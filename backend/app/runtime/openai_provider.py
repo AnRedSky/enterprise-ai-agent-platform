@@ -4,7 +4,7 @@ from typing import AsyncIterator
 import httpx
 
 from app.core.config import settings
-from app.runtime.model_gateway import ModelResult, ModelUsage
+from app.runtime.provider import ModelResult, ModelUsage
 
 
 class OpenAICompatibleProvider:
