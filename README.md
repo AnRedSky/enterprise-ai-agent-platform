@@ -1,12 +1,19 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台，当前开发主线：`feature/phase-1.2`。
+企业级 AI Agent 平台。当前开发主线：`feature/phase-1.2`，正在推进 Phase 1.3。
+
+## 项目文档
+
+- [开发文档](docs/DEVELOPMENT.md)
+- [系统架构](docs/ARCHITECTURE.md)
+- [提交规范](docs/CONTRIBUTING.md)
 
 ## Phase 1.2
 
 已完成：
 - Alembic 初始数据库迁移
 - User / Role / UserRole + JWT 认证
+- RBAC 基础权限
 - Agent Registry + AgentVersion
 - Session / Message 持久化
 - SSE Agent Runtime
@@ -16,6 +23,16 @@
 - AuditLog 数据模型
 - pytest 单元测试
 - GitHub Actions CI
+
+## Phase 1.3 当前进展
+
+- Model Gateway Provider contract
+- OpenAI-compatible Provider
+- 非流式 / SSE 流式模型调用
+- Token Usage 标准结果结构
+- Agent Runtime 与 Model Provider 解耦
+
+后续依次实现 Tool Runtime、Memory、Observability 和 Vue 管理端完整接入。
 
 ## 本地启动
 
@@ -29,19 +46,14 @@ uvicorn app.main:app --reload --port 8000
 
 API: `http://localhost:8000/docs`
 
-## 流式调用
+## 配置真实模型
 
-`POST /api/v1/agents/stream`
+复制 `.env.example` 为 `.env`，设置：
 
-```json
-{
-  "agent_id": "<agent-id>",
-  "input": "你好"
-}
+```text
+MODEL_PROVIDER=openai-compatible
+MODEL_BASE_URL=https://your-provider.example/v1
+MODEL_API_KEY=your-key
 ```
 
-使用 `Authorization: Bearer <token>`。
-
-## 下一阶段
-
-Phase 1.3 将重点进入真实模型 Provider、Tool 执行沙箱、Memory、Observability，以及 Vue 管理端完整接入。
+禁止将 `.env` 或任何密钥提交到 Git。
