@@ -1,23 +1,24 @@
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
-from jose import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
-from pydantic_settings import BaseSettings
 
-class Settings(BaseSettings):
-    secret_key: str = "change-me"
-    algorithm: str = "HS256"
-    access_token_minutes: int = 60
-
-settings = Settings()
-pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+SECRET_KEY = "change-me-in-production"
+ALGORITHM = "HS256"
+_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def hash_password(password: str) -> str:
-    return pwd.hash(password)
+    return _pwd.hash(password)
 
-def verify_password(password: str, hashed: str) -> bool:
-    return pwd.verify(password, hashed)
+def verify_password(password: str, password_hash: str) -> bool:
+    return _pwd.verify(password, password_hash)
 
-def create_token(user_id: UUID, roles: list[str]) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_minutes)
-    return jwt.encode({"sub": str(user_id), "roles": roles, "exp": exp}, settings.secret_key, algorithm=settings.algorithm)
+def create_token(user_id: UUID, roles: list[str], expires_minutes: int = 60) -> str:
+    exp = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+    return jwt.encode({"sub": str(user_id), "roles": roles, "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError as exc:
+        raise ValueError("invalid token") from exc
