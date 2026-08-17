@@ -1,31 +1,14 @@
-from dataclasses import dataclass
 from typing import AsyncIterator
 from uuid import UUID
 
 from app.core.config import settings
 from app.runtime.openai_provider import OpenAICompatibleProvider
-
-
-@dataclass
-class ModelUsage:
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-
-
-@dataclass
-class ModelResult:
-    content: str
-    usage: ModelUsage | None = None
-    model: str | None = None
+from app.runtime.provider import ModelResult
 
 
 class MockProvider:
     async def complete(self, model: str, messages: list[dict]) -> ModelResult:
-        return ModelResult(
-            content=f"【Mock】模型={model}\n{messages[-1]['content']}",
-            model=model,
-        )
+        return ModelResult(content=f"【Mock】模型={model}\n{messages[-1]['content']}", model=model)
 
     async def stream(self, model: str, messages: list[dict]) -> AsyncIterator[str]:
         result = await self.complete(model, messages)
