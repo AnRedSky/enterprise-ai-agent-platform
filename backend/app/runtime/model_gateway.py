@@ -1,27 +1,52 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-import httpx
+from typing import AsyncIterator
+from uuid import UUID
+
+from app.core.config import settings
+from app.runtime.openai_provider import OpenAICompatibleProvider
+
 
 @dataclass
-class ModelRequest:
-    model: str
-    messages: list[dict]
+class ModelUsage:
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
 
-class ModelProvider(ABC):
-    @abstractmethod
-    async def generate(self, request: ModelRequest): ...
 
-class MockProvider(ModelProvider):
-    async def generate(self, request):
-        return f"【Mock】{request.messages[-1]['content']}"
+@dataclass
+class ModelResult:
+    content: str
+    usage: ModelUsage | None = None
+    model: str | None = None
 
-class OpenAICompatibleProvider(ModelProvider):
-    def __init__(self, base_url: str, api_key: str): self.base_url, self.api_key = base_url.rstrip('/'), api_key
-    async def generate(self, request):
-        async with httpx.AsyncClient(timeout=60) as client:
-            r = await client.post(f"{self.base_url}/chat/completions", headers={"Authorization":f"Bearer {self.api_key}"}, json={"model":request.model,"messages":request.messages})
-            r.raise_for_status(); return r.json()["choices"][0]["message"]["content"]
+
+class MockProvider:
+    async def complete(self, model: str, messages: list[dict]) -> ModelResult:
+        return ModelResult(
+            content=f"【Mock】模型={model}\n{messages[-1]['content']}",
+            model=model,
+        )
+
+    async def stream(self, model: str, messages: list[dict]) -> AsyncIterator[str]:
+        result = await self.complete(model, messages)
+        for token in result.content.split():
+            yield token + " "
+
 
 class ModelGateway:
-    def __init__(self, provider: ModelProvider): self.provider = provider
-    async def generate(self, model, messages): return await self.provider.generate(ModelRequest(model, messages))
+    """Unified model entrypoint; provider details must not leak into Agent Runtime."""
+
+    def __init__(self):
+        self.provider = (
+            OpenAICompatibleProvider()
+            if settings.model_provider == "openai-compatible"
+            else MockProvider()
+        )
+
+    async def generate(self, model: str, messages: list[dict], session_id: UUID) -> ModelResult:
+        return await self.provider.complete(model, messages)
+
+    async def stream(self, model: str, messages: list[dict], session_id: UUID) -> AsyncIterator[str]:
+        async for chunk in self.provider.stream(model, messages):
+            if chunk:
+                yield chunk
