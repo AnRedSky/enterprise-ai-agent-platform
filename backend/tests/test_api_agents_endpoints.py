@@ -11,6 +11,7 @@ def test_agent_routes_are_registered():
     assert ("/api/v1/agents", ("GET",)) in paths
     assert ("/api/v1/agents/{agent_id}/versions", ("GET",)) in paths
     assert ("/api/v1/agents/{agent_id}/versions", ("POST",)) in paths
+    assert ("/api/v1/agents/{agent_id}/published-version", ("GET",)) in paths
 
 
 def test_agent_create_requires_bearer_authentication():
@@ -33,4 +34,9 @@ def test_agent_version_create_requires_bearer_authentication():
         "/api/v1/agents/00000000-0000-0000-0000-000000000001/versions",
         json={"system_prompt": "test", "model_id": "mock-model"},
     )
+    assert response.status_code == 401
+
+
+def test_published_version_requires_bearer_authentication():
+    response = client.get("/api/v1/agents/00000000-0000-0000-0000-000000000001/published-version")
     assert response.status_code == 401

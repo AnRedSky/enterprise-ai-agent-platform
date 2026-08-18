@@ -18,6 +18,7 @@ export interface AgentVersion {
   system_prompt: string;
   model_id: string;
   created_at: string;
+  is_published?: boolean;
 }
 
 export interface AgentCreatePayload {
@@ -37,6 +38,10 @@ export async function createAgent(payload: AgentCreatePayload) {
 
 export async function listVersions(agentId: string) {
   return (await request.get<AgentVersion[]>(`/agents/${agentId}/versions`)).data;
+}
+
+export async function getPublishedVersion(agentId: string) {
+  return (await request.get<AgentVersion>(`/agents/${agentId}/published-version`)).data;
 }
 
 export async function createVersion(agentId: string, payload: Pick<AgentVersion, "system_prompt" | "model_id">) {
