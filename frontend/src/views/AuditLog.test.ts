@@ -38,11 +38,9 @@ describe("AuditLog.vue", () => {
   });
 
   it("renders error state", async () => {
-    // 使用同步抛错模拟请求失败：组件的 try/catch 同样会消费该异常，
-    // 但不会产生 Vitest 需要追踪的 rejected Promise / unhandled rejection。
-    auditLogs.mockImplementation(() => {
-      throw new Error("network");
-    });
+    // 返回无效响应，让组件内部访问 response.data.items 时进入 catch。
+    // 这样测试的是组件自己的异常处理路径，同时不会制造 rejected Promise。
+    auditLogs.mockResolvedValue({});
 
     const wrapper = mount(AuditLog, { global });
     await flushPromises();
