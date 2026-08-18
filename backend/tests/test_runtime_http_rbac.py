@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import get_db
 from app.api.runtime import _runtime_claims, router as runtime_router
 from app.main import app
+from app.schemas.runtime import ExecutionItem
 
 
 def _install_db_override():
@@ -24,6 +25,29 @@ def clean_overrides():
     _remove_db_override()
     yield
     _remove_db_override()
+
+
+def test_execution_item_maps_orm_id_to_execution_id():
+    execution_id = uuid4()
+
+    class ExecutionRow:
+        id = execution_id
+        request_id = "req"
+        trace_id = "trace"
+        session_id = None
+        agent_id = uuid4()
+        agent_version = "1.0.0"
+        model_id = "mock-model"
+        status = "success"
+        from datetime import datetime
+        started_at = datetime(2026, 8, 18, 10, 0, 0)
+        ended_at = None
+        duration_ms = 1
+        error_code = None
+
+    item = ExecutionItem.model_validate(ExecutionRow(), from_attributes=True)
+    assert item.execution_id == execution_id
+    assert item.model_dump()["execution_id"] == execution_id
 
 
 def test_runtime_requires_bearer_authentication():
