@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 
 const { auditLogs } = vi.hoisted(() => ({ auditLogs: vi.fn() }));
 vi.mock("../api/runtime", () => ({ runtimeApi: { auditLogs } }));
@@ -25,15 +25,26 @@ describe("AuditLog.vue", () => {
   beforeEach(() => auditLogs.mockReset());
 
   it("renders empty state", async () => {
-    auditLogs.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
+    auditLogs.mockResolvedValue({
+      data: { items: [], page: 1, page_size: 20, total: 0 },
+    });
+
     const wrapper = mount(AuditLog, { global });
-    await vi.waitFor(() => expect(auditLogs).toHaveBeenCalled());
+    await flushPromises();
+
+    expect(auditLogs).toHaveBeenCalledTimes(1);
+    expect(wrapper.find(".empty").exists()).toBe(true);
     expect(wrapper.text()).toContain("empty");
   });
 
   it("renders error state", async () => {
     auditLogs.mockRejectedValue(new Error("network"));
+
     const wrapper = mount(AuditLog, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("Audit 查询失败"));
+    await flushPromises();
+
+    expect(auditLogs).toHaveBeenCalledTimes(1);
+    expect(wrapper.find(".alert").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Audit 查询失败");
   });
 });
