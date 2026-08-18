@@ -2,7 +2,7 @@
 
 ## 1. 项目背景
 
-建设企业级 AI Agent 平台，提供 Agent 配置、版本治理、模型接入、会话、Memory、Tool、Runtime、权限、审计和可观测能力。
+建设企业级 AI Agent 平台，提供 Agent 配置、版本治理、模型接入、会话、Memory、Tool、Runtime、权限、审计、可观测和 Knowledge/RAG 能力。
 
 ## 2. 项目目标
 
@@ -12,7 +12,8 @@
 - 建立受治理的 Tool Runtime。
 - 建立 Session / Memory 上下文能力。
 - 建立 RBAC、审计和 Observability 基础。
-- 为后续 Knowledge / RAG / Workflow / Governance 扩展预留边界。
+- 建立 Knowledge / RAG 的文档、版本、分块、检索和引用闭环。
+- 为后续 Workflow / Governance / Evaluation 扩展预留边界。
 
 ## 3. 技术栈
 
@@ -34,11 +35,12 @@
 - Vite
 - Element Plus
 - Pinia
+- Vitest
 
 ### Engineering
 
 - GitHub
-- GitHub Actions（当前临时暂停自动触发）
+- GitHub Actions
 - Docker Compose
 
 ## 4. 功能模块
@@ -53,8 +55,9 @@
 8. Memory
 9. Observability
 10. Vue Admin Console
-11. Knowledge / RAG（后续阶段）
+11. Knowledge / RAG
 12. Workflow / Governance（后续阶段）
+13. Evaluation（后续阶段）
 
 ## 5. 开发阶段计划
 
@@ -63,38 +66,52 @@
 | Phase 1.0 | 工程初始化、FastAPI + Vue | 已完成 |
 | Phase 1.2 | Identity、RBAC、Agent、Session、SSE、基础 Tool | 已完成 |
 | Phase 1.3-A | Model Gateway | 已完成 |
-| Phase 1.3-B | Tool Runtime | 基础能力已完成，治理编排待完成 |
-| Phase 1.3-C | Memory | 当前阶段 |
-| Phase 1.3-D | Observability | 待开始 |
-| Phase 1.3-E | Vue 管理端深化 | 待开始 |
-| Phase 1.4 | Knowledge / RAG | 后续 |
+| Phase 1.3-B | Tool Runtime | 核心能力已完成；后续继续生产化治理 |
+| Phase 1.3-C | Memory | 核心能力已完成；后续继续生产化治理 |
+| Phase 1.3-D | Observability | 核心执行链路已完成 |
+| Phase 1.3-E | Vue 管理端深化 | 基础管理闭环已完成 |
+| Phase 1.4-A | Knowledge Registry | **当前任务** |
+| Phase 1.4-B | Document ingestion / Chunk | 待开发 |
+| Phase 1.4-C | Retrieval contract | 待开发 |
+| Phase 1.4-D | Runtime Knowledge integration | 待开发 |
+| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | 待开发 |
 | Phase 1.5 | Workflow / Governance | 后续 |
 
-## 6. 人员分工
+详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`。
 
-当前项目采用职责域划分，具体人员可按团队实际情况映射：
+## 6. 前后端并行与联调规则
 
-- Project Owner：需求、范围、里程碑与验收
-- Backend：FastAPI、Runtime、Model、Tool、Memory、数据库
-- Frontend：Vue 管理端、Agent Console、Debug UI
-- QA：单元测试、集成测试、回归测试
-- DevOps：Docker、CI/CD、环境和部署
-- Security：RBAC、Tool 安全、SSRF、审计和数据安全
+每个 Phase 1.4 小版本必须按：
 
-## 7. 交付规则
+```text
+后端 API Contract
+  ↓
+数据库 Migration + Backend pytest
+  ↓
+前端 API 类型 + Vitest
+  ↓
+前后端联调 / 手工脚本
+  ↓
+Runtime Integration
+  ↓
+全量回归
+  ↓
+main 提交
+```
 
-每个功能模块必须同时交付：
+前端不复制后端业务规则；后端不依赖 Vue 页面结构。API contract 是唯一联调边界。
 
-1. 源代码
-2. 数据库 Migration（如涉及数据结构）
-3. 自动化测试
-4. 编号开发文档
-5. 规范 Git Commit
-6. 验收结果与下一步计划
+## 7. 测试目录规则
+
+- Backend 测试统一位于 `backend/tests/`。
+- Frontend 测试统一位于 `frontend/tests/`。
+- Frontend `src/` 只存业务源码，不允许新增 `*.test.*`。
+- Frontend Vitest 只执行 `frontend/tests/**/*.test.ts`。
+- 前后端手工测试脚本必须保持独立，不合并成一个业务测试文件。
 
 ## 8. 分支规则
 
-当前开发统一基于 `main` 最新代码。功能完成后直接形成规范提交；后续如恢复 PR 流程，功能分支必须从最新 `main` 创建。
+当前开发统一基于 `main` 最新代码。禁止创建新的功能分支；功能完成后直接提交 `main`。
 
 ## 9. Git Commit 规范
 
@@ -109,7 +126,19 @@
 
 提交信息必须说明实现内容或修复细节。
 
-## 10. 禁止提交
+## 10. 交付规则
+
+每个功能模块必须同时交付：
+
+1. 源代码
+2. 数据库 Migration（如涉及数据结构）
+3. 自动化测试
+4. 编号开发文档
+5. 规范 Git Commit
+6. 手工验收脚本（需要手工验收时）
+7. 验收结果与下一步计划
+
+## 11. 禁止提交
 
 严禁提交：
 
@@ -123,7 +152,3 @@
 - 临时截图
 - 个人文件
 - 与项目无关的实验文件
-
-## 11. 当前风险
-
-CI 自动执行当前存在不稳定问题，因此暂时关闭 push / pull_request 自动触发；恢复前必须完成失败原因、依赖、测试环境和配置的集中修复与验证。

@@ -1,44 +1,62 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，正在完成 Phase 1.3 核心能力与本地验收。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，正在进入 Phase 1.4 Knowledge / RAG 开发。
 
 ## 项目文档
 
+- [完整架构与实施流程](docs/00-企业级应用%20AI%20智能体系统完整开发架构与实施流程.md)
 - [开发文档](docs/DEVELOPMENT.md)
 - [系统架构](docs/ARCHITECTURE.md)
+- [项目开发规划](docs/07-project-development-plan.md)
+- [Phase 1.4 Knowledge / RAG](docs/11-phase-1.4-knowledge-rag-plan.md)
 - [本地功能测试与验收](docs/LOCAL_TESTING.md)
 - [提交规范](docs/CONTRIBUTING.md)
 
-## Phase 1.2
+## 当前开发状态
 
-已完成：
-- Alembic 初始数据库迁移
-- User / Role / UserRole + JWT 认证
-- RBAC 基础权限
-- Agent Registry + AgentVersion
-- Session / Message 持久化
+### Phase 1.3
+
+已形成可运行闭环：
+
+- Identity / JWT / RBAC
+- Agent Registry / AgentVersion
+- Session / Message
 - SSE Agent Runtime
-- request_id / trace_id / execution_id / session_id / agent_version / model_id
-- Model Gateway + Mock Provider
-- Tool Registry 基础 API
-- AuditLog 数据模型
-- pytest 单元测试
-- GitHub Actions CI
+- Model Gateway：Mock + OpenAI-compatible Provider
+- Tool Registry / Runtime：Schema、权限、超时、审计基础能力
+- Memory：上下文与治理基础能力
+- Observability：Execution / Event / Token / Error
+- Runtime / Audit：RBAC 查询、过滤、分页、Timeline
+- Vue Dashboard / Agent / Runtime / Audit 管理页面
+- 前端 Bearer Token 与受保护路由
 
-## Phase 1.3 当前进展
+### Phase 1.4
 
-已实现并进入验收：
-- Model Gateway Provider contract
-- OpenAI-compatible Provider
-- 非流式 / SSE 流式模型调用
-- Token Usage 标准结果结构
-- Agent Runtime 与 Model Provider 解耦
-- Tool Runtime 基础安全边界、超时与审计
-- Memory 上下文与治理基础能力
-- Observability Execution / Event / Token / Error 链路
-- Runtime / Audit RBAC 查询与稳定分页
-- Vue Dashboard / Agent / Runtime / Audit 基础管理页面
-- Vue 登录、Bearer Token 注入与受保护路由
+当前进入 Knowledge / RAG：
+
+1. Knowledge Registry
+2. Document / Version
+3. Ingestion / Chunk
+4. Retrieval contract
+5. Runtime Knowledge integration
+6. Vue Knowledge 管理与 Retrieval Debug
+
+前后端按“后端 contract → 后端测试 → 前端 API/测试 → 联调 → Runtime 集成 → 全量回归”的顺序推进。
+
+## 前端测试目录约束
+
+Frontend 业务源码与测试严格分离：
+
+```text
+frontend/
+├── src/       # 业务源码
+└── tests/     # Vitest 测试
+    ├── api/
+    ├── views/
+    └── setup.ts
+```
+
+`frontend/src/` 禁止新增 `*.test.*`；Vitest 只执行 `frontend/tests/**/*.test.ts`。
 
 ## 环境配置
 
@@ -48,8 +66,6 @@
 Copy-Item backend/.env.example backend/.env
 Copy-Item frontend/.env.example frontend/.env
 ```
-
-后端 `.env` 可直接修改 `APP_HOST`、`APP_PORT`、`CORS_ORIGINS`、数据库、Redis、JWT 和模型配置；前端 `.env` 可修改 `VITE_API_BASE_URL`、`VITE_DEV_HOST`、`VITE_DEV_PORT`。
 
 ## 本地启动
 
@@ -61,7 +77,7 @@ uv run alembic upgrade head
 uv run python run.py
 ```
 
-`run.py` 会读取 `backend/.env` 中的 `APP_HOST` / `APP_PORT`。API 默认：`http://localhost:8000/docs`
+API 默认：`http://localhost:8000/docs`
 
 前端：
 
@@ -71,22 +87,26 @@ npm install
 npm run dev
 ```
 
-前端开发服务会读取 `frontend/.env` 中的 `VITE_DEV_HOST` / `VITE_DEV_PORT`。
-
 ## 本地验收
 
 完整手工测试步骤请参阅 [本地功能测试与验收](docs/LOCAL_TESTING.md)。
 
-自动化测试：
+Backend：
 
-```bash
+```powershell
 cd backend
 uv run pytest -q
+```
 
-cd ../frontend
+Frontend：
+
+```powershell
+cd frontend
 npm test
 npm run build
 ```
+
+前后端手工测试脚本保持独立执行。
 
 ## 配置真实模型
 
