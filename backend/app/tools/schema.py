@@ -9,7 +9,9 @@ def validate_object_schema(schema: dict[str, Any], arguments: dict[str, Any]) ->
 
     properties = schema.get("properties", {})
     required = schema.get("required", [])
-    additional = schema.get("additionalProperties", False)
+    # JSON Schema defaults additionalProperties to true. Keep that default so
+    # minimal ``{"type": "object"}`` tool schemas accept arbitrary arguments.
+    additional = schema.get("additionalProperties", True)
 
     missing = [name for name in required if name not in arguments]
     if missing:
