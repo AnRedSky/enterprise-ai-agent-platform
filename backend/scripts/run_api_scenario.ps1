@@ -106,15 +106,14 @@ if ([int]$runtime.total -gt 0 -and $runtime.items.Count -gt 0) {
 }
 Invoke-ScenarioRequest -Name "Runtime / audit logs" -Path "/api/v1/runtime/audit-logs" -Headers $headers | Out-Null
 
-# Tools: cover the full management and runtime flow. Creation/binding are admin-only;
-# the scenario account is intentionally not assumed to be admin, so first verify
-# the protected endpoints and then execute against an intentionally missing tool.
+# Tools: cover the full management lifecycle from the normal user's RBAC boundary.
 Invoke-ScenarioRequest -Name "Tools / list" -Path "/api/v1/tools" -Headers $headers | Out-Null
 $missingToolId = "00000000-0000-0000-0000-000000000001"
 Invoke-ScenarioRequest -Name "Tools / create forbidden for normal user" -Method "POST" -Path "/api/v1/tools" -Headers $headers -Body @{ name = "scenario-tool"; description = "Scenario tool"; enabled = $true; input_schema = @{ type = "object" } } -ExpectedStatus @(401, 403) | Out-Null
 Invoke-ScenarioRequest -Name "Tools / bind forbidden for normal user" -Method "POST" -Path "/api/v1/tools/$missingToolId/bind/$agentId" -Headers $headers -ExpectedStatus @(401, 403, 404) | Out-Null
 Invoke-ScenarioRequest -Name "Tools / unbind forbidden for normal user" -Method "DELETE" -Path "/api/v1/tools/$missingToolId/bind/$agentId" -Headers $headers -ExpectedStatus @(401, 403, 404) | Out-Null
 Invoke-ScenarioRequest -Name "Tools / enable forbidden for normal user" -Method "POST" -Path "/api/v1/tools/$missingToolId/enable" -Headers $headers -ExpectedStatus @(401, 403, 404) | Out-Null
+Invoke-ScenarioRequest -Name "Tools / disable forbidden for normal user" -Method "POST" -Path "/api/v1/tools/$missingToolId/disable" -Headers $headers -ExpectedStatus @(401, 403, 404) | Out-Null
 Invoke-ScenarioRequest -Name "Tools / execute missing tool" -Method "POST" -Path "/api/v1/tools/$missingToolId/execute" -Headers $headers -Body @{ agent_id = $agentId; arguments = @{} } -ExpectedStatus @(404, 403) | Out-Null
 
 Write-Host "============================================================" -ForegroundColor DarkGray
