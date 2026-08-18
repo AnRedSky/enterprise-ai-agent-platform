@@ -1,4 +1,2 @@
-<script setup lang="ts">
-import LegacyModule from "../_legacy/Dashboard.vue";
-</script>
-<template><LegacyModule /></template>
+<script setup lang="ts">import DashboardOverview from './components/DashboardOverview.vue';</script>
+<template><DashboardOverview /></template>
