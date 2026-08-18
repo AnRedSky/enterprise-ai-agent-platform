@@ -1,8 +1,7 @@
-import axios from "axios";
-const client = axios.create({ baseURL: "/api/v1" });
+import { request } from "./request";
 export const runtimeApi = {
-    executions(params) { return client.get("/runtime/executions", { params }); },
-    execution(id) { return client.get(`/runtime/executions/${id}`); },
-    executionEvents(id) { return client.get(`/runtime/executions/${id}/events`); },
-    auditLogs(params) { return client.get("/runtime/audit-logs", { params }); },
+    executions(params) { return request.get("/runtime/executions", { params }); },
+    execution(id) { return request.get(`/runtime/executions/${id}`); },
+    executionEvents(id) { return request.get(`/runtime/executions/${id}/events`); },
+    auditLogs(params) { return request.get("/runtime/audit-logs", { params }); },
 };
