@@ -26,14 +26,19 @@ async def db_session():
 
 @pytest.mark.asyncio
 async def test_tool_runtime_persists_audit_and_observability(db_session, monkeypatch):
-    actor = User(username="owner", password_hash="x")
-    agent = Agent(name="runtime-agent", owner_id=actor.id, status="active")
-    tool = Tool(name=f"http-{uuid.uuid4()}", endpoint="https://example.test", enabled=True, input_schema={"type": "object"})
-    binding = AgentTool(agent_id=agent.id, tool_id=tool.id, enabled=True)
+    actor_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    tool_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    actor = User(id=actor_id, username="owner", password_hash="x")
+    agent = Agent(id=agent_id, name="runtime-agent", owner_id=actor_id, status="active")
+    tool = Tool(id=tool_id, name=f"http-{uuid.uuid4()}", endpoint="https://example.test", enabled=True, input_schema={"type": "object"})
+    binding = AgentTool(agent_id=agent_id, tool_id=tool_id, enabled=True)
     execution = Execution(
+        id=execution_id,
         request_id="req-e2e",
         trace_id="trace-e2e",
-        agent_id=agent.id,
+        agent_id=agent_id,
         status="running",
     )
     db_session.add_all([actor, agent, tool, binding, execution])
@@ -54,10 +59,10 @@ async def test_tool_runtime_persists_audit_and_observability(db_session, monkeyp
         observability=ToolObservabilityAdapter(db_session),
     )
     context = ToolExecutionContext(
-        actor_id=actor.id,
-        agent_id=agent.id,
-        tool_id=tool.id,
-        execution_id=execution.id,
+        actor_id=actor_id,
+        agent_id=agent_id,
+        tool_id=tool_id,
+        execution_id=execution_id,
         trace_id=execution.trace_id,
         request_id=execution.request_id,
     )
@@ -69,14 +74,14 @@ async def test_tool_runtime_persists_audit_and_observability(db_session, monkeyp
     await db_session.commit()
 
     assert result["status_code"] == 200
-    audit = await db_session.scalar(select(AuditLog).where(AuditLog.execution_id == execution.id))
+    audit = await db_session.scalar(select(AuditLog).where(AuditLog.execution_id == execution_id))
     assert audit is not None
     assert audit.status == "success"
 
     event = await db_session.scalar(
         select(ExecutionEvent).where(
-            ExecutionEvent.execution_id == execution.id,
-            ExecutionEvent.tool_id == tool.id,
+            ExecutionEvent.execution_id == execution_id,
+            ExecutionEvent.tool_id == tool_id,
         )
     )
     assert event is not None
@@ -86,13 +91,17 @@ async def test_tool_runtime_persists_audit_and_observability(db_session, monkeyp
 
 @pytest.mark.asyncio
 async def test_tool_runtime_denies_non_owner(db_session):
-    owner = User(username="owner2", password_hash="x")
-    actor = User(username="actor2", password_hash="x")
-    agent = Agent(name="restricted-agent", owner_id=owner.id, status="active")
-    tool = Tool(name=f"restricted-{uuid.uuid4()}", enabled=True, input_schema={"type": "object"})
-    binding = AgentTool(agent_id=agent.id, tool_id=tool.id, enabled=True)
+    owner_id = uuid.uuid4()
+    actor_id = uuid.uuid4()
+    agent_id = uuid.uuid4()
+    tool_id = uuid.uuid4()
+    owner = User(id=owner_id, username="owner2", password_hash="x")
+    actor = User(id=actor_id, username="actor2", password_hash="x")
+    agent = Agent(id=agent_id, name="restricted-agent", owner_id=owner_id, status="active")
+    tool = Tool(id=tool_id, name=f"restricted-{uuid.uuid4()}", enabled=True, input_schema={"type": "object"})
+    binding = AgentTool(agent_id=agent_id, tool_id=tool_id, enabled=True)
     db_session.add_all([owner, actor, agent, tool, binding])
     await db_session.flush()
 
-    allowed = await ToolRBACService(db_session).can_execute(actor.id, agent.id, tool.id)
+    allowed = await ToolRBACService(db_session).can_execute(actor_id, agent_id, tool_id)
     assert allowed is False
