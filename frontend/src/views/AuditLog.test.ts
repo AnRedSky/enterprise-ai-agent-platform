@@ -38,12 +38,10 @@ describe("AuditLog.vue", () => {
   });
 
   it("renders error state", async () => {
-    // 使用受控 thenable 模拟请求失败，而不是创建 rejected Promise。
-    // 这样既能覆盖组件的 catch 分支，又不会被 Vitest 的 unhandled rejection 机制误判。
-    auditLogs.mockReturnValue({
-      then: (_resolve: (value: unknown) => void, reject: (reason?: unknown) => void) => {
-        reject(new Error("network"));
-      },
+    // 使用同步抛错模拟请求失败：组件的 try/catch 同样会消费该异常，
+    // 但不会产生 Vitest 需要追踪的 rejected Promise / unhandled rejection。
+    auditLogs.mockImplementation(() => {
+      throw new Error("network");
     });
 
     const wrapper = mount(AuditLog, { global });
