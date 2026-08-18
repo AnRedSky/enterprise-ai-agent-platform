@@ -1,8 +1,10 @@
 name: CI
 
-# TEMPORARILY PAUSED: automatic CI execution is disabled during Phase 1.x stabilization.
-# Keep the workflow definition for later repair; re-enable push/pull_request after CI is fixed.
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -13,9 +15,12 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements.txt
-      - run: python -m compileall app
-      - run: pytest -q
+      - run: uv sync --dev
+      - run: uv run python -m compileall app
+      - run: uv run pytest -q
