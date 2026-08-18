@@ -25,6 +25,10 @@ class VersionCreate(BaseModel):
     model_id: str = Field(min_length=1)
 
 
+class PublishRequest(BaseModel):
+    version_id: UUID
+
+
 @router.post("")
 async def create_agent(
     p: AgentCreate,
@@ -68,6 +72,7 @@ async def list_agents(
             "model_id": latest_versions[agent.id].model_id if agent.id in latest_versions else None,
             "version": latest_versions[agent.id].version if agent.id in latest_versions else None,
             "status": agent.status,
+            "published_version_id": agent.published_version_id,
             "created_at": agent.created_at,
         }
         for agent in agents
@@ -95,3 +100,34 @@ async def create_version(
     registry = AgentRegistry(db)
     agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return await registry.create_version(agent, p.system_prompt, p.model_id)
+
+
+@router.post("/{agent_id}/publish")
+async def publish_agent(
+    agent_id: UUID,
+    p: PublishRequest,
+    claims=Depends(require_roles("user", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    registry = AgentRegistry(db)
+    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    agent, version = await registry.publish(agent, p.version_id)
+    return {
+        "id": agent.id,
+        "status": agent.status,
+        "published_version_id": agent.published_version_id,
+        "version": version.version,
+        "model_id": version.model_id,
+    }
+
+
+@router.post("/{agent_id}/archive")
+async def archive_agent(
+    agent_id: UUID,
+    claims=Depends(require_roles("user", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    registry = AgentRegistry(db)
+    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    agent = await registry.archive(agent)
+    return {"id": agent.id, "status": agent.status, "published_version_id": agent.published_version_id}
