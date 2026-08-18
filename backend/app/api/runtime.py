@@ -31,7 +31,7 @@ def _identity(claims: dict | None = None):
 def _normalize_execution(execution):
     """Keep the HTTP contract stable for lightweight repository/test doubles."""
     if isinstance(execution, dict) and "started_at" not in execution:
-        execution = {**execution, "started_at": datetime.utcnow()}
+        execution = {**execution, "started_at": datetime.now(datetime.UTC)}
     return execution
 
 
