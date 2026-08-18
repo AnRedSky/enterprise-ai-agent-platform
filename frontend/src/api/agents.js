@@ -8,6 +8,9 @@ export async function createAgent(payload) {
 export async function listVersions(agentId) {
     return (await request.get(`/agents/${agentId}/versions`)).data;
 }
+export async function getPublishedVersion(agentId) {
+    return (await request.get(`/agents/${agentId}/published-version`)).data;
+}
 export async function createVersion(agentId, payload) {
     return (await request.post(`/agents/${agentId}/versions`, payload)).data;
 }
