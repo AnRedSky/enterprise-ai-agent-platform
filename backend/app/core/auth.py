@@ -20,9 +20,16 @@ def current_claims(credentials: HTTPAuthorizationCredentials = Depends(bearer)) 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 无效或已过期")
 
 
+def _normalize_roles(claims: dict) -> set[str]:
+    roles = claims.get("roles", [])
+    if isinstance(roles, str):
+        roles = [roles]
+    return {role for role in roles if isinstance(role, str)}
+
+
 def require_roles(*required: str):
     def dependency(claims: dict = Depends(current_claims)):
-        roles = set(claims.get("roles", []))
+        roles = _normalize_roles(claims)
         if "admin" not in roles and not roles.intersection(required):
             raise HTTPException(status_code=403, detail="权限不足")
         return claims
