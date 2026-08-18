@@ -5,7 +5,7 @@ const agents = ref([]), dialogVisible = ref(false), chatVisible = ref(false), lo
 const form = ref({ name: "企业智能助手", description: "Phase 1.2 默认 Agent", system_prompt: "你是一个企业级 AI 助手，请准确、简洁地回答用户问题。", model: "mock-model" });
 async function load() { agents.value = await listAgents(); }
 async function create() { await createAgent(form.value); dialogVisible.value = false; await load(); ElMessage.success("Agent 创建成功"); }
-function openChat(agent) { selected.value = agent; answer.value = ""; input.value = ""; chatVisible.value = true; }
+function openChat(agentId) { selected.value = agents.value.find((agent) => agent.id === agentId) ?? null; answer.value = ""; input.value = ""; chatVisible.value = true; }
 async function execute() { if (!selected.value || !input.value.trim())
     return; loading.value = true; try {
     answer.value = (await executeAgent(selected.value.id, input.value)).answer;
@@ -137,7 +137,7 @@ __VLS_31.slots.default;
     let __VLS_38;
     const __VLS_39 = {
         onClick: (...[$event]) => {
-            __VLS_ctx.openChat(row);
+            __VLS_ctx.openChat(row.id);
         }
     };
     __VLS_35.slots.default;
