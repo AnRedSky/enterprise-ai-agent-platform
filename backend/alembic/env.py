@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.core.config import settings
 from app.models.core import Base
 from app.models.execution import Execution, ExecutionEvent  # noqa: F401
+from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion  # noqa: F401
 
 
 config = context.config
