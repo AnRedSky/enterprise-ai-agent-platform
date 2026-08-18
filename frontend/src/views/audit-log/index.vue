@@ -1,4 +1,5 @@
 <script setup lang="ts">
-import LegacyModule from "../_legacy/AuditLog.vue";
+import AuditLogPanel from "./components/AuditLogPanel.vue";
 </script>
-<template><LegacyModule /></template>
+
+<template><AuditLogPanel /></template>
