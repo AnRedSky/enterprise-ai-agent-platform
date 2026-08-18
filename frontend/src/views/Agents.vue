@@ -16,8 +16,8 @@
       <el-table-column prop="status" label="状态" width="110" />
       <el-table-column label="操作" width="260">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openVersions(row)">版本</el-button>
-          <el-button link type="primary" @click="openChat(row)">调试 Chat</el-button>
+          <el-button link type="primary" @click="openVersions(row as Agent)">版本</el-button>
+          <el-button link type="primary" @click="openChat(row as Agent)">调试 Chat</el-button>
         </template>
       </el-table-column>
     </el-table>
