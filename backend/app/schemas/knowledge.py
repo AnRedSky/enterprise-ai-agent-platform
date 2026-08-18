@@ -77,8 +77,15 @@ class KnowledgeDocumentVersionOut(BaseModel):
     created_at: datetime
 
 
-class Page(BaseModel):
-    items: list
+class KnowledgeBasePage(BaseModel):
+    items: list[KnowledgeBaseOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class KnowledgeDocumentPage(BaseModel):
+    items: list[KnowledgeDocumentOut]
     total: int
     page: int
     page_size: int
