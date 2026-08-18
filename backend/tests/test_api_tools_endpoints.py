@@ -73,9 +73,10 @@ async def test_admin_tool_list_includes_disabled_tools():
     db.execute.return_value = result
 
     response = await list_tools({"roles": ["admin"]}, db)
+    query = str(db.execute.call_args.args[0])
 
     assert response == [disabled, enabled]
-    assert "tools.enabled" not in str(db.execute.call_args.args[0])
+    assert "WHERE tools.enabled" not in query
 
 
 @pytest.mark.asyncio
@@ -87,6 +88,7 @@ async def test_user_tool_list_filters_disabled_tools():
     db.execute.return_value = result
 
     response = await list_tools({"roles": ["user"]}, db)
+    query = str(db.execute.call_args.args[0])
 
     assert response == [enabled]
-    assert "tools.enabled" in str(db.execute.call_args.args[0])
+    assert "WHERE tools.enabled" in query
