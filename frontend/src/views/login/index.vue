@@ -1,4 +1,5 @@
 <script setup lang="ts">
-import LegacyModule from "../_legacy/Login.vue";
+import LoginForm from "./components/LoginForm.vue";
 </script>
-<template><LegacyModule /></template>
+
+<template><LoginForm /></template>
