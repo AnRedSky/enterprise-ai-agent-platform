@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import current_claims
 from app.dependencies.db import get_db
 from app.runtime.memory_context import build_memory_context
-from app.runtime.model_gateway import MockProvider, ModelGateway
+from app.runtime.model_gateway import ModelGateway
 from app.services.memory_service import MemoryService
 from app.services.observability_service import ObservabilityService
 from app.services.session_service import SessionService
@@ -27,7 +27,12 @@ class ChatRequest(BaseModel):
 
 
 def gateway():
-    return ModelGateway(MockProvider())
+    """Build the configured model gateway.
+
+    Provider selection belongs to ModelGateway so local mock agents and
+    OpenAI-compatible production agents follow the same runtime path.
+    """
+    return ModelGateway()
 
 
 @router.post("/stream")
