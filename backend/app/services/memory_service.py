@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
@@ -16,9 +16,24 @@ class MemoryService:
         self.db = db
 
     @staticmethod
-    def _visible_clause():
-        now = datetime.now(UTC)
-        return and_(MemoryRecord.is_active.is_(True), or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now))
+    def _utc_naive(value: datetime | None) -> datetime | None:
+        """Normalize timestamps to naive UTC for PostgreSQL TIMESTAMP columns."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(UTC).replace(tzinfo=None)
+
+    @classmethod
+    def _visible_clause(cls):
+        # MemoryRecord.expires_at is mapped to TIMESTAMP WITHOUT TIME ZONE.
+        # asyncpg rejects aware datetimes for that column, so all DB-bound
+        # timestamps must use the same naive-UTC representation.
+        now = datetime.now(UTC).replace(tzinfo=None)
+        return and_(
+            MemoryRecord.is_active.is_(True),
+            or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
+        )
 
     async def put(
         self,
@@ -38,7 +53,7 @@ class MemoryService:
             memory_type=memory_type,
             memory_key=memory_key,
             content=content,
-            expires_at=expires_at,
+            expires_at=self._utc_naive(expires_at),
             is_active=True,
         )
         self.db.add(record)
@@ -79,7 +94,7 @@ class MemoryService:
         if memory_type is not None:
             record.memory_type = memory_type
         if expires_at is not None:
-            record.expires_at = expires_at
+            record.expires_at = self._utc_naive(expires_at)
         if is_active is not None:
             record.is_active = is_active
         await self.db.flush()
