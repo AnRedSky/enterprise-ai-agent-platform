@@ -11,3 +11,9 @@ export async function listVersions(agentId) {
 export async function createVersion(agentId, payload) {
     return (await request.post(`/agents/${agentId}/versions`, payload)).data;
 }
+export async function publishAgent(agentId, versionId) {
+    return (await request.post(`/agents/${agentId}/publish`, { version_id: versionId })).data;
+}
+export async function archiveAgent(agentId) {
+    return (await request.post(`/agents/${agentId}/archive`)).data;
+}
