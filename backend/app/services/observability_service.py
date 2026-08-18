@@ -40,7 +40,7 @@ class ObservabilityService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        ended = datetime.utcnow()
+        ended = datetime.now(datetime.UTC)
         execution.status = status
         execution.ended_at = ended
         execution.duration_ms = max(0, int((ended - execution.started_at).total_seconds() * 1000))
@@ -62,7 +62,7 @@ class ObservabilityService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> ExecutionEvent:
-        ended = datetime.utcnow()
+        ended = datetime.now(datetime.UTC)
         event = ExecutionEvent(
             execution_id=execution.id,
             trace_id=execution.trace_id,
@@ -89,4 +89,4 @@ class ObservabilityService:
 
     @staticmethod
     def now() -> datetime:
-        return datetime.utcnow()
+        return datetime.now(datetime.UTC)

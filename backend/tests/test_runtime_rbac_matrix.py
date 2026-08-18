@@ -22,8 +22,8 @@ async def seed(session):
     exec_a, exec_b = uuid4(), uuid4()
     session.add_all([
         Agent(id=agent_a, name="agent-a", owner_id=owner_a), Agent(id=agent_b, name="agent-b", owner_id=owner_b),
-        Execution(id=exec_a, request_id="req-a", trace_id="trace-a", agent_id=agent_a, status="success", started_at=datetime.utcnow()),
-        Execution(id=exec_b, request_id="req-b", trace_id="trace-b", agent_id=agent_b, status="failed", started_at=datetime.utcnow()),
+        Execution(id=exec_a, request_id="req-a", trace_id="trace-a", agent_id=agent_a, status="success", started_at=datetime.now(datetime.UTC)),
+        Execution(id=exec_b, request_id="req-b", trace_id="trace-b", agent_id=agent_b, status="failed", started_at=datetime.now(datetime.UTC)),
         AuditLog(id=uuid4(), actor_id=owner_a, agent_id=agent_a, action="execute", status="success"),
         AuditLog(id=uuid4(), actor_id=owner_b, agent_id=agent_b, action="execute", status="failed"),
     ])

@@ -23,6 +23,6 @@ def test_memory_visibility_clause_contains_active_and_expiry_rules():
 
 
 def test_expiry_boundary_is_representable():
-    future = datetime.utcnow() + timedelta(hours=1)
-    past = datetime.utcnow() - timedelta(hours=1)
-    assert future > datetime.utcnow() > past
+    future = datetime.now(datetime.UTC) + timedelta(hours=1)
+    past = datetime.now(datetime.UTC) - timedelta(hours=1)
+    assert future > datetime.now(datetime.UTC) > past
