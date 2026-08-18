@@ -1,14 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
-import AuditLog from "./AuditLog.vue";
 
-const auditLogs = vi.fn();
+const { auditLogs } = vi.hoisted(() => ({ auditLogs: vi.fn() }));
 vi.mock("../api/runtime", () => ({ runtimeApi: { auditLogs } }));
 vi.mock("element-plus", () => ({
   ElMessage: { error: vi.fn() },
   ElCard: { template: "<div><slot name=\"header\"/><slot/></div>" }, ElForm: { template: "<form><slot/></form>" }, ElInput: { template: "<input />" }, ElButton: { template: "<button><slot/></button>" },
   ElAlert: { template: "<div class=\"alert\">alert</div>" }, ElEmpty: { template: "<div class=\"empty\">empty</div>" }, ElTable: { template: "<div class=\"table\"><slot/></div>" }, ElTableColumn: { template: "<div/>" }, ElPagination: { template: "<div/>" },
 }));
+
+import AuditLog from "./AuditLog.vue";
 
 describe("AuditLog.vue", () => {
   beforeEach(() => auditLogs.mockReset());
