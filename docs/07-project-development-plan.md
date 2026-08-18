@@ -70,7 +70,7 @@
 | Phase 1.3-C | Memory | 核心能力已完成；后续继续生产化治理 |
 | Phase 1.3-D | Observability | 核心执行链路已完成 |
 | Phase 1.3-E | Vue 管理端深化 | 基础管理闭环已完成 |
-| Phase 1.4-A | Knowledge Registry | **当前任务** |
+| Phase 1.4-A | Knowledge Registry | **Backend contract / migration / API / pytest / 手工脚本已提交；待本地迁移与回归验收** |
 | Phase 1.4-B | Document ingestion / Chunk | 待开发 |
 | Phase 1.4-C | Retrieval contract | 待开发 |
 | Phase 1.4-D | Runtime Knowledge integration | 待开发 |
@@ -79,27 +79,35 @@
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`。
 
-## 6. 前后端并行与联调规则
+## 6. 固定前后端开发顺序
 
-每个 Phase 1.4 小版本必须按：
+所有功能必须严格执行：
 
 ```text
-后端 API Contract
+需求 / 架构文档确认
   ↓
-数据库 Migration + Backend pytest
+Backend Domain + API Contract
   ↓
-前端 API 类型 + Vitest
+Database Migration + Backend pytest
   ↓
-前后端联调 / 手工脚本
+Frontend API Types + Vitest
   ↓
-Runtime Integration
+Frontend UI（index.vue + components/）
   ↓
-全量回归
+API Scenario / 手工验收脚本
+  ↓
+前后端联调
+  ↓
+Runtime Integration（需要时）
+  ↓
+Backend pytest + Frontend npm test + Frontend npm run build
+  ↓
+更新开发 / 验收文档
   ↓
 main 提交
 ```
 
-前端不复制后端业务规则；后端不依赖 Vue 页面结构。API contract 是唯一联调边界。
+前端不复制后端业务规则；后端不依赖 Vue 页面结构。API contract 是唯一联调边界。完整规则以 `docs/DEVELOPMENT.md` 为准。
 
 ## 7. 测试目录规则
 
@@ -109,11 +117,19 @@ main 提交
 - Frontend Vitest 只执行 `frontend/tests/**/*.test.ts`。
 - 前后端手工测试脚本必须保持独立，不合并成一个业务测试文件。
 
-## 8. 分支规则
+## 8. 文件命名规则
+
+- Backend：API / Model / Schema / Service / Test / Scenario 分别使用明确的 `<domain>`、`<domain>_service`、`test_<domain>_<scope>`、`run_<domain>_scenario` 结构。
+- Frontend：API 使用 `<domain>.ts`；页面入口使用 `views/<domain>/index.vue`；组件使用语义化 Purpose 名称；测试统一位于 `frontend/tests`。
+- 禁止同职责 `.js` / `.ts` 并存、临时业务文件、无意义 `new_*` / `temp_*` 命名。
+- `_legacy` 仅允许作为历史迁移目录，不得作为运行时入口。
+- 发现同一职责存在多个候选文件时，必须先确定唯一 canonical 文件并清理冗余文件。
+
+## 9. 分支规则
 
 当前开发统一基于 `main` 最新代码。禁止创建新的功能分支；功能完成后直接提交 `main`。
 
-## 9. Git Commit 规范
+## 10. Git Commit 规范
 
 采用 Conventional Commits：
 
@@ -126,7 +142,7 @@ main 提交
 
 提交信息必须说明实现内容或修复细节。
 
-## 10. 交付规则
+## 11. 交付规则
 
 每个功能模块必须同时交付：
 
@@ -138,7 +154,7 @@ main 提交
 6. 手工验收脚本（需要手工验收时）
 7. 验收结果与下一步计划
 
-## 11. 禁止提交
+## 12. 禁止提交
 
 严禁提交：
 
