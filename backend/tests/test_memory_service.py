@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -38,6 +39,24 @@ async def test_memory_put_creates_record():
     assert record.memory_type == "fact"
     assert record.memory_key == "language"
     assert record.content == "User prefers Chinese."
+
+
+@pytest.mark.asyncio
+async def test_memory_put_normalizes_aware_expiry_to_naive_utc():
+    db = FakeDB()
+    service = MemoryService(db)
+    expires_at = datetime(2026, 8, 18, 18, 0, tzinfo=UTC) + timedelta(hours=1)
+
+    record = await service.put(
+        user_id=uuid4(),
+        agent_id=uuid4(),
+        memory_key="temporary",
+        content="temporary memory",
+        expires_at=expires_at,
+    )
+
+    assert record.expires_at == expires_at.replace(tzinfo=None)
+    assert record.expires_at.tzinfo is None
 
 
 @pytest.mark.asyncio
