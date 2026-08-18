@@ -33,14 +33,18 @@ describe("Dashboard.vue", () => {
       { id: "a2", name: "B", status: "draft" },
     ]);
     listTools.mockResolvedValue([{ id: "t1", enabled: true }, { id: "t2", enabled: false }]);
-    executions.mockImplementation(({ status }: { status?: string }) => Promise.resolve({ data: { total: status === "failed" ? 2 : 8 } }));
+    executions.mockImplementation(({ status }: { status?: string }) =>
+      Promise.resolve({ data: { total: status === "failed" ? 2 : 8 } }),
+    );
 
     const wrapper = mount(Dashboard, { global });
     await vi.waitFor(() => expect(executions).toHaveBeenCalledTimes(2));
+    // executions() being called does not mean Promise.all() has completed;
+    // wait for the rendered metrics before asserting the reactive state.
+    await vi.waitFor(() => expect(wrapper.text()).toContain("8"));
     expect(wrapper.text()).toContain("2");
     expect(wrapper.text()).toContain("1");
     expect(wrapper.text()).toContain("1/2");
-    expect(wrapper.text()).toContain("8");
   });
 
   it("renders a clear error when dashboard data fails", async () => {
