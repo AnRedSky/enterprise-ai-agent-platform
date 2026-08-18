@@ -12,8 +12,15 @@ from app.services.runtime_query import RuntimeQueryService
 router = APIRouter(prefix="/api/v1/runtime", tags=["runtime"])
 
 
-def _identity():
-    claims = current_claims()
+def _runtime_claims() -> dict:
+    """Resolve authentication through FastAPI while keeping tests monkeypatchable."""
+    return current_claims()
+
+
+def _identity(claims: dict | None = None):
+    """Return the authenticated actor and whether the actor has the admin role."""
+    if claims is None:
+        claims = current_claims()
     actor_id = UUID(claims["sub"])
     roles = claims.get("roles", [])
     if isinstance(roles, str):
@@ -39,9 +46,10 @@ async def list_executions(
     session_id: UUID | None = None,
     started_from: datetime | None = None,
     started_to: datetime | None = None,
+    claims: dict = Depends(_runtime_claims),
     db: AsyncSession = Depends(get_db),
 ):
-    actor_id, is_admin = _identity()
+    actor_id, is_admin = _identity(claims)
     page, page_size, total, rows = await RuntimeQueryService(db).executions(
         actor_id,
         is_admin,
@@ -59,8 +67,12 @@ async def list_executions(
 
 
 @router.get("/executions/{execution_id}", response_model=ExecutionTimelineResponse)
-async def execution_detail(execution_id: UUID, db: AsyncSession = Depends(get_db)):
-    actor_id, is_admin = _identity()
+async def execution_detail(
+    execution_id: UUID,
+    claims: dict = Depends(_runtime_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    actor_id, is_admin = _identity(claims)
     execution = await RuntimeQueryService(db).execution(actor_id, is_admin, execution_id)
     if execution is None:
         raise HTTPException(status_code=404, detail="execution not found")
@@ -68,8 +80,12 @@ async def execution_detail(execution_id: UUID, db: AsyncSession = Depends(get_db
 
 
 @router.get("/executions/{execution_id}/events", response_model=ExecutionTimelineResponse)
-async def execution_events(execution_id: UUID, db: AsyncSession = Depends(get_db)):
-    actor_id, is_admin = _identity()
+async def execution_events(
+    execution_id: UUID,
+    claims: dict = Depends(_runtime_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    actor_id, is_admin = _identity(claims)
     execution, events = await RuntimeQueryService(db).events(actor_id, is_admin, execution_id)
     if execution is None:
         raise HTTPException(status_code=404, detail="execution not found")
@@ -83,9 +99,10 @@ async def list_audit_logs(
     agent_id: UUID | None = None,
     tool_id: UUID | None = None,
     status: str | None = None,
+    claims: dict = Depends(_runtime_claims),
     db: AsyncSession = Depends(get_db),
 ):
-    actor_id, is_admin = _identity()
+    actor_id, is_admin = _identity(claims)
     page, page_size, total, rows = await RuntimeQueryService(db).audit_logs(
         actor_id, is_admin, page, page_size, agent_id, tool_id, status
     )
