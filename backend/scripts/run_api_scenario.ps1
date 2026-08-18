@@ -20,17 +20,15 @@ function Invoke-ScenarioRequest {
 
     Write-Host "[RUN ] $Name" -ForegroundColor Cyan
 
-    # Windows PowerShell's HTTP stack can reuse a stale keep-alive connection
-    # against a locally restarted uvicorn process. Force connection close for
-    # this deterministic smoke-test script so a previous request cannot poison
-    # the next request (notably Auth / login after Auth / register).
-    $requestHeaders = @{ "Connection" = "close" }
-    foreach ($key in $Headers.Keys) { $requestHeaders[$key] = $Headers[$key] }
-
+    # Windows PowerShell 5.1 rejects Connection/Keep-Alive/Close as ordinary
+    # request headers. Use the native DisableKeepAlive switch instead. This
+    # avoids stale keep-alive connections when the local uvicorn process has
+    # been restarted between requests.
     $params = @{
         Uri = "$BaseUrl$Path"
         Method = $Method
-        Headers = $requestHeaders
+        Headers = $Headers
+        DisableKeepAlive = $true
         ErrorAction = "Stop"
     }
     if ($null -ne $Body) {
