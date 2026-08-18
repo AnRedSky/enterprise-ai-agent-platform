@@ -38,12 +38,20 @@ describe("AuditLog.vue", () => {
   });
 
   it("renders error state", async () => {
-    auditLogs.mockRejectedValue(new Error("network"));
+    let rejectRequest!: (reason?: unknown) => void;
+    auditLogs.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectRequest = reject;
+      }),
+    );
 
     const wrapper = mount(AuditLog, { global });
+    expect(auditLogs).toHaveBeenCalledTimes(1);
+
+    // 先让组件完成请求并挂载 catch，再主动拒绝请求，避免测试自身产生 unhandled rejection。
+    rejectRequest(new Error("network"));
     await flushPromises();
 
-    expect(auditLogs).toHaveBeenCalledTimes(1);
     expect(wrapper.find(".alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("Audit 查询失败");
   });
