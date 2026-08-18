@@ -1,11 +1,11 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { isAuthenticated } from "../api/auth";
-import Dashboard from "../views/Dashboard.vue";
-import Agents from "../views/Agents.vue";
-import Runtime from "../views/Runtime.vue";
-import AuditLog from "../views/AuditLog.vue";
-import Tools from "../views/Tools.vue";
-import Login from "../views/Login.vue";
+import Dashboard from "../views/dashboard/index.vue";
+import Agents from "../views/agents/index.vue";
+import Runtime from "../views/runtime/index.vue";
+import AuditLog from "../views/audit-log/index.vue";
+import Tools from "../views/tools/index.vue";
+import Login from "../views/login/index.vue";
 
 const router = createRouter({
   history: createWebHistory(),
