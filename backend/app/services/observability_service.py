@@ -41,9 +41,15 @@ class ObservabilityService:
         error_message: str | None = None,
     ) -> None:
         ended = datetime.now(UTC)
+        # SQLAlchemy DateTime columns are currently configured without timezone=True,
+        # so SQLite/PostgreSQL may hydrate started_at as a naive UTC datetime. Normalize
+        # it before subtracting from the timezone-aware clock used by this service.
+        started = execution.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
         execution.status = status
         execution.ended_at = ended
-        execution.duration_ms = max(0, int((ended - execution.started_at).total_seconds() * 1000))
+        execution.duration_ms = max(0, int((ended - started).total_seconds() * 1000))
         execution.error_code = error_code
         execution.error_message = error_message
         await self.db.flush()
@@ -63,6 +69,8 @@ class ObservabilityService:
         error_message: str | None = None,
     ) -> ExecutionEvent:
         ended = datetime.now(UTC)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=UTC)
         event = ExecutionEvent(
             execution_id=execution.id,
             trace_id=execution.trace_id,
