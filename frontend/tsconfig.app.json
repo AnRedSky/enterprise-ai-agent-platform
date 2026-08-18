@@ -9,7 +9,8 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client", "element-plus/global"],
+    "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]
 }
