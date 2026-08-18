@@ -17,10 +17,7 @@ def sanitize_tool_metadata(value: Any) -> Any:
 
 
 class AuditLogAdapter:
-    """Persistence boundary for tool audit events.
-
-    Concrete DB implementations should persist only sanitized metadata.
-    """
+    """Persistence boundary for tool audit events."""
 
     def __init__(self, repository):
         self.repository = repository
@@ -34,8 +31,10 @@ class AuditLogAdapter:
             "trace_id": context.trace_id,
             "request_id": context.request_id,
             "action": action,
+            "resource_type": "tool",
+            "resource_id": str(context.tool_id),
             "status": "success",
-            "metadata": sanitize_tool_metadata(metadata or {}),
+            "metadata_json": sanitize_tool_metadata(metadata or {}),
         })
 
     async def log_failure(self, context, action: str, error: Exception, metadata: dict | None = None) -> None:
@@ -47,7 +46,9 @@ class AuditLogAdapter:
             "trace_id": context.trace_id,
             "request_id": context.request_id,
             "action": action,
+            "resource_type": "tool",
+            "resource_id": str(context.tool_id),
             "status": "failure",
             "error_code": getattr(error, "code", "TOOL_EXECUTION_ERROR"),
-            "metadata": sanitize_tool_metadata(metadata or {}),
+            "metadata_json": sanitize_tool_metadata(metadata or {}),
         })
