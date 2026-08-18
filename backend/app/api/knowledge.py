@@ -8,9 +8,11 @@ from app.dependencies.db import get_db
 from app.schemas.knowledge import (
     KnowledgeBaseCreate,
     KnowledgeBaseOut,
+    KnowledgeBasePage,
     KnowledgeBaseUpdate,
     KnowledgeDocumentCreate,
     KnowledgeDocumentOut,
+    KnowledgeDocumentPage,
     KnowledgeDocumentUpdate,
     KnowledgeDocumentVersionCreate,
     KnowledgeDocumentVersionOut,
@@ -24,7 +26,7 @@ def _identity(claims: dict) -> tuple[UUID, bool]:
     return UUID(claims["sub"]), "admin" in claims.get("roles", [])
 
 
-@router.get("", response_model=dict)
+@router.get("", response_model=KnowledgeBasePage)
 async def list_knowledge_bases(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -82,7 +84,7 @@ async def delete_knowledge_base(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{knowledge_base_id}/documents", response_model=dict)
+@router.get("/{knowledge_base_id}/documents", response_model=KnowledgeDocumentPage)
 async def list_documents(
     knowledge_base_id: UUID,
     page: int = Query(1, ge=1),
