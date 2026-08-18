@@ -2,8 +2,14 @@ from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.dependencies.db import get_db as _get_db
+
 
 async def get_db() -> AsyncIterator[AsyncSession]:
-    """Database dependency placeholder used by API routes and test overrides."""
-    raise RuntimeError("Database session provider is not configured")
-    yield
+    """Yield the application's async database session.
+
+    Kept in the API layer so tests and routes can override this dependency
+    without importing the infrastructure module directly.
+    """
+    async for session in _get_db():
+        yield session
