@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -68,11 +68,13 @@ async def test_admin_tool_list_includes_disabled_tools():
     disabled = SimpleNamespace(id="disabled", enabled=False)
     enabled = SimpleNamespace(id="enabled", enabled=True)
     db = AsyncMock()
-    db.execute.return_value.scalars.return_value.all.return_value = [disabled, enabled]
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [disabled, enabled]
+    db.execute.return_value = result
 
-    result = await list_tools({"roles": ["admin"]}, db)
+    response = await list_tools({"roles": ["admin"]}, db)
 
-    assert result == [disabled, enabled]
+    assert response == [disabled, enabled]
     assert "tools.enabled" not in str(db.execute.call_args.args[0])
 
 
@@ -80,9 +82,11 @@ async def test_admin_tool_list_includes_disabled_tools():
 async def test_user_tool_list_filters_disabled_tools():
     enabled = SimpleNamespace(id="enabled", enabled=True)
     db = AsyncMock()
-    db.execute.return_value.scalars.return_value.all.return_value = [enabled]
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [enabled]
+    db.execute.return_value = result
 
-    result = await list_tools({"roles": ["user"]}, db)
+    response = await list_tools({"roles": ["user"]}, db)
 
-    assert result == [enabled]
+    assert response == [enabled]
     assert "tools.enabled" in str(db.execute.call_args.args[0])

@@ -1,7 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { get } = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock("axios", () => ({ default: { create: () => ({ get }) } }));
+vi.mock("./request", () => ({
+  request: { get },
+}));
 
 import { runtimeApi } from "./runtime";
 
