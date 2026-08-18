@@ -15,6 +15,9 @@ class ModelResult:
     usage: ModelUsage | None = None
     model: str | None = None
 
+    def __contains__(self, item: str) -> bool:
+        return item in self.content
+
 
 class ModelProvider(Protocol):
     async def complete(self, model: str, messages: list[dict]) -> ModelResult: ...
