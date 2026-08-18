@@ -38,20 +38,18 @@ describe("AuditLog.vue", () => {
   });
 
   it("renders error state", async () => {
-    let rejectRequest!: (reason?: unknown) => void;
-    auditLogs.mockReturnValue(
-      new Promise((_resolve, reject) => {
-        rejectRequest = reject;
-      }),
-    );
+    // 使用受控 thenable 模拟请求失败，而不是创建 rejected Promise。
+    // 这样既能覆盖组件的 catch 分支，又不会被 Vitest 的 unhandled rejection 机制误判。
+    auditLogs.mockReturnValue({
+      then: (_resolve: (value: unknown) => void, reject: (reason?: unknown) => void) => {
+        reject(new Error("network"));
+      },
+    });
 
     const wrapper = mount(AuditLog, { global });
-    expect(auditLogs).toHaveBeenCalledTimes(1);
-
-    // 先让组件完成请求并挂载 catch，再主动拒绝请求，避免测试自身产生 unhandled rejection。
-    rejectRequest(new Error("network"));
     await flushPromises();
 
+    expect(auditLogs).toHaveBeenCalledTimes(1);
     expect(wrapper.find(".alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("Audit 查询失败");
   });
