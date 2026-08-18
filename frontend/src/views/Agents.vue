@@ -6,7 +6,7 @@
       <el-table-column prop="model" label="模型"/>
       <el-table-column prop="version" label="版本"/>
       <el-table-column prop="status" label="状态"/>
-      <el-table-column label="操作"><template #default="{row}"><el-button link type="primary" @click="openChat(row)">测试</el-button></template></el-table-column>
+      <el-table-column label="操作"><template #default="{row}"><el-button link type="primary" @click="openChat(row.id)">测试</el-button></template></el-table-column>
     </el-table>
     <el-dialog v-model="dialogVisible" title="创建 Agent" width="520px">
       <el-form label-width="110px">
@@ -32,7 +32,7 @@ const agents=ref<Agent[]>([]),dialogVisible=ref(false),chatVisible=ref(false),lo
 const form=ref({name:"企业智能助手",description:"Phase 1.2 默认 Agent",system_prompt:"你是一个企业级 AI 助手，请准确、简洁地回答用户问题。",model:"mock-model"});
 async function load(){agents.value=await listAgents()}
 async function create(){await createAgent(form.value);dialogVisible.value=false;await load();ElMessage.success("Agent 创建成功")}
-function openChat(agent:Agent){selected.value=agent;answer.value="";input.value="";chatVisible.value=true}
+function openChat(agentId:string){selected.value=agents.value.find((agent)=>agent.id===agentId) ?? null;answer.value="";input.value="";chatVisible.value=true}
 async function execute(){if(!selected.value||!input.value.trim())return;loading.value=true;try{answer.value=(await executeAgent(selected.value.id,input.value)).answer}finally{loading.value=false}}
 onMounted(load);
 </script>
