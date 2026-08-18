@@ -28,6 +28,7 @@ def upgrade():
         sa.Column("duration_ms", sa.Integer(), nullable=True),
         sa.Column("error_code", sa.String(length=100), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["session_id"], ["sessions.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["agent_id"], ["agents.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
@@ -37,6 +38,7 @@ def upgrade():
     op.create_index("ix_execution_trace_created", "executions", ["trace_id", "created_at"], unique=False)
     op.create_index("ix_execution_session_created", "executions", ["session_id", "created_at"], unique=False)
     op.create_index("ix_executions_status", "executions", ["status"])
+    op.create_index("ix_executions_created_at", "executions", ["created_at"])
 
     op.create_table(
         "execution_events",
