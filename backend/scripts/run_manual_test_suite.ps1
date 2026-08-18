@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("api", "unit", "all")]
+    [ValidateSet("api", "unit", "frontend", "all")]
     [string]$Mode = "api",
     [string]$BaseUrl = $(if ($env:API_BASE_URL) { $env:API_BASE_URL } else { "http://127.0.0.1:8000" }),
     [string]$Username = "TestUser",
@@ -10,7 +10,10 @@ param(
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backendDir = Split-Path -Parent $scriptDir
+$projectDir = Split-Path -Parent $backendDir
+$frontendDir = Join-Path $projectDir "frontend"
 $scenarioScript = Join-Path $scriptDir "run_api_scenario.ps1"
+$frontendScript = Join-Path $frontendDir "scripts\run_manual_frontend_suite.ps1"
 
 Write-Host "============================================================" -ForegroundColor DarkGray
 Write-Host "Enterprise AI Agent Platform - Manual Test Suite" -ForegroundColor White
@@ -72,10 +75,24 @@ function Invoke-UnitTests {
     }
 }
 
+function Invoke-FrontendTests {
+    if (-not (Test-Path $frontendScript)) {
+        throw "Frontend manual test script not found: $frontendScript"
+    }
+
+    Write-Host "[RUN ] Frontend tests + production build" -ForegroundColor Cyan
+    & powershell -ExecutionPolicy Bypass -File $frontendScript
+    if ($LASTEXITCODE -ne 0) {
+        throw "Frontend test suite failed with exit code $LASTEXITCODE."
+    }
+    Write-Host "[ OK  ] Frontend tests + production build" -ForegroundColor Green
+}
+
 switch ($Mode) {
-    "api"  { Invoke-ApiScenario }
-    "unit" { Invoke-UnitTests }
-    "all"  { Invoke-ApiScenario; Invoke-UnitTests }
+    "api"      { Invoke-ApiScenario }
+    "unit"     { Invoke-UnitTests }
+    "frontend" { Invoke-FrontendTests }
+    "all"      { Invoke-ApiScenario; Invoke-UnitTests; Invoke-FrontendTests }
 }
 
 Write-Host "============================================================" -ForegroundColor DarkGray
