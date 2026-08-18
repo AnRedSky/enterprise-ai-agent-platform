@@ -56,6 +56,52 @@ async def enable_tool(tool_id: UUID, claims=Depends(require_roles("admin")), db:
     return {"id": tool.id, "enabled": True}
 
 
+@router.post("/{tool_id}/bind/{agent_id}")
+async def bind_tool(
+    tool_id: UUID,
+    agent_id: UUID,
+    claims=Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    tool = (await db.execute(select(Tool).where(Tool.id == tool_id))).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(404, "Tool 不存在")
+    agent_exists = (await db.execute(select(AgentTool.agent_id).where(AgentTool.agent_id == agent_id).limit(1))).scalar_one_or_none()
+    if agent_exists is None:
+        from app.models.core import Agent
+
+        agent = (await db.execute(select(Agent.id).where(Agent.id == agent_id))).scalar_one_or_none()
+        if agent is None:
+            raise HTTPException(404, "Agent 不存在")
+    binding = (await db.execute(
+        select(AgentTool).where(AgentTool.agent_id == agent_id, AgentTool.tool_id == tool_id)
+    )).scalar_one_or_none()
+    if binding is None:
+        binding = AgentTool(agent_id=agent_id, tool_id=tool_id, enabled=True)
+        db.add(binding)
+    else:
+        binding.enabled = True
+    await db.commit()
+    return {"agent_id": agent_id, "tool_id": tool_id, "enabled": True}
+
+
+@router.delete("/{tool_id}/bind/{agent_id}")
+async def unbind_tool(
+    tool_id: UUID,
+    agent_id: UUID,
+    claims=Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    binding = (await db.execute(
+        select(AgentTool).where(AgentTool.agent_id == agent_id, AgentTool.tool_id == tool_id)
+    )).scalar_one_or_none()
+    if binding is None:
+        raise HTTPException(404, "Tool 绑定不存在")
+    await db.delete(binding)
+    await db.commit()
+    return {"agent_id": agent_id, "tool_id": tool_id, "enabled": False}
+
+
 @router.post("/{tool_id}/execute")
 async def execute_tool(
     tool_id: UUID,
