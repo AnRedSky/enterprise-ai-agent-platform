@@ -13,7 +13,7 @@ class ExecutionItem(BaseModel):
     request_id: str
     trace_id: str
     session_id: UUID | None = None
-    agent_id: UUID
+    agent_id: UUID | None = None
     agent_version: str | None = None
     model_id: str | None = None
     status: str
