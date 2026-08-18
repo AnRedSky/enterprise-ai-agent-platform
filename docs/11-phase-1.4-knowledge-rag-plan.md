@@ -1,6 +1,6 @@
 # Phase 1.4：Knowledge / RAG 功能闭环规划与执行基线
 
-> 本文是 Phase 1.4 的开发基线。所有开发直接提交 `main`，不创建新的功能分支。
+> 本文是 Phase 1.4 的开发基线。所有开发直接提交 `main`，不创建新的功能分支。固定开发顺序以 `docs/DEVELOPMENT.md` 为准。
 
 ## 1. 阶段目标
 
@@ -21,12 +21,14 @@ Knowledge Base
 
 ### 1.4-A Knowledge Registry
 
-- KnowledgeBase 元数据、Owner、状态、版本
-- Document 元数据、来源、状态、版本
-- RBAC owner isolation
-- CRUD API 与分页
-- Alembic migration
-- pytest 回归测试
+- [x] KnowledgeBase 元数据、Owner、状态
+- [x] Document 元数据、来源、状态、版本关联
+- [x] RBAC owner isolation
+- [x] CRUD API 与分页
+- [x] Alembic migration `0007_knowledge_registry`
+- [x] Backend pytest：API contract 回归测试已提交
+- [x] 独立手工验收脚本：`backend/scripts/run_knowledge_registry_scenario.ps1`
+- [ ] 本地执行 migration + pytest + 手工场景并记录最终验收结果
 
 ### 1.4-B Document ingestion
 
@@ -56,12 +58,16 @@ Knowledge Base
 
 ### 1.4-F Knowledge 管理端
 
+必须等 1.4-A Backend Contract 验收通过后开始：
+
 - Knowledge Base 列表 / 创建 / 状态
 - Document 列表 / 上传入口 / ingestion 状态
 - Document Version 展示
 - 错误、空状态、分页
 
 ### 1.4-G Retrieval / Debug
+
+必须等 1.4-C Retrieval Contract 稳定后开始：
 
 - 检索调试入口
 - query、top-k、过滤条件
@@ -76,11 +82,12 @@ Knowledge Base
 
 1. Backend contract + migration + pytest
 2. Frontend API types + Vitest
-3. API scenario / 手工验收脚本
-4. Runtime integration
-5. 前后端联调
-6. `backend pytest` + `frontend npm test` + `frontend npm run build`
-7. 更新验收文档后提交 `main`
+3. Frontend UI
+4. API scenario / 手工验收脚本
+5. Runtime integration
+6. 前后端联调
+7. `backend pytest` + `frontend npm test` + `frontend npm run build`
+8. 更新验收文档后提交 `main`
 
 禁止先做孤立 UI，再反向修改 API；禁止前后端各自定义不同的领域模型。
 
@@ -96,7 +103,11 @@ Knowledge Base
 - 所有知识检索执行能够关联 execution / trace
 - 前后端测试脚本保持独立
 
-## 6. 暂不在第一轮实现
+## 6. 当前状态
+
+**Phase 1.4-A Backend Contract 已进入本地验收阶段。** 本轮提交了模型、migration、schema、service、API、回归测试和独立 PowerShell 手工脚本。尚未宣称 1.4-A 最终验收完成；必须由本地环境执行 migration、pytest 和手工场景后再关闭该阶段。
+
+## 7. 暂不在第一轮实现
 
 - 强绑定 Milvus / Elasticsearch 等具体基础设施
 - 自动 OCR 全套能力
