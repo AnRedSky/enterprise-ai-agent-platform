@@ -2,19 +2,32 @@ from datetime import datetime,UTC
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
-from app.core.auth import current_claims
+from app.core.auth import bearer, current_claims
 from app.schemas.runtime import AuditLogListResponse, ExecutionListResponse, ExecutionTimelineResponse
 from app.services.runtime_query import RuntimeQueryService
 
 router = APIRouter(prefix="/api/v1/runtime", tags=["runtime"])
 
 
-def _runtime_claims() -> dict:
-    """Resolve authentication through FastAPI while keeping tests monkeypatchable."""
-    return current_claims()
+def _runtime_claims(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+) -> dict:
+    """Resolve the bearer token while keeping the helper monkeypatchable in tests.
+
+    The previous implementation called ``current_claims()`` without passing the
+    request credentials. That bypassed FastAPI dependency resolution and caused
+    every real HTTP request to the runtime endpoints to receive a 401, even when
+    the caller supplied a valid Authorization header.
+    """
+    if credentials is None:
+        # Preserve direct-call/test behavior: current_claims() will either be
+        # monkeypatched by tests or reject the unresolved Depends marker.
+        return current_claims()
+    return current_claims(credentials)
 
 
 def _identity(claims: dict | None = None):
