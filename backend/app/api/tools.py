@@ -56,6 +56,16 @@ async def enable_tool(tool_id: UUID, claims=Depends(require_roles("admin")), db:
     return {"id": tool.id, "enabled": True}
 
 
+@router.post("/{tool_id}/disable")
+async def disable_tool(tool_id: UUID, claims=Depends(require_roles("admin")), db: AsyncSession = Depends(get_db)):
+    tool = (await db.execute(select(Tool).where(Tool.id == tool_id))).scalar_one_or_none()
+    if not tool:
+        raise HTTPException(404, "Tool 不存在")
+    tool.enabled = False
+    await db.commit()
+    return {"id": tool.id, "enabled": False}
+
+
 @router.post("/{tool_id}/bind/{agent_id}")
 async def bind_tool(
     tool_id: UUID,
