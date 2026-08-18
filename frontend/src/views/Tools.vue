@@ -12,10 +12,10 @@
       <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="420">
         <template #default="{ row }">
-          <el-button v-if="isAdmin" link type="primary" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
-          <el-button link type="primary" @click="openExecute(row)">执行</el-button>
-          <el-button v-if="isAdmin" link type="primary" @click="openBind(row, 'bind')">绑定 Agent</el-button>
-          <el-button v-if="isAdmin" link type="danger" @click="openBind(row, 'unbind')">解绑 Agent</el-button>
+          <el-button v-if="isAdmin" link type="primary" @click="toggle(row as Tool)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+          <el-button link type="primary" @click="openExecute(row as Tool)">执行</el-button>
+          <el-button v-if="isAdmin" link type="primary" @click="openBind(row as Tool, 'bind')">绑定 Agent</el-button>
+          <el-button v-if="isAdmin" link type="danger" @click="openBind(row as Tool, 'unbind')">解绑 Agent</el-button>
         </template>
       </el-table-column>
     </el-table>
