@@ -1,5 +1,6 @@
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 from app.models.execution import Execution
 from app.services.observability_service import ObservabilityService
@@ -31,4 +32,26 @@ async def test_finish_execution_accepts_naive_database_timestamp():
     assert execution.duration_ms is not None
     assert execution.duration_ms >= 0
     assert execution.ended_at is not None
-    assert execution.ended_at.tzinfo is not None
+    assert execution.ended_at.tzinfo is None
+
+
+async def test_record_event_normalizes_database_timestamps_to_naive_utc():
+    execution = Execution(
+        id=uuid4(),
+        request_id="req",
+        trace_id="trace",
+        status="running",
+    )
+    db = AsyncMock()
+    started_at = datetime.now(UTC)
+
+    event = await ObservabilityService(db).record_event(
+        execution,
+        span_type="model",
+        started_at=started_at,
+        model_id="mock-model",
+    )
+
+    assert event.started_at.tzinfo is None
+    assert event.ended_at is not None
+    assert event.ended_at.tzinfo is None
