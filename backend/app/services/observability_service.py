@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,14 @@ from app.models.execution import Execution, ExecutionEvent
 class ObservabilityService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def _utc_naive(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(UTC).replace(tzinfo=None)
 
     async def start_execution(
         self,
@@ -41,14 +49,11 @@ class ObservabilityService:
         error_message: str | None = None,
     ) -> None:
         ended = datetime.now(UTC)
-        # SQLAlchemy DateTime columns are currently configured without timezone=True,
-        # so SQLite/PostgreSQL may hydrate started_at as a naive UTC datetime. Normalize
-        # it before subtracting from the timezone-aware clock used by this service.
         started = execution.started_at
         if started.tzinfo is None:
             started = started.replace(tzinfo=UTC)
         execution.status = status
-        execution.ended_at = ended
+        execution.ended_at = self._utc_naive(ended)
         execution.duration_ms = max(0, int((ended - started).total_seconds() * 1000))
         execution.error_code = error_code
         execution.error_message = error_message
@@ -76,8 +81,8 @@ class ObservabilityService:
             trace_id=execution.trace_id,
             span_type=span_type,
             status=status,
-            started_at=started_at,
-            ended_at=ended,
+            started_at=self._utc_naive(started_at),
+            ended_at=self._utc_naive(ended),
             duration_ms=max(0, int((ended - started_at).total_seconds() * 1000)),
             model_id=model_id,
             tool_id=tool_id,
