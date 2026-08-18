@@ -19,10 +19,18 @@ function Invoke-ScenarioRequest {
     )
 
     Write-Host "[RUN ] $Name" -ForegroundColor Cyan
+
+    # Windows PowerShell's HTTP stack can reuse a stale keep-alive connection
+    # against a locally restarted uvicorn process. Force connection close for
+    # this deterministic smoke-test script so a previous request cannot poison
+    # the next request (notably Auth / login after Auth / register).
+    $requestHeaders = @{ "Connection" = "close" }
+    foreach ($key in $Headers.Keys) { $requestHeaders[$key] = $Headers[$key] }
+
     $params = @{
         Uri = "$BaseUrl$Path"
         Method = $Method
-        Headers = $Headers
+        Headers = $requestHeaders
         ErrorAction = "Stop"
     }
     if ($null -ne $Body) {
@@ -45,14 +53,23 @@ function Invoke-ScenarioRequest {
     }
     catch {
         $status = $null
+        $errorBody = $null
         if ($_.Exception.Response) {
             try { $status = [int]$_.Exception.Response.StatusCode.value__ } catch {}
+            try {
+                if ($_.Exception.Response.Content) {
+                    $errorBody = $_.Exception.Response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                }
+            } catch {}
         }
         if ($null -ne $status -and ($ExpectedStatus -contains $status)) {
             Write-Host "[ OK  ] $Name -> HTTP $status" -ForegroundColor Green
             return $null
         }
         Write-Host "[FAIL ] $Name" -ForegroundColor Red
+        if ($null -ne $status) { Write-Host "       HTTP status: $status" -ForegroundColor Yellow }
+        if (-not [string]::IsNullOrWhiteSpace($errorBody)) { Write-Host "       Response: $errorBody" -ForegroundColor Yellow }
+        Write-Host "       Request: $Method $BaseUrl$Path" -ForegroundColor DarkGray
         throw
     }
 }
@@ -114,8 +131,8 @@ $chat = Invoke-ScenarioRequest `
     -Body @{ agent_id = $agentId; input = "请回复：scenario-ok" }
 
 $chatText = if ($chat -is [string]) { $chat } else { $chat | Out-String }
-if ($chatText -notmatch '"type"\s*:\s*"start"') { throw "Chat stream did not contain a start event." }
-if ($chatText -notmatch '"type"\s*:\s*"done"') { throw "Chat stream did not contain a done event." }
+if ($chatText -notmatch '\"type\"\s*:\s*\"start\"') { throw "Chat stream did not contain a start event." }
+if ($chatText -notmatch '\"type\"\s*:\s*\"done\"') { throw "Chat stream did not contain a done event." }
 Write-Host "[ OK  ] Chat / SSE contains start + done events" -ForegroundColor Green
 
 # Runtime: the list endpoint returns {items,page,page_size,total}.
