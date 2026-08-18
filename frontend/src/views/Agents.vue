@@ -3,7 +3,7 @@
     <div class="header">
       <div>
         <h1>Agent 工作台</h1>
-        <p>管理 Agent、版本并使用真实 SSE Runtime 调试。</p>
+        <p>管理 Agent、版本、发布生命周期并使用真实 SSE Runtime 调试。</p>
       </div>
       <el-button type="primary" @click="dialogVisible = true">创建 Agent</el-button>
     </div>
@@ -14,10 +14,12 @@
       <el-table-column prop="model_id" label="模型" width="160" />
       <el-table-column prop="version" label="版本" width="110" />
       <el-table-column prop="status" label="状态" width="110" />
-      <el-table-column label="操作" width="260">
+      <el-table-column label="操作" min-width="390">
         <template #default="{ row }">
           <el-button link type="primary" @click="openVersions(row as Agent)">版本</el-button>
-          <el-button link type="primary" @click="openChat(row as Agent)">调试 Chat</el-button>
+          <el-button link type="primary" @click="openChat(row as Agent)" :disabled="row.status !== 'published'">调试 Chat</el-button>
+          <el-button v-if="row.status !== 'published' && row.status !== 'archived'" link type="success" @click="publishLatest(row as Agent)">发布最新</el-button>
+          <el-button v-if="row.status === 'published'" link type="danger" @click="archive(row as Agent)">归档</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -73,8 +75,8 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { ElMessage } from "element-plus";
-import { createAgent, createVersion as createAgentVersion, listAgents, listVersions, type Agent, type AgentVersion } from "../api/agents";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { archiveAgent, createAgent, createVersion as createAgentVersion, listAgents, listVersions, publishAgent, type Agent, type AgentVersion } from "../api/agents";
 import { streamChat } from "../api/chat";
 
 const agents = ref<Agent[]>([]);
@@ -113,7 +115,7 @@ async function create() {
     await createAgent(form.value);
     dialogVisible.value = false;
     await load();
-    ElMessage.success("Agent 创建成功");
+    ElMessage.success("Agent 创建成功，请发布后再进行 Chat 调试");
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : "Agent 创建失败");
   } finally {
@@ -139,11 +141,34 @@ async function createVersion() {
     await createAgentVersion(selected.value.id, versionForm.value);
     versions.value = await listVersions(selected.value.id);
     await load();
-    ElMessage.success("版本创建成功");
+    ElMessage.success("版本创建成功，请发布目标版本后生效");
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : "版本创建失败");
   } finally {
     savingVersion.value = false;
+  }
+}
+
+async function publishLatest(agent: Agent) {
+  try {
+    const items = await listVersions(agent.id);
+    if (!items.length) throw new Error("没有可发布版本");
+    await publishAgent(agent.id, items[0].id);
+    await load();
+    ElMessage.success(`已发布 ${items[0].version}`);
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : "Agent 发布失败");
+  }
+}
+
+async function archive(agent: Agent) {
+  try {
+    await ElMessageBox.confirm(`确定归档 Agent「${agent.name}」吗？归档后不能创建新版本或继续 Chat。`, "归档确认", { type: "warning" });
+    await archiveAgent(agent.id);
+    await load();
+    ElMessage.success("Agent 已归档");
+  } catch (e) {
+    if (e !== "cancel" && e !== "close") ElMessage.error(e instanceof Error ? e.message : "Agent 归档失败");
   }
 }
 
