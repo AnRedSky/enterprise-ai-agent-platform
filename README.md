@@ -40,6 +40,17 @@
 - Vue Dashboard / Agent / Runtime / Audit 基础管理页面
 - Vue 登录、Bearer Token 注入与受保护路由
 
+## 环境配置
+
+后端配置模板：`backend/.env.example`；前端配置模板：`frontend/.env.example`。两个 `.env` 文件均不会提交到 Git。
+
+```powershell
+Copy-Item backend/.env.example backend/.env
+Copy-Item frontend/.env.example frontend/.env
+```
+
+后端 `.env` 可直接修改 `APP_HOST`、`APP_PORT`、`CORS_ORIGINS`、数据库、Redis、JWT 和模型配置；前端 `.env` 可修改 `VITE_API_BASE_URL`、`VITE_DEV_HOST`、`VITE_DEV_PORT`。
+
 ## 本地启动
 
 ```bash
@@ -47,10 +58,10 @@ docker compose up -d postgres redis
 cd backend
 uv sync
 uv run alembic upgrade head
-uv run uvicorn app.main:app --reload --port 8000
+uv run python run.py
 ```
 
-API: `http://localhost:8000/docs`
+`run.py` 会读取 `backend/.env` 中的 `APP_HOST` / `APP_PORT`。API 默认：`http://localhost:8000/docs`
 
 前端：
 
@@ -59,6 +70,8 @@ cd frontend
 npm install
 npm run dev
 ```
+
+前端开发服务会读取 `frontend/.env` 中的 `VITE_DEV_HOST` / `VITE_DEV_PORT`。
 
 ## 本地验收
 
@@ -77,7 +90,7 @@ npm run build
 
 ## 配置真实模型
 
-复制 `.env.example` 为 `.env`，设置：
+复制 `backend/.env.example` 为 `backend/.env`，设置：
 
 ```text
 MODEL_PROVIDER=openai-compatible
