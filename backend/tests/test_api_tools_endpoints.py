@@ -1,5 +1,10 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 from fastapi.testclient import TestClient
 
+from app.api.tools import list_tools
 from app.main import app
 
 client = TestClient(app)
@@ -56,3 +61,28 @@ def test_tool_execute_requires_bearer_authentication():
         json={"agent_id": "00000000-0000-0000-0000-000000000002", "arguments": {}},
     )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_tool_list_includes_disabled_tools():
+    disabled = SimpleNamespace(id="disabled", enabled=False)
+    enabled = SimpleNamespace(id="enabled", enabled=True)
+    db = AsyncMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [disabled, enabled]
+
+    result = await list_tools({"roles": ["admin"]}, db)
+
+    assert result == [disabled, enabled]
+    assert "tools.enabled" not in str(db.execute.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_user_tool_list_filters_disabled_tools():
+    enabled = SimpleNamespace(id="enabled", enabled=True)
+    db = AsyncMock()
+    db.execute.return_value.scalars.return_value.all.return_value = [enabled]
+
+    result = await list_tools({"roles": ["user"]}, db)
+
+    assert result == [enabled]
+    assert "tools.enabled" in str(db.execute.call_args.args[0])
