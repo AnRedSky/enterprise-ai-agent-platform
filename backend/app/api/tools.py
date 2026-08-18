@@ -63,13 +63,19 @@ async def execute_tool(
     claims=Depends(current_claims),
     db: AsyncSession = Depends(get_db),
 ):
-    actor_id = UUID(claims["sub"])
+    actor_id = UUID(str(claims["sub"]))
     request_id, trace_id = ObservabilityService.new_ids()
     tool_repo = SqlAlchemyToolRepository(db, Tool, AgentTool)
     permission = ToolRBACService(db)
     audit = AuditLogAdapter(SqlAlchemyAuditRepository(db, AuditLog))
     observability = ToolObservabilityAdapter(db)
-    runtime = ToolRuntimeService(tool_repo, permission.can_execute, audit, observability)
+    runtime = ToolRuntimeService(
+        tool_repo,
+        tool_repo,
+        permission.can_execute,
+        audit_logger=audit,
+        observability=observability,
+    )
     execution = await ObservabilityService(db).start_execution(
         request_id=request_id,
         trace_id=trace_id,
