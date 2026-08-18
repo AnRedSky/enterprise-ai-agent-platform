@@ -70,7 +70,7 @@ function Invoke-ScenarioRequest {
 Write-Host "============================================================" -ForegroundColor DarkGray
 Write-Host "Enterprise AI Agent Platform - API Scenario Smoke Test" -ForegroundColor White
 Write-Host "Base URL: $BaseUrl" -ForegroundColor Gray
-Write-Host "Scenario: Health -> Auth -> Agents -> Publish -> Chat -> Runtime -> Tools" -ForegroundColor Gray
+Write-Host "Scenario: Health -> Auth -> Agents -> Publish -> Chat -> Runtime -> Archive -> Tools" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor DarkGray
 
 $health = Invoke-ScenarioRequest -Name "Health" -Path "/health"
@@ -111,6 +111,17 @@ if ([int]$runtime.total -gt 0 -and $runtime.items.Count -gt 0) {
 }
 Invoke-ScenarioRequest -Name "Runtime / audit logs" -Path "/api/v1/runtime/audit-logs" -Headers $headers | Out-Null
 
+# Phase 1.4 lifecycle: create a second version, publish it, then archive the Agent.
+$secondVersion = Invoke-ScenarioRequest -Name "Agents / create second version" -Method "POST" -Path "/api/v1/agents/$agentId/versions" -Headers $headers -Body @{ system_prompt = "You are the second published test assistant."; model_id = "mock-model" }
+if ([string]::IsNullOrWhiteSpace([string]$secondVersion.id)) { throw "Second version creation did not return an id." }
+$republished = Invoke-ScenarioRequest -Name "Agents / publish second version" -Method "POST" -Path "/api/v1/agents/$agentId/publish" -Headers $headers -Body @{ version_id = [string]$secondVersion.id }
+if ($republished.published_version_id -ne $secondVersion.id) { throw "Second version was not recorded as the published version." }
+$archived = Invoke-ScenarioRequest -Name "Agents / archive" -Method "POST" -Path "/api/v1/agents/$agentId/archive" -Headers $headers
+if ($archived.status -ne "archived") { throw "Agent archive did not return archived status." }
+Invoke-ScenarioRequest -Name "Agents / create version after archive" -Method "POST" -Path "/api/v1/agents/$agentId/versions" -Headers $headers -Body @{ system_prompt = "Should be rejected."; model_id = "mock-model" } -ExpectedStatus @(409) | Out-Null
+Invoke-ScenarioRequest -Name "Agents / publish after archive" -Method "POST" -Path "/api/v1/agents/$agentId/publish" -Headers $headers -Body @{ version_id = [string]$secondVersion.id } -ExpectedStatus @(409) | Out-Null
+Invoke-ScenarioRequest -Name "Chat / archived agent rejected" -Method "POST" -Path "/api/v1/agents/stream" -Headers $headers -Body @{ agent_id = $agentId; input = "should-not-run" } -ExpectedStatus @(409) | Out-Null
+
 # Tools: cover the full management lifecycle from the normal user's RBAC boundary.
 Invoke-ScenarioRequest -Name "Tools / list" -Path "/api/v1/tools" -Headers $headers | Out-Null
 $missingToolId = "00000000-0000-0000-0000-000000000001"
@@ -122,7 +133,7 @@ Invoke-ScenarioRequest -Name "Tools / disable forbidden for normal user" -Method
 Invoke-ScenarioRequest -Name "Tools / execute missing tool" -Method "POST" -Path "/api/v1/tools/$missingToolId/execute" -Headers $headers -Body @{ agent_id = $agentId; arguments = @{} } -ExpectedStatus @(404, 403) | Out-Null
 
 Write-Host "============================================================" -ForegroundColor DarkGray
-Write-Host "[PASS] API scenario completed: Health -> Auth -> Agents -> Publish -> Chat -> Runtime -> Tools" -ForegroundColor Green
+Write-Host "[PASS] API scenario completed: Health -> Auth -> Agents -> Publish -> Chat -> Runtime -> Archive -> Tools" -ForegroundColor Green
 Write-Host "Test user : $Username" -ForegroundColor Gray
 Write-Host "Agent ID  : $agentId" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor DarkGray
