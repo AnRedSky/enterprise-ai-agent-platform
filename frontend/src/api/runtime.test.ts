@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { runtimeApi } from "./runtime";
 
-const get = vi.fn();
+const { get } = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock("axios", () => ({ default: { create: () => ({ get }) } }));
+
+import { runtimeApi } from "./runtime";
 
 describe("runtimeApi", () => {
   beforeEach(() => get.mockReset());
