@@ -1,10 +1,11 @@
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_db
-from app.api.runtime import router as runtime_router
+from app.api.runtime import _runtime_claims, router as runtime_router
 from app.main import app
 
 
@@ -28,6 +29,20 @@ def clean_overrides():
 def test_runtime_requires_bearer_authentication():
     response = TestClient(app).get("/api/v1/runtime/executions")
     assert response.status_code == 401
+
+
+def test_runtime_claims_forwards_resolved_bearer_credentials(monkeypatch):
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="test-token")
+    expected = {"sub": str(uuid4()), "roles": ["user"]}
+    captured = {}
+
+    def fake_current_claims(received):
+        captured["credentials"] = received
+        return expected
+
+    monkeypatch.setattr("app.api.runtime.current_claims", fake_current_claims)
+    assert _runtime_claims(credentials) == expected
+    assert captured["credentials"] is credentials
 
 
 def test_runtime_owner_scope_returns_404_for_inaccessible_execution(monkeypatch):
