@@ -9,8 +9,10 @@ def current_claims(credentials: HTTPAuthorizationCredentials = Depends(bearer)) 
     """Return decoded JWT claims for FastAPI injection or direct service/test calls."""
     # FastAPI resolves ``Depends(bearer)`` before invoking this function. Runtime
     # helpers also call ``current_claims()`` directly, in which case the default
-    # value is the Depends marker rather than credentials.
-    if isinstance(credentials, Depends) or not credentials:
+    # value is a Depends marker rather than credentials. Check the resolved type
+    # instead of using ``isinstance(..., Depends)`` because ``Depends`` is a
+    # factory function, not the marker's runtime class.
+    if not isinstance(credentials, HTTPAuthorizationCredentials):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="需要登录")
     try:
         return decode_token(credentials.credentials)
