@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.agents import router as agents_router
+from app.api.runtime import router as runtime_router
 from app.api.tools import router as tools_router
 
 app = FastAPI(title="Enterprise AI Agent Platform", version="0.2.0")
@@ -11,6 +12,7 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(agents_router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(chat_router, prefix="/api/v1/agents", tags=["chat"])
 app.include_router(tools_router, prefix="/api/v1/tools", tags=["tools"])
+app.include_router(runtime_router)
 
 @app.get("/health")
 async def health(): return {"status":"ok","version":"0.2.0"}
