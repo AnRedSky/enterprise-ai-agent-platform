@@ -42,7 +42,15 @@ async def create_tool(p: ToolCreate, claims=Depends(require_roles("admin")), db:
 
 @router.get("")
 async def list_tools(claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Tool).where(Tool.enabled.is_(True)).order_by(Tool.name))
+    """List enabled tools for users and all tools for administrators.
+
+    Administrators must be able to see disabled tools; otherwise a disabled
+    tool disappears from the management UI and can never be re-enabled.
+    """
+    query = select(Tool).order_by(Tool.name)
+    if "admin" not in claims.get("roles", []):
+        query = query.where(Tool.enabled.is_(True))
+    result = await db.execute(query)
     return list(result.scalars().all())
 
 
