@@ -1,6 +1,5 @@
 import asyncio
 import json
-import time
 import uuid
 from uuid import UUID
 
@@ -14,6 +13,7 @@ from app.dependencies.db import get_db
 from app.runtime.memory_context import build_memory_context
 from app.runtime.model_gateway import MockProvider, ModelGateway
 from app.services.memory_service import MemoryService
+from app.services.observability_service import ObservabilityService
 from app.services.session_service import SessionService
 
 router = APIRouter()
@@ -36,10 +36,11 @@ async def stream(
     claims=Depends(current_claims),
     db: AsyncSession = Depends(get_db),
 ):
-    request_id, trace_id = uuid.uuid4(), uuid.uuid4()
+    request_id, trace_id = ObservabilityService.new_ids()
     user_id = UUID(claims["sub"])
     service = SessionService(db)
     memory_service = MemoryService(db)
+    observability = ObservabilityService(db)
     agent, version = await service.load_runtime(p.agent_id)
 
     if "admin" not in claims.get("roles", []) and agent.owner_id != user_id:
@@ -56,6 +57,14 @@ async def stream(
     memory_context = build_memory_context(memories)
 
     await service.add_message(session.id, "user", p.input)
+    execution = await observability.start_execution(
+        request_id=request_id,
+        trace_id=trace_id,
+        session_id=session.id,
+        agent_id=agent.id,
+        agent_version=version.version,
+        model_id=version.model_id,
+    )
     await db.commit()
 
     messages = [{"role": "system", "content": version.system_prompt}]
@@ -64,25 +73,56 @@ async def stream(
     messages.extend({"role": m.role, "content": m.content} for m in history)
     messages.append({"role": "user", "content": p.input})
 
-    started = time.perf_counter()
-    answer = await gateway().generate(version.model_id, messages)
+    model_started = observability.now()
+    try:
+        result = await gateway().generate(version.model_id, messages, session.id)
+        usage = result.usage
+        await observability.record_event(
+            execution,
+            span_type="model",
+            started_at=model_started,
+            model_id=version.model_id,
+            prompt_tokens=usage.prompt_tokens if usage else None,
+            completion_tokens=usage.completion_tokens if usage else None,
+            total_tokens=usage.total_tokens if usage else None,
+        )
+        await observability.finish_execution(execution)
+        await db.commit()
+    except Exception as exc:
+        await observability.record_event(
+            execution,
+            span_type="model",
+            started_at=model_started,
+            status="failed",
+            model_id=version.model_id,
+            error_code=type(exc).__name__,
+            error_message="Model execution failed",
+        )
+        await observability.finish_execution(
+            execution,
+            status="failed",
+            error_code=type(exc).__name__,
+            error_message="Model execution failed",
+        )
+        await db.commit()
+        raise HTTPException(502, "模型执行失败") from exc
 
     async def events():
-        yield f"data: {json.dumps({'type': 'start', 'request_id': str(request_id), 'trace_id': str(trace_id), 'session_id': str(session.id), 'agent_id': str(agent.id), 'agent_version': version.version, 'model_id': version.model_id, 'memory_count': len(memories)}, ensure_ascii=False)}\n\n"
-        for i in range(0, len(answer), 24):
-            yield f"data: {json.dumps({'type': 'delta', 'content': answer[i:i + 24]}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'start', 'request_id': request_id, 'trace_id': trace_id, 'session_id': str(session.id), 'agent_id': str(agent.id), 'agent_version': version.version, 'model_id': version.model_id, 'memory_count': len(memories)}, ensure_ascii=False)}\n\n"
+        for i in range(0, len(result.content), 24):
+            yield f"data: {json.dumps({'type': 'delta', 'content': result.content[i:i + 24]}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
-        await service.add_message(session.id, "assistant", answer)
+        await service.add_message(session.id, "assistant", result.content)
         await db.commit()
-        yield f"data: {json.dumps({'type': 'done', 'execution_id': str(uuid.uuid4()), 'latency_ms': int((time.perf_counter() - started) * 1000)}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'execution_id': str(execution.id), 'latency_ms': execution.duration_ms}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         events(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Request-ID": str(request_id),
-            "X-Trace-ID": str(trace_id),
+            "X-Request-ID": request_id,
+            "X-Trace-ID": trace_id,
         },
     )
 
