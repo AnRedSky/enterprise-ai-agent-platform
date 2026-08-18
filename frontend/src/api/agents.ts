@@ -7,6 +7,7 @@ export interface Agent {
   model_id: string | null;
   version: string | null;
   status: string;
+  published_version_id?: string | null;
   created_at: string;
 }
 
@@ -40,4 +41,12 @@ export async function listVersions(agentId: string) {
 
 export async function createVersion(agentId: string, payload: Pick<AgentVersion, "system_prompt" | "model_id">) {
   return (await request.post<AgentVersion>(`/agents/${agentId}/versions`, payload)).data;
+}
+
+export async function publishAgent(agentId: string, versionId: string) {
+  return (await request.post<Agent>(`/agents/${agentId}/publish`, { version_id: versionId })).data;
+}
+
+export async function archiveAgent(agentId: string) {
+  return (await request.post<Agent>(`/agents/${agentId}/archive`)).data;
 }
