@@ -88,8 +88,11 @@ if ([string]::IsNullOrWhiteSpace([string]$agent.id)) { throw "Agent creation did
 $agentId = [string]$agent.id
 Invoke-ScenarioRequest -Name "Agents / list" -Path "/api/v1/agents" -Headers $headers | Out-Null
 $versions = Invoke-ScenarioRequest -Name "Agents / versions" -Path "/api/v1/agents/$agentId/versions" -Headers $headers
-if ($null -eq $versions -or $versions.Count -lt 1) { throw "Agent version list did not contain a version." }
-$versionId = [string]$versions[0].id
+# Windows PowerShell unwraps a single JSON array item into a scalar object.
+# Normalize to an array before counting/indexing so the manual scenario is stable.
+$versionItems = @($versions)
+if ($versionItems.Count -lt 1) { throw "Agent version list did not contain a version." }
+$versionId = [string]$versionItems[0].id
 if ([string]::IsNullOrWhiteSpace($versionId)) { throw "Agent version did not return an id." }
 $published = Invoke-ScenarioRequest -Name "Agents / publish" -Method "POST" -Path "/api/v1/agents/$agentId/publish" -Headers $headers -Body @{ version_id = $versionId }
 if ($published.status -ne "published") { throw "Agent publish did not return published status." }
