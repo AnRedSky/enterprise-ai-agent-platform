@@ -1,4 +1,2 @@
-<script setup lang="ts">
-import LegacyModule from "../_legacy/Runtime.vue";
-</script>
-<template><LegacyModule /></template>
+<script setup lang="ts">import RuntimeExecutions from './components/RuntimeExecutions.vue';</script>
+<template><RuntimeExecutions /></template>
