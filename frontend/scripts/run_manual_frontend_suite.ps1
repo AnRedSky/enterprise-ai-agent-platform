@@ -1,16 +1,33 @@
 [CmdletBinding()]
 param(
-    [string]$FrontendDir = $(if ($env:FRONTEND_DIR) { $env:FRONTEND_DIR } else { (Resolve-Path (Join-Path $PSScriptRoot "..")).Path })
+    [string]$FrontendDir = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# Resolve the frontend directory from the explicit parameter, environment,
+# or this script's own location. Avoid evaluating Join-Path with an empty
+# PSScriptRoot when the script is invoked through an unusual PowerShell host.
+if ([string]::IsNullOrWhiteSpace($FrontendDir)) {
+    if (-not [string]::IsNullOrWhiteSpace($env:FRONTEND_DIR)) {
+        $FrontendDir = $env:FRONTEND_DIR
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+        $FrontendDir = Join-Path -Path $PSScriptRoot -ChildPath ".."
+    }
+    else {
+        $FrontendDir = Join-Path -Path (Get-Location).Path -ChildPath "..\frontend"
+    }
+}
+
+$FrontendDir = (Resolve-Path -Path $FrontendDir).Path
 
 Write-Host "============================================================" -ForegroundColor DarkGray
 Write-Host "Enterprise AI Agent Platform - Frontend Manual Test Suite" -ForegroundColor White
 Write-Host "Frontend: $FrontendDir" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor DarkGray
 
-if (-not (Test-Path $FrontendDir)) {
+if (-not (Test-Path -Path $FrontendDir -PathType Container)) {
     throw "Frontend directory not found: $FrontendDir"
 }
 
@@ -20,7 +37,7 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 
 Push-Location $FrontendDir
 try {
-    if (-not (Test-Path "package.json")) {
+    if (-not (Test-Path -Path "package.json" -PathType Leaf)) {
         throw "package.json was not found in $FrontendDir"
     }
 
