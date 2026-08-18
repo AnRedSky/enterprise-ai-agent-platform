@@ -31,6 +31,7 @@ class Agent(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    published_version_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_versions.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class AgentVersion(Base):
