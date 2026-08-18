@@ -1,4 +1,4 @@
 <script setup lang="ts">
-import LegacyModule from "../_legacy/Agents.vue";
+import AgentWorkbench from "./components/AgentWorkbench.vue";
 </script>
-<template><LegacyModule /></template>
+<template><AgentWorkbench /></template>
