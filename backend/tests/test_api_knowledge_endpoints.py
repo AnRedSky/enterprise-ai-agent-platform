@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas.knowledge import KnowledgeDocumentPage
 
 client = TestClient(app)
 
@@ -37,6 +38,14 @@ def test_knowledge_detail_requires_bearer_authentication():
 def test_document_list_requires_bearer_authentication():
     response = client.get("/api/v1/knowledge/00000000-0000-0000-0000-000000000001/documents")
     assert response.status_code == 401
+
+
+def test_document_list_uses_typed_pagination_response():
+    route = next(
+        route for route in app.routes
+        if route.path == "/api/v1/knowledge/{knowledge_base_id}/documents" and "GET" in (route.methods or set())
+    )
+    assert route.response_model is KnowledgeDocumentPage
 
 
 def test_document_create_requires_bearer_authentication():
