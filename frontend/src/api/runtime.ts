@@ -1,6 +1,4 @@
-import axios from "axios";
-
-const client = axios.create({ baseURL: "/api/v1" });
+import { request } from "./request";
 
 export type Execution = {
   execution_id: string; request_id: string; trace_id: string; session_id?: string; agent_id?: string;
@@ -19,8 +17,8 @@ export type Page<T> = { items: T[]; page: number; page_size: number; total: numb
 export type Timeline = { execution: Execution; items: Event[] };
 
 export const runtimeApi = {
-  executions(params: Record<string, unknown>) { return client.get<Page<Execution>>("/runtime/executions", { params }); },
-  execution(id: string) { return client.get<Timeline>(`/runtime/executions/${id}`); },
-  executionEvents(id: string) { return client.get<Timeline>(`/runtime/executions/${id}/events`); },
-  auditLogs(params: Record<string, unknown>) { return client.get<Page<AuditLog>>("/runtime/audit-logs", { params }); },
+  executions(params: Record<string, unknown>) { return request.get<Page<Execution>>("/runtime/executions", { params }); },
+  execution(id: string) { return request.get<Timeline>(`/runtime/executions/${id}`); },
+  executionEvents(id: string) { return request.get<Timeline>(`/runtime/executions/${id}/events`); },
+  auditLogs(params: Record<string, unknown>) { return request.get<Page<AuditLog>>("/runtime/audit-logs", { params }); },
 };
