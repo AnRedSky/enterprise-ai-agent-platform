@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, UTC
 from uuid import uuid4
 
 import pytest
@@ -27,8 +27,8 @@ async def seed(session):
     session.add_all([
         Agent(id=agent_a, name="a", owner_id=owner_a),
         Agent(id=agent_b, name="b", owner_id=owner_b),
-        Execution(id=execution_a, request_id="req-a", trace_id="trace-a", agent_id=agent_a, status="success", started_at=datetime.now(datetime.UTC)),
-        Execution(id=execution_b, request_id="req-b", trace_id="trace-b", agent_id=agent_b, status="failed", started_at=datetime.now(datetime.UTC)),
+        Execution(id=execution_a, request_id="req-a", trace_id="trace-a", agent_id=agent_a, status="success", started_at=datetime.now(UTC)),
+        Execution(id=execution_b, request_id="req-b", trace_id="trace-b", agent_id=agent_b, status="failed", started_at=datetime.now(UTC)),
         ExecutionEvent(id=uuid4(), execution_id=execution_a, trace_id="trace-a", span_type="model", status="completed"),
         ExecutionEvent(id=uuid4(), execution_id=execution_b, trace_id="trace-b", span_type="tool", status="completed"),
         AuditLog(id=uuid4(), actor_id=owner_a, agent_id=agent_a, action="run", status="success"),
@@ -88,7 +88,7 @@ async def test_pagination_is_capped(db):
 async def test_execution_pagination_is_deterministic_when_timestamps_tie(db):
     owner_a = uuid4()
     agent_a = uuid4()
-    timestamp = datetime.now(datetime.UTC)
+    timestamp = datetime.now(UTC)
     execution_low = uuid4()
     execution_high = uuid4()
     if execution_low > execution_high:

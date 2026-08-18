@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, UTC
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
@@ -17,7 +17,7 @@ class MemoryService:
 
     @staticmethod
     def _visible_clause():
-        now = datetime.now(datetime.UTC)
+        now = datetime.now(UTC)
         return and_(MemoryRecord.is_active.is_(True), or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now))
 
     async def put(

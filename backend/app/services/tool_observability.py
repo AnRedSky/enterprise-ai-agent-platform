@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, UTC
 
 from app.models.execution import ExecutionEvent
 
@@ -12,7 +12,7 @@ class ToolObservabilityAdapter:
         return (context.execution_id, context.tool_id)
 
     async def start_tool_span(self, context):
-        self.started_at[self._key(context)] = datetime.now(datetime.UTC)
+        self.started_at[self._key(context)] = datetime.now(UTC)
 
     async def finish_tool_span(self, context, result):
         await self._record(context, "completed")
@@ -21,8 +21,8 @@ class ToolObservabilityAdapter:
         await self._record(context, "failed", getattr(error, "code", "TOOL_EXECUTION_ERROR"), "Tool execution failed")
 
     async def _record(self, context, status, error_code=None, error_message=None):
-        started = self.started_at.pop(self._key(context), datetime.now(datetime.UTC))
-        ended = datetime.now(datetime.UTC)
+        started = self.started_at.pop(self._key(context), datetime.now(UTC))
+        ended = datetime.now(UTC)
         event = ExecutionEvent(
             execution_id=context.execution_id,
             trace_id=context.trace_id or "unknown",

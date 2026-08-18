@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime,UTC
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,7 +31,7 @@ def _identity(claims: dict | None = None):
 def _normalize_execution(execution):
     """Keep the HTTP contract stable for lightweight repository/test doubles."""
     if isinstance(execution, dict) and "started_at" not in execution:
-        execution = {**execution, "started_at": datetime.now(datetime.UTC)}
+        execution = {**execution, "started_at": datetime.now(UTC)}
     return execution
 
 

@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, UTC
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,7 +40,7 @@ class ObservabilityService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        ended = datetime.now(datetime.UTC)
+        ended = datetime.now(UTC)
         execution.status = status
         execution.ended_at = ended
         execution.duration_ms = max(0, int((ended - execution.started_at).total_seconds() * 1000))
@@ -62,7 +62,7 @@ class ObservabilityService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> ExecutionEvent:
-        ended = datetime.now(datetime.UTC)
+        ended = datetime.now(UTC)
         event = ExecutionEvent(
             execution_id=execution.id,
             trace_id=execution.trace_id,
@@ -89,4 +89,4 @@ class ObservabilityService:
 
     @staticmethod
     def now() -> datetime:
-        return datetime.now(datetime.UTC)
+        return datetime.now(UTC)

@@ -1,10 +1,10 @@
-from datetime import datetime
+from datetime import datetime, UTC
 from uuid import uuid4
 from app.schemas.runtime import AuditLogListResponse, ExecutionItem, ExecutionListResponse, ExecutionTimelineResponse
 
 
 def execution():
-    return ExecutionItem(execution_id=uuid4(), request_id="req", trace_id="trace", agent_id=uuid4(), status="success", started_at=datetime.now(datetime.UTC))
+    return ExecutionItem(execution_id=uuid4(), request_id="req", trace_id="trace", agent_id=uuid4(), status="success", started_at=datetime.now(UTC))
 
 
 def test_execution_response_contract():

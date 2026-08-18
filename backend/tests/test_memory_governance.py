@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from app.models.memory import MemoryRecord
 from app.services.memory_service import MemoryService
@@ -23,6 +23,6 @@ def test_memory_visibility_clause_contains_active_and_expiry_rules():
 
 
 def test_expiry_boundary_is_representable():
-    future = datetime.now(datetime.UTC) + timedelta(hours=1)
-    past = datetime.now(datetime.UTC) - timedelta(hours=1)
-    assert future > datetime.now(datetime.UTC) > past
+    future = datetime.now(UTC) + timedelta(hours=1)
+    past = datetime.now(UTC) - timedelta(hours=1)
+    assert future > datetime.now(UTC) > past
