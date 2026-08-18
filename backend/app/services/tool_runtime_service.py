@@ -19,25 +19,57 @@ class ToolExecutionContext:
 class ToolRuntimeService:
     """Single governance boundary for Tool execution."""
 
-    def __init__(self, tool_repository, permission_checker, audit_logger=None, observability=None, max_calls: int = 8):
+    def __init__(
+        self,
+        tool_repository,
+        binding_repository=None,
+        permission_checker=None,
+        audit_logger=None,
+        observability=None,
+        max_calls: int = 8,
+    ):
+        # Backward compatibility with the earlier three-argument constructor:
+        # ToolRuntimeService(tool_repository, permission_checker, ...).
+        if permission_checker is None and callable(binding_repository):
+            permission_checker = binding_repository
+            binding_repository = tool_repository
+
+        if permission_checker is None:
+            raise TypeError("permission_checker is required")
+
         self.tool_repository = tool_repository
+        self.binding_repository = binding_repository or tool_repository
         self.permission_checker = permission_checker
         self.audit_logger = audit_logger
         self.observability = observability
         self.max_calls = max_calls
 
-    async def execute(self, context: ToolExecutionContext, arguments: dict[str, Any], call_count: int = 0) -> dict[str, Any]:
+    @staticmethod
+    def _is_active(entity: Any, default: bool = True) -> bool:
+        """Support both the legacy is_active field and the persisted enabled field."""
+        if hasattr(entity, "enabled"):
+            return bool(entity.enabled)
+        if hasattr(entity, "is_active"):
+            return bool(entity.is_active)
+        return default
+
+    async def execute(
+        self,
+        context: ToolExecutionContext,
+        arguments: dict[str, Any],
+        call_count: int = 0,
+    ) -> dict[str, Any]:
         if call_count >= self.max_calls:
             raise ToolExecutionError("TOOL_LIMIT_EXCEEDED", "Tool execution limit exceeded")
 
         tool = await self.tool_repository.get(context.tool_id)
         if tool is None:
             raise ToolExecutionError("TOOL_NOT_FOUND", "Tool not found")
-        if not getattr(tool, "enabled", True):
+        if not self._is_active(tool):
             raise ToolExecutionError("TOOL_DISABLED", "Tool is disabled")
 
-        binding = await self.tool_repository.get_binding(context.agent_id, context.tool_id)
-        if binding is None or not getattr(binding, "enabled", True):
+        binding = await self.binding_repository.get_binding(context.agent_id, context.tool_id)
+        if binding is None or not self._is_active(binding):
             raise ToolExecutionError("TOOL_NOT_BOUND", "Tool is not enabled for this agent")
 
         allowed = await self.permission_checker(context.actor_id, context.agent_id, context.tool_id)
