@@ -78,7 +78,12 @@ if ([string]::IsNullOrWhiteSpace([string]$version.id)) { throw "Version creation
 if ($version.status -ne "ready") { throw "Version status is not ready." }
 
 $versions = Invoke-ScenarioRequest -Name "Knowledge / versions" -Path "/api/v1/knowledge/$kbId/documents/$documentId/versions" -Headers $headers
-if ($versions.Count -lt 1) { throw "Version list is empty after creation." }
+# Windows PowerShell 5.1 unwraps a one-element JSON array into a PSCustomObject.
+# Always normalize to an array before checking Count so a valid single version is not mistaken for an empty list.
+$versionItems = @($versions)
+if ($versionItems.Count -lt 1) { throw "Version list is empty after creation." }
+if (-not ($versionItems | Where-Object { [string]$_.id -eq [string]$version.id })) { throw "Version list does not contain the created version." }
+
 $documents = Invoke-ScenarioRequest -Name "Knowledge / documents pagination" -Path "/api/v1/knowledge/$kbId/documents?page=1&page_size=10" -Headers $headers
 if ($null -eq $documents.items -or [int]$documents.total -lt 1) { throw "Document pagination did not return the created document." }
 
