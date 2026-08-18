@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { mount } from "@vue/test-utils";
-import Runtime from "./Runtime.vue";
 
-const executions = vi.fn();
-const executionEvents = vi.fn();
+const { executions, executionEvents } = vi.hoisted(() => ({
+  executions: vi.fn(),
+  executionEvents: vi.fn(),
+}));
 vi.mock("../api/runtime", () => ({
   runtimeApi: { executions, executionEvents },
 }));
@@ -19,6 +19,9 @@ vi.mock("element-plus", async () => {
     vLoading: {},
   };
 });
+
+import { mount } from "@vue/test-utils";
+import Runtime from "./Runtime.vue";
 
 describe("Runtime.vue", () => {
   beforeEach(() => { executions.mockReset(); executionEvents.mockReset(); });
