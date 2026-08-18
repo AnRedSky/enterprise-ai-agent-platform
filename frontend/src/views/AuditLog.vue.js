@@ -1,20 +1,38 @@
 import { onMounted, ref } from "vue";
-import { ElMessage } from "element-plus";
 import { runtimeApi } from "../api/runtime";
-const items = ref([]), page = ref(1), pageSize = ref(20), total = ref(0), status = ref(""), loading = ref(false), error = ref(false);
-async function load() { loading.value = true; error.value = false; try {
-    const r = await runtimeApi.auditLogs({ page: page.value, page_size: pageSize.value, ...(status.value ? { status: status.value } : {}) });
-    items.value = r.data.items;
-    total.value = r.data.total;
+const items = ref([]);
+const page = ref(1);
+const pageSize = ref(20);
+const total = ref(0);
+const status = ref("");
+const loading = ref(false);
+const error = ref(false);
+async function load() {
+    loading.value = true;
+    error.value = false;
+    try {
+        const response = await runtimeApi.auditLogs({
+            page: page.value,
+            page_size: pageSize.value,
+            ...(status.value ? { status: status.value } : {}),
+        });
+        items.value = response.data.items ?? [];
+        total.value = response.data.total ?? 0;
+    }
+    catch (err) {
+        // 查询异常必须在组件内部消费，避免 rejected Promise 冒泡为未处理异常。
+        console.error("AuditLog query failed", err);
+        items.value = [];
+        total.value = 0;
+        error.value = true;
+    }
+    finally {
+        loading.value = false;
+    }
 }
-catch {
-    error.value = true;
-    ElMessage.error("Audit 查询失败");
-}
-finally {
-    loading.value = false;
-} }
-onMounted(load);
+onMounted(() => {
+    void load();
+});
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
 let __VLS_components;
