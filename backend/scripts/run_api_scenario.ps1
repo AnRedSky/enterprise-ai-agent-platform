@@ -70,7 +70,7 @@ function Invoke-ScenarioRequest {
 Write-Host "============================================================" -ForegroundColor DarkGray
 Write-Host "Enterprise AI Agent Platform - API Scenario Smoke Test" -ForegroundColor White
 Write-Host "Base URL: $BaseUrl" -ForegroundColor Gray
-Write-Host "Scenario: Health -> Auth -> Agents -> Chat -> Runtime -> Tools" -ForegroundColor Gray
+Write-Host "Scenario: Health -> Auth -> Agents -> Publish -> Chat -> Runtime -> Tools" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor DarkGray
 
 $health = Invoke-ScenarioRequest -Name "Health" -Path "/health"
@@ -87,7 +87,12 @@ $agent = Invoke-ScenarioRequest -Name "Agents / create" -Method "POST" -Path "/a
 if ([string]::IsNullOrWhiteSpace([string]$agent.id)) { throw "Agent creation did not return an id." }
 $agentId = [string]$agent.id
 Invoke-ScenarioRequest -Name "Agents / list" -Path "/api/v1/agents" -Headers $headers | Out-Null
-Invoke-ScenarioRequest -Name "Agents / versions" -Path "/api/v1/agents/$agentId/versions" -Headers $headers | Out-Null
+$versions = Invoke-ScenarioRequest -Name "Agents / versions" -Path "/api/v1/agents/$agentId/versions" -Headers $headers
+if ($null -eq $versions -or $versions.Count -lt 1) { throw "Agent version list did not contain a version." }
+$versionId = [string]$versions[0].id
+if ([string]::IsNullOrWhiteSpace($versionId)) { throw "Agent version did not return an id." }
+$published = Invoke-ScenarioRequest -Name "Agents / publish" -Method "POST" -Path "/api/v1/agents/$agentId/publish" -Headers $headers -Body @{ version_id = $versionId }
+if ($published.status -ne "published") { throw "Agent publish did not return published status." }
 
 $chat = Invoke-ScenarioRequest -Name "Chat / stream" -Method "POST" -Path "/api/v1/agents/stream" -Headers $headers -Body @{ agent_id = $agentId; input = "请回复：scenario-ok" }
 $chatText = if ($chat -is [string]) { $chat } else { $chat | Out-String }
@@ -117,7 +122,7 @@ Invoke-ScenarioRequest -Name "Tools / disable forbidden for normal user" -Method
 Invoke-ScenarioRequest -Name "Tools / execute missing tool" -Method "POST" -Path "/api/v1/tools/$missingToolId/execute" -Headers $headers -Body @{ agent_id = $agentId; arguments = @{} } -ExpectedStatus @(404, 403) | Out-Null
 
 Write-Host "============================================================" -ForegroundColor DarkGray
-Write-Host "[PASS] API scenario completed: Health -> Auth -> Agents -> Chat -> Runtime -> Tools" -ForegroundColor Green
+Write-Host "[PASS] API scenario completed: Health -> Auth -> Agents -> Publish -> Chat -> Runtime -> Tools" -ForegroundColor Green
 Write-Host "Test user : $Username" -ForegroundColor Gray
 Write-Host "Agent ID  : $agentId" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor DarkGray
