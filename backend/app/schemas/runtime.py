@@ -15,7 +15,7 @@ class ExecutionItem(BaseModel):
     session_id: UUID | None = None
     agent_id: UUID
     agent_version: str | None = None
-    model_id: UUID | None = None
+    model_id: str | None = None
     status: str
     started_at: datetime
     ended_at: datetime | None = None
@@ -35,7 +35,7 @@ class ExecutionEventItem(BaseModel):
     started_at: datetime
     ended_at: datetime | None = None
     duration_ms: int | None = None
-    model_id: UUID | None = None
+    model_id: str | None = None
     tool_id: UUID | None = None
     error_code: str | None = None
 
