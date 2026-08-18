@@ -26,13 +26,24 @@ class ModelGateway:
             else MockProvider()
         )
 
+    def _provider_for_model(self, model: str):
+        """Route explicit mock models to the deterministic local provider.
+
+        This keeps the local smoke-test contract stable even when a developer's
+        .env enables an OpenAI-compatible provider for other agents.
+        An explicitly injected provider is still always honored by tests/callers.
+        """
+        if isinstance(self.provider, OpenAICompatibleProvider) and model.startswith("mock-"):
+            return MockProvider()
+        return self.provider
+
     async def generate(
         self,
         model: str,
         messages: list[dict],
         session_id: UUID | None = None,
     ) -> ModelResult:
-        return await self.provider.complete(model, messages)
+        return await self._provider_for_model(model).complete(model, messages)
 
     async def stream(
         self,
@@ -40,6 +51,6 @@ class ModelGateway:
         messages: list[dict],
         session_id: UUID | None = None,
     ) -> AsyncIterator[str]:
-        async for chunk in self.provider.stream(model, messages):
+        async for chunk in self._provider_for_model(model).stream(model, messages):
             if chunk:
                 yield chunk
