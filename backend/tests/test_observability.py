@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock
 
 from app.models.execution import Execution
@@ -21,7 +21,7 @@ async def test_finish_execution_accepts_naive_database_timestamp():
         request_id="req",
         trace_id="trace",
         status="running",
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(UTC),
     )
     db = AsyncMock()
 
