@@ -1,9 +1,9 @@
 import asyncio
 import ipaddress
 import socket
-from urllib.error import HTTPError, HTTPRedirectHandler, URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, build_opener
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from app.tools.exceptions import ToolExecutionError
 
