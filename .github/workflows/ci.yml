@@ -1,10 +1,9 @@
 name: CI
 
+# TEMPORARILY PAUSED: automatic CI execution is disabled during Phase 1.x stabilization.
+# Keep the workflow definition for later repair; re-enable push/pull_request after CI is fixed.
 on:
-  push:
-    branches: [main, 'feature/**']
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   backend:
