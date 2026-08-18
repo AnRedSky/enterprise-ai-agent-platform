@@ -43,7 +43,7 @@
         <el-table-column prop="model_id" label="模型" width="160" />
         <el-table-column prop="created_at" label="创建时间" />
         <el-table-column label="操作" width="110">
-          <template #default="{ row }"><el-button v-if="!row.is_published && selected?.status !== 'archived'" link type="success" :loading="publishingVersionId === row.id" @click="publishVersion(row)">发布</el-button></template>
+          <template #default="{ row }"><el-button v-if="!row.is_published && selected?.status !== 'archived'" link type="success" :loading="publishingVersionId === row.id" @click="publishVersion(row as AgentVersion)">发布</el-button></template>
         </el-table-column>
       </el-table>
       <el-divider />
