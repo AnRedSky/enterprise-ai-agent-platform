@@ -5,6 +5,11 @@ export default defineConfig({
   plugins: [vue()],
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      jsdom: {
+        url: "http://localhost/",
+      },
+    },
     globals: true,
     clearMocks: true,
   },
