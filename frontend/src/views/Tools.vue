@@ -1,7 +1,7 @@
 <template>
   <div class="page">
     <div class="header">
-      <div><h1>Tool 管理</h1><p>工具注册、启停、绑定与执行；创建和治理操作受管理员 RBAC 保护。</p></div>
+      <div><h1>Tool 管理</h1><p>工具注册、启停、绑定/解绑与执行；创建和治理操作受管理员 RBAC 保护。</p></div>
       <el-button v-if="isAdmin" type="primary" @click="createVisible = true">创建 Tool</el-button>
     </div>
 
@@ -10,11 +10,12 @@
       <el-table-column prop="name" label="名称" min-width="180" />
       <el-table-column prop="description" label="描述" min-width="220" />
       <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="360">
+      <el-table-column label="操作" width="420">
         <template #default="{ row }">
           <el-button v-if="isAdmin" link type="primary" @click="toggle(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
           <el-button link type="primary" @click="openExecute(row)">执行</el-button>
-          <el-button v-if="isAdmin" link type="primary" @click="openBind(row)">绑定 Agent</el-button>
+          <el-button v-if="isAdmin" link type="primary" @click="openBind(row, 'bind')">绑定 Agent</el-button>
+          <el-button v-if="isAdmin" link type="danger" @click="openBind(row, 'unbind')">解绑 Agent</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -30,11 +31,11 @@
       <template #footer><el-button @click="createVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="create">创建</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="bindVisible" title="绑定 Tool 到 Agent" width="520px">
+    <el-dialog v-model="bindVisible" :title="bindingAction === 'bind' ? '绑定 Tool 到 Agent' : '解绑 Tool 到 Agent'" width="520px">
       <el-select v-model="selectedAgent" placeholder="选择 Agent" style="width: 100%">
         <el-option v-for="agent in agents" :key="agent.id" :label="agent.name" :value="agent.id" />
       </el-select>
-      <template #footer><el-button @click="bindVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="bind">绑定</el-button></template>
+      <template #footer><el-button @click="bindVisible = false">取消</el-button><el-button :type="bindingAction === 'bind' ? 'primary' : 'danger'" :loading="saving" @click="applyBinding">{{ bindingAction === 'bind' ? '绑定' : '解绑' }}</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="executeVisible" :title="`执行 Tool：${selectedTool?.name || ''}`" width="620px">
@@ -54,8 +55,9 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { getRoles } from "../api/auth";
 import { listAgents, type Agent } from "../api/agents";
-import { bindTool, createTool, disableTool, enableTool, executeTool, listTools, type Tool } from "../api/tools";
+import { bindTool, createTool, disableTool, enableTool, executeTool, listTools, unbindTool, type Tool } from "../api/tools";
 
+type BindingAction = "bind" | "unbind";
 const tools = ref<Tool[]>([]);
 const agents = ref<Agent[]>([]);
 const loading = ref(false);
@@ -67,6 +69,7 @@ const bindVisible = ref(false);
 const executeVisible = ref(false);
 const selectedTool = ref<Tool | null>(null);
 const selectedAgent = ref("");
+const bindingAction = ref<BindingAction>("bind");
 const argumentsText = ref("{}\n");
 const executionResult = ref("");
 const createForm = ref({ name: "", description: "", endpoint: "", input_schema: "{}" });
@@ -108,21 +111,27 @@ async function create() {
   }
 }
 
-function openBind(tool: Tool) {
+function openBind(tool: Tool, action: BindingAction) {
   selectedTool.value = tool;
+  bindingAction.value = action;
   selectedAgent.value = agents.value[0]?.id || "";
   bindVisible.value = true;
 }
 
-async function bind() {
+async function applyBinding() {
   if (!selectedTool.value || !selectedAgent.value) return;
   saving.value = true;
   try {
-    await bindTool(selectedTool.value.id, selectedAgent.value);
+    if (bindingAction.value === "bind") {
+      await bindTool(selectedTool.value.id, selectedAgent.value);
+      ElMessage.success("Tool 绑定成功");
+    } else {
+      await unbindTool(selectedTool.value.id, selectedAgent.value);
+      ElMessage.success("Tool 解绑成功");
+    }
     bindVisible.value = false;
-    ElMessage.success("Tool 绑定成功");
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "Tool 绑定失败");
+    ElMessage.error(e instanceof Error ? e.message : "Tool 绑定关系更新失败");
   } finally {
     saving.value = false;
   }
