@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 from app.models.core import Agent, AgentVersion
 
+
 class AgentRegistry:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -34,10 +35,38 @@ class AgentRegistry:
         return list(result.scalars().all())
 
     async def create_version(self, agent: Agent, system_prompt: str, model_id: str):
+        if agent.status == "archived":
+            raise HTTPException(409, "归档 Agent 不允许创建新版本")
         versions = await self.versions(agent.id)
-        next_major = len(versions) + 1
-        version = AgentVersion(agent_id=agent.id, version=f"1.{next_major - 1}.0", system_prompt=system_prompt, model_id=model_id)
+        next_minor = len(versions)
+        version = AgentVersion(agent_id=agent.id, version=f"1.{next_minor}.0", system_prompt=system_prompt, model_id=model_id)
         self.db.add(version)
         await self.db.commit()
         await self.db.refresh(version)
         return version
+
+    async def publish(self, agent: Agent, version_id: UUID):
+        if agent.status == "archived":
+            raise HTTPException(409, "归档 Agent 不允许发布")
+        result = await self.db.execute(
+            select(AgentVersion).where(
+                AgentVersion.id == version_id,
+                AgentVersion.agent_id == agent.id,
+            )
+        )
+        version = result.scalar_one_or_none()
+        if not version:
+            raise HTTPException(404, "Agent 版本不存在")
+        agent.published_version_id = version.id
+        agent.status = "published"
+        await self.db.commit()
+        await self.db.refresh(agent)
+        return agent, version
+
+    async def archive(self, agent: Agent):
+        if agent.status == "archived":
+            return agent
+        agent.status = "archived"
+        await self.db.commit()
+        await self.db.refresh(agent)
+        return agent
