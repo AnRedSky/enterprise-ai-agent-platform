@@ -4,11 +4,11 @@ import { mount } from "@vue/test-utils";
 const api = vi.hoisted(() => ({
   listAgents: vi.fn(), listVersions: vi.fn(), createAgent: vi.fn(), createVersion: vi.fn(), publishAgent: vi.fn(), archiveAgent: vi.fn(),
 }));
-vi.mock("../api/agents", () => ({ ...api, }),);
-vi.mock("../api/chat", () => ({ streamChat: vi.fn() }));
+vi.mock("../../src/api/agents", () => ({ ...api }));
+vi.mock("../../src/api/chat", () => ({ streamChat: vi.fn() }));
 vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), error: vi.fn() }, ElMessageBox: { confirm: vi.fn() } }));
 
-import Agents from "./Agents.vue";
+import Agents from "../../src/views/Agents.vue";
 
 const stubs = {
   "el-button": { props: ["disabled", "loading"], template: "<button :disabled=\"disabled\"><slot/></button>" },

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { get, post, delete_: deleteMock } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), delete_: vi.fn() }));
 vi.mock("axios", () => ({ default: { create: () => ({ get, post, delete: deleteMock, interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } } }) } }));
 
-import { bindTool, disableTool, enableTool, executeTool, listTools, unbindTool } from "./tools";
+import { bindTool, disableTool, enableTool, executeTool, listTools, unbindTool } from "../../src/api/tools";
 
 describe("tools api", () => {
   beforeEach(() => {

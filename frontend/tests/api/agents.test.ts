@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("axios", () => ({ default: { create: () => ({ get, post, interceptors: { request: { use: vi.fn() }, response: { use: vi.fn() } } }) } }));
 
-import { createAgent, createVersion, listAgents, listVersions } from "./agents";
+import { createAgent, createVersion, listAgents, listVersions } from "../../src/api/agents";
 
 describe("agents api", () => {
   beforeEach(() => {

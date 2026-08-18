@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { get } = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock("./request", () => ({
+vi.mock("../../src/api/request", () => ({
   request: { get },
 }));
 
-import { runtimeApi } from "./runtime";
+import { runtimeApi } from "../../src/api/runtime";
 
 describe("runtimeApi", () => {
   beforeEach(() => get.mockReset());

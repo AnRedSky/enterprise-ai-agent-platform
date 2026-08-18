@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearSession, getRoles, getToken, isAuthenticated, setSession } from "./auth";
+import { clearSession, getRoles, getToken, isAuthenticated, setSession } from "../../src/api/auth";
 
 describe("auth session", () => {
   beforeEach(() => {

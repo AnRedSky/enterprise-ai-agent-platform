@@ -6,12 +6,12 @@ const { listAgents, listTools, executions } = vi.hoisted(() => ({
   listTools: vi.fn(),
   executions: vi.fn(),
 }));
-vi.mock("../api/agents", () => ({ listAgents }));
-vi.mock("../api/tools", () => ({ listTools }));
-vi.mock("../api/runtime", () => ({ runtimeApi: { executions } }));
+vi.mock("../../src/api/agents", () => ({ listAgents }));
+vi.mock("../../src/api/tools", () => ({ listTools }));
+vi.mock("../../src/api/runtime", () => ({ runtimeApi: { executions } }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 
-import Dashboard from "./Dashboard.vue";
+import Dashboard from "../../src/views/Dashboard.vue";
 
 const stubs = {
   "el-button": { template: "<button><slot/></button>" },
@@ -36,11 +36,8 @@ describe("Dashboard.vue", () => {
     executions.mockImplementation(({ status }: { status?: string }) =>
       Promise.resolve({ data: { total: status === "failed" ? 2 : 8 } }),
     );
-
     const wrapper = mount(Dashboard, { global });
     await vi.waitFor(() => expect(executions).toHaveBeenCalledTimes(2));
-    // executions() being called does not mean Promise.all() has completed;
-    // wait for the rendered metrics before asserting the reactive state.
     await vi.waitFor(() => expect(wrapper.text()).toContain("8"));
     expect(wrapper.text()).toContain("2");
     expect(wrapper.text()).toContain("1");
@@ -51,7 +48,6 @@ describe("Dashboard.vue", () => {
     listAgents.mockRejectedValue(new Error("network"));
     listTools.mockResolvedValue([]);
     executions.mockResolvedValue({ data: { total: 0 } });
-
     const wrapper = mount(Dashboard, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("network"));
   });
