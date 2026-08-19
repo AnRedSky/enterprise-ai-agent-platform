@@ -1,12 +1,12 @@
 """track knowledge vector indexing state
 
-Revision ID: 0011_knowledge_vector_index_status
+Revision ID: 0011_vector_index_status
 Revises: 0010_pgvector_knowledge_chunks
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0011_knowledge_vector_index_status"
+revision = "0011_vector_index_status"
 down_revision = "0010_pgvector_knowledge_chunks"
 branch_labels = None
 depends_on = None
