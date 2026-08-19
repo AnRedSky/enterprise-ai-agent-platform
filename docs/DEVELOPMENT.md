@@ -152,7 +152,7 @@ Retrieval Debug / Runtime Trace
 
 ### 当前阶段
 
-**Phase 1.4-F-02：真实 Hybrid Retrieval 服务编排与 `mode=hybrid` API。**
+**Phase 1.4-G-01：Retrieval Debug 的 Hybrid 来源与 Score Breakdown 展示。**
 
 当前任务必须满足：
 
@@ -160,10 +160,13 @@ Retrieval Debug / Runtime Trace
 2. vector retrieval 从 PostgreSQL/pgvector 读取；
 3. 两路检索均执行 Knowledge Base / Document scope 与 RBAC；
 4. Hybrid 使用 provider-neutral fusion contract；
-5. 线上检索不得从 JSON/JSONL 结果文件读取；
-6. JSON/JSONL 仅可作为 Evaluation Dataset / 测试输入或测试输出；
-7. 除真实模型生成外，业务链路尽可能走真实数据库、Provider、API 与 Runtime 流程；
-8. Reranker 在 Hybrid 基础链路稳定并完成评测后再接入。
+5. Hybrid API 必须返回可追溯的 lexical/vector source、单路 score、权重与 fused score；
+6. Retrieval Debug 必须展示真实 API 返回的 score breakdown，不在前端重新计算业务分数；
+7. 线上检索不得从 JSON/JSONL 结果文件读取；
+8. JSON/JSONL 仅可作为 Evaluation Dataset / 测试输入或测试输出；
+9. 除真实模型生成外，业务链路尽可能走真实数据库、Provider、API 与 Runtime 流程；
+10. Reranker 在 Hybrid 基础链路稳定并完成评测后再接入；
+11. G-02 后续继续关联 Runtime execution / trace。
 
 ## 7. Git / 提交规范
 
