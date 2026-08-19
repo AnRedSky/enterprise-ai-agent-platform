@@ -9,10 +9,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
+from app.services.knowledge_vector_indexing import KnowledgeVectorIndexingService
 
 
 class KnowledgeIngestionService:
-    """Provider-neutral document cleaning and deterministic chunk persistence."""
+    """Document cleaning, deterministic chunk persistence, and optional vector indexing."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -107,6 +108,11 @@ class KnowledgeIngestionService:
             version.ingestion_status = "ready"
             version.status = "ready"
             await self.db.commit()
+            await self.db.refresh(version)
+
+            # Chunk persistence is the durable ingestion boundary. Vector indexing
+            # is a second provider-specific stage and can be retried independently.
+            await KnowledgeVectorIndexingService(self.db).index_version(version.id, owner_id, is_admin)
             await self.db.refresh(version)
             return version, len(chunks)
         except HTTPException:
