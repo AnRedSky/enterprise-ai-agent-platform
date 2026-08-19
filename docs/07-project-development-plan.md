@@ -17,9 +17,10 @@
 | Phase 1.4-D | Runtime Knowledge integration | Auth → Knowledge → Ingest → AgentVersion → Runtime Chat → Citation 联调通过 |
 | Phase 1.4-E | Knowledge / Retrieval 生产化深化 | pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；mock + PostgreSQL/pgvector deterministic quality validation 已通过；真实 Embedding 语义质量仍待真实 Provider |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug / Runtime Trace | **G-01 / G-02 已完成；Backend 152 passed、0 warnings；migration 0012 已到 head** |
-| Phase 1.5 | Workflow / Governance | **1.5-A 已验收；1.5-B Publish Governance 已验收；Tenant Contract 已通过本地手工验收；1.5-C Backend Contract 开发中** |
+| Phase 1.5 | Workflow / Governance | **1.5-A 已验收；1.5-B Publish Governance / Tenant Contract 已通过本地手工验收；1.5-C Backend Contract 修复待本地验收** |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`、`docs/12-phase-1.4-e-vector-retrieval-provider.md` 与 `docs/13-phase-1.5-workflow-governance-plan.md`。
+当前项目实时进度统一见 `docs/PROJECT_STATUS.md`；工程长期开发规则统一见 `docs/DEVELOPMENT.md`。
 
 ## 6. 固定前后端开发顺序
 
@@ -51,7 +52,7 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 
 ## 7. 当前任务
 
-**Phase 1.5-C Workflow Execution State Machine** 已开始 Backend Contract 实现，尚未写入本地验收通过结果。
+**Phase 1.5-C Workflow Execution State Machine** 已完成 Backend Contract 实现，但本地验收曾被 Alembic metadata 兼容问题阻塞；问题已完成根因分析与代码修复，当前等待开发者本地重新验证。
 
 当前实现范围：
 
@@ -64,12 +65,16 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 7. 只能从当前 Workflow 的已发布版本创建 Execution。
 8. 新增 Backend execution API contract 与独立 pytest。
 9. 新增 Backend-only validation script：`backend/scripts/run_phase_1_5_c_workflow_execution_validation.ps1`。
-10. **只有开发者本地验证通过后，才标记 1.5-C Backend 完成。**
+10. 针对历史 `alembic_version.version_num VARCHAR(32)` 与新 revision id 长度不兼容的问题，增加 migration preflight 并新增单元测试。
+11. **只有开发者本地验证通过后，才标记 1.5-C Backend 完成。**
 
 开发者本地验证命令：
 
 ```powershell
 cd backend
+uv run alembic upgrade head
+uv run alembic current
+uv run pytest -q
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
 ```
 
@@ -83,3 +88,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_wo
 - pgvector 必须由 PostgreSQL 服务端提供，不能通过 Python 依赖替代。
 - Phase 1.5 必须严格遵循“Backend Contract → Migration/pytest → Frontend API/Vitest → UI → 手工验收 → 联调 → 全量回归 → 文档 → main”。
 - Backend 测试脚本禁止混入 Frontend 测试；Frontend 测试必须独立通过 `npm test` / `npm run build` 执行。
+- 工程错误统一记录到 `docs/error-tracking/`。
