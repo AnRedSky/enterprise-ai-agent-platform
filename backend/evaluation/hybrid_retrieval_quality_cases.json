@@ -1,0 +1,27 @@
+[
+  {
+    "id": "hy-001",
+    "query": "FastAPI Agent Runtime",
+    "relevant_documents": ["FastAPI Agent Runtime"]
+  },
+  {
+    "id": "hy-002",
+    "query": "报销规则",
+    "relevant_documents": ["报销规则"]
+  },
+  {
+    "id": "hy-003",
+    "query": "PostgreSQL 知识库",
+    "relevant_documents": ["PostgreSQL 知识库"]
+  },
+  {
+    "id": "hy-004",
+    "query": "审批流程",
+    "relevant_documents": ["报销规则", "审批流程"]
+  },
+  {
+    "id": "hy-005",
+    "query": "citation retrieval",
+    "relevant_documents": ["FastAPI Agent Runtime", "Citation Retrieval"]
+  }
+]
