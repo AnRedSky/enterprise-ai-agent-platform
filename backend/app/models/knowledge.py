@@ -44,6 +44,8 @@ class KnowledgeDocumentVersion(Base):
     version: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     ingestion_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    vector_index_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(200), nullable=True)
     source_uri: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
