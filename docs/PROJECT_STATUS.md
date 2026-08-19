@@ -8,9 +8,10 @@
 - 主分支：`main`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - 当前阶段：Phase 1.5 Workflow / Governance
-- 当前任务：Phase 1.5-C Workflow Execution State Machine
+- 当前任务：Phase 1.5-D Workflow Runtime Integration
 - 当前角色：开发执行
 - 开始时间：2026-08-19
+- 基线：已同步远端 `main` 最新提交 `b4288f0f1957941e501c3b238679c47b93aefbfa`
 
 ## 2. 阶段状态
 
@@ -22,90 +23,85 @@
 | Phase 1.4 | 已完成核心闭环 | Knowledge / RAG、pgvector、Embedding / Retrieval contract、Runtime Trace |
 | Phase 1.5-A | 已完成 | Workflow Definition Contract，本地 Backend 验收通过 |
 | Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
-| Phase 1.5-C | 修复待验收 | Workflow Execution State Machine；migration metadata 已修复，但 Backend 全量回归因 Alembic 测试导入错误阻塞 |
-| Phase 1.5-D | 待开始 | Workflow Runtime Integration |
+| Phase 1.5-C | 已完成 | Workflow Execution State Machine；开发者反馈全量测试及 1.5-C 验收全部通过 |
+| Phase 1.5-D | 开发中 | Workflow Runtime Integration |
 | Phase 1.5-E | 待开始 | Governance / Audit / Trace |
 | Phase 1.5-F | 待开始 | Vue Workflow / Governance 管理端 |
 
-## 3. 1.5-C 当前任务拆解
+## 3. 1.5-C 验收结论
 
-1. WorkflowExecution / WorkflowNodeExecution Domain
-2. Execution / Node 状态机
-3. Alembic 0016
-4. Execution API Contract
-5. Tenant-scoped Execution 查询
-6. Backend pytest
-7. Backend API Scenario
-8. 本地手工验收
-9. 文档更新
-10. 直接提交 `main`
-
-### 已发现并修复的问题
-
-#### 0016 migration revision id 长度问题
-
-`0016_workflow_execution_state_machine` revision id 长度为 37，而历史 `alembic_version.version_num` 为 `VARCHAR(32)`，导致 PostgreSQL 在记录 migration head 时失败。
-
-错误记录：
-
-`docs/error-tracking/001-alembic-version-column-too-short.md`
-
-修复：
-
-- `backend/alembic/env.py` 调用统一的 Alembic metadata preflight。
-- 已存在且长度不足的 `alembic_version.version_num` 自动扩展至 `VARCHAR(64)`。
-- preflight 与 migration 保持同一事务。
-- 开发者反馈已实际验证：`uv run alembic upgrade head` 成功，`alembic current` 为 `0016_workflow_execution_state_machine (head)`。
-
-#### Alembic 测试导入错误
-
-开发者反馈 Backend 全量回归失败：
+开发者已反馈：
 
 ```text
-ImportError: cannot import name 'env' from 'alembic'
+uv run pytest -q                         → 通过
+uv run alembic upgrade head              → 通过
+uv run alembic current                   → 0016_workflow_execution_state_machine (head)
+1.5-C Workflow Execution contract       → 通过
 ```
 
-错误来源：`backend/tests/test_alembic_env.py` 直接执行 `from alembic import env`。
+因此允许进入 1.5-D。
 
-错误记录：
+## 4. 1.5-D 实施范围
 
-`docs/error-tracking/002-alembic-env-test-import.md`
+### 已实现
 
-修复：
+1. `backend/app/runtime/workflow_runtime.py`
+   - Workflow Definition 校验
+   - `input / agent / output` 三类最小节点
+   - 串行节点执行
+   - Agent published version 校验
+   - Agent owner/admin 权限校验
+   - Model Gateway 调用
 
-- 将可测试的 `prepare_alembic_version_table()` 从 migration entrypoint 提取至 `backend/app/core/alembic_compat.py`。
-- `backend/alembic/env.py` 只负责 migration lifecycle，并调用该兼容函数。
-- 测试改为直接测试应用模块，避免导入 migration entrypoint 及其副作用。
+2. `backend/app/services/workflow_execution.py`
+   - Execution → Runtime 编排
+   - Node running / completed / failed 持久化
+   - Runtime 成功收敛为 completed
+   - Runtime 节点失败收敛为 failed
 
-## 4. 当前验收门禁
+3. `backend/app/api/workflow_executions.py`
+   - 新增 `POST /api/v1/workflows/executions/{execution_id}/run`
 
-必须由开发者实际执行并反馈结果：
+4. 测试
+   - `tests/test_workflow_runtime.py`
+   - `tests/test_api_workflow_runtime.py`
+
+5. 本地验收脚本
+   - `backend/scripts/run_phase_1_5_d_workflow_runtime_validation.ps1`
+
+6. 阶段文档
+   - `docs/phase-1.5-d-workflow-runtime-integration.md`
+
+## 5. 1.5-D 明确边界
+
+本阶段只实现稳定的最小串行 Runtime，不实现：
+
+- MQ / Worker 异步调度
+- Temporal
+- 并行 DAG
+- 条件分支 / 循环
+- Tool Runtime 编排
+- Human-in-the-loop
+- Governance / Audit / Trace 扩展
+- Vue Workflow UI
+
+## 6. 当前验收门禁
+
+必须由开发者本地实际执行并反馈：
 
 ```powershell
 cd backend
 uv run pytest -q
 uv run alembic upgrade head
 uv run alembic current
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_d_workflow_runtime_validation.ps1
 ```
 
-当前不能因 migration 已通过而提前进入 1.5-D；必须先确认 Backend 全量回归和 1.5-C 验收脚本均通过。
+前后端测试严格隔离；本阶段 Backend 验证脚本不得调用 frontend npm 测试。
 
-## 5. 测试结果记录
+## 7. 下一步
 
-### 已确认结果
-
-- `uv run alembic upgrade head`：通过，已到 `0016_workflow_execution_state_machine (head)`。
-- 1.5-C Workflow Execution State Machine Contract：`5 passed in 1.52s`。
-- 先前 Backend 全量回归：`152 passed in 2.71s`，无 warnings。
-
-### 当前阻塞
-
-- Backend `uv run pytest -q` 因 `tests/test_alembic_env.py` 导入错误在 collection 阶段失败；修复已直接提交 `main`，等待开发者重新验证。
-
-## 6. 下一步
-
-1. 开发者拉取 / 同步 `main` 最新提交。
-2. 执行 1.5-C 全量 Backend pytest 与验收脚本。
-3. 根据实际结果更新本文件与错误记录。
-4. 只有 1.5-C 全量验收通过后，才进入 1.5-D Workflow Runtime Integration。
+1. 开发者拉取 / 同步当前 `main`。
+2. 执行 1.5-D Backend 全量 pytest 与 Runtime 验收脚本。
+3. 若失败，先记录到 `docs/error-tracking/`，修复后重新验收。
+4. 只有 1.5-D 本地验收全部通过后，进入 Phase 1.5-E Governance / Audit / Trace。
