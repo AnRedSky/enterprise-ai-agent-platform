@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("api", "unit", "all")]
+    [ValidateSet("api", "knowledge", "unit", "all")]
     [string]$Mode = "api",
     [string]$BaseUrl = $(if ($env:API_BASE_URL) { $env:API_BASE_URL } else { "http://127.0.0.1:8000" }),
     [string]$Username = "TestUser",
@@ -11,6 +11,8 @@ $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $backendDir = Split-Path -Parent $scriptDir
 $scenarioScript = Join-Path $scriptDir "run_api_scenario.ps1"
+$knowledgeScenarioScript = Join-Path $scriptDir "run_knowledge_registry_scenario.ps1"
+$ingestionScenarioScript = Join-Path $scriptDir "run_knowledge_ingestion_scenario.ps1"
 
 Write-Host "============================================================" -ForegroundColor DarkGray
 Write-Host "Enterprise AI Agent Platform - Backend Manual Test Suite" -ForegroundColor White
@@ -19,25 +21,27 @@ Write-Host "Base URL: $BaseUrl" -ForegroundColor Gray
 Write-Host "============================================================" -ForegroundColor DarkGray
 
 function Invoke-ApiScenario {
-    if (-not (Test-Path $scenarioScript)) {
-        throw "API scenario script not found: $scenarioScript"
-    }
-
+    if (-not (Test-Path $scenarioScript)) { throw "API scenario script not found: $scenarioScript" }
     Write-Host "[RUN ] Backend API scenario: Health -> Auth -> Agents -> Chat -> Runtime -> Tools" -ForegroundColor Cyan
     & powershell -ExecutionPolicy Bypass -File $scenarioScript -BaseUrl $BaseUrl -Username $Username -Password $Password
-    if ($LASTEXITCODE -ne 0) {
-        throw "Backend API scenario failed with exit code $LASTEXITCODE."
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Backend API scenario failed with exit code $LASTEXITCODE." }
     Write-Host "[ OK  ] Backend API scenario" -ForegroundColor Green
+}
+
+function Invoke-KnowledgeScenarios {
+    foreach ($script in @($knowledgeScenarioScript, $ingestionScenarioScript)) {
+        if (-not (Test-Path $script)) { throw "Knowledge scenario script not found: $script" }
+        Write-Host "[RUN ] Backend Knowledge scenario: $(Split-Path -Leaf $script)" -ForegroundColor Cyan
+        & powershell -ExecutionPolicy Bypass -File $script -BaseUrl $BaseUrl -Password $Password
+        if ($LASTEXITCODE -ne 0) { throw "Knowledge scenario failed with exit code $LASTEXITCODE." }
+        Write-Host "[ OK  ] $(Split-Path -Leaf $script)" -ForegroundColor Green
+    }
 }
 
 function Invoke-UnitTests {
     Push-Location $backendDir
     try {
-        if (-not (Get-Command pytest -ErrorAction SilentlyContinue)) {
-            throw "pytest was not found. Activate backend .venv first."
-        }
-
+        if (-not (Get-Command pytest -ErrorAction SilentlyContinue)) { throw "pytest was not found. Activate backend .venv first." }
         $testPaths = @(
             "tests/test_api_health_endpoint.py",
             "tests/test_api_auth_endpoints.py",
@@ -45,6 +49,9 @@ function Invoke-UnitTests {
             "tests/test_api_chat_endpoints.py",
             "tests/test_api_runtime_endpoints.py",
             "tests/test_api_tools_endpoints.py",
+            "tests/test_api_knowledge_endpoints.py",
+            "tests/test_api_knowledge_ingestion.py",
+            "tests/test_knowledge_ingestion.py",
             "tests/test_runtime_api_contract.py",
             "tests/test_runtime_http_rbac.py",
             "tests/test_model_gateway.py",
@@ -54,28 +61,21 @@ function Invoke-UnitTests {
             "tests/test_memory_governance.py",
             "tests/test_observability.py"
         )
-
         $existing = @($testPaths | Where-Object { Test-Path $_ })
-        if ($existing.Count -eq 0) {
-            throw "No expected pytest files were found."
-        }
-
+        if ($existing.Count -eq 0) { throw "No expected pytest files were found." }
         Write-Host "[RUN ] Backend regression tests ($($existing.Count) test files)" -ForegroundColor Cyan
         & pytest -q @existing
-        if ($LASTEXITCODE -ne 0) {
-            throw "Backend regression tests failed with exit code $LASTEXITCODE."
-        }
+        if ($LASTEXITCODE -ne 0) { throw "Backend regression tests failed with exit code $LASTEXITCODE." }
         Write-Host "[ OK  ] Backend regression tests" -ForegroundColor Green
     }
-    finally {
-        Pop-Location
-    }
+    finally { Pop-Location }
 }
 
 switch ($Mode) {
-    "api"  { Invoke-ApiScenario }
-    "unit" { Invoke-UnitTests }
-    "all"  { Invoke-ApiScenario; Invoke-UnitTests }
+    "api"       { Invoke-ApiScenario }
+    "knowledge" { Invoke-KnowledgeScenarios }
+    "unit"      { Invoke-UnitTests }
+    "all"       { Invoke-ApiScenario; Invoke-KnowledgeScenarios; Invoke-UnitTests }
 }
 
 Write-Host "============================================================" -ForegroundColor DarkGray
