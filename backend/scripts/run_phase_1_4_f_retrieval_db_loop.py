@@ -10,7 +10,15 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 from uuid import uuid4
+
+# Running ``python scripts/<script>.py`` sets sys.path[0] to ``scripts/``.
+# Add the backend project root explicitly so the same validation command works
+# from a clean local checkout without requiring PYTHONPATH to be configured.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 import httpx
 from sqlalchemy import delete, select, text
