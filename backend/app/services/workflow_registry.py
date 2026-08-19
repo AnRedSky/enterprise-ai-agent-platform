@@ -17,21 +17,30 @@ class WorkflowRegistry:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def list(self, owner_id: UUID, admin: bool = False) -> list[Workflow]:
-        query = select(Workflow).order_by(Workflow.created_at.desc())
+    async def list(self, tenant_id: UUID, owner_id: UUID, admin: bool = False) -> list[Workflow]:
+        query = select(Workflow).where(Workflow.tenant_id == tenant_id).order_by(Workflow.created_at.desc())
         if not admin:
             query = query.where(Workflow.owner_id == owner_id)
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
-    async def get(self, workflow_id: UUID, owner_id: UUID, admin: bool = False) -> Workflow:
-        workflow = (await self.db.execute(select(Workflow).where(Workflow.id == workflow_id))).scalar_one_or_none()
-        if not workflow or (not admin and workflow.owner_id != owner_id):
+    async def get(self, workflow_id: UUID, tenant_id: UUID, owner_id: UUID, admin: bool = False) -> Workflow:
+        query = select(Workflow).where(Workflow.id == workflow_id, Workflow.tenant_id == tenant_id)
+        if not admin:
+            query = query.where(Workflow.owner_id == owner_id)
+        workflow = (await self.db.execute(query)).scalar_one_or_none()
+        if not workflow:
             raise HTTPException(404, "Workflow 不存在")
         return workflow
 
-    async def create(self, owner_id: UUID, name: str, description: str) -> Workflow:
-        workflow = Workflow(owner_id=owner_id, name=name, description=description, status="draft")
+    async def create(self, tenant_id: UUID, owner_id: UUID, name: str, description: str) -> Workflow:
+        workflow = Workflow(
+            tenant_id=tenant_id,
+            owner_id=owner_id,
+            name=name,
+            description=description,
+            status="draft",
+        )
         self.db.add(workflow)
         await self.db.commit()
         await self.db.refresh(workflow)
@@ -107,7 +116,6 @@ class WorkflowRegistry:
         if version.workflow_id != workflow.id:
             raise HTTPException(400, "Workflow 与版本不匹配")
 
-        # Publish is idempotent for the already-active version: do not emit duplicate audit events.
         if workflow.published_version_id == version.id and version.status == "published":
             return version
         if version.status not in self.VERSION_PUBLISHABLE_STATUSES and version.status != "published":
@@ -133,6 +141,7 @@ class WorkflowRegistry:
                 status="success",
                 metadata_json={
                     "workflow_id": str(workflow.id),
+                    "tenant_id": str(workflow.tenant_id),
                     "version": version.version,
                     "previous_version_id": str(previous_id) if previous_id else None,
                 },
