@@ -98,7 +98,8 @@ $versionId = [string]$version.id
 if ([string]::IsNullOrWhiteSpace($versionId)) { throw 'Version create did not return an id.' }
 
 $ingestPath = '/api/v1/knowledge/versions/{0}/ingest' -f $versionId
-$ingestBody = @{ max_chars = 80; overlap_chars = 10 }
+# Keep the manual scenario aligned with KnowledgeIngestRequest (max_chars >= 100).
+$ingestBody = @{ max_chars = 100; overlap_chars = 10 }
 $ingest = Invoke-ScenarioRequest -Name 'Knowledge / ingest' -Method 'POST' -Path $ingestPath -Headers $headers -Body $ingestBody
 if ($ingest.ingestion_status -ne 'ready') { throw 'Ingestion did not reach ready status.' }
 if ([int]$ingest.chunk_count -lt 2) { throw 'Expected at least 2 chunks.' }
