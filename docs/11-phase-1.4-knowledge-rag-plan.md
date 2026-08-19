@@ -40,23 +40,27 @@ Knowledge Base
 - [x] Chunk 与 Document Version 可追溯
 - [x] Backend pytest：chunk contract / API contract
 - [x] 独立手工验收脚本：`backend/scripts/run_knowledge_ingestion_scenario.ps1`
-- [ ] 本地执行 migration + pytest + ingestion 手工场景并记录最终验收结果
+- [x] 本地手工验收：Version → Ingest → Chunks → Re-ingest 已通过
 
 ### 1.4-C Retrieval contract
 
-- Embedding provider interface
-- Retriever interface
-- Reranker interface（先定义 contract）
-- Provider-neutral retrieval result
-- source document / chunk / relevance score / citation
+- [x] Embedding provider interface
+- [x] Retriever interface
+- [x] Reranker interface（先定义 contract）
+- [x] Provider-neutral retrieval result
+- [x] source document / chunk / relevance score / citation
+- [x] 第一版 provider-neutral lexical retrieval 实现，不绑定具体向量数据库
+- [x] Knowledge Base owner isolation 在检索查询阶段执行
+- [x] 独立手工验收脚本：`backend/scripts/run_knowledge_retrieval_scenario.ps1`
+- [ ] 本地执行 pytest + retrieval 手工场景并记录最终验收结果
 
 ### 1.4-D Runtime integration
 
-- AgentVersion 可声明 Knowledge 配置
-- Runtime Context Assembly 接入检索结果
-- 保持 `execution_id / trace_id / agent_version` 链路
-- 权限过滤必须发生在检索结果进入模型上下文之前
-- 引用结果写入 Observability
+- [ ] AgentVersion 可声明 Knowledge 配置
+- [ ] Runtime Context Assembly 接入检索结果
+- [ ] 保持 `execution_id / trace_id / agent_version` 链路
+- [ ] 权限过滤必须发生在检索结果进入模型上下文之前
+- [ ] 引用结果写入 Observability
 
 ## 3. 前端并行开发顺序
 
@@ -110,7 +114,7 @@ Knowledge Base
 
 ## 6. 当前状态
 
-**Phase 1.4-A 已完成本地手工验收。当前开发位置为 Phase 1.4-B Document ingestion / Chunk 的本地验收阶段。** 本轮已提交 migration、chunk model、parser/cleaner、deterministic chunk service、ingestion API、pytest 与独立 PowerShell 手工脚本；尚未宣称 1.4-B 最终验收完成。
+**Phase 1.4-A 已完成，Phase 1.4-B 已完成本地手工验收，当前开发位置进入 Phase 1.4-C Retrieval contract 本地验收阶段。** 当前已提交 provider-neutral Embedding / Retriever / Reranker interface、检索响应模型、RBAC 过滤的 lexical retrieval API、pytest 单元覆盖与独立 PowerShell 手工场景。下一步先完成 Retrieval contract 的 pytest + 手工验收，再进入前端 Knowledge 管理端与 Runtime integration。
 
 ## 7. 暂不在第一轮实现
 
