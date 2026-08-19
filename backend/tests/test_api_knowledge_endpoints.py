@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.schemas.knowledge import KnowledgeDocumentPage
+from app.schemas.knowledge_retrieval import KnowledgeRetrievalResponse
 
 client = TestClient(app)
 
@@ -18,6 +19,15 @@ def test_knowledge_routes_are_registered():
     assert ("/api/v1/knowledge/{knowledge_base_id}/documents/{document_id}", ("GET",)) in paths
     assert ("/api/v1/knowledge/{knowledge_base_id}/documents/{document_id}/versions", ("GET",)) in paths
     assert ("/api/v1/knowledge/{knowledge_base_id}/documents/{document_id}/versions", ("POST",)) in paths
+
+
+def test_retrieval_route_has_typed_response_and_authentication():
+    route = next(
+        route for route in app.routes
+        if route.path == "/api/v1/knowledge/retrieve" and "POST" in (route.methods or set())
+    )
+    assert route.response_model is KnowledgeRetrievalResponse
+    assert client.post("/api/v1/knowledge/retrieve", json={"query": "报销规则"}).status_code == 401
 
 
 def test_knowledge_list_requires_bearer_authentication():
