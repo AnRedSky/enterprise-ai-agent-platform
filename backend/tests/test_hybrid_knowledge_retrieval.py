@@ -26,6 +26,41 @@ def test_weighted_fusion_combines_candidates_and_preserves_stable_order():
     assert results[0].source == "lexical+vector"
 
 
+def test_hybrid_score_breakdown_exposes_real_source_scores_and_weights():
+    service = HybridRetrievalService(HybridRetrievalConfig(lexical_weight=0.4, vector_weight=0.6))
+
+    results = service.fuse(
+        lexical=[candidate("chunk-a", 1.0, "lexical")],
+        vector=[candidate("chunk-a", 0.5, "vector")],
+        top_k=1,
+    )
+
+    breakdown = results[0].payload["hybrid_score_breakdown"]
+    assert breakdown == {
+        "lexical_score": 1.0,
+        "vector_score": 0.5,
+        "lexical_weight": 0.4,
+        "vector_weight": 0.6,
+        "fused_score": 0.7,
+        "support": ["lexical", "vector"],
+    }
+
+
+def test_single_source_breakdown_keeps_missing_signal_explicit():
+    service = HybridRetrievalService()
+
+    results = service.fuse([candidate("chunk-a", 0.9, "lexical")], [], top_k=1)
+
+    assert results[0].payload["hybrid_score_breakdown"] == {
+        "lexical_score": 0.9,
+        "vector_score": None,
+        "lexical_weight": 0.5,
+        "vector_weight": 0.5,
+        "fused_score": 0.9,
+        "support": ["lexical"],
+    }
+
+
 def test_duplicate_candidate_from_one_source_uses_highest_score():
     service = HybridRetrievalService()
 
