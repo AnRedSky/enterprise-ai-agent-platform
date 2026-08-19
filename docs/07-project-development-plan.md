@@ -12,10 +12,11 @@
 | Phase 1.3-D | Observability | 核心执行链路已完成 |
 | Phase 1.3-E | Vue 管理端深化 | 基础管理闭环已完成 |
 | Phase 1.4-A | Knowledge Registry | **本地手工验收通过：CRUD、Version、分页、删除、Owner/RBAC 闭环通过** |
-| Phase 1.4-B | Document ingestion / Chunk | **Backend contract / migration / parser-cleaner / deterministic chunk / persistence / API / pytest / 手工脚本已提交；待本地迁移与回归验收** |
-| Phase 1.4-C | Retrieval contract | **核心检索服务已实现；进入 Runtime 联调** |
+| Phase 1.4-B | Document ingestion / Chunk | **Backend contract / migration / parser-cleaner / deterministic chunk / persistence / API / pytest / 手工脚本已提交；本地迁移与回归验收通过** |
+| Phase 1.4-C | Retrieval contract | **核心检索服务已实现；本地 pytest + Retrieval 手工验收通过** |
 | Phase 1.4-D | Runtime Knowledge integration | **联调门禁已建立；Auth → Knowledge → Document → Version → Ingest → AgentVersion → Runtime Chat → Citation → Audit/Observability 已完成本地回归** |
-| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | **进行中：Knowledge Workbench、Retrieval Debug、检索 loading/error/empty、结果与 Citation Detail 已落地；继续补齐前端回归与浏览器验收** |
+| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | **lexical-v2、Evaluation Dataset、真实 lexical baseline、Recall/Precision/MRR quality gate 已完成并纳入 CI；进入真实 Embedding / Vector DB provider replacement validation** |
+| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | **进行中：Knowledge Workbench、Retrieval Debug、检索 loading/error/empty、结果与 Citation Detail 已落地；继续补齐 Runtime execution 关联与浏览器验收** |
 | Phase 1.5 | Workflow / Governance | 后续 |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`。
