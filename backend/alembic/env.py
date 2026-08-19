@@ -10,6 +10,7 @@ from app.models.core import Base
 from app.models.execution import Execution, ExecutionEvent  # noqa: F401
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion  # noqa: F401
 from app.models.workflow import Workflow, WorkflowVersion  # noqa: F401
+from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution  # noqa: F401
 
 
 config = context.config
