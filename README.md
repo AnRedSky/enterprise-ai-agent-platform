@@ -9,6 +9,7 @@
 - [系统架构](docs/ARCHITECTURE.md)
 - [项目开发规划](docs/07-project-development-plan.md)
 - [Phase 1.4 Knowledge / RAG](docs/11-phase-1.4-knowledge-rag-plan.md)
+- [Phase 1.4-E Vector Retrieval Provider](docs/12-phase-1.4-e-vector-retrieval-provider.md)
 - [本地功能测试与验收](docs/LOCAL_TESTING.md)
 - [提交规范](docs/CONTRIBUTING.md)
 
@@ -41,6 +42,8 @@ Knowledge / RAG 已完成：
 5. Runtime Knowledge integration
 6. Vue Knowledge 管理与 Retrieval Debug
 7. lexical-v2 Evaluation baseline 与本地 quality gate
+8. OpenAI-compatible Embedding Provider contract 与可选真实 probe
+9. provider-neutral Vector Retrieval contract 与 deterministic in-memory adapter
 
 当前正在推进真实 Embedding / Vector DB provider replacement validation：
 
@@ -48,7 +51,9 @@ Knowledge / RAG 已完成：
 - 已提供 OpenAI-compatible Embedding adapter
 - 已提供本地 `httpx.MockTransport` contract tests
 - 已提供可选真实 provider probe
-- 后续将继续接入 provider-neutral vector retrieval adapter，再验证真实 Vector DB provider
+- 已提供 `VectorRetrievalProvider` contract
+- 已提供本地 deterministic in-memory vector adapter，仅用于 contract tests
+- 后续继续接入真实 Vector DB provider，再进行 lexical / vector / hybrid 质量对比
 
 前后端按“后端 contract → 后端测试 → 前端 API/测试 → 联调 → Runtime 集成 → 全量回归”的顺序推进。
 
@@ -88,6 +93,32 @@ uv run python run.py
 
 不要使用系统 Python 或全局 pip 安装项目运行依赖。
 
+### Knowledge / Embedding / Vector 配置
+
+本地 `.env` 需要按实际 Provider 补充配置；Git 只提交 `.env.example`。
+
+Embedding：
+
+```text
+EMBEDDING_PROVIDER=none
+EMBEDDING_BASE_URL=
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=
+EMBEDDING_TIMEOUT_SECONDS=30
+```
+
+Vector Retrieval：
+
+```text
+VECTOR_PROVIDER=none
+VECTOR_DB_URL=
+VECTOR_DB_COLLECTION=knowledge_chunks
+VECTOR_TOP_K=5
+VECTOR_MIN_SCORE=0.0
+```
+
+默认 `VECTOR_PROVIDER=none`，不会连接真实 Vector DB。当前 in-memory vector adapter 仅用于本地 contract tests。真实 Vector DB 接入前，先配置对应的 `VECTOR_*` 参数并完成本地专项验收。
+
 ## 本地启动
 
 ```bash
@@ -119,6 +150,14 @@ cd backend
 uv run pytest -q
 ```
 
+Vector / Embedding contract：
+
+```powershell
+cd backend
+uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_provider_validation.ps1
+```
+
 Frontend：
 
 ```powershell
@@ -127,14 +166,7 @@ npm test
 npm run build
 ```
 
-Embedding Provider 本地验证：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_provider_validation.ps1
-```
-
-未配置真实 Embedding provider 时，脚本只执行 contract tests 并跳过真实 provider probe；配置 `EMBEDDING_PROVIDER=openai-compatible` 后才会发起真实 endpoint 请求。
+Embedding Provider 本地验证未配置真实 Provider 时，脚本只执行 contract tests 并跳过真实 provider probe；配置 `EMBEDDING_PROVIDER=openai-compatible` 后才会发起真实 endpoint 请求。
 
 当前阶段测试与质量门禁均在本地执行，暂不执行 GitHub Actions CI。
 
@@ -155,6 +187,16 @@ EMBEDDING_PROVIDER=openai-compatible
 EMBEDDING_BASE_URL=https://your-provider.example/v1
 EMBEDDING_API_KEY=your-key
 EMBEDDING_MODEL=your-embedding-model
+```
+
+真实 Vector DB 接入时，再按对应 adapter 要求设置：
+
+```text
+VECTOR_PROVIDER=<provider>
+VECTOR_DB_URL=<local-only-endpoint>
+VECTOR_DB_COLLECTION=knowledge_chunks
+VECTOR_TOP_K=5
+VECTOR_MIN_SCORE=0.0
 ```
 
 禁止将 `.env` 或任何密钥提交到 Git。
