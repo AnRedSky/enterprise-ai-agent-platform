@@ -11,12 +11,12 @@
 | Phase 1.3-C | Memory | 核心能力已完成；后续继续生产化治理 |
 | Phase 1.3-D | Observability | 核心执行链路已完成 |
 | Phase 1.3-E | Vue 管理端深化 | 基础管理闭环已完成 |
-| Phase 1.4-A | Knowledge Registry | **本地手工验收通过：CRUD、Version、分页、删除、Owner/RBAC 闭环通过** |
-| Phase 1.4-B | Document ingestion / Chunk | **Backend contract / migration / parser-cleaner / deterministic chunk / persistence / API / pytest / 手工脚本已提交；本地迁移与回归验收通过** |
-| Phase 1.4-C | Retrieval contract | **核心检索服务已实现；本地 pytest + Retrieval 手工验收通过** |
-| Phase 1.4-D | Runtime Knowledge integration | **联调门禁已建立；Auth → Knowledge → Document → Version → Ingest → AgentVersion → Runtime Chat → Citation → Audit/Observability 已完成本地回归** |
-| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | **lexical-v2、Evaluation Dataset、Recall/Precision/MRR quality gate、OpenAI-compatible Embedding Provider、Vector Retrieval provider-neutral contract、PostgreSQL + pgvector adapter、0010 migration、scope/dimension contract 已完成；当前修复本地 PostgreSQL pgvector 运行环境与 migration 验收门禁** |
-| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | **进行中：Knowledge Workbench、Retrieval Debug、检索 loading/error/empty、结果与 Citation Detail 已落地；继续补齐 Runtime execution 关联与浏览器验收** |
+| Phase 1.4-A | Knowledge Registry | 本地手工验收通过 |
+| Phase 1.4-B | Document ingestion / Chunk | Backend contract、migration、chunk persistence、API、pytest、手工脚本验收通过 |
+| Phase 1.4-C | Retrieval contract | lexical-v2 核心检索与质量门禁已通过 |
+| Phase 1.4-D | Runtime Knowledge integration | Auth → Knowledge → Ingest → AgentVersion → Runtime Chat → Citation 联调通过 |
+| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | **pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；待本地真实 Embedding 配置后验收** |
+| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | 进行中 |
 | Phase 1.5 | Workflow / Governance | 后续 |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md` 与 `docs/12-phase-1.4-e-vector-retrieval-provider.md`。
@@ -51,19 +51,19 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 
 ## 7. 当前下一任务
 
-**Phase 1.4-E → pgvector 环境验收 → 真实 Embedding → pgvector indexing / vector retrieval 闭环**：
+**Phase 1.4-E → Vector Retrieval API 闭环**：
 
-1. 推荐通过 `docker compose up -d postgres redis` 使用 `pgvector/pgvector:pg16`，确保 PostgreSQL 服务端具备 `vector` extension。
-2. 本地 PostgreSQL 执行 `uv run alembic upgrade head`，确认 pgvector extension、table、HNSW index。
-3. 执行 `scripts/run_pgvector_validation.ps1`，确认 upsert、cosine search、Knowledge Base scope、cleanup。
-4. 将真实 Embedding Provider 接入 Document Chunk indexing，建立 Chunk → Embedding → pgvector upsert 链路。
-5. Retrieval API 增加 vector retrieval mode，并保留 lexical-v2。
-6. 使用现有 5 条 Evaluation Dataset 对 lexical-v2 / vector retrieval 做 Recall@K、Precision@K、MRR 对比。
-7. vector retrieval 稳定后进入 hybrid retrieval（lexical + vector）。
+1. 本地执行 `uv run alembic upgrade head`，确认 migration 0011。
+2. 运行 vector / indexing contract tests。
+3. 如配置真实 Embedding，执行 `scripts/run_embedding_provider_validation.ps1`。
+4. 设置 `VECTOR_PROVIDER=pgvector` 后，通过 Knowledge ingest 验证 `Chunk → Embedding → pgvector upsert`，检查 `vector_index_status=ready`。
+5. Retrieval API 增加 `mode=vector`，保持 lexical-v2 不变。
+6. 使用现有 Evaluation Dataset 对 lexical-v2 / vector retrieval 做 Recall@K、Precision@K、MRR 对比。
+7. 稳定后进入 hybrid retrieval。
 
-### 当前阻塞与处理规则
+### 当前规则
 
-- migration 0010 的 `CREATE EXTENSION vector` 失败属于 PostgreSQL 服务端缺少 pgvector，不属于 Python / uv 依赖问题。
-- 不通过修改 migration 绕过 `vector` 类型；应修复 PostgreSQL 运行环境。
-- 本地直接安装 PostgreSQL 16 时，需要单独安装与 PG16 匹配的 pgvector。
-- 当前阶段不执行 GitHub Actions CI；测试由本地 `uv run` 环境执行并由开发者反馈结果。
+- 本地开发 / 测试阶段，不执行 GitHub Actions CI。
+- Backend 所有测试、脚本、Alembic 使用 `uv run` 项目环境。
+- 真实 `.env` / API Key / DB credentials 不提交 Git。
+- pgvector 必须由 PostgreSQL 服务端提供，不能通过 Python 依赖替代。
