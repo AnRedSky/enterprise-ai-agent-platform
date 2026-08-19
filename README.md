@@ -1,6 +1,6 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，正在进入 Phase 1.4 Knowledge / RAG 开发。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 正在进行生产化深化与真实 Provider 替换验证。
 
 ## 项目文档
 
@@ -32,7 +32,7 @@
 
 ### Phase 1.4
 
-当前进入 Knowledge / RAG：
+Knowledge / RAG 已完成：
 
 1. Knowledge Registry
 2. Document / Version
@@ -40,6 +40,15 @@
 4. Retrieval contract
 5. Runtime Knowledge integration
 6. Vue Knowledge 管理与 Retrieval Debug
+7. lexical-v2 Evaluation baseline 与本地 quality gate
+
+当前正在推进真实 Embedding / Vector DB provider replacement validation：
+
+- `EmbeddingProvider` 保持 provider-neutral contract
+- 已提供 OpenAI-compatible Embedding adapter
+- 已提供本地 `httpx.MockTransport` contract tests
+- 已提供可选真实 provider probe
+- 后续将继续接入 provider-neutral vector retrieval adapter，再验证真实 Vector DB provider
 
 前后端按“后端 contract → 后端测试 → 前端 API/测试 → 联调 → Runtime 集成 → 全量回归”的顺序推进。
 
@@ -66,6 +75,18 @@ frontend/
 Copy-Item backend/.env.example backend/.env
 Copy-Item frontend/.env.example frontend/.env
 ```
+
+Backend 使用 **uv** 管理依赖与虚拟环境，后端测试、脚本和服务运行统一使用项目 `.venv` 中的 `uv run`：
+
+```powershell
+cd backend
+uv sync
+uv run pytest -q
+uv run alembic upgrade head
+uv run python run.py
+```
+
+不要使用系统 Python 或全局 pip 安装项目运行依赖。
 
 ## 本地启动
 
@@ -106,7 +127,16 @@ npm test
 npm run build
 ```
 
-前后端手工测试脚本保持独立执行。
+Embedding Provider 本地验证：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_provider_validation.ps1
+```
+
+未配置真实 Embedding provider 时，脚本只执行 contract tests 并跳过真实 provider probe；配置 `EMBEDDING_PROVIDER=openai-compatible` 后才会发起真实 endpoint 请求。
+
+当前阶段测试与质量门禁均在本地执行，暂不执行 GitHub Actions CI。
 
 ## 配置真实模型
 
@@ -116,6 +146,15 @@ npm run build
 MODEL_PROVIDER=openai-compatible
 MODEL_BASE_URL=https://your-provider.example/v1
 MODEL_API_KEY=your-key
+```
+
+如需验证真实 Embedding provider，设置：
+
+```text
+EMBEDDING_PROVIDER=openai-compatible
+EMBEDDING_BASE_URL=https://your-provider.example/v1
+EMBEDDING_API_KEY=your-key
+EMBEDDING_MODEL=your-embedding-model
 ```
 
 禁止将 `.env` 或任何密钥提交到 Git。
