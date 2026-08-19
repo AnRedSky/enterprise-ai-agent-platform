@@ -43,10 +43,8 @@ class HybridRetrievalService:
 
     Candidates supported by both retrieval signals are ranked ahead of
     single-source candidates. Within each support tier, the fused/normalized
-    score is descending and chunk_id is the deterministic tie-breaker. This
-    makes hybrid evidence a first-class ranking signal while keeping ordering
-    stable across database execution order. Reranking/model-based fusion is
-    intentionally deferred to the next phase.
+    score is descending and chunk_id is the deterministic tie-breaker. Reranking
+    and model-based fusion are intentionally deferred to a later phase.
     """
 
     RETRIEVAL_MODE = "hybrid"
@@ -95,7 +93,6 @@ class HybridRetrievalService:
             elif lexical_score is not None:
                 score = lexical_score
             else:
-                # Every candidate is guaranteed to come from at least one source.
                 score = vector_score  # type: ignore[assignment]
 
             source_parts: list[str] = []
@@ -103,12 +100,22 @@ class HybridRetrievalService:
                 source_parts.append("lexical")
             if vector_score is not None:
                 source_parts.append("vector")
+
+            payload = dict(candidate.payload)
+            payload["hybrid_score_breakdown"] = {
+                "lexical_score": round(lexical_score, 6) if lexical_score is not None else None,
+                "vector_score": round(vector_score, 6) if vector_score is not None else None,
+                "lexical_weight": self.config.lexical_weight,
+                "vector_weight": self.config.vector_weight,
+                "fused_score": round(score, 6),
+                "support": source_parts,
+            }
             fused.append(
                 HybridCandidate(
                     chunk_id=chunk_id,
                     score=round(score, 6),
                     source="+".join(source_parts),
-                    payload=candidate.payload,
+                    payload=payload,
                 )
             )
 
