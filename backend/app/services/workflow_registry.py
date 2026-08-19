@@ -12,6 +12,7 @@ from app.models.workflow import Workflow, WorkflowVersion
 
 class WorkflowRegistry:
     ALLOWED_STATUSES = {"draft", "testing", "published", "deprecated", "archived"}
+    VERSION_PUBLISHABLE_STATUSES = {"draft", "testing"}
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -59,7 +60,7 @@ class WorkflowRegistry:
         result = await self.db.execute(
             select(WorkflowVersion)
             .where(WorkflowVersion.workflow_id == workflow_id)
-            .order_by(WorkflowVersion.created_at.desc())
+            .order_by(WorkflowVersion.created_at.desc(), WorkflowVersion.id.desc())
         )
         return list(result.scalars().all())
 
@@ -103,11 +104,26 @@ class WorkflowRegistry:
     async def publish(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID) -> WorkflowVersion:
         if workflow.status == "archived":
             raise HTTPException(409, "归档 Workflow 不允许发布")
-        if version.status in {"deprecated", "archived"}:
+        if version.workflow_id != workflow.id:
+            raise HTTPException(400, "Workflow 与版本不匹配")
+
+        # Publish is idempotent for the already-active version: do not emit duplicate audit events.
+        if workflow.published_version_id == version.id and version.status == "published":
+            return version
+        if version.status not in self.VERSION_PUBLISHABLE_STATUSES and version.status != "published":
             raise HTTPException(409, "当前版本状态不允许发布")
+
+        previous_id = workflow.published_version_id
+        if previous_id and previous_id != version.id:
+            previous = (
+                await self.db.execute(select(WorkflowVersion).where(WorkflowVersion.id == previous_id))
+            ).scalar_one_or_none()
+            if previous and previous.status == "published":
+                previous.status = "deprecated"
 
         version.status = "published"
         workflow.status = "published"
+        workflow.published_version_id = version.id
         self.db.add(
             AuditLog(
                 actor_id=actor_id,
@@ -115,7 +131,11 @@ class WorkflowRegistry:
                 resource_type="workflow_version",
                 resource_id=str(version.id),
                 status="success",
-                metadata_json={"workflow_id": str(workflow.id), "version": version.version},
+                metadata_json={
+                    "workflow_id": str(workflow.id),
+                    "version": version.version,
+                    "previous_version_id": str(previous_id) if previous_id else None,
+                },
             )
         )
         await self.db.commit()
