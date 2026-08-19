@@ -152,21 +152,20 @@ Retrieval Debug / Runtime Trace
 
 ### 当前阶段
 
-**Phase 1.4-G-01：Retrieval Debug 的 Hybrid 来源与 Score Breakdown 展示。**
+**Phase 1.4-G-02 已完成：Runtime execution / trace 与 Retrieval Debug 关联已完成并通过本地 Backend 回归。当前主线准备进入 Phase 1.5 Workflow / Governance。**
 
-当前任务必须满足：
+G-02 已验证：
 
-1. lexical-v2 从 PostgreSQL Knowledge 数据读取；
-2. vector retrieval 从 PostgreSQL/pgvector 读取；
-3. 两路检索均执行 Knowledge Base / Document scope 与 RBAC；
-4. Hybrid 使用 provider-neutral fusion contract；
-5. Hybrid API 必须返回可追溯的 lexical/vector source、单路 score、权重与 fused score；
-6. Retrieval Debug 必须展示真实 API 返回的 score breakdown，不在前端重新计算业务分数；
-7. 线上检索不得从 JSON/JSONL 结果文件读取；
-8. JSON/JSONL 仅可作为 Evaluation Dataset / 测试输入或测试输出；
-9. 除真实模型生成外，业务链路尽可能走真实数据库、Provider、API 与 Runtime 流程；
-10. Reranker 在 Hybrid 基础链路稳定并完成评测后再接入；
-11. G-02 后续继续关联 Runtime execution / trace。
+1. Runtime trace metadata contract 可持久化；
+2. Retrieval span 可关联 `top_k / result_count / retrieval_sources / citations` 等真实元数据；
+3. Runtime execution / events 查询继续遵守 RBAC scope；
+4. 前端 Timeline 展示后端真实 metadata，不重新计算业务分数；
+5. PostgreSQL migration `0012_execution_event_metadata` 已到 head；
+6. 开发者本地 `uv run pytest -q`：**152 passed，0 warnings**。
+
+### Phase 1.5 开发入口规则
+
+Phase 1.5 在具体业务代码开发前，必须先建立明确的 Workflow / Governance 开发基线，包括领域边界、状态机、数据模型、API contract、RBAC / audit 要求、验收场景与任务拆解。基线确认后，严格按照本文件固定开发顺序逐项推进。
 
 ## 7. Git / 提交规范
 
