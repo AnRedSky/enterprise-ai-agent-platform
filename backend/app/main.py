@@ -9,6 +9,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_ingestion import router as knowledge_ingestion_router
 from app.api.knowledge_retrieval import router as knowledge_retrieval_router
 from app.api.workflows import router as workflows_router
+from app.api.workflow_executions import router as workflow_executions_router
 from app.core.config import settings
 
 app = FastAPI(title=settings.app_name, version="0.2.0")
@@ -28,6 +29,7 @@ app.include_router(knowledge_router, prefix="/api/v1/knowledge", tags=["knowledg
 app.include_router(knowledge_ingestion_router, prefix="/api/v1/knowledge", tags=["knowledge-ingestion"])
 app.include_router(knowledge_retrieval_router, prefix="/api/v1/knowledge", tags=["knowledge-retrieval"])
 app.include_router(workflows_router, prefix="/api/v1/workflows", tags=["workflows"])
+app.include_router(workflow_executions_router, prefix="/api/v1/workflows", tags=["workflow-executions"])
 
 
 @app.get("/health")
