@@ -75,7 +75,9 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] 新增本地真实 provider probe：`backend/scripts/validate_embedding_provider.py`
 - [x] 新增统一验证入口：`backend/scripts/run_embedding_provider_validation.ps1`
 - [ ] 本地使用真实 Embedding provider 完成 endpoint / model / dimension / error boundary 联调
-- [ ] 将真实 embedding 输出接入 provider-neutral vector retrieval adapter
+- [x] 建立 provider-neutral Vector Retrieval adapter contract
+- [x] 建立 deterministic in-memory vector adapter，仅用于本地 contract tests
+- [x] 增加 vector top-k / min-score / dimension mismatch / stable tie-breaking 测试
 - [ ] 与真实 Vector DB provider 完成替换性联调
 - [ ] 真实 provider 上的 Recall / Precision / MRR 对比评测
 
@@ -129,9 +131,9 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E lexical-v2 Evaluation baseline 已完成。** 当前离线基线为 5 个 Evaluation Case，aggregate `Recall@K=1.0`、`Precision@K=0.5`、`MRR=1.0`。Quality gate 只允许指标保持或提升，并拒绝 case 数量、case 集合及单 case 指标回归；开发阶段仅作为本地质量门禁，不触发 CI。
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E lexical-v2 Evaluation baseline 与 Embedding Provider contract validation 已完成。** 当前离线基线为 5 个 Evaluation Case，aggregate `Recall@K=1.0`、`Precision@K=0.5`、`MRR=1.0`。Quality gate 只允许指标保持或提升，并拒绝 case 数量、case 集合及单 case 指标回归；开发阶段仅作为本地质量门禁，不触发 CI。
 
-当前已进入真实 Embedding provider replacement validation：OpenAI-compatible adapter 与本地 contract tests 已完成，下一步由本地环境执行真实 provider probe，并继续实现 vector retrieval adapter 与真实 Vector DB provider 替换性验证。
+当前 Phase 1.4-E 已从“Embedding Provider 验证”进入“Vector Retrieval Provider contract”阶段：已建立 `VectorRetrievalProvider`、`VectorRecord`、`VectorSearchResult` 以及 deterministic in-memory adapter。真实 Vector DB 尚未接入，下一步先完成真实 Vector DB adapter contract 与 metadata / Knowledge Base scope，再选择 pgvector 等具体实现。
 
 ## 7. 暂不在第一轮实现
 
