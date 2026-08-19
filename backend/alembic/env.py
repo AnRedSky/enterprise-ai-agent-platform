@@ -83,11 +83,11 @@ async def run_async_migrations():
         poolclass=pool.NullPool,
     )
     async with connectable.connect() as connection:
-        await _prepare_alembic_version_table(connection)
-        await connection.run_sync(
-            lambda c: context.configure(connection=c, target_metadata=target_metadata)
-        )
         async with connection.begin():
+            await _prepare_alembic_version_table(connection)
+            await connection.run_sync(
+                lambda c: context.configure(connection=c, target_metadata=target_metadata)
+            )
             await connection.run_sync(lambda _: context.run_migrations())
     await connectable.dispose()
 
