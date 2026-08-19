@@ -18,6 +18,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentVersionOut,
 )
 from app.services.knowledge_registry import KnowledgeRegistry
+from app.services.knowledge_vector_indexing import KnowledgeVectorIndexingService
 
 router = APIRouter()
 
@@ -188,3 +189,22 @@ async def create_version(
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Document 不存在或无权访问")
     return await registry.create_version(document, owner_id, owner_id, payload.model_dump(), is_admin)
+
+
+@router.post("/{knowledge_base_id}/documents/{document_id}/versions/{version_id}/vector-index", response_model=KnowledgeDocumentVersionOut)
+async def rebuild_vector_index(
+    knowledge_base_id: UUID,
+    document_id: UUID,
+    version_id: UUID,
+    claims=Depends(require_roles("user", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    owner_id, is_admin = _identity(claims)
+    registry = KnowledgeRegistry(db)
+    document = await registry.get_document(document_id, owner_id, is_admin)
+    if document.knowledge_base_id != knowledge_base_id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Document 不存在或无权访问")
+    await KnowledgeVectorIndexingService(db).index_version(version_id, owner_id, is_admin)
+    version = await registry.get_version(version_id, owner_id, is_admin)
+    return version
