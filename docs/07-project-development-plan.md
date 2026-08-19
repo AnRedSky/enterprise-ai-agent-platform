@@ -17,7 +17,7 @@
 | Phase 1.4-D | Runtime Knowledge integration | Auth → Knowledge → Ingest → AgentVersion → Runtime Chat → Citation 联调通过 |
 | Phase 1.4-E | Knowledge / Retrieval 生产化深化 | pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；mock + PostgreSQL/pgvector deterministic quality validation 已通过；真实 Embedding 语义质量仍待真实 Provider |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug / Runtime Trace | **G-01 / G-02 已完成；Backend 152 passed、0 warnings；migration 0012 已到 head** |
-| Phase 1.5 | Workflow / Governance | **开发基线已建立；1.5-A Workflow Definition Contract Ready** |
+| Phase 1.5 | Workflow / Governance | **基线已建立；1.5-A Backend Domain/API/Migration/pytest/手工验收实现进行中** |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`、`docs/12-phase-1.4-e-vector-retrieval-provider.md` 与 `docs/13-phase-1.5-workflow-governance-plan.md`。
 
@@ -49,18 +49,29 @@ Frontend production build
 
 Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内 Python 命令必须通过 `uv run` 执行。Frontend 必须同时通过 `npm test` 与 `npm run build` 后才能进入下一模块。
 
-## 7. 当前下一任务
+## 7. 当前任务
 
-**Phase 1.5-A Workflow Definition Contract**：
+**Phase 1.5-A Workflow Definition Contract** 已完成首轮代码落地，当前等待开发者本地 Backend 验证，不提前声明测试通过：
 
-1. 建立 Workflow / WorkflowVersion Backend Domain。
-2. 明确 Workflow 生命周期、Version 不可变与 Publish 规则。
-3. 建立 `/api/v1/workflows` Registry / Version API contract。
-4. 建立 tenant / owner isolation 与 Admin scope contract。
-5. 完成 Alembic migration + Backend pytest + Backend 独立手工验收脚本。
-6. Backend 通过后才进入 Frontend API Types / Vitest / UI。
+1. `Workflow` / `WorkflowVersion` Backend Domain 已建立。
+2. `/api/v1/workflows` Registry / Version API 已建立。
+3. Workflow owner/admin scope 已建立。
+4. Workflow Version 唯一约束、生命周期字段与 Published 原地修改保护已建立。
+5. Publish 写入现有 AuditLog contract。
+6. Alembic `0013_workflow_definition` 已建立。
+7. Backend-only 验收脚本：`backend/scripts/run_phase_1_5_a_workflow_registry_validation.ps1`。
+8. **未执行的本地测试结果不写入项目状态；Tenant isolation 不宣称完成，因为当前 Identity 尚无 tenant contract。**
 
-详细范围、状态机、字段、API、RBAC、验收门禁见 `docs/13-phase-1.5-workflow-governance-plan.md`。
+开发者本地验证命令：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_a_workflow_registry_validation.ps1
+```
+
+该脚本严格只执行 Backend migration / pytest，不调用 Frontend 测试；Frontend 必须按准则独立执行 `npm test` 与 `npm run build`。
+
+只有 Backend 验证通过后，才进入 Phase 1.5-A Frontend API Types / Vitest / UI。
 
 ### 当前规则
 
