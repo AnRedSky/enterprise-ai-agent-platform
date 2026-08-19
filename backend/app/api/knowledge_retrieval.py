@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_roles
 from app.dependencies.db import get_db
 from app.schemas.knowledge_retrieval import KnowledgeRetrievalRequest, KnowledgeRetrievalResponse
+from app.services.hybrid_knowledge_retrieval_service import HybridKnowledgeRetrievalService
 from app.services.vector_knowledge_retrieval import KnowledgeRetrievalRouterService
 
 router = APIRouter()
@@ -22,18 +23,32 @@ async def retrieve_knowledge(
     db: AsyncSession = Depends(get_db),
 ):
     owner_id, is_admin = _identity(claims)
-    results, retrieval_mode, fallback_used = await KnowledgeRetrievalRouterService(db).retrieve(
-        mode=payload.mode,
-        fallback_to_lexical=payload.fallback_to_lexical,
-        query=payload.query,
-        top_k=payload.top_k,
-        owner_id=owner_id,
-        is_admin=is_admin,
-        knowledge_base_id=payload.knowledge_base_id,
-        document_id=payload.document_id,
-        min_score=payload.min_score,
-        dedupe=payload.dedupe,
-    )
+    common_kwargs = {
+        "query": payload.query,
+        "top_k": payload.top_k,
+        "owner_id": owner_id,
+        "is_admin": is_admin,
+        "knowledge_base_id": payload.knowledge_base_id,
+        "document_id": payload.document_id,
+        "min_score": payload.min_score,
+        "dedupe": payload.dedupe,
+    }
+
+    if payload.mode == "hybrid":
+        results = await HybridKnowledgeRetrievalService(db).retrieve(
+            **common_kwargs,
+            lexical_weight=payload.lexical_weight,
+            vector_weight=payload.vector_weight,
+        )
+        retrieval_mode = "hybrid"
+        fallback_used = False
+    else:
+        results, retrieval_mode, fallback_used = await KnowledgeRetrievalRouterService(db).retrieve(
+            mode=payload.mode,
+            fallback_to_lexical=payload.fallback_to_lexical,
+            **common_kwargs,
+        )
+
     return {
         "query": payload.query,
         "top_k": payload.top_k,
