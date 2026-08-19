@@ -1,6 +1,6 @@
 # Phase 1.4：Knowledge / RAG 功能闭环规划与执行基线
 
-> 本文是 Phase 1.4 的开发基线。所有开发直接提交 `main`，不创建新的功能分支。固定开发顺序以 `docs/DEVELOPMENT.md` 为准。
+> 本文是 Phase 1.4 的开发基线。所有开发直接提交 `main`，不创建新的功能分支。固定开发顺序以 `docs/DEVELOPMENT.md` 为准。当前项目处于本地开发 / 测试阶段，暂不执行 GitHub Actions CI；质量门禁由本地 `uv run` / `npm` 测试与手工验收脚本承担。
 
 ## 1. 阶段目标
 
@@ -68,9 +68,15 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] 增加 provider-neutral 离线评测 runner：`backend/scripts/evaluate_knowledge_retrieval_baseline.py`
 - [x] 用真实 lexical retrieval 输出运行 Evaluation Dataset，形成基线指标快照：`backend/evaluation/knowledge_retrieval_baseline.json`
 - [x] 增加 Retrieval baseline quality gate：`backend/scripts/check_knowledge_retrieval_quality.py`
-- [x] quality gate 纳入 CI，Backend pytest 后必须执行 `uv run python scripts/check_knowledge_retrieval_quality.py`
+- [x] quality gate 本地可执行，作为开发阶段检索质量回归门禁；当前不接入 GitHub Actions CI
 - [x] quality gate 回归测试覆盖 aggregate / case-level 指标下降及 case-set 漂移
-- [ ] 与真实 Embedding / Vector DB provider 的替换性联调
+- [x] 新增 OpenAI-compatible Embedding Provider adapter，保持 `EmbeddingProvider` contract 不变
+- [x] 新增 Embedding Provider contract tests，使用 `httpx.MockTransport` 验证请求、排序、异常响应
+- [x] 新增本地真实 provider probe：`backend/scripts/validate_embedding_provider.py`
+- [x] 新增统一验证入口：`backend/scripts/run_embedding_provider_validation.ps1`
+- [ ] 本地使用真实 Embedding provider 完成 endpoint / model / dimension / error boundary 联调
+- [ ] 将真实 embedding 输出接入 provider-neutral vector retrieval adapter
+- [ ] 与真实 Vector DB provider 完成替换性联调
 - [ ] 真实 provider 上的 Recall / Precision / MRR 对比评测
 
 ## 3. 前端并行开发顺序
@@ -107,7 +113,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 7. `backend pytest` + `frontend npm test` + `frontend npm run build`
 8. 更新验收文档后提交 `main`
 
-禁止先做孤立 UI，再反向修改 API；禁止前后端各自定义不同的领域模型。
+当前阶段测试由本地开发环境执行，不执行 GitHub Actions CI。
 
 ## 5. 第一轮验收标准
 
@@ -123,9 +129,9 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 lexical-v2 Evaluation baseline 已完成并纳入 CI quality gate。** 当前离线基线为 5 个 Evaluation Case，aggregate `Recall@K=1.0`、`Precision@K=0.5`、`MRR=1.0`。Quality gate 只允许指标保持或提升，并拒绝 case 数量、case 集合及单 case 指标回归，从而避免出现“pytest 通过但检索质量悄然下降”的情况。
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E lexical-v2 Evaluation baseline 已完成。** 当前离线基线为 5 个 Evaluation Case，aggregate `Recall@K=1.0`、`Precision@K=0.5`、`MRR=1.0`。Quality gate 只允许指标保持或提升，并拒绝 case 数量、case 集合及单 case 指标回归；开发阶段仅作为本地质量门禁，不触发 CI。
 
-下一步进入真实 Embedding / Vector DB provider replacement validation，并在保持 provider-neutral contract 的前提下对比 lexical-v2 与真实 provider 的 Recall / Precision / MRR。
+当前已进入真实 Embedding provider replacement validation：OpenAI-compatible adapter 与本地 contract tests 已完成，下一步由本地环境执行真实 provider probe，并继续实现 vector retrieval adapter 与真实 Vector DB provider 替换性验证。
 
 ## 7. 暂不在第一轮实现
 
