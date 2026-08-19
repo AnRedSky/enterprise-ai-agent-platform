@@ -21,14 +21,11 @@ uv run pytest -q
 if ($LASTEXITCODE -ne 0) { throw "Backend regression failed with exit code $LASTEXITCODE." }
 
 Write-Host '[4/5] Knowledge Retrieval evaluation + quality gate'
-$results = Join-Path $backend 'evaluation\vector_results.jsonl'
 & uv run python .\scripts\run_knowledge_retrieval_evaluation.py --k 3
-if ($LASTEXITCODE -ne 0) { throw "Knowledge Retrieval evaluation runner failed with exit code $LASTEXITCODE." }
-
-& uv run python .\scripts\evaluate_knowledge_retrieval_provider.py $results --k 3
 if ($LASTEXITCODE -ne 0) { throw "Retrieval provider quality gate failed with exit code $LASTEXITCODE." }
 
 Write-Host '[5/5] Validation summary'
 Write-Host 'Phase 1.4-E provider validation suite completed.'
-Write-Host "Retrieval Evaluation results: $results"
+Write-Host 'Knowledge Retrieval source: PostgreSQL/pgvector knowledge_chunks.'
+Write-Host 'Evaluation fixture JSON is test-data input only; retrieval results are never read from a JSON result file.'
 Write-Host 'Mock Embedding + PostgreSQL/pgvector validates the deterministic local retrieval pipeline; it does not prove real model semantic quality.'
