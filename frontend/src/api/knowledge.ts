@@ -4,6 +4,7 @@ export interface KnowledgeBase { id: string; name: string; description: string; 
 export interface KnowledgeDocument { id: string; knowledge_base_id: string; title: string; source_type: string; source_uri: string | null; status: string; current_version_id: string | null; created_at: string; updated_at: string; }
 export interface KnowledgeVersion { id: string; document_id: string; version: string; status: string; ingestion_status: string; source_uri: string | null; content_hash: string | null; content_text: string | null; created_by: string; created_at: string; }
 export interface KnowledgeChunk { id: string; document_version_id: string; chunk_index: number; content: string; start_offset: number; end_offset: number; }
+export interface HybridScoreBreakdown { lexical_score: number | null; vector_score: number | null; lexical_weight: number; vector_weight: number; fused_score: number; support: string[]; }
 export interface KnowledgePage<T> { items: T[]; total: number; page: number; page_size: number; }
 export interface RetrievalResult {
   document_id: string;
@@ -17,12 +18,15 @@ export interface RetrievalResult {
   content: string;
   matched_terms: string[];
   retrieval_mode: string;
+  retrieval_sources?: string[];
+  hybrid_score_breakdown?: HybridScoreBreakdown | null;
 }
 export interface RetrievalResponse {
   query: string;
   top_k: number;
   min_score: number;
   retrieval_mode: string;
+  fallback_used?: boolean;
   results: RetrievalResult[];
 }
 
@@ -37,4 +41,4 @@ export const listVersions = (knowledgeBaseId: string, documentId: string) => req
 export const createVersion = (knowledgeBaseId: string, documentId: string, payload: { version: string; source_uri?: string | null; content_hash?: string | null; content_text?: string | null; status?: string }) => request.post<KnowledgeVersion>(`/knowledge/${knowledgeBaseId}/documents/${documentId}/versions`, payload).then(r => r.data);
 export const ingestVersion = (versionId: string, payload?: { max_chars?: number; overlap_chars?: number }) => request.post<{ version_id: string; ingestion_status: string; chunk_count: number; content_hash: string }>(`/knowledge/versions/${versionId}/ingest`, payload).then(r => r.data);
 export const listChunks = (versionId: string) => request.get<KnowledgeChunk[]>(`/knowledge/versions/${versionId}/chunks`).then(r => r.data);
-export const retrieveKnowledge = (payload: { query: string; top_k?: number; min_score?: number; dedupe?: boolean; knowledge_base_id?: string; document_id?: string }) => request.post<RetrievalResponse>("/knowledge/retrieve", payload).then(r => r.data);
+export const retrieveKnowledge = (payload: { query: string; top_k?: number; min_score?: number; dedupe?: boolean; knowledge_base_id?: string; document_id?: string; mode?: "lexical-v2" | "vector" | "hybrid"; fallback_to_lexical?: boolean; lexical_weight?: number; vector_weight?: number }) => request.post<RetrievalResponse>("/knowledge/retrieve", payload).then(r => r.data);
