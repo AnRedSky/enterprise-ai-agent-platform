@@ -36,6 +36,21 @@ function Invoke-Json {
     }
 }
 
+# The runtime scenario uses the AgentVersion.knowledge_config column introduced
+# by migration 0009. Always bring the local database to the application head
+# before exercising the already-running API process; otherwise an upgraded
+# application can fail with HTTP 500 against an older schema.
+Write-Host '[RUN ] Database / alembic upgrade head' -ForegroundColor Gray
+Push-Location $PSScriptRoot\..
+try {
+    python -m alembic upgrade head
+    if ($LASTEXITCODE -ne 0) { throw ('Alembic upgrade failed with exit code ' + $LASTEXITCODE + '.') }
+}
+finally {
+    Pop-Location
+}
+Write-Host '[ OK  ] Database / alembic upgrade head' -ForegroundColor Green
+
 $register = Invoke-Json -Name 'Auth / register' -Method 'POST' -Path '/api/v1/auth/register' -Body @{ username = $username; password = $password }
 $login = Invoke-Json -Name 'Auth / login' -Method 'POST' -Path '/api/v1/auth/login' -Body @{ username = $username; password = $password }
 $headers = @{ Authorization = 'Bearer ' + [string]$login.access_token }
