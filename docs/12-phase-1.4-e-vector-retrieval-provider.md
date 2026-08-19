@@ -36,70 +36,54 @@ Knowledge Retrieval / Citation
 
 ### Local deterministic adapter
 
-`InMemoryVectorRetrievalProvider` 用于 contract tests，覆盖：
-
-- cosine similarity
-- stable tie-breaking
-- `top_k` / `min_score`
-- embedding dimension mismatch
-- Knowledge Base scope
+`InMemoryVectorRetrievalProvider` 用于 contract tests，覆盖 cosine similarity、stable tie-breaking、`top_k` / `min_score`、dimension mismatch、Knowledge Base scope。
 
 ### PostgreSQL + pgvector adapter
 
-新增 `PgVectorRetrievalProvider`，保持 SQLAlchemy / PostgreSQL 细节隔离在 adapter 层。
+`PgVectorRetrievalProvider` 已落地，隔离 SQLAlchemy / PostgreSQL 细节，并支持 batch upsert、cosine distance、top-k、min-score、Knowledge Base scope、dimension validation 与 metadata contract。
 
-当前实现提供：
+### 真实索引链路（本次新增）
 
-- batch sequential upsert / update
-- pgvector cosine distance (`<=>`)
-- `score = 1 - cosine_distance`
-- top-k 排序
-- min-score filtering
-- Knowledge Base scope filtering
-- embedding dimension validation
-- `knowledge_base_id` / `document_version_id` metadata contract
+新增 `KnowledgeVectorIndexingService`：
+
+```text
+Document Chunk
+  ↓
+OpenAI-compatible Embedding
+  ↓
+Embedding batch
+  ↓
+VectorRecord
+  ↓
+PgVectorRetrievalProvider.upsert
+  ↓
+knowledge_chunks
+```
+
+- `VECTOR_PROVIDER=none` 时保持兼容，vector index status 为 `skipped`。
+- `VECTOR_PROVIDER=pgvector` 时要求 `EMBEDDING_PROVIDER=openai-compatible`。
+- Embedding API 按 `EMBEDDING_BATCH_SIZE` 分批。
+- `KnowledgeDocumentVersion.vector_index_status`：`pending / processing / ready / skipped / failed`。
+- 保存实际 `embedding_model`，便于后续重建索引和排障。
+- Chunk 持久化与 Vector indexing 分成两个可恢复阶段；向量索引失败不会删除已经持久化的 chunks。
 
 ### Database migration
 
-新增 `0010_pgvector_knowledge_chunks`：
+- `0010_pgvector_knowledge_chunks`：pgvector extension、vector table、dimension、HNSW index。
+- `0011_knowledge_vector_index_status`：增加 vector indexing 状态与 embedding model。
 
-- `CREATE EXTENSION IF NOT EXISTS vector`
-- `knowledge_chunks` vector storage table
-- configurable `EMBEDDING_DIMENSION`
-- HNSW cosine index
-- Knowledge Base / Document Version scope indexes
-- chunk cascade cleanup
-
-Migration 通过项目统一入口执行：
+Migration：
 
 ```powershell
 cd backend
 uv run alembic upgrade head
 ```
 
-**重要：0010 要求数据库服务端已经安装 pgvector。** Python / `uv` 环境只提供 Alembic、SQLAlchemy 等客户端依赖，不能替 PostgreSQL 安装 `vector` extension。
-
-本项目默认 Docker Compose 已切换到带 pgvector 的 PostgreSQL 16 镜像：
-
-```powershell
-docker compose up -d postgres redis
-cd backend
-uv run alembic upgrade head
-```
-
-如果继续使用本机直接安装的 PostgreSQL 16，而不是 Compose PostgreSQL，必须先在该 PostgreSQL 实例安装与 PG16 匹配的 pgvector，并确认：
-
-```sql
-SELECT name, default_version
-FROM pg_available_extensions
-WHERE name = 'vector';
-```
-
-若结果为空，`uv run alembic upgrade head` 会在 migration 0010 的 `CREATE EXTENSION` 步骤失败；此时不要修改 migration 绕过 vector 类型，而应修复数据库运行环境。
+**重要：migration 0010 要求 PostgreSQL 服务端已经安装 pgvector。** Python / `uv` 环境不能替 PostgreSQL 安装 `vector` extension。本项目 Docker Compose 默认使用 `pgvector/pgvector:pg16`。
 
 ## 3. 配置
 
-`backend/.env` 本地建议：
+`backend/.env` 在需要真实索引时配置：
 
 ```dotenv
 EMBEDDING_PROVIDER=openai-compatible
@@ -108,6 +92,7 @@ EMBEDDING_API_KEY=your-local-key
 EMBEDDING_MODEL=your-embedding-model
 EMBEDDING_TIMEOUT_SECONDS=30
 EMBEDDING_DIMENSION=1536
+EMBEDDING_BATCH_SIZE=32
 
 VECTOR_PROVIDER=pgvector
 VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
@@ -116,15 +101,9 @@ VECTOR_TOP_K=5
 VECTOR_MIN_SCORE=0.0
 ```
 
-Docker Compose PostgreSQL 镜像可通过 `POSTGRES_IMAGE` 覆盖，默认值为 `pgvector/pgvector:pg16`：
+`EMBEDDING_DIMENSION` 必须与真实 Provider 返回维度以及 migration 0010 的 vector column 一致。
 
-```dotenv
-POSTGRES_IMAGE=pgvector/pgvector:pg16
-```
-
-`EMBEDDING_DIMENSION` 必须与真实 Embedding Provider 返回向量维度一致，并且 migration 0010 创建的 pgvector column 维度保持一致。
-
-真实 `.env`、API Key、数据库密码和带凭据的连接 URL 不提交 Git；仓库只维护 `.env.example`。
+真实 `.env`、API Key、数据库密码和带凭据连接 URL 不提交 Git；仓库只维护 `.env.example`。
 
 ## 4. 本地验证顺序
 
@@ -132,25 +111,15 @@ POSTGRES_IMAGE=pgvector/pgvector:pg16
 
 ```powershell
 cd backend
-uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py
+uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py tests/test_knowledge_vector_indexing.py
 ```
 
 ### 4.2 PostgreSQL / pgvector Schema
-
-推荐使用项目 Compose 数据库：
 
 ```powershell
 docker compose up -d postgres redis
 cd backend
 uv run alembic upgrade head
-```
-
-验证 extension：
-
-```sql
-SELECT extname, extversion
-FROM pg_extension
-WHERE extname = 'vector';
 ```
 
 ### 4.3 pgvector round-trip
@@ -159,30 +128,39 @@ WHERE extname = 'vector';
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_pgvector_validation.ps1
 ```
 
-未配置 `VECTOR_PROVIDER=pgvector` 时允许 skip；配置后必须完成：
-
-```text
-PostgreSQL
-  ↓
-vector extension
-  ↓
-knowledge_chunks
-  ↓
-upsert
-  ↓
-cosine search
-  ↓
-Knowledge Base scope
-  ↓
-cleanup
-```
-
-### 4.4 Embedding
-
-真实 Embedding Provider 仍使用：
+### 4.4 真实 Embedding Provider
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_provider_validation.ps1
+```
+
+### 4.5 真实 Chunk → Embedding → pgvector indexing
+
+在 `backend/.env` 同时设置：
+
+```dotenv
+EMBEDDING_PROVIDER=openai-compatible
+EMBEDDING_BASE_URL=...
+EMBEDDING_API_KEY=...
+EMBEDDING_MODEL=...
+VECTOR_PROVIDER=pgvector
+VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
+```
+
+然后执行现有 Runtime / Knowledge 联调脚本，确认 ingest 返回：
+
+```json
+{
+  "ingestion_status": "ready",
+  "vector_index_status": "ready",
+  "embedding_model": "..."
+}
+```
+
+并在 PostgreSQL 检查：
+
+```sql
+SELECT count(*) FROM knowledge_chunks;
 ```
 
 ## 5. 设计约束
@@ -190,18 +168,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_prov
 - 不把 pgvector SQL operator 暴露给 Runtime。
 - 不修改 lexical-v2 API contract。
 - Vector score 使用统一 cosine similarity 语义。
-- Knowledge Base scope 必须在 Vector DB 查询层过滤，不能只依赖上层结果裁剪。
+- Knowledge Base scope 必须在 Vector DB 查询层过滤。
 - Embedding dimension 在写入与查询前校验。
-- 当前先实现 PostgreSQL + pgvector，不引入第二种 Vector DB。
-- 本地 PostgreSQL 优先使用 Compose 提供的 pgvector/pg16 镜像。
+- Vector indexing 与 chunk ingestion 分阶段，可独立失败/重试。
+- 当前只实现 PostgreSQL + pgvector，不引入第二种 Vector DB。
+- 本地开发统一使用 `uv run`，不直接使用系统 Python / pip。
 - 不执行 GitHub Actions CI。
 
 ## 6. 下一步
 
-pgvector 本地 round-trip 验证通过后继续：
-
-1. 将真实 Embedding Provider 接入 ingestion/indexing。
-2. Document Chunk → Embedding → pgvector upsert 建立真实索引链路。
-3. Retrieval API 增加 vector retrieval mode。
-4. 使用 Evaluation Dataset 对比 lexical-v2 / vector retrieval 的 Recall@K、Precision@K、MRR。
-5. 稳定后进入 hybrid retrieval（lexical + vector）。
+1. Retrieval API 增加 `mode=vector`，复用现有 RBAC / Citation contract。
+2. Query → Embedding → pgvector search → Chunk/Citation 形成真实 vector retrieval 闭环。
+3. 使用现有 5 条 Evaluation Dataset 对 lexical-v2 / vector retrieval 做 Recall@K、Precision@K、MRR 对比。
+4. 稳定后进入 hybrid retrieval（lexical + vector）。
