@@ -54,6 +54,15 @@
 9. 当前本地开发阶段不得在 GitHub 仓库执行或触发 CI；测试由开发者本地同步代码后执行，并将结果反馈用于后续修复。
 10. Backend 的 Python 包安装、测试、脚本与服务运行统一使用 `uv run ...`，禁止绕过项目 `.venv` 使用系统 Python 安装或运行项目依赖。
 11. 本地真实 Provider 的 endpoint、API key、model 等配置必须写入未提交的 `backend/.env`；Git 仓库只维护 `.env.example`，禁止提交密钥。
+12. **项目状态与可追溯性必须持续维护**：任何功能任务开始、完成、延期、阻塞或变更范围时，必须同步更新项目状态文档、相关技术/设计文档及必要代码注释；不得仅通过聊天、Issue 或 Commit 信息作为唯一记录。
+13. **功能完成必须立即形成文档闭环**：任务完成后必须立即新增或更新对应开发/验收文档，至少记录实现细节、涉及文件/接口、测试命令及结果、已知问题、解决方案和剩余风险。
+14. **每次任务文档必须包含下一阶段任务清单**：明确任务描述、优先级（P0/P1/P2/P3）、前置依赖和预期完成时间；已完成任务不得继续标记为待开发。
+15. **任务必须有责任人**：每项未完成任务必须明确责任角色/责任人、当前状态、开始时间、目标时间、阻塞项和所需资源；任务发生转移时必须同步更新记录。
+16. **时间节点必须可追踪**：计划至少记录里程碑、目标日期、实际完成日期；发生延期必须记录原因、影响范围和新的目标日期。
+17. **资源协调必须显式记录**：真实 Provider、数据库、测试数据、开发环境、外部服务及其他依赖必须在任务计划中注明负责人和准备状态；不得将未确认的资源状态写成“已完成”。
+18. **变更必须可追溯**：代码、数据库 migration、API contract、配置、技术设计和文档之间的关联应通过 Commit、任务记录、文档链接或明确的变更说明建立可追溯关系。
+19. **代码注释应记录设计意图而非重复代码**：涉及复杂业务规则、降级策略、兼容逻辑、数据迁移和 provider 替换策略时，应补充必要注释，并与设计文档保持一致。
+20. **测试结果必须真实记录**：文档只能记录开发者实际执行并反馈的测试结果；不得将未执行的本地测试、真实 Provider 联调或质量门禁写成通过。
 
 ## 3. 分层原则
 
@@ -121,6 +130,49 @@ VECTOR_MIN_SCORE=0.0
 - `VECTOR_TOP_K`：默认向量检索返回数量。
 - `VECTOR_MIN_SCORE`：向量相似度最低阈值，范围 `0..1`。
 - Embedding 与 Vector DB 配置分离，禁止把具体供应商参数写死在 Knowledge Runtime。
+
+## 6.2 项目功能状态与推进计划
+
+本节是当前项目功能状态的统一摘要。详细实现证据以各 Phase 技术/验收文档、代码与本地测试反馈为准；状态不得与这些证据冲突。
+
+### 已完成模块
+
+| 模块 | 状态 | 完成范围 | 验收/证据 |
+|---|---|---|---|
+| Phase 1.3 Agent / Runtime 核心闭环 | 已完成 | Agent、Runtime、Tool、Audit 等既有执行链路 | 本地回归已建立；后续不得破坏 |
+| Knowledge Registry | 已完成 | KnowledgeBase、Document、Version、Owner/RBAC、CRUD、分页 | Phase 1.4-A 验收文档 |
+| Document Ingestion | 已完成 | parser、清洗、chunk、状态机、版本追踪 | Phase 1.4-B 验收文档 |
+| Retrieval Contract | 已完成 | Embedding、Retriever、Reranker contract、source/score/citation | Phase 1.4-C 验收文档 |
+| Runtime Knowledge Integration | 已完成 | Context Assembly、权限过滤、execution/trace、citation/observability | Phase 1.4-D 验收文档 |
+| Knowledge Frontend / Retrieval Debug | 已完成 | Knowledge 管理及 Retrieval Debug UI/API | Phase 1.4-D/E 验收文档 |
+| lexical-v2 baseline | 已完成 | 固定 Evaluation Dataset 与 lexical baseline | Phase 1.4-E 文档 |
+| pgvector indexing / Vector Retrieval | 已完成实现 | embedding → vector index → vector retrieval、显式 lexical fallback | 代码与测试；真实 Provider 仍需本地验证 |
+| Retrieval Evaluation Quality Gate | 已完成实现 | Recall@K、Precision@K、MRR、latency、error rate、baseline gate | runner + pytest；真实 Provider 结果尚待导入 |
+
+### 未完成 / 待验收任务
+
+| ID | 任务 | 优先级 | 状态 | 责任角色 | 目标时间 | 依赖/资源 |
+|---|---|---|---|---|---|---|
+| 1.4-E-01 | 使用真实 Embedding Provider 完成 5 条 Dataset 端到端向量入库与检索 | P0 | 待本地联调 | Backend / Knowledge | 2026-08-20 | 本地 `.env`、Embedding API、PostgreSQL/pgvector |
+| 1.4-E-02 | 采集真实 vector `vector_results.jsonl` 并执行 Quality Gate | P0 | 待 01 完成 | Backend / QA | 2026-08-20 | 01、固定 Dataset、同一 top-k/scope |
+| 1.4-E-03 | 比较 lexical-v2 与真实 vector 的 Recall/Precision/MRR/latency/error rate，确认是否达标 | P0 | 待 02 完成 | Knowledge / QA | 2026-08-20 | 02、baseline |
+| 1.4-E-04 | 修复真实 Provider 联调发现的问题并补回归测试 | P0 | 待评测结果 | Backend | 2026-08-21 | 03、真实错误样本 |
+| 1.4-E-05 | 完成 Provider Replacement Validation 验收文档与阶段结论 | P0 | 待 03/04 | Tech Lead | 2026-08-21 | 测试结果、配置说明、已知问题 |
+| 1.4-F-01 | Hybrid Retrieval（lexical + vector）设计与 Contract | P1 | 未开始 | Architecture / Backend | 2026-08-24 | 1.4-E 验收通过 |
+| 1.4-F-02 | Hybrid scoring / rerank 与 evaluation | P1 | 未开始 | Backend / Knowledge / QA | 2026-08-26 | 1.4-F-01 |
+| 1.4-F-03 | Hybrid Retrieval UI / Debug 展示 | P1 | 未开始 | Frontend | 2026-08-27 | 1.4-F-02 |
+
+> 时间节点是当前计划目标，不代表实际完成；发生延期必须在下一次状态更新中记录原因、影响和新目标日期。
+
+### 责任与资源协调原则
+
+- **Tech Lead / 架构**：维护状态基线、技术设计、任务优先级、跨模块依赖和最终阶段结论。
+- **Backend / Knowledge**：负责 API contract、indexing、retrieval provider、错误边界、migration 与后端测试。
+- **Frontend**：负责 API types、Knowledge UI、Retrieval Debug 和前端回归。
+- **QA / 验收**：负责 Dataset 一致性、测试场景、Quality Gate、验收证据和已知问题登记。
+- **开发环境负责人**：确保 PostgreSQL/pgvector、Embedding Provider、Redis 等本地依赖可用；真实密钥只进入未提交 `backend/.env`。
+
+任何任务进入“阻塞”状态时，必须立即记录阻塞原因、责任方、资源缺口、影响任务和预计解除时间。
 
 ## 7. 前端目录与测试约束
 
@@ -198,7 +250,46 @@ frontend/
 
 当前阶段所有测试均由本地开发环境执行。GitHub Actions CI 暂不作为本地开发验收环节。
 
-禁止先做孤立 UI，再反向修改 API；禁止前后端各自定义不同的领域模型。
+### 9.1 功能任务完成后的强制文档闭环
+
+每完成一个功能任务，必须在同一开发周期内立即更新对应文档，并至少包含以下内容：
+
+```text
+功能任务
+├── 实现细节
+│   ├── API / Contract
+│   ├── Domain / Service
+│   ├── Database / Migration（如适用）
+│   ├── Frontend / UI（如适用）
+│   └── 关键设计与代码注释
+├── 变更记录
+│   ├── Commit
+│   ├── 涉及文件
+│   └── 关联任务/里程碑
+├── 测试结果
+│   ├── Backend pytest
+│   ├── Frontend npm test
+│   ├── Frontend npm run build
+│   └── 场景/真实 Provider 验收（如适用）
+├── 已知问题 / 风险
+├── 解决方案 / 临时措施
+└── 下一阶段任务清单
+    ├── 任务描述
+    ├── 优先级
+    ├── 责任角色
+    ├── 前置依赖
+    └── 目标时间
+```
+
+如果测试或真实 Provider 未执行，必须明确标记为“未执行/待验收”，不得以代码存在替代运行证据。
+
+### 9.2 状态更新频率
+
+- 任务开始：登记负责人、开始时间、目标时间和依赖资源。
+- 任务完成：立即登记实际完成时间、Commit、测试结果和文档。
+- 任务阻塞：立即登记阻塞原因、责任方、影响、资源缺口和解除时间。
+- 任务延期：立即更新原因、新目标时间和影响范围。
+- 阶段完成：更新阶段验收结论，并同步更新本文件第 6.2 节。
 
 ## 10. 开发约束
 
