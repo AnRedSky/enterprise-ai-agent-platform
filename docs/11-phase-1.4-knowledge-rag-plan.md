@@ -55,31 +55,28 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] 前后端第一轮回归
 
 ### 1.4-E Knowledge / Retrieval 生产化深化
-- [x] 检索策略升级为 deterministic `lexical-v2`，保持 provider-neutral
+- [x] 检索策略升级为 deterministic `lexical-v2`
 - [x] 中文短语增加序列/二元 token，避免连续中文文本无法命中
-- [x] `min_score` 阈值控制，避免低相关候选进入上下文
-- [x] 可选重复 Chunk 去重，降低重复上下文
-- [x] 返回 `matched_terms` 与 `retrieval_mode`，支持 Retrieval Debug 质量分析
-- [x] 候选扫描设置上限并保持稳定排序，避免结果顺序随数据库返回顺序漂移
+- [x] `min_score` 阈值控制
+- [x] 可选重复 Chunk 去重
+- [x] 返回 `matched_terms` 与 `retrieval_mode`
+- [x] 候选扫描设置上限并保持稳定排序
 - [x] Retrieval API schema 与前端 API 类型同步升级
-- [x] 增加 retrieval quality / API contract 单元测试
-- [x] 增加离线 Evaluation Case contract：Recall@K / Precision@K / MRR
-- [x] 增加基线 Retrieval Evaluation Dataset：`backend/evaluation/knowledge_retrieval_dataset.jsonl`
-- [x] 增加 provider-neutral 离线评测 runner：`backend/scripts/evaluate_knowledge_retrieval_baseline.py`
-- [x] 用真实 lexical retrieval 输出运行 Evaluation Dataset，形成基线指标快照：`backend/evaluation/knowledge_retrieval_baseline.json`
-- [x] 增加 Retrieval baseline quality gate：`backend/scripts/check_knowledge_retrieval_quality.py`
-- [x] quality gate 本地可执行，作为开发阶段检索质量回归门禁；当前不接入 GitHub Actions CI
-- [x] quality gate 回归测试覆盖 aggregate / case-level 指标下降及 case-set 漂移
-- [x] 新增 OpenAI-compatible Embedding Provider adapter，保持 `EmbeddingProvider` contract 不变
-- [x] 新增 Embedding Provider contract tests，使用 `httpx.MockTransport` 验证请求、排序、异常响应
-- [x] 新增本地真实 provider probe：`backend/scripts/validate_embedding_provider.py`
-- [x] 新增统一验证入口：`backend/scripts/run_embedding_provider_validation.ps1`
-- [ ] 本地使用真实 Embedding provider 完成 endpoint / model / dimension / error boundary 联调
-- [x] 建立 provider-neutral Vector Retrieval adapter contract
-- [x] 建立 deterministic in-memory vector adapter，仅用于本地 contract tests
-- [x] 增加 vector top-k / min-score / dimension mismatch / stable tie-breaking 测试
-- [ ] 与真实 Vector DB provider 完成替换性联调
-- [ ] 真实 provider 上的 Recall / Precision / MRR 对比评测
+- [x] retrieval quality / API contract 单元测试
+- [x] 离线 Evaluation Case contract：Recall@K / Precision@K / MRR
+- [x] Evaluation Dataset 与 lexical-v2 baseline
+- [x] Retrieval baseline quality gate
+- [x] OpenAI-compatible Embedding Provider adapter、contract tests、真实 probe
+- [x] provider-neutral Vector Retrieval contract 与 deterministic in-memory adapter
+- [x] PostgreSQL + pgvector adapter、migration 0010/0011、indexing service
+- [x] vector retrieval API：`mode=vector`，保留显式 lexical fallback
+- [x] mock Embedding + PostgreSQL/pgvector deterministic retrieval quality gate
+- [x] 本地 Provider Validation 已通过：Recall@3=1.0、Precision@3=0.466667、MRR=0.9、error_rate=0、quality gate=passed
+- [x] 评估结果直接来自 PostgreSQL/pgvector `knowledge_chunks`，JSON fixture 仅作为测试数据输入，不作为检索结果数据源
+- [ ] 使用真实 Embedding Provider 完成 endpoint / model / dimension / error boundary 联调
+- [ ] 使用真实 Embedding Provider 完成 5 条 Dataset 的真实语义质量对比
+
+> 说明：由于当前开发环境无法获得真实 Embedding 模型，mock Embedding 只证明 deterministic indexing / vector retrieval pipeline，不证明真实模型语义质量。
 
 ## 3. 前端并行开发顺序
 
@@ -99,10 +96,36 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] source document / score / citation / content 展示
 - [x] 与 Retrieval API 的 `retrieval_mode / matched_terms / min_score` contract 对齐
 - [ ] 与 Runtime execution 关联
+- [ ] hybrid retrieval 来源与 score breakdown 展示
 
-前端只通过 `/api/v1` 调用后端，不实现 Knowledge 核心业务规则。
+## 4. Phase 1.4-F Hybrid Retrieval
 
-## 4. 联调顺序
+### 4.1 F-01：Contract / score fusion
+
+已开始并直接提交 `main`：
+
+- `backend/app/services/hybrid_knowledge_retrieval.py`
+- `backend/tests/test_hybrid_knowledge_retrieval.py`
+- `docs/13-phase-1.4-f-hybrid-retrieval.md`
+
+第一版只建立 provider-neutral score fusion，不直接绑定 pgvector SQL，也不引入 reranker 模型：
+
+```text
+lexical-v2 candidates ──┐
+                        ├─ weighted fusion → stable hybrid ranking
+vector candidates ──────┘
+```
+
+默认 lexical / vector 权重均为 `0.5`，分数均假定已经归一化到 `0..1`。相同 chunk 的单路重复候选取最高分；只命中单一路的候选按另一侧 0 分计算；最终按 score 降序、chunk_id 升序稳定排序。
+
+### 4.2 后续 F-02 / F-03
+
+- [ ] F-02：将 lexical-v2 + vector 两路真实检索编排接入 Hybrid Retrieval，并增加 `mode=hybrid` API
+- [ ] F-03：使用固定 Evaluation Dataset 做 hybrid 权重评测与 quality gate
+- [ ] G-01：Retrieval Debug 展示 lexical/vector/hybrid 来源与分数拆解
+- [ ] G-02：Runtime execution / trace 与 Retrieval Debug 关联
+
+## 5. 联调顺序
 
 每个小版本必须按以下顺序推进：
 
@@ -117,23 +140,11 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 当前阶段测试由本地开发环境执行，不执行 GitHub Actions CI。
 
-## 5. 第一轮验收标准
-
-- Knowledge Base owner 隔离有效
-- Document CRUD / version 可追踪
-- ingestion 状态可查询
-- Chunk 可追溯到 Document Version
-- Retrieval contract 返回标准 source / score / citation
-- 未授权用户无法读取其他 Owner 的知识内容
-- Runtime 接入前不允许把未授权 chunk 放入 prompt
-- 所有知识检索执行能够关联 execution / trace
-- 前后端测试脚本保持独立
-
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E lexical-v2 Evaluation baseline 与 Embedding Provider contract validation 已完成。** 当前离线基线为 5 个 Evaluation Case，aggregate `Recall@K=1.0`、`Precision@K=0.5`、`MRR=1.0`。Quality gate 只允许指标保持或提升，并拒绝 case 数量、case 集合及单 case 指标回归；开发阶段仅作为本地质量门禁，不触发 CI。
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 mock Embedding + PostgreSQL/pgvector deterministic retrieval validation 已完成本地验收。** 用户反馈的实际结果为：Backend regression 140 passed、Recall@3=1.0、Precision@3=0.466667、MRR=0.9、error_rate=0、quality gate=passed。
 
-当前 Phase 1.4-E 已从“Embedding Provider 验证”进入“Vector Retrieval Provider contract”阶段：已建立 `VectorRetrievalProvider`、`VectorRecord`、`VectorSearchResult` 以及 deterministic in-memory adapter。真实 Vector DB 尚未接入，下一步先完成真实 Vector DB adapter contract 与 metadata / Knowledge Base scope，再选择 pgvector 等具体实现。
+真实 Embedding Provider 尚未验证，因此不能把当前结果描述为真实模型语义质量通过。当前项目进入 **Phase 1.4-F Hybrid Retrieval Contract**；F-01 已实现，等待本地 pytest 验证后继续 F-02。
 
 ## 7. 暂不在第一轮实现
 
