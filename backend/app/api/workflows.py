@@ -25,12 +25,20 @@ class WorkflowVersionCreate(BaseModel):
     definition: dict = Field(default_factory=dict)
 
 
+def _tenant_id(claims: dict) -> UUID:
+    try:
+        return UUID(claims["tenant_id"])
+    except (KeyError, ValueError, TypeError):
+        raise ValueError("Token 缺少有效 tenant_id")
+
+
 def _workflow_response(workflow):
     return {
         "id": workflow.id,
         "name": workflow.name,
         "description": workflow.description,
         "owner_id": workflow.owner_id,
+        "tenant_id": workflow.tenant_id,
         "status": workflow.status,
         "published_version_id": workflow.published_version_id,
         "created_at": workflow.created_at,
@@ -53,7 +61,7 @@ def _version_response(version):
 @router.get("")
 async def list_workflows(claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     registry = WorkflowRegistry(db)
-    workflows = await registry.list(UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    workflows = await registry.list(_tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return [_workflow_response(item) for item in workflows]
 
 
@@ -63,13 +71,13 @@ async def create_workflow(
     claims=Depends(require_roles("user", "admin")),
     db: AsyncSession = Depends(get_db),
 ):
-    workflow = await WorkflowRegistry(db).create(UUID(claims["sub"]), payload.name, payload.description)
+    workflow = await WorkflowRegistry(db).create(_tenant_id(claims), UUID(claims["sub"]), payload.name, payload.description)
     return _workflow_response(workflow)
 
 
 @router.get("/{workflow_id}")
 async def get_workflow(workflow_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
-    workflow = await WorkflowRegistry(db).get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    workflow = await WorkflowRegistry(db).get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return _workflow_response(workflow)
 
 
@@ -81,7 +89,7 @@ async def update_workflow(
     db: AsyncSession = Depends(get_db),
 ):
     registry = WorkflowRegistry(db)
-    workflow = await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    workflow = await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     workflow = await registry.update(workflow, payload.name, payload.description)
     return _workflow_response(workflow)
 
@@ -93,7 +101,7 @@ async def delete_workflow(
     db: AsyncSession = Depends(get_db),
 ):
     registry = WorkflowRegistry(db)
-    workflow = await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    workflow = await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     await registry.delete(workflow)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -101,7 +109,7 @@ async def delete_workflow(
 @router.get("/{workflow_id}/versions")
 async def list_workflow_versions(workflow_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     registry = WorkflowRegistry(db)
-    await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return [_version_response(item) for item in await registry.versions(workflow_id)]
 
 
@@ -113,7 +121,7 @@ async def create_workflow_version(
     db: AsyncSession = Depends(get_db),
 ):
     registry = WorkflowRegistry(db)
-    workflow = await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    workflow = await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     version = await registry.create_version(workflow, UUID(claims["sub"]), payload.definition)
     return _version_response(version)
 
@@ -126,7 +134,7 @@ async def get_workflow_version(
     db: AsyncSession = Depends(get_db),
 ):
     registry = WorkflowRegistry(db)
-    await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return _version_response(await registry.get_version(workflow_id, version_id))
 
 
@@ -138,6 +146,6 @@ async def publish_workflow_version(
     db: AsyncSession = Depends(get_db),
 ):
     registry = WorkflowRegistry(db)
-    workflow = await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    workflow = await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     version = await registry.get_version(workflow_id, version_id)
     return _version_response(await registry.publish(workflow, version, UUID(claims["sub"])))
