@@ -22,7 +22,7 @@
 | Phase 1.4 | 已完成核心闭环 | Knowledge / RAG、pgvector、Embedding / Retrieval contract、Runtime Trace |
 | Phase 1.5-A | 已完成 | Workflow Definition Contract，本地 Backend 验收通过 |
 | Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
-| Phase 1.5-C | 开发中 | Workflow Execution State Machine；当前被 0016 migration metadata 问题阻塞，已完成根因分析并准备修复 |
+| Phase 1.5-C | 修复待验收 | Workflow Execution State Machine；0016 migration metadata 兼容问题已修复代码并提交 main，等待开发者本地验证 |
 | Phase 1.5-D | 待开始 | Workflow Runtime Integration |
 | Phase 1.5-E | 待开始 | Governance / Audit / Trace |
 | Phase 1.5-F | 待开始 | Vue Workflow / Governance 管理端 |
@@ -40,13 +40,20 @@
 9. 文档更新
 10. 直接提交 `main`
 
-### 当前阻塞
+### 已发现并修复的问题
 
 `0016_workflow_execution_state_machine` revision id 长度为 37，而历史 `alembic_version.version_num` 为 `VARCHAR(32)`，导致 PostgreSQL 在记录 migration head 时失败。
 
 错误记录：
 
 `docs/error-tracking/001-alembic-version-column-too-short.md`
+
+当前修复：
+
+- `backend/alembic/env.py` 增加 Alembic version metadata preflight。
+- 已存在且长度不足的 `alembic_version.version_num` 自动扩展至 `VARCHAR(64)`。
+- preflight 与 migration 保持同一事务。
+- 增加 `backend/tests/test_alembic_env.py` 覆盖扩展、缺表 no-op、已满足长度 no-op。
 
 ## 4. 修复后的验收门禁
 
@@ -57,6 +64,7 @@ cd backend
 uv run alembic upgrade head
 uv run alembic current
 uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
 ```
 
 1.5-C 未完成本地验收前，不进入 1.5-D Runtime Integration。
@@ -77,8 +85,6 @@ uv run pytest -q
 
 ## 6. 下一步
 
-1. 在 `main` 修复 0016 Alembic version metadata compatibility。
-2. 实际执行 migration upgrade / current。
-3. 执行 1.5-C Backend pytest 与 Backend-only validation script。
-4. 根据实际结果更新本文件。
-5. 验收通过后继续 1.5-D Runtime Integration。
+1. 开发者本地验证 main 最新提交。
+2. 根据实际结果更新本文件与错误记录。
+3. 1.5-C 验收通过后继续 1.5-D Runtime Integration。
