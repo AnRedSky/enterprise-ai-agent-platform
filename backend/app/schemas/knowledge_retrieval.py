@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ class KnowledgeRetrievalRequest(BaseModel):
     dedupe: bool = True
     knowledge_base_id: UUID | None = None
     document_id: UUID | None = None
+    mode: Literal["lexical-v2", "vector"] = "lexical-v2"
+    fallback_to_lexical: bool = False
 
 
 class KnowledgeRetrievalSource(BaseModel):
@@ -33,4 +36,5 @@ class KnowledgeRetrievalResponse(BaseModel):
     top_k: int
     min_score: float
     retrieval_mode: str
+    fallback_used: bool = False
     results: list[KnowledgeRetrievalSource]
