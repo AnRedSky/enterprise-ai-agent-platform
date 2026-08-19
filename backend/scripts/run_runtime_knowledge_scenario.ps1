@@ -26,12 +26,35 @@ function Invoke-Json {
     }
 
     try {
-        $response = Invoke-RestMethod @request
+        $response = Invoke-WebRequest @request
+        $raw = [string]$response.Content
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            Write-Host ('[ OK  ] ' + $Name) -ForegroundColor Green
+            return $null
+        }
+        $parsed = $raw | ConvertFrom-Json
         Write-Host ('[ OK  ] ' + $Name) -ForegroundColor Green
-        return $response
+        return $parsed
     }
     catch {
         Write-Host ('[FAIL ] ' + $Name) -ForegroundColor Red
+        $detail = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($detail) -and $null -ne $_.Exception.Response) {
+            try {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($null -ne $stream) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $detail = $reader.ReadToEnd()
+                    $reader.Dispose()
+                }
+            }
+            catch {
+                $detail = $null
+            }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($detail)) {
+            Write-Host ('[HTTP ] ' + $detail) -ForegroundColor DarkYellow
+        }
         throw
     }
 }
@@ -39,10 +62,6 @@ function Invoke-Json {
 Write-Host '[RUN ] Database / uv run alembic upgrade head' -ForegroundColor Gray
 Push-Location $PSScriptRoot\..
 try {
-    # Backend dependencies and commands are managed by uv. Always execute
-    # Alembic through `uv run` so the project .venv is selected explicitly.
-    # This also avoids importing backend/alembic as a Python package, which
-    # can shadow the installed Alembic distribution.
     $uvCommand = Get-Command uv -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -eq $uvCommand) {
         throw 'uv executable was not found in PATH. Install uv and ensure it is available in PATH.'
@@ -99,12 +118,16 @@ $publish = Invoke-Json -Name 'Agent / publish' -Method 'POST' -Path $publishPath
 if ($publish.status -ne 'published') { throw 'Agent was not published.' }
 
 Write-Host '[RUN ] Runtime / chat with knowledge context' -ForegroundColor Gray
-$chatBody = @{ agent_id = $agentId; input = 'Who approves an employee application?' } | ConvertTo-Json -Depth 10
+# Retrieval is lexical in Phase 1.4. Use terms that are guaranteed to overlap
+# with the ingested content; otherwise a valid scenario would produce zero
+# retrieval results and make the citation assertion meaningless.
+$chatBody = @{ agent_id = $agentId; input = 'employee applications manager approval' } | ConvertTo-Json -Depth 10
 $chatUri = $BaseUrl + '/api/v1/agents/stream'
 $chatResponse = Invoke-WebRequest -Uri $chatUri -Method 'POST' -Headers $headers -ContentType 'application/json' -Body $chatBody
 if ($chatResponse.StatusCode -ne 200) { throw ('Runtime chat returned HTTP ' + $chatResponse.StatusCode + '.') }
 $raw = [string]$chatResponse.Content
 if ($raw -notmatch 'knowledge_count') { throw 'Runtime start event did not expose knowledge_count.' }
+if ($raw -notmatch '"knowledge_count":\s*[1-9]') { throw 'Runtime retrieval returned zero knowledge results.' }
 if ($raw -notmatch 'Runtime Policy#0') { throw 'Runtime response did not expose expected citation.' }
 if ($raw -notmatch 'execution_id') { throw 'Runtime response did not expose execution_id.' }
 if ($raw -notmatch 'trace_id') { throw 'Runtime response did not expose trace_id.' }
