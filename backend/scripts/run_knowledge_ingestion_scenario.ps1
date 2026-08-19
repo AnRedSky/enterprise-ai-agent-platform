@@ -10,9 +10,9 @@ $BaseUrl = $BaseUrl.TrimEnd('/')
 
 function Invoke-ScenarioRequest {
     param(
-        [string]$Name,
+        [Parameter(Mandatory = $true)][string]$Name,
         [string]$Method = "GET",
-        [string]$Path,
+        [Parameter(Mandatory = $true)][string]$Path,
         [hashtable]$Headers = @{},
         [object]$Body = $null,
         [int[]]$ExpectedStatus = @(200)
@@ -26,6 +26,7 @@ function Invoke-ScenarioRequest {
         DisableKeepAlive = $true
         ErrorAction = "Stop"
     }
+
     if ($null -ne $Body) {
         $params.ContentType = "application/json"
         $params.Body = ($Body | ConvertTo-Json -Depth 10 -Compress)
@@ -37,22 +38,30 @@ function Invoke-ScenarioRequest {
         if ($ExpectedStatus -notcontains $status) {
             throw "Unexpected HTTP status $status. Expected: $($ExpectedStatus -join ', ')"
         }
+
         Write-Host "[ OK  ] $Name -> HTTP $status" -ForegroundColor Green
-        if ($response.Content) {
-            try { return ($response.Content | ConvertFrom-Json) }
-            catch { return $response.Content }
+        if ([string]::IsNullOrWhiteSpace([string]$response.Content)) {
+            return $null
         }
-        return $null
+
+        try {
+            return ($response.Content | ConvertFrom-Json)
+        }
+        catch {
+            return $response.Content
+        }
     }
     catch {
         $status = $null
         if ($_.Exception.Response) {
             try { $status = [int]$_.Exception.Response.StatusCode.value__ } catch {}
         }
+
         if ($null -ne $status -and ($ExpectedStatus -contains $status)) {
             Write-Host "[ OK  ] $Name -> HTTP $status" -ForegroundColor Green
             return $null
         }
+
         Write-Host "[FAIL ] $Name -> HTTP $status" -ForegroundColor Red
         throw
     }
@@ -68,89 +77,47 @@ if ([string]::IsNullOrWhiteSpace($Username)) {
     $Username = "ingestion_$(Get-Date -Format 'yyyyMMddHHmmssfff')"
 }
 
-Invoke-ScenarioRequest `
-    -Name "Auth / register" `
-    -Method POST `
-    -Path "/api/v1/auth/register" `
-    -Body @{ username = $Username; password = $Password } `
-    -ExpectedStatus @(200, 409) | Out-Null
+$registerParams = @{
+    Name = "Auth / register"
+    Method = "POST"
+    Path = "/api/v1/auth/register"
+    Body = @{ username = $Username; password = $Password }
+    ExpectedStatus = @(200, 409)
+}
+Invoke-ScenarioRequest @registerParams | Out-Null
 
-$login = Invoke-ScenarioRequest `
-    -Name "Auth / login" `
-    -Method POST `
-    -Path "/api/v1/auth/login" `
-    -Body @{ username = $Username; password = $Password }
-
+$login = Invoke-ScenarioRequest -Name "Auth / login" -Method "POST" -Path "/api/v1/auth/login" -Body @{ username = $Username; password = $Password }
 if ([string]::IsNullOrWhiteSpace($login.access_token)) {
     throw "Login did not return access_token."
 }
 $headers = @{ Authorization = "Bearer $($login.access_token)" }
 
-$kb = Invoke-ScenarioRequest `
-    -Name "Knowledge / create" `
-    -Method POST `
-    -Path "/api/v1/knowledge" `
-    -Headers $headers `
-    -Body @{ name = "ingestion-$Username"; description = "Document ingestion scenario" }
+$kb = Invoke-ScenarioRequest -Name "Knowledge / create" -Method "POST" -Path "/api/v1/knowledge" -Headers $headers -Body @{ name = "ingestion-$Username"; description = "Document ingestion scenario" }
 $kbId = [string]$kb.id
+if ([string]::IsNullOrWhiteSpace($kbId)) { throw "Knowledge create did not return an id." }
 
-$doc = Invoke-ScenarioRequest `
-    -Name "Knowledge / document create" `
-    -Method POST `
-    -Path "/api/v1/knowledge/$kbId/documents" `
-    -Headers $headers `
-    -Body @{ title = "Ingestion Scenario Document"; source_type = "manual" }
+$doc = Invoke-ScenarioRequest -Name "Knowledge / document create" -Method "POST" -Path "/api/v1/knowledge/$kbId/documents" -Headers $headers -Body @{ title = "Ingestion Scenario Document"; source_type = "manual" }
 $docId = [string]$doc.id
+if ([string]::IsNullOrWhiteSpace($docId)) { throw "Document create did not return an id." }
 
 $content = "第一段：企业 AI Agent 平台。`n`n第二段：Knowledge Registry、Document、Version 与 Chunk 构成知识处理基础。`n`n第三段：本场景验证清洗、确定性分块、持久化与重复摄取。"
-$version = Invoke-ScenarioRequest `
-    -Name "Knowledge / version create" `
-    -Method POST `
-    -Path "/api/v1/knowledge/$kbId/documents/$docId/versions" `
-    -Headers $headers `
-    -Body @{ version = "v1"; status = "draft"; content_text = $content }
+$version = Invoke-ScenarioRequest -Name "Knowledge / version create" -Method "POST" -Path "/api/v1/knowledge/$kbId/documents/$docId/versions" -Headers $headers -Body @{ version = "v1"; status = "draft"; content_text = $content }
 $versionId = [string]$version.id
+if ([string]::IsNullOrWhiteSpace($versionId)) { throw "Version create did not return an id." }
 
-$ingest = Invoke-ScenarioRequest `
-    -Name "Knowledge / ingest" `
-    -Method POST `
-    -Path "/api/v1/knowledge/versions/$versionId/ingest" `
-    -Headers $headers `
-    -Body @{ max_chars = 80; overlap_chars = 10 }
+$ingestBody = @{ max_chars = 80; overlap_chars = 10 }
+$ingest = Invoke-ScenarioRequest -Name "Knowledge / ingest" -Method "POST" -Path "/api/v1/knowledge/versions/$versionId/ingest" -Headers $headers -Body $ingestBody
+if ($ingest.ingestion_status -ne "ready") { throw "Ingestion did not reach ready status." }
+if ([int]$ingest.chunk_count -lt 2) { throw "Expected at least 2 chunks." }
 
-if ($ingest.ingestion_status -ne "ready") {
-    throw "Ingestion did not reach ready status."
-}
-if ([int]$ingest.chunk_count -lt 2) {
-    throw "Expected at least 2 chunks."
-}
-
-$chunks = Invoke-ScenarioRequest `
-    -Name "Knowledge / chunks" `
-    -Path "/api/v1/knowledge/versions/$versionId/chunks" `
-    -Headers $headers
+$chunks = Invoke-ScenarioRequest -Name "Knowledge / chunks" -Path "/api/v1/knowledge/versions/$versionId/chunks" -Headers $headers
 $chunkItems = @($chunks)
+if ($chunkItems.Count -ne [int]$ingest.chunk_count) { throw "Chunk list count does not match ingestion result." }
+if ([string]$chunkItems[0].document_version_id -ne $versionId) { throw "Chunk is not linked to the expected document version." }
 
-if ($chunkItems.Count -ne [int]$ingest.chunk_count) {
-    throw "Chunk list count does not match ingestion result."
-}
-if ([string]$chunkItems[0].document_version_id -ne $versionId) {
-    throw "Chunk is not linked to the expected document version."
-}
-
-$ingestAgain = Invoke-ScenarioRequest `
-    -Name "Knowledge / re-ingest" `
-    -Method POST `
-    -Path "/api/v1/knowledge/versions/$versionId/ingest" `
-    -Headers $headers `
-    -Body @{ max_chars = 80; overlap_chars = 10 }
-
-if ($ingestAgain.ingestion_status -ne "ready") {
-    throw "Re-ingestion did not reach ready status."
-}
-if ([int]$ingestAgain.chunk_count -ne [int]$ingest.chunk_count) {
-    throw "Re-ingestion changed the chunk count unexpectedly."
-}
+$ingestAgain = Invoke-ScenarioRequest -Name "Knowledge / re-ingest" -Method "POST" -Path "/api/v1/knowledge/versions/$versionId/ingest" -Headers $headers -Body $ingestBody
+if ($ingestAgain.ingestion_status -ne "ready") { throw "Re-ingestion did not reach ready status." }
+if ([int]$ingestAgain.chunk_count -ne [int]$ingest.chunk_count) { throw "Re-ingestion changed the chunk count unexpectedly." }
 
 Write-Host "============================================================" -ForegroundColor DarkGray
 Write-Host "[PASS] Knowledge Ingestion scenario completed" -ForegroundColor Green
