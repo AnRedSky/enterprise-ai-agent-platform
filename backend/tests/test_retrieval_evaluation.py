@@ -1,6 +1,8 @@
 from app.services.retrieval_evaluation import (
     RetrievalEvaluationCase,
+    RetrievalEvaluationObservation,
     aggregate_evaluation,
+    aggregate_observations,
     evaluate_case,
     precision_at_k,
     recall_at_k,
@@ -36,6 +38,40 @@ def test_aggregate_evaluation_rejects_mismatched_inputs():
     case = RetrievalEvaluationCase("q1", frozenset({"a"}))
     try:
         aggregate_evaluation([case], [], k=3)
+    except ValueError as exc:
+        assert "same length" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_aggregate_observations_reports_quality_latency_and_errors():
+    cases = [
+        RetrievalEvaluationCase("q1", frozenset({"a"})),
+        RetrievalEvaluationCase("q2", frozenset({"b"})),
+        RetrievalEvaluationCase("q3", frozenset({"c"})),
+    ]
+    observations = [
+        RetrievalEvaluationObservation(("a",), latency_ms=10),
+        RetrievalEvaluationObservation(("noise", "b"), latency_ms=20),
+        RetrievalEvaluationObservation((), latency_ms=30, error="provider unavailable"),
+    ]
+    result = aggregate_observations(cases, observations, k=2)
+    assert result == {
+        "cases": 3,
+        "successful_cases": 2,
+        "error_cases": 1,
+        "error_rate": 1 / 3,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.75,
+        "mrr": 0.75,
+        "avg_latency_ms": 20.0,
+    }
+
+
+def test_aggregate_observations_rejects_mismatched_inputs():
+    case = RetrievalEvaluationCase("q1", frozenset({"a"}))
+    try:
+        aggregate_observations([case], [])
     except ValueError as exc:
         assert "same length" in str(exc)
     else:
