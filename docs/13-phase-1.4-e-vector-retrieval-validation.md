@@ -113,7 +113,7 @@ VECTOR_MIN_SCORE=0.0
 
 ```powershell
 cd backend
-uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py tests/test_knowledge_vector_indexing.py tests/test_vector_knowledge_retrieval.py
+uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py tests/test_knowledge_vector_indexing.py tests/test_vector_knowledge_retrieval.py tests/test_retrieval_evaluation.py
 ```
 
 ### pgvector
@@ -140,6 +140,33 @@ cd backend
 uv run pytest -q
 ```
 
+### Retrieval Evaluation
+
+真实 provider 或手工 API 场景完成后，把每个 Dataset query 的实际结果保存为 JSONL，例如：
+
+```json
+{"query":"FastAPI Agent Runtime","mode":"vector","ranking":["chunk-fastapi-runtime","chunk-citation"],"latency_ms":42.1}
+{"query":"报销规则","mode":"vector","ranking":["chunk-expense-policy"],"latency_ms":38.4}
+```
+
+然后执行：
+
+```powershell
+cd backend
+uv run python scripts/evaluate_knowledge_retrieval_provider.py .\evaluation\vector_results.jsonl
+```
+
+runner 会输出：
+
+- Recall@K
+- Precision@K
+- MRR
+- 平均 latency
+- provider error rate
+- quality gate
+
+质量门禁当前要求 Recall@K / MRR 不低于已提交的 lexical-v2 baseline；任意 provider error 都会导致 gate failed。Precision 继续作为报告指标，不作为当前硬门禁，以便先观察真实 vector provider 的排序行为。
+
 ### Frontend
 
 ```powershell
@@ -156,15 +183,9 @@ npm run build
 - vector
 - 后续 hybrid
 
-至少记录：
+Dataset 固定为 `backend/evaluation/knowledge_retrieval_dataset.jsonl`，当前包含 5 个场景。Vector 与 lexical 必须使用相同 Knowledge Base scope、相同 top-k、相同相关性标注，避免数据集或权限边界造成不可比结果。
 
-- Recall@K
-- Precision@K
-- MRR
-- 平均 latency
-- provider error rate
-
-Vector 与 lexical 使用相同 Knowledge Base scope、相同 top-k 与相同 Evaluation Dataset，避免数据集或权限边界造成不可比结果。
+Baseline 固定在 `backend/evaluation/knowledge_retrieval_baseline.json`。Provider 运行结果不提交到 Git；只提交评测代码、Dataset 与 baseline。
 
 ## 7. 失败与降级规则
 
@@ -185,4 +206,4 @@ Vector 与 lexical 使用相同 Knowledge Base scope、相同 top-k 与相同 Ev
 - 当前没有自动后台索引队列，重建通过 API / 本地脚本触发。
 - 当前跨 Version 的 content-hash embedding 复用尚未实现。
 - Hybrid retrieval 尚未进入实现阶段。
-- 当前质量门禁仍在本地执行，不以 GitHub Actions 结果作为本阶段验收依据。
+- 真实 provider 结果必须由本地环境产生；GitHub 不执行本阶段测试，也不触发 Actions CI。
