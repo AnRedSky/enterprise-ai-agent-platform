@@ -99,6 +99,11 @@ class KnowledgeIngestionService:
             version.content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
             for item in chunks:
                 self.db.add(KnowledgeDocumentChunk(document_version_id=version.id, **item))
+
+            document = await self.db.get(KnowledgeDocument, version.document_id)
+            if document is None:
+                raise HTTPException(status_code=404, detail="Document 不存在")
+            document.current_version_id = version.id
             version.ingestion_status = "ready"
             version.status = "ready"
             await self.db.commit()
