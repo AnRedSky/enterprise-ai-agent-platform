@@ -1,6 +1,5 @@
 {
   "mode": "lexical-v2",
-  "case_count": 5,
   "cases": [
     {
       "query": "FastAPI Agent Runtime",
@@ -70,5 +69,6 @@
   ],
   "recall_at_k": 1.0,
   "precision_at_k": 0.5,
-  "mrr": 1.0
+  "mrr": 1.0,
+  "case_count": 5
 }
