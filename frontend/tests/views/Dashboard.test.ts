@@ -11,7 +11,7 @@ vi.mock("../../src/api/tools", () => ({ listTools }));
 vi.mock("../../src/api/runtime", () => ({ runtimeApi: { executions } }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 
-import Dashboard from "../../src/views/Dashboard.vue";
+import Dashboard from "../../src/views/dashboard/components/DashboardOverview.vue";
 
 const stubs = {
   "el-button": { template: "<button><slot/></button>" },
@@ -20,7 +20,7 @@ const stubs = {
 };
 const global = { stubs, directives: { loading: () => undefined } };
 
-describe("Dashboard.vue", () => {
+describe("DashboardOverview", () => {
   beforeEach(() => {
     listAgents.mockReset();
     listTools.mockReset();
