@@ -4,13 +4,14 @@
 
 ## 1. 技术基线
 
-- Backend：FastAPI + Python 3.12
+- Backend：FastAPI + Python 3.12+
+- Backend 包管理与运行：**uv / `backend/.venv`**
 - Frontend：Vue 3 + TypeScript + Vite
 - Database：PostgreSQL
 - Cache：Redis
 - Migration：Alembic
 - Test：pytest / Vitest
-- CI：GitHub Actions
+- CI：当前本地开发阶段**不执行、不配置、不触发 GitHub Actions CI**；后续进入部署阶段再单独启用。
 
 ## 2. 固定开发顺序
 
@@ -50,6 +51,8 @@
 6. 联调完成后必须执行前后端全量回归和生产构建。
 7. 验收文档必须在代码提交前同步更新，避免“代码已完成、规划仍显示待开发”。
 8. 所有功能直接提交 `main`，禁止创建新的功能分支。
+9. 当前本地开发阶段不得在 GitHub 仓库执行或触发 CI；测试由开发者本地同步代码后执行，并将结果反馈用于后续修复。
+10. Backend 的 Python 包安装、测试、脚本与服务运行统一使用 `uv run ...`，禁止绕过项目 `.venv` 使用系统 Python 安装或运行项目依赖。
 
 ## 3. 分层原则
 
@@ -91,7 +94,11 @@ Phase 1.4 目标为 Knowledge / RAG 闭环，固定按以下顺序推进：
 6. Retrieval Evaluation：Evaluation Dataset + Recall@K / Precision@K / MRR。
 7. 真实 Embedding / Vector DB provider 替换性验证。
 
-当前开发位置：**Phase 1.4-E Retrieval Evaluation / Provider Replacement Validation**。1.4-A/B/C/D 已完成本地验收；1.4-E 的 lexical-v2 production baseline 已完成 deterministic ranking、中文 tokenization、min_score、dedupe、candidate cap 与 retrieval metadata。当前已补齐离线评测指标 contract、5 条基线 Evaluation Dataset 与 provider-neutral runner。下一步使用真实 lexical retrieval 输出生成基线指标快照，再进行真实 Embedding / Vector DB provider 替换性联调。
+当前开发位置：**Phase 1.4-E Retrieval Evaluation / Provider Replacement Validation**。1.4-A/B/C/D 已完成本地验收；1.4-E 的 lexical-v2 production baseline 已完成 deterministic ranking、中文 tokenization、min_score、dedupe、candidate cap、retrieval metadata、离线评测指标 contract、5 条 Evaluation Dataset、provider-neutral runner 与 baseline quality gate。
+
+本阶段新增 OpenAI-compatible Embedding Provider adapter，保持 `EmbeddingProvider` contract 不变；新增本地 MockTransport contract tests 与可选真实 provider probe。真实 provider 联调必须由本地 `.env` 提供 endpoint / key / model，禁止提交任何密钥。
+
+下一步在本地完成真实 Embedding provider probe，并继续实现 Vector DB adapter 的 provider-neutral validation；本阶段不执行 GitHub Actions CI。
 
 ## 7. 前端目录与测试约束
 
@@ -166,6 +173,8 @@ frontend/
 7. `backend pytest` + `frontend npm test` + `frontend npm run build`
 8. 更新开发规划与验收文档
 9. 直接提交 `main`
+
+当前阶段所有测试均由本地开发环境执行。GitHub Actions CI 暂不作为本地开发验收环节。
 
 禁止先做孤立 UI，再反向修改 API；禁止前后端各自定义不同的领域模型。
 
