@@ -2,11 +2,16 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.core import Base
+
+
+# Keep PostgreSQL storage as JSONB while using portable JSON for SQLite-based
+# backend unit tests and local model metadata construction.
+EVENT_METADATA_TYPE = JSON().with_variant(JSONB, "postgresql")
 
 
 class Execution(Base):
@@ -53,7 +58,7 @@ class ExecutionEvent(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # PostgreSQL column remains `metadata` for schema compatibility, while the
     # Python attribute avoids SQLAlchemy Declarative API's reserved name.
-    event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
+    event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", EVENT_METADATA_TYPE, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     def __init__(self, **kwargs: Any) -> None:

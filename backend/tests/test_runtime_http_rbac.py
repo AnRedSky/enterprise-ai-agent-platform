@@ -5,7 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_db
-from app.api.runtime import _runtime_claims, router as runtime_router
+from app.api.runtime import _runtime_claims
 from app.main import app
 from app.schemas.runtime import ExecutionItem
 
@@ -100,7 +100,11 @@ def test_runtime_admin_scope_can_query_cross_owner_execution(monkeypatch):
         assert requested_id == execution_id
         return execution
 
-    monkeypatch.setattr("app.api.runtime.RuntimeQueryService.execution", accessible)
+    async def accessible_events(self, actor, is_admin, requested_id):
+        execution_row = await accessible(self, actor, is_admin, requested_id)
+        return execution_row, []
+
+    monkeypatch.setattr("app.api.runtime.RuntimeQueryService.events", accessible_events)
     response = TestClient(app).get(f"/api/v1/runtime/executions/{execution_id}")
     assert response.status_code == 200
     assert response.json()["execution"]["status"] == "success"
