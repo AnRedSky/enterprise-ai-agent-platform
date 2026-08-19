@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     embedding_model: str | None = None
     embedding_timeout_seconds: float = 30.0
     embedding_dimension: int = 1536
+    embedding_batch_size: int = 32
 
     # Vector retrieval is provider-neutral. Keep `none` until PostgreSQL + pgvector
     # is enabled locally; the in-memory implementation remains test-only.
