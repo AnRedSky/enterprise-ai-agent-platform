@@ -39,13 +39,14 @@ class HybridRetrievalService:
     chunk is returned by both sources, its score is the configured weighted
     fusion of the two normalized scores. A chunk returned by only one source
     keeps that source's normalized score rather than being penalized merely for
-    missing from the other candidate set. This keeps single-source candidates
-    comparable with their originating retrieval signal while still rewarding
-    candidates supported by both sources.
+    missing from the other candidate set.
 
-    Ties are resolved by chunk_id so ranking remains stable across database
-    execution order. Reranking/model-based fusion is intentionally deferred to
-    the next phase.
+    Candidates supported by both retrieval signals are ranked ahead of
+    single-source candidates. Within each support tier, the fused/normalized
+    score is descending and chunk_id is the deterministic tie-breaker. This
+    makes hybrid evidence a first-class ranking signal while keeping ordering
+    stable across database execution order. Reranking/model-based fusion is
+    intentionally deferred to the next phase.
     """
 
     RETRIEVAL_MODE = "hybrid"
@@ -111,7 +112,13 @@ class HybridRetrievalService:
                 )
             )
 
-        fused.sort(key=lambda item: (-item.score, item.chunk_id))
+        fused.sort(
+            key=lambda item: (
+                -(1 if item.source == "lexical+vector" else 0),
+                -item.score,
+                item.chunk_id,
+            )
+        )
         return fused[:top_k]
 
     @staticmethod
