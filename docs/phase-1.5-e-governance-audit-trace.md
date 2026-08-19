@@ -96,6 +96,30 @@ Frontend 测试必须独立执行。
 docs/error-tracking/003-workflow-execution-governance-test-fixture-created-by.md
 ```
 
+### 5.2 测试夹具继续缺少 tenant / workflow / version 上下文
+
+补齐 `created_by` 后，开发者再次执行 Backend full regression，仍出现 2 个失败：
+
+```text
+AttributeError: 'types.SimpleNamespace' object has no attribute 'tenant_id'
+```
+
+失败发生在 `WorkflowGovernanceService.trace()` 创建 `WorkflowTraceEvent` 时。Governance Trace 同时要求：
+
+- `tenant_id`
+- `workflow_id`
+- `workflow_version_id`
+- `created_by`
+- `id`
+
+本次修复将状态机测试中的重复 `SimpleNamespace` 统一收敛为 `_execution()` 工厂，并补齐上述上下文。生产代码不增加针对测试夹具的降级逻辑。
+
+详细错误知识库记录：
+
+```text
+docs/error-tracking/004-workflow-execution-governance-test-fixture-tenant-context.md
+```
+
 ## 6. 验收标准
 
 1. Workflow 创建会生成 Audit 与 Trace。
