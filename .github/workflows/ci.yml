@@ -24,6 +24,8 @@ jobs:
       - run: uv sync --dev
       - run: uv run python -m compileall app
       - run: uv run pytest -q
+      - name: Retrieval quality gate
+        run: uv run python scripts/check_knowledge_retrieval_quality.py
 
   runtime-knowledge:
     runs-on: ubuntu-latest
