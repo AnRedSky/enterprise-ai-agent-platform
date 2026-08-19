@@ -5,7 +5,7 @@ const { auditLogs } = vi.hoisted(() => ({ auditLogs: vi.fn() }));
 vi.mock("../../src/api/runtime", () => ({ runtimeApi: { auditLogs } }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 
-import AuditLog from "../../src/views/AuditLog.vue";
+import AuditLog from "../../src/views/audit-log/components/AuditLogPanel.vue";
 
 const stubs = {
   "el-card": { template: "<div><slot name=\"header\"/><slot/></div>" },
@@ -21,7 +21,7 @@ const stubs = {
 
 const global = { stubs, directives: { loading: () => undefined } };
 
-describe("AuditLog.vue", () => {
+describe("AuditLogPanel", () => {
   beforeEach(() => auditLogs.mockReset());
 
   it("renders empty state", async () => {
