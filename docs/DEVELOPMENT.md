@@ -90,7 +90,7 @@ Phase 1.4 目标为 Knowledge / RAG 闭环，固定按以下顺序推进：
 5. Frontend Knowledge 管理与 Retrieval Debug。
 6. 联调与全量回归。
 
-当前开发位置：**Phase 1.4-B Document ingestion / Chunk 本地验收阶段**。Phase 1.4-A Knowledge Registry 已完成本地手工验收，后续不得跳过 1.4-B 的 migration、pytest、手工场景验收直接进入 Retrieval。
+当前开发位置：**Phase 1.4-D Runtime Integration 联调前实现阶段**。1.4-A/B/C 已完成本地手工验收；1.4-F/G 前端 Knowledge 管理与 Retrieval Debug 已完成基础实现。本轮已完成 AgentVersion Knowledge 配置、Runtime Context Assembly、Owner/RBAC 前置过滤、Citation 与 Retrieval Observability contract。下一步必须完成 Runtime + Knowledge 手工联调，再进行前后端全量回归与验收文档闭环。
 
 ## 7. 前端目录与测试约束
 
