@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     model_api_key: str | None = None
     model_timeout_seconds: float = 60.0
 
+    embedding_provider: str = "none"
+    embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
+    embedding_model: str | None = None
+    embedding_timeout_seconds: float = 30.0
+
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent_platform"
     redis_url: str = "redis://localhost:6379/0"
 
