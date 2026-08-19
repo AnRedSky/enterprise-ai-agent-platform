@@ -36,16 +36,12 @@ function Invoke-Json {
     }
 }
 
-# The runtime scenario uses the AgentVersion.knowledge_config column introduced
-# by migration 0009. Always bring the local database to the application head
-# before exercising the already-running API process; otherwise an upgraded
-# application can fail with HTTP 500 against an older schema.
 Write-Host '[RUN ] Database / alembic upgrade head' -ForegroundColor Gray
 Push-Location $PSScriptRoot\..
 try {
-    # The Alembic package does not expose alembic.__main__ in the supported
-    # environment, so `python -m alembic` is not portable. Invoke Alembic's
-    # official CommandLine entry point directly with the same Python runtime.
+    # Do not use `python -m alembic`: some supported Alembic installations do
+    # not ship alembic.__main__. Invoke the installed Alembic CLI entry point
+    # through Python's import API instead, using the same interpreter as this script.
     python -c "from alembic.config import CommandLine; CommandLine().main(['upgrade','head'])"
     if ($LASTEXITCODE -ne 0) { throw ('Alembic upgrade failed with exit code ' + $LASTEXITCODE + '.') }
 }
