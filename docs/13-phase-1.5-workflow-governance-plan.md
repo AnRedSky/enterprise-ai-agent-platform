@@ -67,7 +67,7 @@ Governance / Audit / Trace
 
 | ID | 任务 | 目标 | 状态 |
 |---|---|---|---|
-| 1.5-A | Workflow Definition Contract | 建立 Workflow 定义、版本、生命周期与 RBAC/API contract | **下一项** |
+| 1.5-A | Workflow Definition Contract | 建立 Workflow 定义、版本、生命周期与 RBAC/API contract | **执行中** |
 | 1.5-B | Workflow Version / Publish Governance | 发布版本、不可变版本与发布审计 | 待 1.5-A 验收 |
 | 1.5-C | Workflow Execution State Machine | 建立 execution / node state contract 与持久化 | 待 1.5-B 验收 |
 | 1.5-D | Workflow Runtime Integration | Workflow → Agent Runtime / Tool Runtime 执行链路 | 待 1.5-C 验收 |
@@ -80,12 +80,13 @@ Governance / Audit / Trace
 
 建立 `Workflow` / `WorkflowVersion` provider-neutral domain。
 
-建议第一轮最小字段：
+当前仓库已有 Identity/RBAC，但 JWT 与 User 模型尚未建立独立 Tenant domain / `tenant_id` claim。因此 **1.5-A 不虚构 tenant 来源**：本任务先落地现有可验证的 `owner_id + admin` scope；Tenant isolation 作为 1.5-B 的前置治理补齐项，在 Tenant contract 建立后再纳入 Workflow 数据模型。架构文档要求核心数据最终具备 `tenant_id`，本阶段不得用 `owner_id` 冒充 tenant。fileciteturn543file3L1-L1
+
+第一轮最小字段：
 
 ```text
 Workflow
 - id
-- tenant_id
 - name
 - description
 - owner_id
@@ -160,7 +161,7 @@ API 设计遵循项目既有 `/api/v1` 版本化与统一错误模型要求。�
 3. Admin 可以跨 Owner 查询，但不能绕过发布状态约束。
 4. Published Version 不允许原地修改。
 5. Publish 操作必须产生可审计事件。
-6. `tenant_id` 必须进入 Workflow 数据边界，不能依赖前端传入字段实现隔离。架构文档明确要求核心数据带 `tenant_id` 并在数据库层面建立租户隔离。fileciteturn543file3L1-L1
+6. Tenant isolation 暂不在 1.5-A 声称已完成；必须等待 Identity Tenant contract 后实施，不得通过 owner_id 假装实现 tenant isolation。
 
 ## 5. 数据模型 / Migration 原则
 
@@ -178,7 +179,7 @@ workflows
 
 - PostgreSQL
 - Alembic migration
-- `tenant_id` / owner scope
+- owner scope
 - Workflow 与 Version 外键约束
 - 唯一版本约束
 - 时间字段使用 timezone-aware UTC
@@ -203,7 +204,6 @@ workflows
 - Owner CRUD
 - Cross-owner denial
 - Admin read scope
-- Tenant isolation
 - Pagination
 - Error mapping
 - Published version update denial
@@ -282,7 +282,7 @@ Frontend 测试必须独立通过 `npm test` / `npm run build` 执行，不允�
 1. Backend pytest 通过且无新增 warnings。
 2. Alembic upgrade head 成功。
 3. API Scenario 通过。
-4. RBAC / tenant isolation 场景通过。
+4. RBAC owner isolation 场景通过；Tenant isolation 只有在 Tenant contract 建立后才能作为已完成门禁。
 5. Frontend API types / Vitest / build 在进入 UI 后通过。
 6. 前后端实际联调通过。
 7. 验收文档记录真实执行结果，不预填“通过”。
@@ -290,18 +290,18 @@ Frontend 测试必须独立通过 `npm test` / `npm run build` 执行，不允�
 
 ## 10. 当前任务状态
 
-**Phase 1.5 基线已建立。当前下一执行项为 1.5-A Workflow Definition Contract。**
+**Phase 1.5 基线已建立。1.5-A Workflow Definition Contract 执行中。**
 
 责任角色：开发执行
 
-状态：Ready
+状态：In Progress
 
 开始时间：2026-08-19
 
 目标时间：本轮完成 Backend Domain + API Contract、Migration、pytest 与 Backend 手工验收后，再进入 Frontend。
 
-阻塞项：无
+阻塞项：Identity Tenant contract 尚未建立，但不阻塞 1.5-A owner/admin scope contract；Tenant isolation 不在 1.5-A 宣称完成。
 
 资源依赖：PostgreSQL / Alembic / 现有 RBAC、Audit、Observability 能力
 
-下一阶段：1.5-B Workflow Version / Publish Governance
+下一阶段：1.5-B Workflow Version / Publish Governance + Tenant contract
