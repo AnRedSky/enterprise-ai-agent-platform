@@ -11,24 +11,63 @@ describe("agents api", () => {
     post.mockReset();
   });
 
-  it("lists agents with latest version metadata", async () => {
-    get.mockResolvedValue({ data: [{ id: "agent-1", name: "A", model_id: "mock-model", version: "1.0.0", status: "draft", description: "", created_at: "" }] });
+  it("lists agents with latest version and knowledge metadata", async () => {
+    get.mockResolvedValue({
+      data: [{
+        id: "agent-1",
+        name: "A",
+        model_id: "mock-model",
+        version: "1.0.0",
+        status: "draft",
+        description: "",
+        created_at: "",
+        knowledge_config: { knowledge_base_ids: ["kb-1"], top_k: 3 },
+      }],
+    });
     const result = await listAgents();
     expect(result[0].version).toBe("1.0.0");
+    expect(result[0].knowledge_config?.knowledge_base_ids).toEqual(["kb-1"]);
     expect(get).toHaveBeenCalledWith("/agents");
   });
 
-  it("creates agents and versions", async () => {
+  it("creates agents and versions with knowledge configuration", async () => {
     post.mockResolvedValue({ data: { id: "agent-1", version: "1.1.0" } });
-    await createAgent({ name: "A", description: "", system_prompt: "You are A", model_id: "mock-model" });
-    await createVersion("agent-1", { system_prompt: "v2", model_id: "mock-model" });
-    expect(post).toHaveBeenNthCalledWith(1, "/agents", expect.any(Object));
-    expect(post).toHaveBeenNthCalledWith(2, "/agents/agent-1/versions", { system_prompt: "v2", model_id: "mock-model" });
+    await createAgent({
+      name: "A",
+      description: "",
+      system_prompt: "You are A",
+      model_id: "mock-model",
+      knowledge_config: { knowledge_base_ids: ["kb-1"], top_k: 5 },
+    });
+    await createVersion("agent-1", {
+      system_prompt: "v2",
+      model_id: "mock-model",
+      knowledge_config: { knowledge_base_ids: ["kb-1"], top_k: 3 },
+    });
+    expect(post).toHaveBeenNthCalledWith(1, "/agents", expect.objectContaining({
+      knowledge_config: { knowledge_base_ids: ["kb-1"], top_k: 5 },
+    }));
+    expect(post).toHaveBeenNthCalledWith(2, "/agents/agent-1/versions", {
+      system_prompt: "v2",
+      model_id: "mock-model",
+      knowledge_config: { knowledge_base_ids: ["kb-1"], top_k: 3 },
+    });
   });
 
   it("loads versions for an agent", async () => {
-    get.mockResolvedValue({ data: [{ id: "v1", agent_id: "agent-1", version: "1.0.0", system_prompt: "A", model_id: "mock-model", created_at: "" }] });
-    await listVersions("agent-1");
+    get.mockResolvedValue({
+      data: [{
+        id: "v1",
+        agent_id: "agent-1",
+        version: "1.0.0",
+        system_prompt: "A",
+        model_id: "mock-model",
+        knowledge_config: { knowledge_base_ids: [], top_k: 5 },
+        created_at: "",
+      }],
+    });
+    const result = await listVersions("agent-1");
+    expect(result[0].knowledge_config.top_k).toBe(5);
     expect(get).toHaveBeenCalledWith("/agents/agent-1/versions");
   });
 });
