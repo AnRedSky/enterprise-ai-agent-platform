@@ -46,23 +46,31 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
 
     await db.execute(
         text("""
-            INSERT INTO knowledge_bases (id, name, description, owner_id, status)
-            VALUES (:id, 'Phase 1.4-E Evaluation Fixture', 'Ephemeral deterministic retrieval evaluation data', :owner, 'active')
+            INSERT INTO knowledge_bases
+                (id, name, description, owner_id, status, created_at, updated_at)
+            VALUES
+                (:id, 'Phase 1.4-E Evaluation Fixture',
+                 'Ephemeral deterministic retrieval evaluation data',
+                 :owner, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """),
         {"id": str(KB_ID), "owner": str(user_id)},
     )
     await db.execute(
         text("""
-            INSERT INTO knowledge_documents (id, knowledge_base_id, title, source_type, status)
-            VALUES (:id, :kb, 'Phase 1.4-E Evaluation Fixture', 'evaluation', 'active')
+            INSERT INTO knowledge_documents
+                (id, knowledge_base_id, title, source_type, status, created_at, updated_at)
+            VALUES
+                (:id, :kb, 'Phase 1.4-E Evaluation Fixture', 'evaluation', 'active',
+                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         """),
         {"id": str(DOC_ID), "kb": str(KB_ID)},
     )
     await db.execute(
         text("""
             INSERT INTO knowledge_document_versions
-                (id, document_id, version, status, ingestion_status, vector_index_status, created_by)
-            VALUES (:id, :doc, 'evaluation', 'published', 'completed', 'processing', :user)
+                (id, document_id, version, status, ingestion_status, vector_index_status, created_by, created_at)
+            VALUES
+                (:id, :doc, 'evaluation', 'published', 'completed', 'processing', :user, CURRENT_TIMESTAMP)
         """),
         {"id": str(VERSION_ID), "doc": str(DOC_ID), "user": str(user_id)},
     )
@@ -73,8 +81,10 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
         await db.execute(
             text("""
                 INSERT INTO knowledge_document_chunks
-                    (id, document_version_id, chunk_index, content, char_start, char_end, content_hash, token_count)
-                VALUES (:id, :version, :index, :content, 0, :char_end, :hash, :tokens)
+                    (id, document_version_id, chunk_index, content, char_start, char_end,
+                     content_hash, token_count, created_at)
+                VALUES
+                    (:id, :version, :index, :content, 0, :char_end, :hash, :tokens, CURRENT_TIMESTAMP)
             """),
             {
                 "id": str(chunk_id),
