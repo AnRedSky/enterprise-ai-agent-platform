@@ -66,7 +66,7 @@ class AuditLogItem(BaseModel):
     action: str
     status: str
     error_code: str | None = None
-    metadata: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("metadata", "metadata_json"))
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("metadata_json", "metadata"))
     created_at: datetime
 
 
