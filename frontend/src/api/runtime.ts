@@ -8,6 +8,7 @@ export type Execution = {
 export type Event = {
   id: string; execution_id: string; trace_id: string; span_type: string; status: string;
   started_at: string; ended_at?: string; duration_ms?: number; model_id?: string; tool_id?: string; error_code?: string;
+  metadata?: Record<string, unknown>;
 };
 export type AuditLog = {
   id: string; actor_id?: string; agent_id?: string; tool_id?: string; execution_id?: string;
