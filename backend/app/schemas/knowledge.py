@@ -71,6 +71,8 @@ class KnowledgeDocumentVersionOut(BaseModel):
     version: str
     status: str
     ingestion_status: str
+    vector_index_status: str
+    embedding_model: str | None
     source_uri: str | None
     content_hash: str | None
     content_text: str | None
