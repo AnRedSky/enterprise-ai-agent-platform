@@ -9,11 +9,25 @@ class AgentRegistry:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, owner_id: UUID, name: str, description: str, system_prompt: str, model_id: str):
+    async def create(
+        self,
+        owner_id: UUID,
+        name: str,
+        description: str,
+        system_prompt: str,
+        model_id: str,
+        knowledge_config: dict | None = None,
+    ):
         agent = Agent(owner_id=owner_id, name=name, description=description)
         self.db.add(agent)
         await self.db.flush()
-        version = AgentVersion(agent_id=agent.id, version="1.0.0", system_prompt=system_prompt, model_id=model_id)
+        version = AgentVersion(
+            agent_id=agent.id,
+            version="1.0.0",
+            system_prompt=system_prompt,
+            model_id=model_id,
+            knowledge_config=knowledge_config or {},
+        )
         self.db.add(version)
         await self.db.commit()
         await self.db.refresh(agent)
@@ -45,7 +59,13 @@ class AgentRegistry:
         )
         return result.scalar_one_or_none()
 
-    async def create_version(self, agent: Agent, system_prompt: str, model_id: str):
+    async def create_version(
+        self,
+        agent: Agent,
+        system_prompt: str,
+        model_id: str,
+        knowledge_config: dict | None = None,
+    ):
         if agent.status == "archived":
             raise HTTPException(409, "归档 Agent 不允许创建新版本")
         versions = await self.versions(agent.id)
@@ -57,7 +77,13 @@ class AgentRegistry:
                 continue
             if major == 1 and minor > max_minor:
                 max_minor = minor
-        version = AgentVersion(agent_id=agent.id, version=f"1.{max_minor + 1}.0", system_prompt=system_prompt, model_id=model_id)
+        version = AgentVersion(
+            agent_id=agent.id,
+            version=f"1.{max_minor + 1}.0",
+            system_prompt=system_prompt,
+            model_id=model_id,
+            knowledge_config=knowledge_config or {},
+        )
         self.db.add(version)
         await self.db.commit()
         await self.db.refresh(version)
