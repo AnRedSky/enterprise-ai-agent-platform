@@ -1,4 +1,4 @@
-from datetime import datetime,UTC
+from datetime import datetime, UTC
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,8 +24,6 @@ def _runtime_claims(
     the caller supplied a valid Authorization header.
     """
     if credentials is None:
-        # Preserve direct-call/test behavior: current_claims() will either be
-        # monkeypatched by tests or reject the unresolved Depends marker.
         return current_claims()
     return current_claims(credentials)
 
@@ -86,10 +84,10 @@ async def execution_detail(
     db: AsyncSession = Depends(get_db),
 ):
     actor_id, is_admin = _identity(claims)
-    execution = await RuntimeQueryService(db).execution(actor_id, is_admin, execution_id)
+    execution, events = await RuntimeQueryService(db).events(actor_id, is_admin, execution_id)
     if execution is None:
         raise HTTPException(status_code=404, detail="execution not found")
-    return {"execution": _normalize_execution(execution), "items": []}
+    return {"execution": _normalize_execution(execution), "items": events}
 
 
 @router.get("/executions/{execution_id}/events", response_model=ExecutionTimelineResponse)
