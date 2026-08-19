@@ -25,6 +25,59 @@ jobs:
       - run: uv run python -m compileall app
       - run: uv run pytest -q
 
+  runtime-knowledge:
+    runs-on: ubuntu-latest
+    needs: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d agent_platform"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql+asyncpg://agent:agent@127.0.0.1:5432/agent_platform
+      APP_ENV: test
+      MODEL_PROVIDER: mock
+      JWT_SECRET_KEY: ci-runtime-knowledge-secret
+      API_BASE_URL: http://127.0.0.1:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: uv sync --dev
+      - name: Start backend
+        run: |
+          uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/enterprise-agent-backend.log 2>&1 &
+          echo $! > /tmp/enterprise-agent-backend.pid
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/enterprise-agent-backend.log
+          exit 1
+      - name: Runtime Knowledge Scenario
+        run: pwsh -NoProfile -File ./scripts/run_runtime_knowledge_scenario.ps1
+      - name: Backend logs on failure
+        if: failure()
+        run: cat /tmp/enterprise-agent-backend.log
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
