@@ -107,6 +107,16 @@ async def stream(
                 execution,
                 span_type="retrieval",
                 started_at=retrieval_started,
+                metadata={
+                    "query": p.input,
+                    "knowledge_base_ids": [str(item) for item in knowledge_base_ids],
+                    "top_k": top_k,
+                    "result_count": len(retrieval_results),
+                    "citations": [item["citation"] for item in retrieval_results],
+                    "retrieval_sources": sorted(
+                        {source for item in retrieval_results for source in item.get("retrieval_sources", [])}
+                    ),
+                },
             )
         except Exception as exc:
             await observability.record_event(
@@ -116,6 +126,11 @@ async def stream(
                 status="failed",
                 error_code=type(exc).__name__,
                 error_message="Knowledge retrieval failed",
+                metadata={
+                    "query": p.input,
+                    "knowledge_base_ids": [str(item) for item in knowledge_base_ids],
+                    "top_k": top_k,
+                },
             )
             await observability.finish_execution(
                 execution,
