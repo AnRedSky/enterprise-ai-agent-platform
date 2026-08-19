@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,7 @@ def _workflow_response(workflow):
         "description": workflow.description,
         "owner_id": workflow.owner_id,
         "status": workflow.status,
+        "published_version_id": workflow.published_version_id,
         "created_at": workflow.created_at,
         "updated_at": workflow.updated_at,
     }
@@ -139,8 +140,4 @@ async def publish_workflow_version(
     registry = WorkflowRegistry(db)
     workflow = await registry.get(workflow_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
     version = await registry.get_version(workflow_id, version_id)
-    if version.status == "published":
-        return _version_response(version)
-    if workflow.status == "published":
-        raise HTTPException(409, "已发布 Workflow 不允许直接切换版本；请通过新的治理流程执行发布")
     return _version_response(await registry.publish(workflow, version, UUID(claims["sub"])))
