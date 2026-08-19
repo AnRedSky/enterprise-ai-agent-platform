@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,6 +73,7 @@ class ObservabilityService:
         total_tokens: int | None = None,
         error_code: str | None = None,
         error_message: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ExecutionEvent:
         ended = datetime.now(UTC)
         if started_at.tzinfo is None:
@@ -91,6 +93,7 @@ class ObservabilityService:
             total_tokens=total_tokens,
             error_code=error_code,
             error_message=error_message,
+            metadata=metadata,
         )
         self.db.add(event)
         await self.db.flush()
