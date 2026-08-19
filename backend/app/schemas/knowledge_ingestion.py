@@ -14,6 +14,8 @@ class KnowledgeIngestOut(BaseModel):
 
     version_id: UUID
     ingestion_status: str
+    vector_index_status: str
+    embedding_model: str | None
     chunk_count: int
     content_hash: str
 
