@@ -38,6 +38,9 @@ const docForm = ref({ title: "", source_type: "manual", source_uri: "" });
 const versionForm = ref({ version: "v1", content_text: "", source_uri: "" });
 const query = ref("");
 const topK = ref(5);
+const retrievalMode = ref<"lexical-v2" | "vector" | "hybrid">("lexical-v2");
+const lexicalWeight = ref(0.5);
+const vectorWeight = ref(0.5);
 const saving = ref(false);
 const ingesting = ref("");
 const retrievalLoading = ref(false);
@@ -61,9 +64,7 @@ async function loadBases() {
   try {
     const page = await listKnowledgeBases();
     bases.value = page.items;
-    if (selectedBase.value) {
-      selectedBase.value = bases.value.find((item) => item.id === selectedBase.value?.id) ?? null;
-    }
+    if (selectedBase.value) selectedBase.value = bases.value.find((item) => item.id === selectedBase.value?.id) ?? null;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "知识库加载失败";
   } finally {
@@ -107,10 +108,7 @@ async function saveDocument() {
   if (!selectedBase.value || !docForm.value.title.trim()) return;
   saving.value = true;
   try {
-    await createDocument(selectedBase.value.id, {
-      ...docForm.value,
-      source_uri: docForm.value.source_uri || null,
-    });
+    await createDocument(selectedBase.value.id, { ...docForm.value, source_uri: docForm.value.source_uri || null });
     docDialog.value = false;
     await selectBase(selectedBase.value);
     ElMessage.success("文档创建成功");
@@ -125,10 +123,7 @@ async function saveVersion() {
   if (!selectedBase.value || !selectedDocument.value || !versionForm.value.version.trim()) return;
   saving.value = true;
   try {
-    await createVersion(selectedBase.value.id, selectedDocument.value.id, {
-      ...versionForm.value,
-      source_uri: versionForm.value.source_uri || null,
-    });
+    await createVersion(selectedBase.value.id, selectedDocument.value.id, { ...versionForm.value, source_uri: versionForm.value.source_uri || null });
     versionDialog.value = false;
     await openDocument(selectedDocument.value);
     ElMessage.success("版本创建成功");
@@ -183,9 +178,7 @@ async function removeDocument(doc: unknown) {
     await selectBase(selectedBase.value);
     ElMessage.success("文档已删除");
   } catch (e) {
-    if (e !== "cancel" && e !== "close") {
-      ElMessage.error(e instanceof Error ? e.message : "删除失败");
-    }
+    if (e !== "cancel" && e !== "close") ElMessage.error(e instanceof Error ? e.message : "删除失败");
   }
 }
 
@@ -205,6 +198,9 @@ async function search() {
       query: text,
       top_k: topK.value,
       knowledge_base_id: selectedBase.value?.id,
+      mode: retrievalMode.value,
+      lexical_weight: retrievalMode.value === "hybrid" ? lexicalWeight.value : undefined,
+      vector_weight: retrievalMode.value === "hybrid" ? vectorWeight.value : undefined,
     });
     results.value = out.results;
     if (!out.results.length) retrievalError.value = "没有命中结果，请尝试调整问题或扩大知识库范围";
@@ -249,9 +245,7 @@ onMounted(loadBases);
       </el-card>
 
       <el-card class="panel">
-        <template #header>
-          <div class="panel-head"><b>文档</b><el-button size="small" type="primary" :disabled="!selectedBase" @click="docDialog = true">新建文档</el-button></div>
-        </template>
+        <template #header><div class="panel-head"><b>文档</b><el-button size="small" type="primary" :disabled="!selectedBase" @click="docDialog = true">新建文档</el-button></div></template>
         <el-table :data="documents" @row-click="openDocument">
           <el-table-column prop="title" label="标题" />
           <el-table-column prop="source_type" label="来源" width="90" />
@@ -284,23 +278,40 @@ onMounted(loadBases);
     </el-card>
 
     <el-card class="section retrieval-panel">
-      <template #header><div class="panel-head"><div><b>Retrieval Debug</b><span class="hint">检索结果、Score、Chunk 与 Citation 可追溯查看</span></div><el-button v-if="query || results.length" link @click="clearRetrieval">清空</el-button></div></template>
+      <template #header><div class="panel-head"><div><b>Retrieval Debug</b><span class="hint">检索结果、Score、Chunk、Citation 与 Hybrid 来源拆解可追溯查看</span></div><el-button v-if="query || results.length" link @click="clearRetrieval">清空</el-button></div></template>
       <div class="search">
         <el-input v-model="query" placeholder="输入检索问题，例如：公司的报销规则是什么？" clearable @keyup.enter="search" />
+        <el-select v-model="retrievalMode" class="mode-select">
+          <el-option label="Lexical v2" value="lexical-v2" />
+          <el-option label="Vector" value="vector" />
+          <el-option label="Hybrid" value="hybrid" />
+        </el-select>
         <el-input-number v-model="topK" :min="1" :max="20" />
         <el-button type="primary" :loading="retrievalLoading" @click="search">检索</el-button>
+      </div>
+      <div v-if="retrievalMode === 'hybrid'" class="weights">
+        <span>Lexical 权重</span><el-slider v-model="lexicalWeight" :min="0" :max="1" :step="0.1" />
+        <span>Vector 权重</span><el-slider v-model="vectorWeight" :min="0" :max="1" :step="0.1" />
       </div>
       <el-alert v-if="retrievalError" :title="retrievalError" type="warning" show-icon :closable="false" />
       <div v-if="results.length" class="retrieval-grid">
         <el-table :data="results" highlight-current-row class="result-table" @current-change="selectResult">
           <el-table-column prop="source_document" label="来源" width="180" />
           <el-table-column prop="relevance_score" label="Score" width="100" />
+          <el-table-column prop="retrieval_mode" label="Mode" width="110" />
+          <el-table-column label="Sources" width="150"><template #default="{ row }">{{ row.retrieval_sources?.join(" + ") || row.retrieval_mode }}</template></el-table-column>
           <el-table-column prop="citation" label="Citation" width="220" />
           <el-table-column prop="content" label="内容" min-width="400" show-overflow-tooltip />
         </el-table>
         <el-card v-if="selectedResult" class="citation-card" shadow="never">
-          <template #header><b>Citation Detail</b></template>
-          <div class="citation-meta"><span><b>Document：</b>{{ selectedResult.source_document }}</span><span><b>Score：</b>{{ selectedResult.relevance_score }}</span><span><b>Citation：</b>{{ selectedResult.citation }}</span></div>
+          <template #header><b>Citation / Retrieval Detail</b></template>
+          <div class="citation-meta"><span><b>Document：</b>{{ selectedResult.source_document }}</span><span><b>Score：</b>{{ selectedResult.relevance_score }}</span><span><b>Mode：</b>{{ selectedResult.retrieval_mode }}</span><span><b>Sources：</b>{{ selectedResult.retrieval_sources?.join(" + ") || "-" }}</span><span><b>Citation：</b>{{ selectedResult.citation }}</span></div>
+          <div v-if="selectedResult.hybrid_score_breakdown" class="breakdown">
+            <b>Hybrid Score Breakdown</b>
+            <div>Lexical：{{ selectedResult.hybrid_score_breakdown.lexical_score ?? "未命中" }} × {{ selectedResult.hybrid_score_breakdown.lexical_weight }}</div>
+            <div>Vector：{{ selectedResult.hybrid_score_breakdown.vector_score ?? "未命中" }} × {{ selectedResult.hybrid_score_breakdown.vector_weight }}</div>
+            <div>Fused：{{ selectedResult.hybrid_score_breakdown.fused_score }}</div>
+          </div>
           <div class="citation-content">{{ selectedResult.content }}</div>
           <div v-if="selectedResult.source_uri" class="citation-source"><b>Source URI：</b>{{ selectedResult.source_uri }}</div>
         </el-card>
@@ -334,11 +345,14 @@ onMounted(loadBases);
 .hint { margin-left: 10px; color: #667085; font-size: 12px; font-weight: normal; }
 .search { display: flex; gap: 10px; margin-bottom: 16px; }
 .search .el-input { flex: 1; }
+.mode-select { width: 130px; }
+.weights { display: grid; grid-template-columns: 100px 1fr 100px 1fr; gap: 12px; align-items: center; margin-bottom: 16px; color: #475467; font-size: 13px; }
 .retrieval-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr); gap: 16px; margin-top: 16px; }
 .result-table, .citation-card { min-width: 0; }
 .citation-meta { display: grid; gap: 8px; color: #475467; font-size: 13px; }
+.breakdown { margin-top: 16px; padding: 12px; border: 1px solid #e4e7ec; border-radius: 6px; line-height: 1.8; color: #344054; }
 .citation-content { margin-top: 16px; padding: 14px; white-space: pre-wrap; line-height: 1.7; background: #f8fafc; border-radius: 6px; }
 .citation-source { margin-top: 12px; color: #667085; font-size: 12px; word-break: break-all; }
-@media (max-width: 1100px) { .retrieval-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .retrieval-grid { grid-template-columns: 1fr; } .weights { grid-template-columns: 100px 1fr; } }
 @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .page { padding: 16px; } .search { flex-wrap: wrap; } }
 </style>
