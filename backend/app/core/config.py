@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     embedding_model: str | None = None
     embedding_timeout_seconds: float = 30.0
 
+    # Vector retrieval is provider-neutral. Keep `none` until a real Vector DB
+    # adapter is selected; the in-memory implementation is test-only.
+    vector_provider: str = "none"
+    vector_db_url: str | None = None
+    vector_db_collection: str = "knowledge_chunks"
+    vector_top_k: int = 5
+    vector_min_score: float = 0.0
+
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent_platform"
     redis_url: str = "redis://localhost:6379/0"
 
