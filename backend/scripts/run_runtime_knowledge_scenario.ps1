@@ -39,11 +39,33 @@ function Invoke-Json {
 Write-Host '[RUN ] Database / alembic upgrade head' -ForegroundColor Gray
 Push-Location $PSScriptRoot\..
 try {
-    # Do not use `python -m alembic`: some supported Alembic installations do
-    # not ship alembic.__main__. Invoke the installed Alembic CLI entry point
-    # through Python's import API instead, using the same interpreter as this script.
-    python -c "from alembic.config import CommandLine; CommandLine().main(['upgrade','head'])"
-    if ($LASTEXITCODE -ne 0) { throw ('Alembic upgrade failed with exit code ' + $LASTEXITCODE + '.') }
+    # Do not use `python -m alembic` or import `alembic.config` here.
+    # The repository itself contains backend/alembic/ (the migration package),
+    # which can shadow the installed Alembic distribution when Python is run
+    # from backend/. Invoke the real Alembic CLI executable instead.
+    $alembicCommand = Get-Command alembic -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $alembicCommand) {
+        $pythonCommand = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $pythonCommand) {
+            throw 'Python executable was not found in PATH.'
+        }
+
+        $pythonDir = Split-Path -Parent $pythonCommand.Source
+        $candidate = Join-Path $pythonDir 'Scripts\alembic.exe'
+        if (Test-Path $candidate) {
+            $alembicCommand = Get-Item $candidate
+        }
+    }
+
+    if ($null -eq $alembicCommand) {
+        throw 'Alembic CLI was not found. Install Alembic in the active Python environment or ensure alembic.exe is on PATH.'
+    }
+
+    Write-Host ('[INFO ] Alembic CLI: ' + $alembicCommand.Source) -ForegroundColor DarkGray
+    & $alembicCommand.Source upgrade head
+    if ($LASTEXITCODE -ne 0) {
+        throw ('Alembic upgrade failed with exit code ' + $LASTEXITCODE + '.')
+    }
 }
 finally {
     Pop-Location
