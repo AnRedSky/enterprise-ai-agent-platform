@@ -12,7 +12,8 @@
     "types": ["vite/client", "element-plus/global"],
     "skipLibCheck": true,
     "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "paths": { "@/*": ["src/*"] },
+    "noEmit": true
   },
   "include": ["src/**/*.ts", "src/**/*.vue"]
 }
