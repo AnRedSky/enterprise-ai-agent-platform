@@ -95,11 +95,11 @@ Phase 1.4 目标为 Knowledge / RAG 闭环，固定按以下顺序推进：
 6. Retrieval Evaluation：Evaluation Dataset + Recall@K / Precision@K / MRR。
 7. 真实 Embedding / Vector DB provider 替换性验证。
 
-当前开发位置：**Phase 1.4-E Retrieval Evaluation / Provider Replacement Validation**。1.4-A/B/C/D 已完成本地验收；1.4-E 的 lexical-v2 production baseline 已完成 deterministic ranking、中文 tokenization、min_score、dedupe、candidate cap、retrieval metadata、离线评测指标 contract、5 条 Evaluation Dataset、provider-neutral runner 与 baseline quality gate。
+当前开发位置：**Phase 1.4-E Retrieval Evaluation / Provider Replacement Validation**。1.4-A/B/C/D 已完成本地验收；1.4-E 已完成 lexical-v2 baseline、OpenAI-compatible Embedding contract、provider-neutral Vector Retrieval、pgvector indexing、vector retrieval API、显式 lexical fallback、5 条 Evaluation Dataset 与 baseline quality gate。
 
-本阶段新增 OpenAI-compatible Embedding Provider adapter，保持 `EmbeddingProvider` contract 不变；新增本地 MockTransport contract tests 与可选真实 provider probe。真实 provider 联调必须由本地 `.env` 提供 endpoint / key / model，禁止提交任何密钥。
+当前继续推进 **Retrieval Evaluation**：质量评估必须对 lexical-v2 与真实 vector provider 使用相同 Dataset、Knowledge Base scope、top-k 与相关性标注，并至少记录 Recall@K、Precision@K、MRR、平均 latency、provider error rate。质量门禁不得把 provider 错误隐藏在成功率之外。
 
-当前已完成 Embedding Provider contract validation。下一步进入 provider-neutral Vector Retrieval adapter：先使用 deterministic in-memory adapter 验证向量检索 contract，再接入真实 Vector DB；本地测试仍统一使用 `uv run`，不执行 GitHub Actions CI。
+本阶段新增 `RetrievalEvaluationObservation` 与 provider quality-gate runner；真实 provider 结果通过 JSONL 导入评测，不提交任何真实 endpoint、API key 或运行产物。当前质量门禁仍只允许本地执行，不执行 GitHub Actions CI。
 
 ### 6.1 Phase 1.4-E Vector Retrieval 配置
 
