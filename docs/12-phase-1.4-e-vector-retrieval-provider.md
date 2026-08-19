@@ -1,6 +1,6 @@
 # Phase 1.4-E：Vector Retrieval Provider 深化
 
-> 本文记录 Phase 1.4-E 从真实 Embedding Provider 验证进入 Vector Retrieval Provider contract 的实施基线。当前仍为本地开发 / 测试阶段，不执行 GitHub Actions CI。
+> 当前阶段仍为本地开发 / 测试阶段，不执行 GitHub Actions CI。Backend 统一使用 `uv` 项目环境。
 
 ## 1. 本阶段目标
 
@@ -20,101 +20,149 @@ provider-neutral VectorSearchResult
 Knowledge Retrieval / Citation
 ```
 
-具体 Vector DB（例如 pgvector、Milvus）不得直接进入 Runtime 业务代码。
+具体 Vector DB 不得直接进入 Runtime 业务代码。
 
-## 2. 已实现
+## 2. 已完成
 
-### VectorRetrievalProvider contract
+### Provider-neutral contract
 
 提供：
 
 - `upsert(records)`
-- `search(query_embedding, top_k, min_score)`
+- `search(query_embedding, top_k, min_score, knowledge_base_id)`
 - `VectorRecord`
 - `VectorSearchResult`
 - `VectorRetrievalProviderError`
 
-结果保持 provider-neutral：
-
-```text
-chunk_id
-score
-metadata
-```
-
 ### Local deterministic adapter
 
-`InMemoryVectorRetrievalProvider` 用于：
+`InMemoryVectorRetrievalProvider` 用于 contract tests，覆盖：
 
-- contract tests
-- cosine similarity 验证
+- cosine similarity
 - stable tie-breaking
-- `top_k` / `min_score` 验证
-- embedding dimension mismatch 验证
+- `top_k` / `min_score`
+- embedding dimension mismatch
+- Knowledge Base scope
 
-该实现**仅用于本地测试，不作为生产 Vector DB**。
+### PostgreSQL + pgvector adapter
+
+新增 `PgVectorRetrievalProvider`，保持 SQLAlchemy / PostgreSQL 细节隔离在 adapter 层。
+
+当前实现提供：
+
+- batch sequential upsert / update
+- pgvector cosine distance (`<=>`)
+- `score = 1 - cosine_distance`
+- top-k 排序
+- min-score filtering
+- Knowledge Base scope filtering
+- embedding dimension validation
+- `knowledge_base_id` / `document_version_id` metadata contract
+
+### Database migration
+
+新增 `0010_pgvector_knowledge_chunks`：
+
+- `CREATE EXTENSION IF NOT EXISTS vector`
+- `knowledge_chunks` vector storage table
+- configurable `EMBEDDING_DIMENSION`
+- HNSW cosine index
+- Knowledge Base / Document Version scope indexes
+- chunk cascade cleanup
+
+Migration 通过项目统一入口执行：
+
+```powershell
+cd backend
+uv run alembic upgrade head
+```
 
 ## 3. 配置
 
-后端 `Settings` 已增加：
+`backend/.env` 本地建议：
 
-```text
-VECTOR_PROVIDER=none
-VECTOR_DB_URL=
+```dotenv
+EMBEDDING_PROVIDER=openai-compatible
+EMBEDDING_BASE_URL=https://your-embedding-provider/v1
+EMBEDDING_API_KEY=your-local-key
+EMBEDDING_MODEL=your-embedding-model
+EMBEDDING_TIMEOUT_SECONDS=30
+EMBEDDING_DIMENSION=1536
+
+VECTOR_PROVIDER=pgvector
+VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
 VECTOR_DB_COLLECTION=knowledge_chunks
 VECTOR_TOP_K=5
 VECTOR_MIN_SCORE=0.0
 ```
 
-真实配置只写入本地 `backend/.env`。Git 仓库只维护 `backend/.env.example`。
+`EMBEDDING_DIMENSION` 必须与真实 Embedding Provider 返回向量维度一致，并且 migration 0010 创建的 pgvector column 维度保持一致。
 
-推荐本地配置流程：
+真实 `.env`、API Key、数据库密码和带凭据的连接 URL 不提交 Git；仓库只维护 `.env.example`。
 
-```powershell
-cd backend
-Copy-Item .env.example .env
-```
+## 4. 本地验证顺序
 
-如果已有 `.env`，只补充上述 `VECTOR_*` 参数即可。
-
-不要把真实 API Key、Vector DB 密码、带凭据的连接 URL 提交到 Git。
-
-## 4. 当前测试
-
-开发者本地同步代码后执行：
+### 4.1 Contract
 
 ```powershell
 cd backend
-uv sync
 uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py
 ```
 
-真实 Embedding Provider：
+### 4.2 Schema
+
+```powershell
+uv run alembic upgrade head
+```
+
+### 4.3 pgvector round-trip
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_pgvector_validation.ps1
+```
+
+未配置 `VECTOR_PROVIDER=pgvector` 时允许 skip；配置后必须完成：
+
+```text
+PostgreSQL
+  ↓
+vector extension
+  ↓
+knowledge_chunks
+  ↓
+upsert
+  ↓
+cosine search
+  ↓
+Knowledge Base scope
+  ↓
+cleanup
+```
+
+### 4.4 Embedding
+
+真实 Embedding Provider 仍使用：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_provider_validation.ps1
 ```
 
-真实 Provider 未配置时，probe 可以正常 skip；contract tests 必须通过。
+## 5. 设计约束
 
-## 5. 下一步
+- 不把 pgvector SQL operator 暴露给 Runtime。
+- 不修改 lexical-v2 API contract。
+- Vector score 使用统一 cosine similarity 语义。
+- Knowledge Base scope 必须在 Vector DB 查询层过滤，不能只依赖上层结果裁剪。
+- Embedding dimension 在写入与查询前校验。
+- 当前先实现 PostgreSQL + pgvector，不引入第二种 Vector DB。
+- 不执行 GitHub Actions CI。
 
-下一任务不是直接绑定某个 Vector DB，而是增加真实 Vector DB adapter contract：
+## 6. 下一步
 
-1. 定义 Vector DB adapter 生命周期与连接配置
-2. 明确 collection / index / dimension contract
-3. 增加批量 upsert / search 边界
-4. 增加 metadata filter contract
-5. 增加权限过滤与 Knowledge Base scope
-6. 将 embedding dimension 检查前置到 ingestion/indexing 阶段
-7. 再选择 pgvector 作为第一真实实现
-8. 用 Evaluation Dataset 对比 lexical-v2 与 vector retrieval
-9. 最后再进入 hybrid retrieval
+pgvector 本地 round-trip 验证通过后继续：
 
-## 6. 不在当前任务实现
-
-- 不直接接入生产 Vector DB
-- 不新增 CI workflow
-- 不把 Vector DB SDK 暴露给 Runtime
-- 不改变现有 lexical-v2 API contract
-- 不提交本地 `.env`
+1. 将真实 Embedding Provider 接入 ingestion/indexing。
+2. Document Chunk → Embedding → pgvector upsert 建立真实索引链路。
+3. Retrieval API 增加 vector retrieval mode。
+4. 使用 Evaluation Dataset 对比 lexical-v2 / vector retrieval 的 Recall@K、Precision@K、MRR。
+5. 稳定后进入 hybrid retrieval（lexical + vector）。
