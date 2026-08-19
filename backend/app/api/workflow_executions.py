@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,7 +78,7 @@ def _node_response(item):
     }
 
 
-@router.post("/workflows/{workflow_id}/executions", status_code=201)
+@router.post("/{workflow_id}/executions", status_code=201)
 async def create_execution(
     workflow_id: UUID,
     payload: WorkflowExecutionCreate,
@@ -88,7 +88,6 @@ async def create_execution(
     registry = WorkflowRegistry(db)
     workflow = await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     if workflow.published_version_id is None:
-        from fastapi import HTTPException
         raise HTTPException(409, "Workflow 没有已发布版本")
     version = await registry.get_version(workflow.id, workflow.published_version_id)
     execution = await WorkflowExecutionService(db).create(workflow, version, UUID(claims["sub"]), payload.input_data)
