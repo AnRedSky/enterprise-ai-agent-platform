@@ -16,6 +16,15 @@ def test_chunk_text_is_deterministic_and_tracks_offsets():
     assert chunks == KnowledgeIngestionService.chunk_text(text, max_chars=10, overlap_chars=2)
 
 
+def test_chunk_text_rejects_invalid_max_chars():
+    try:
+        KnowledgeIngestionService.chunk_text("hello", max_chars=0)
+    except ValueError as exc:
+        assert "greater than 0" in str(exc)
+    else:
+        raise AssertionError("invalid max_chars should raise ValueError")
+
+
 def test_chunk_text_rejects_invalid_overlap():
     try:
         KnowledgeIngestionService.chunk_text("hello", max_chars=100, overlap_chars=100)
