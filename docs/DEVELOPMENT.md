@@ -53,6 +53,7 @@
 8. 所有功能直接提交 `main`，禁止创建新的功能分支。
 9. 当前本地开发阶段不得在 GitHub 仓库执行或触发 CI；测试由开发者本地同步代码后执行，并将结果反馈用于后续修复。
 10. Backend 的 Python 包安装、测试、脚本与服务运行统一使用 `uv run ...`，禁止绕过项目 `.venv` 使用系统 Python 安装或运行项目依赖。
+11. 本地真实 Provider 的 endpoint、API key、model 等配置必须写入未提交的 `backend/.env`；Git 仓库只维护 `.env.example`，禁止提交密钥。
 
 ## 3. 分层原则
 
@@ -98,7 +99,28 @@ Phase 1.4 目标为 Knowledge / RAG 闭环，固定按以下顺序推进：
 
 本阶段新增 OpenAI-compatible Embedding Provider adapter，保持 `EmbeddingProvider` contract 不变；新增本地 MockTransport contract tests 与可选真实 provider probe。真实 provider 联调必须由本地 `.env` 提供 endpoint / key / model，禁止提交任何密钥。
 
-下一步在本地完成真实 Embedding provider probe，并继续实现 Vector DB adapter 的 provider-neutral validation；本阶段不执行 GitHub Actions CI。
+当前已完成 Embedding Provider contract validation。下一步进入 provider-neutral Vector Retrieval adapter：先使用 deterministic in-memory adapter 验证向量检索 contract，再接入真实 Vector DB；本地测试仍统一使用 `uv run`，不执行 GitHub Actions CI。
+
+### 6.1 Phase 1.4-E Vector Retrieval 配置
+
+`backend/app/core/config.py` 与 `backend/.env.example` 必须同步维护以下配置：
+
+```text
+VECTOR_PROVIDER=none
+VECTOR_DB_URL=
+VECTOR_DB_COLLECTION=knowledge_chunks
+VECTOR_TOP_K=5
+VECTOR_MIN_SCORE=0.0
+```
+
+说明：
+
+- `VECTOR_PROVIDER=none`：默认不连接真实 Vector DB。
+- `VECTOR_DB_URL`：真实 Vector DB endpoint，由本地 `.env` 提供。
+- `VECTOR_DB_COLLECTION`：向量集合/索引名称。
+- `VECTOR_TOP_K`：默认向量检索返回数量。
+- `VECTOR_MIN_SCORE`：向量相似度最低阈值，范围 `0..1`。
+- Embedding 与 Vector DB 配置分离，禁止把具体供应商参数写死在 Knowledge Runtime。
 
 ## 7. 前端目录与测试约束
 
