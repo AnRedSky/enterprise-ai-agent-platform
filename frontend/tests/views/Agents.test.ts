@@ -8,7 +8,7 @@ vi.mock("../../src/api/agents", () => ({ ...api }));
 vi.mock("../../src/api/chat", () => ({ streamChat: vi.fn() }));
 vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), error: vi.fn() }, ElMessageBox: { confirm: vi.fn() } }));
 
-import Agents from "../../src/views/Agents.vue";
+import Agents from "../../src/views/agents/components/AgentWorkbench.vue";
 
 const stubs = {
   "el-button": { props: ["disabled", "loading"], template: "<button :disabled=\"disabled\"><slot/></button>" },
@@ -26,7 +26,7 @@ const versions = [
   { id: "v1", agent_id: "a1", version: "1.0.0", system_prompt: "old", model_id: "mock-model", created_at: "2026-01-01", is_published: true },
 ];
 
-describe("Agents.vue lifecycle", () => {
+describe("AgentWorkbench lifecycle", () => {
   beforeEach(() => { vi.clearAllMocks(); api.listAgents.mockResolvedValue([agent]); api.listVersions.mockResolvedValue(versions); });
 
   it("loads agents and opens versions", async () => {
