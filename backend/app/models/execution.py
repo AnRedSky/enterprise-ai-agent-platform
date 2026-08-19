@@ -51,5 +51,20 @@ class ExecutionEvent(Base):
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # PostgreSQL column remains `metadata` for schema compatibility, while the
+    # Python attribute avoids SQLAlchemy Declarative API's reserved name.
+    event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    def __init__(self, **kwargs: Any) -> None:
+        # Keep the G-02 application/test contract (`metadata=...`) without
+        # declaring a mapped attribute named `metadata` on the Declarative class.
+        metadata = kwargs.pop("metadata", None)
+        super().__init__(**kwargs)
+        if metadata is not None:
+            self.event_metadata = metadata
+
+
+# Pydantic's runtime trace schema intentionally exposes the public field as
+# `metadata`; this compatibility property keeps `from_attributes=True` working.
+ExecutionEvent.metadata = property(lambda self: self.event_metadata)
