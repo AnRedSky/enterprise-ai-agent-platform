@@ -45,11 +45,14 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] 本地 pytest + Retrieval 手工验收已通过
 
 ### 1.4-D Runtime integration
-- [ ] AgentVersion 可声明 Knowledge 配置
-- [ ] Runtime Context Assembly 接入检索结果
-- [ ] 保持 `execution_id / trace_id / agent_version` 链路
-- [ ] 权限过滤必须发生在检索结果进入模型上下文之前
-- [ ] 引用结果写入 Observability
+- [x] AgentVersion 可声明 Knowledge 配置（`knowledge_base_ids` + `top_k`）
+- [x] Runtime Context Assembly 接入检索结果
+- [x] 保持 `execution_id / trace_id / agent_version` 链路
+- [x] 权限过滤必须发生在检索结果进入模型上下文之前
+- [x] 引用结果通过 SSE start/done 事件向调用方返回
+- [x] Retrieval span 写入 Observability
+- [ ] Runtime + Knowledge 联调手工验收
+- [ ] 完整前后端回归
 
 ## 3. 前端并行开发顺序
 
@@ -100,7 +103,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C 已完成本地验收；当前进入前端 1.4-F / 1.4-G 管理与检索调试闭环。** 本轮新增 Knowledge API 类型封装、Knowledge 管理工作台、Retrieval Debug、独立前端测试与手工测试脚本。下一步在前端验收通过后进入 **1.4-D Runtime integration**：AgentVersion Knowledge 配置 → Context Assembly → RBAC → Citation / Trace。
+**Phase 1.4-A / B / C 已完成本地验收；1.4-D 已完成第一轮 Runtime Context Assembly contract 实现，当前进入 Runtime + Knowledge 联调手工验收与前后端全量回归。** AgentVersion 已支持 Knowledge 配置，Runtime 在模型调用前执行带 Owner/RBAC 过滤的检索，并将 citation 与 retrieval span 纳入执行链路。
 
 ## 7. 暂不在第一轮实现
 
