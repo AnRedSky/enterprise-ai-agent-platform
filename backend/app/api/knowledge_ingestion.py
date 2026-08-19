@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_claims, require_roles
@@ -34,6 +34,8 @@ async def ingest_version(
     return {
         "version_id": version.id,
         "ingestion_status": version.ingestion_status,
+        "vector_index_status": version.vector_index_status,
+        "embedding_model": version.embedding_model,
         "chunk_count": chunk_count,
         "content_hash": version.content_hash or "",
     }
