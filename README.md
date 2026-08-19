@@ -53,7 +53,9 @@ Knowledge / RAG 已完成：
 - 已提供可选真实 provider probe
 - 已提供 `VectorRetrievalProvider` contract
 - 已提供本地 deterministic in-memory vector adapter，仅用于 contract tests
-- 后续继续接入真实 Vector DB provider，再进行 lexical / vector / hybrid 质量对比
+- 已提供 PostgreSQL + pgvector adapter 与 migration 0010
+- 本地 PostgreSQL 推荐通过 Docker Compose 使用 `pgvector/pgvector:pg16`
+- 后续继续真实 Embedding indexing 与 lexical / vector / hybrid 质量对比
 
 前后端按“后端 contract → 后端测试 → 前端 API/测试 → 联调 → Runtime 集成 → 全量回归”的顺序推进。
 
@@ -105,19 +107,26 @@ EMBEDDING_BASE_URL=
 EMBEDDING_API_KEY=
 EMBEDDING_MODEL=
 EMBEDDING_TIMEOUT_SECONDS=30
+EMBEDDING_DIMENSION=1536
 ```
 
 Vector Retrieval：
 
 ```text
 VECTOR_PROVIDER=none
-VECTOR_DB_URL=
+VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
 VECTOR_DB_COLLECTION=knowledge_chunks
 VECTOR_TOP_K=5
 VECTOR_MIN_SCORE=0.0
 ```
 
-默认 `VECTOR_PROVIDER=none`，不会连接真实 Vector DB。当前 in-memory vector adapter 仅用于本地 contract tests。真实 Vector DB 接入前，先配置对应的 `VECTOR_*` 参数并完成本地专项验收。
+PostgreSQL / pgvector：
+
+```text
+POSTGRES_IMAGE=pgvector/pgvector:pg16
+```
+
+默认 `VECTOR_PROVIDER=none`，不会连接真实 Vector DB。启用 pgvector 时，migration 0010 要求 PostgreSQL 服务端已经安装 `vector` extension；Python / uv 环境不能替 PostgreSQL 安装 extension。推荐使用项目 Docker Compose 提供的 pgvector PostgreSQL。
 
 ## 本地启动
 
@@ -139,6 +148,8 @@ npm install
 npm run dev
 ```
 
+如果本机已有 PostgreSQL 16 并通过 `DATABASE_URL` 使用它，而不是 Compose PostgreSQL，需要先在该实例安装与 PG16 匹配的 pgvector，并确认 `pg_available_extensions` 中存在 `vector`。
+
 ## 本地验收
 
 完整手工测试步骤请参阅 [本地功能测试与验收](docs/LOCAL_TESTING.md)。
@@ -156,6 +167,15 @@ Vector / Embedding contract：
 cd backend
 uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_provider_validation.ps1
+```
+
+pgvector schema / round-trip：
+
+```powershell
+docker compose up -d postgres redis
+cd backend
+uv run alembic upgrade head
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_pgvector_validation.ps1
 ```
 
 Frontend：
@@ -192,8 +212,8 @@ EMBEDDING_MODEL=your-embedding-model
 真实 Vector DB 接入时，再按对应 adapter 要求设置：
 
 ```text
-VECTOR_PROVIDER=<provider>
-VECTOR_DB_URL=<local-only-endpoint>
+VECTOR_PROVIDER=pgvector
+VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
 VECTOR_DB_COLLECTION=knowledge_chunks
 VECTOR_TOP_K=5
 VECTOR_MIN_SCORE=0.0

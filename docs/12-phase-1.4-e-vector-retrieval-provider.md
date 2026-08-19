@@ -77,6 +77,26 @@ cd backend
 uv run alembic upgrade head
 ```
 
+**重要：0010 要求数据库服务端已经安装 pgvector。** Python / `uv` 环境只提供 Alembic、SQLAlchemy 等客户端依赖，不能替 PostgreSQL 安装 `vector` extension。
+
+本项目默认 Docker Compose 已切换到带 pgvector 的 PostgreSQL 16 镜像：
+
+```powershell
+docker compose up -d postgres redis
+cd backend
+uv run alembic upgrade head
+```
+
+如果继续使用本机直接安装的 PostgreSQL 16，而不是 Compose PostgreSQL，必须先在该 PostgreSQL 实例安装与 PG16 匹配的 pgvector，并确认：
+
+```sql
+SELECT name, default_version
+FROM pg_available_extensions
+WHERE name = 'vector';
+```
+
+若结果为空，`uv run alembic upgrade head` 会在 migration 0010 的 `CREATE EXTENSION` 步骤失败；此时不要修改 migration 绕过 vector 类型，而应修复数据库运行环境。
+
 ## 3. 配置
 
 `backend/.env` 本地建议：
@@ -96,6 +116,12 @@ VECTOR_TOP_K=5
 VECTOR_MIN_SCORE=0.0
 ```
 
+Docker Compose PostgreSQL 镜像可通过 `POSTGRES_IMAGE` 覆盖，默认值为 `pgvector/pgvector:pg16`：
+
+```dotenv
+POSTGRES_IMAGE=pgvector/pgvector:pg16
+```
+
 `EMBEDDING_DIMENSION` 必须与真实 Embedding Provider 返回向量维度一致，并且 migration 0010 创建的 pgvector column 维度保持一致。
 
 真实 `.env`、API Key、数据库密码和带凭据的连接 URL 不提交 Git；仓库只维护 `.env.example`。
@@ -109,10 +135,22 @@ cd backend
 uv run pytest -q tests/test_embedding_provider.py tests/test_vector_retrieval_provider.py
 ```
 
-### 4.2 Schema
+### 4.2 PostgreSQL / pgvector Schema
+
+推荐使用项目 Compose 数据库：
 
 ```powershell
+docker compose up -d postgres redis
+cd backend
 uv run alembic upgrade head
+```
+
+验证 extension：
+
+```sql
+SELECT extname, extversion
+FROM pg_extension
+WHERE extname = 'vector';
 ```
 
 ### 4.3 pgvector round-trip
@@ -155,6 +193,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_embedding_prov
 - Knowledge Base scope 必须在 Vector DB 查询层过滤，不能只依赖上层结果裁剪。
 - Embedding dimension 在写入与查询前校验。
 - 当前先实现 PostgreSQL + pgvector，不引入第二种 Vector DB。
+- 本地 PostgreSQL 优先使用 Compose 提供的 pgvector/pg16 镜像。
 - 不执行 GitHub Actions CI。
 
 ## 6. 下一步
