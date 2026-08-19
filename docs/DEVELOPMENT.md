@@ -112,6 +112,8 @@ frontend/
 
 - `frontend/src/` 禁止新增 `*.test.*`。
 - Vitest 只执行 `frontend/tests/**/*.test.ts`。
+- **Frontend 业务源码统一使用 TypeScript：API、router、composables/store 等代码必须使用 `.ts`；禁止 `.js` 与 `.ts` 同名实现并存。迁移完成后必须删除旧 `.js` 文件。**
+- Vue 单文件组件统一使用 `<script setup lang="ts">`。
 - 前端业务组件不得依赖 `_legacy` 页面实现。
 - 每个功能模块使用 `index.vue + components/`；`index.vue` 只负责页面入口与组件编排。
 - 前后端手工测试脚本必须保持独立，不合并为单一业务测试文件。
