@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     model_api_key: str | None = None
     model_timeout_seconds: float = 60.0
 
+    # `mock` is a deterministic offline fixture for local retrieval validation;
+    # it does not represent real model semantic quality.
     embedding_provider: str = "none"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
