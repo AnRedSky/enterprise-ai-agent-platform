@@ -1,0 +1,13 @@
+{"chunk_id":"chunk-fastapi-runtime","content":"FastAPI Agent Runtime provides the agent execution runtime, request lifecycle, tool invocation, and runtime query handling. Citation retrieval can attach source references to runtime results."}
+{"chunk_id":"chunk-runtime-debug","content":"Agent Runtime debugging covers request tracing, execution diagnostics, and runtime failure analysis for FastAPI services."}
+{"chunk_id":"chunk-citation","content":"Citation retrieval records source chunk references and returns citations with knowledge retrieval results. Retrieval ranking should preserve traceable source evidence."}
+{"chunk_id":"chunk-citation-guide","content":"Citation guide explains how retrieval results map back to source documents and how citation references are presented to users."}
+{"chunk_id":"chunk-expense-policy","content":"报销规则规定员工报销的申请条件、金额限制、票据要求以及审批流程。"}
+{"chunk_id":"chunk-expense-audit","content":"报销审计关注费用单据、审批记录和财务核验结果，支持企业费用合规检查。"}
+{"chunk_id":"chunk-approval-process","content":"审批流程包括申请、直属负责人审批、财务审核和最终确认等步骤，适用于企业业务申请。"}
+{"chunk_id":"chunk-approval-audit","content":"审批审计记录审批节点、审批人和处理时间，用于流程追踪与合规审查。"}
+{"chunk_id":"chunk-postgres-knowledge","content":"PostgreSQL 知识库用于保存企业知识文档、文档版本、Chunk 以及检索索引信息。"}
+{"chunk_id":"chunk-knowledge-catalog","content":"知识库目录管理知识文档、分类和版本信息，支持企业知识资产统一管理。"}
+{"chunk_id":"chunk-postgres-tuning","content":"PostgreSQL tuning covers indexes, query plans, connection pooling, and database performance optimization."}
+{"chunk_id":"chunk-runtime-noise","content":"Generic runtime operations include service health checks, logging, metrics, and deployment diagnostics."}
+{"chunk_id":"chunk-knowledge-noise","content":"Generic knowledge management covers document metadata, search configuration, and content lifecycle operations."}
