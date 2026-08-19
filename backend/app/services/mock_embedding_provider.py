@@ -8,16 +8,34 @@ from typing import Sequence
 from app.services.embedding_provider import EmbeddingProviderError
 
 
-_TOKEN_PATTERN = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
+
+
+def _tokenize(text: str) -> list[str]:
+    """Build deterministic lexical-semantic features for offline evaluation.
+
+    English identifiers/words remain whole tokens. Chinese runs additionally
+    emit overlapping bigrams so a short Chinese query such as ``报销规则`` can
+    match a longer sentence such as ``报销规则规定...``. This is intentionally
+    a deterministic fixture strategy, not a substitute for a real embedding
+    model.
+    """
+    tokens: list[str] = []
+    for part in _TOKEN_PATTERN.findall(text.lower()):
+        tokens.append(part)
+        if re.fullmatch(r"[\u4e00-\u9fff]+", part):
+            tokens.extend(part[index : index + 2] for index in range(len(part) - 1))
+    return tokens
 
 
 class MockEmbeddingProvider:
     """Deterministic local embedding adapter for offline retrieval validation.
 
-    This provider is intentionally lexical-semantic fixture-like rather than a
-    language model. Shared tokens contribute to shared vector dimensions, so
-    related evaluation queries and chunks can be ranked deterministically.
-    It must not be used as evidence of real model semantic quality.
+    Shared lexical features contribute to shared vector dimensions, so related
+    evaluation queries and chunks can be ranked deterministically. Chinese
+    text uses character bigram features to avoid treating an entire sentence
+    as one token. It must not be used as evidence of real model semantic
+    quality.
     """
 
     def __init__(self, dimension: int = 1536) -> None:
@@ -34,7 +52,7 @@ class MockEmbeddingProvider:
 
     def _embed_one(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
-        tokens = _TOKEN_PATTERN.findall(text.lower())
+        tokens = _tokenize(text)
         if not tokens:
             raise EmbeddingProviderError("embedding text must contain searchable content")
 
