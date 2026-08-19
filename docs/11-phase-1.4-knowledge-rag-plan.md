@@ -96,8 +96,8 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] query / top-k / Knowledge Base 过滤
 - [x] source document / score / citation / content 展示
 - [x] 与 Retrieval API 的 `retrieval_mode / matched_terms / min_score` contract 对齐
-- [ ] 与 Runtime execution 关联
-- [ ] hybrid retrieval 来源与 score breakdown 展示
+- [x] G-01：Hybrid retrieval 来源与 lexical/vector/fused score breakdown 展示
+- [ ] G-02：Runtime execution / trace 与 Retrieval Debug 关联
 
 ## 4. Phase 1.4-F Hybrid Retrieval
 
@@ -153,11 +153,15 @@ API response
 
 ### 4.3 F-03
 
-- [ ] Hybrid Evaluation Dataset + Recall@K / Precision@K / MRR + 权重质量门禁
+- [x] Hybrid Evaluation Dataset + Recall@K / Precision@K / MRR + 权重质量门禁
+- [x] 本地真实 PostgreSQL/pgvector + FastAPI Retrieval API 质量评测通过
+- [x] 5 cases、k=3：lexical Recall@3=1.0 / Precision@3=1.0 / MRR=1.0；vector Recall@3=1.0 / Precision@3=0.466667 / MRR=1.0；hybrid Recall@3=1.0 / Precision@3=0.466667 / MRR=1.0
+- [x] error_rate=0，Hybrid 质量门禁通过
+- [x] 全量 Backend regression：148 passed，86 warnings
 
 ### 4.4 G-01 / G-02
 
-- [ ] G-01：Retrieval Debug 展示 lexical/vector/hybrid 来源与分数拆解
+- [x] G-01：Retrieval Debug 展示 lexical/vector/hybrid 来源与 score 拆解；后端返回真实 breakdown，前端直接展示，不重新计算业务分数
 - [ ] G-02：Runtime execution / trace 与 Retrieval Debug 关联
 
 ## 5. 联调顺序
@@ -177,9 +181,9 @@ API response
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 mock Embedding + PostgreSQL/pgvector deterministic retrieval validation 已完成本地验收。Phase 1.4-F-01 已完成本地回归，F-02 的真实数据库闭环代码与本地手工验收脚本已完成，等待开发者执行真实 PostgreSQL/pgvector DB loop。**
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 mock Embedding + PostgreSQL/pgvector deterministic retrieval validation 已完成本地验收；Phase 1.4-F-01 / F-02 / F-03 已完成本地验收；G-01 已实现并等待开发者本地执行前后端验证脚本。**
 
-当前任务：**Phase 1.4-F-02 Retrieval API → Vector → Hybrid → Citation 真实数据库闭环本地验收**。
+当前任务：**Phase 1.4-G-01 Retrieval Debug：Hybrid 来源与 Score Breakdown 本地验收。**
 
 ## 7. 暂不在第一轮实现
 
