@@ -10,15 +10,31 @@ from fastapi import HTTPException
 from app.services.workflow_execution import WorkflowExecutionService
 
 
+def _execution(*, status: str) -> SimpleNamespace:
+    """Build a test execution that satisfies the WorkflowExecution governance contract."""
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        workflow_id=uuid4(),
+        workflow_version_id=uuid4(),
+        created_by=uuid4(),
+        status=status,
+        current_node_id=None,
+        started_at=None,
+        ended_at=None,
+        output_data=None,
+        error_code=None,
+        error_message=None,
+        input_data={},
+    )
+
+
 @pytest.mark.asyncio
 async def test_pending_execution_can_start_and_complete():
     db = AsyncMock()
     db.refresh = AsyncMock()
     service = WorkflowExecutionService(db)
-    execution = SimpleNamespace(
-        id=uuid4(), created_by=uuid4(), status="pending", current_node_id=None, started_at=None,
-        ended_at=None, output_data=None, error_code=None, error_message=None,
-    )
+    execution = _execution(status="pending")
 
     await service.transition(execution, "running", node_id="start")
     assert execution.status == "running"
@@ -36,10 +52,7 @@ async def test_pending_execution_can_start_and_complete():
 async def test_terminal_execution_cannot_transition_again():
     db = AsyncMock()
     service = WorkflowExecutionService(db)
-    execution = SimpleNamespace(
-        id=uuid4(), created_by=uuid4(), status="completed", current_node_id=None, started_at=None,
-        ended_at=None, output_data=None, error_code=None, error_message=None,
-    )
+    execution = _execution(status="completed")
 
     with pytest.raises(HTTPException) as exc:
         await service.transition(execution, "running")
@@ -51,10 +64,7 @@ async def test_pending_execution_can_be_cancelled_but_running_cannot_complete_tw
     db = AsyncMock()
     db.refresh = AsyncMock()
     service = WorkflowExecutionService(db)
-    execution = SimpleNamespace(
-        id=uuid4(), created_by=uuid4(), status="pending", current_node_id=None, started_at=None,
-        ended_at=None, output_data=None, error_code=None, error_message=None,
-    )
+    execution = _execution(status="pending")
 
     await service.transition(execution, "cancelled")
     assert execution.status == "cancelled"
