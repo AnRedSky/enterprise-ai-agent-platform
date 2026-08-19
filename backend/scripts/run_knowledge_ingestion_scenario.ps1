@@ -1,3 +1,5 @@
+# PowerShell 5.1 / PowerShell 7 compatible manual acceptance scenario.
+# Keep this script syntax-stable: use quoted paths and splatted parameter hashtables for scenario requests.
 [CmdletBinding()]
 param(
     [string]$BaseUrl = $(if ($env:API_BASE_URL) { $env:API_BASE_URL } else { 'http://127.0.0.1:8000' }),
