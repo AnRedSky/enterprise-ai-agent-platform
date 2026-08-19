@@ -38,5 +38,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Enforce TypeScript-only source and tests
+        shell: bash
+        run: |
+          if find src tests -type f \( -name '*.js' -o -name '*.jsx' \) -print -quit | grep -q .; then
+            echo 'JavaScript source/test files are not allowed under frontend/src or frontend/tests.'
+            find src tests -type f \( -name '*.js' -o -name '*.jsx' \) -print
+            exit 1
+          fi
       - run: npm test
       - run: npm run build
