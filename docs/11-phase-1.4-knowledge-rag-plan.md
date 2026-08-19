@@ -51,8 +51,20 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] 权限过滤必须发生在检索结果进入模型上下文之前
 - [x] 引用结果通过 SSE start/done 事件向调用方返回
 - [x] Retrieval span 写入 Observability
-- [ ] Runtime + Knowledge 联调手工验收
-- [ ] 完整前后端回归
+- [x] Runtime + Knowledge 联调手工验收
+- [x] 前后端第一轮回归
+
+### 1.4-E Knowledge / Retrieval 生产化深化
+- [x] 检索策略升级为 deterministic `lexical-v2`，保持 provider-neutral
+- [x] 中文短语增加序列/二元 token，避免连续中文文本无法命中
+- [x] `min_score` 阈值控制，避免低相关候选进入上下文
+- [x] 可选重复 Chunk 去重，降低重复上下文
+- [x] 返回 `matched_terms` 与 `retrieval_mode`，支持 Retrieval Debug 质量分析
+- [x] 候选扫描设置上限并保持稳定排序，避免结果顺序随数据库返回顺序漂移
+- [x] Retrieval API schema 与前端 API 类型同步升级
+- [x] 增加 retrieval quality / API contract 单元测试
+- [ ] 与真实 Embedding / Vector DB provider 的替换性联调
+- [ ] Retrieval Evaluation Dataset 与离线 Recall / Precision / MRR 评测
 
 ## 3. 前端并行开发顺序
 
@@ -70,6 +82,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] Retrieval 调试入口
 - [x] query / top-k / Knowledge Base 过滤
 - [x] source document / score / citation / content 展示
+- [x] 与 Retrieval API 的 `retrieval_mode / matched_terms / min_score` contract 对齐
 - [ ] 与 Runtime execution 关联
 
 前端只通过 `/api/v1` 调用后端，不实现 Knowledge 核心业务规则。
@@ -103,7 +116,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C 已完成本地验收；1.4-D 已完成第一轮 Runtime Context Assembly contract 实现，当前进入 Runtime + Knowledge 联调手工验收与前后端全量回归。** AgentVersion 已支持 Knowledge 配置，Runtime 在模型调用前执行带 Owner/RBAC 过滤的检索，并将 citation 与 retrieval span 纳入执行链路。
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 已完成第一轮 provider-neutral retrieval production baseline。** 当前检索仍保持 lexical provider-neutral 实现，通过 deterministic ranking、中文短语 tokenization、min_score、dedupe、candidate cap 和 retrieval metadata 提升可控性。下一步进入 Retrieval Evaluation 与真实 Embedding / Vector DB provider 替换性验证。
 
 ## 7. 暂不在第一轮实现
 
