@@ -1,5 +1,5 @@
 # PowerShell 5.1 / PowerShell 7 compatible manual acceptance scenario.
-# Keep this script syntax-stable: use quoted paths and splatted parameter hashtables for scenario requests.
+# Keep this script ASCII-only and parser-stable for Windows PowerShell 5.1.
 [CmdletBinding()]
 param(
     [string]$BaseUrl = $(if ($env:API_BASE_URL) { $env:API_BASE_URL } else { 'http://127.0.0.1:8000' }),
@@ -20,9 +20,9 @@ function Invoke-ScenarioRequest {
         [int[]]$ExpectedStatus = @(200)
     )
 
-    Write-Host "[RUN ] $Name" -ForegroundColor Cyan
+    Write-Host ('[RUN ] {0}' -f $Name) -ForegroundColor Cyan
     $requestParams = @{
-        Uri = "$BaseUrl$Path"
+        Uri = ('{0}{1}' -f $BaseUrl, $Path)
         Method = $Method
         Headers = $Headers
         DisableKeepAlive = $true
@@ -38,9 +38,9 @@ function Invoke-ScenarioRequest {
         $response = Invoke-WebRequest @requestParams
         $status = [int]$response.StatusCode
         if ($ExpectedStatus -notcontains $status) {
-            throw "Unexpected HTTP status $status. Expected: $($ExpectedStatus -join ', ')"
+            throw ('Unexpected HTTP status {0}. Expected: {1}' -f $status, ($ExpectedStatus -join ', '))
         }
-        Write-Host "[ OK  ] $Name -> HTTP $status" -ForegroundColor Green
+        Write-Host ('[ OK  ] {0} -> HTTP {1}' -f $Name, $status) -ForegroundColor Green
         if ([string]::IsNullOrWhiteSpace([string]$response.Content)) { return $null }
         try { return ($response.Content | ConvertFrom-Json) } catch { return $response.Content }
     }
@@ -50,79 +50,60 @@ function Invoke-ScenarioRequest {
             try { $status = [int]$_.Exception.Response.StatusCode.value__ } catch {}
         }
         if ($null -ne $status -and ($ExpectedStatus -contains $status)) {
-            Write-Host "[ OK  ] $Name -> HTTP $status" -ForegroundColor Green
+            Write-Host ('[ OK  ] {0} -> HTTP {1}' -f $Name, $status) -ForegroundColor Green
             return $null
         }
-        Write-Host "[FAIL ] $Name -> HTTP $status" -ForegroundColor Red
+        Write-Host ('[FAIL ] {0} -> HTTP {1}' -f $Name, $status) -ForegroundColor Red
         throw
     }
 }
 
 Write-Host '============================================================' -ForegroundColor DarkGray
 Write-Host 'Enterprise AI Agent Platform - Knowledge Ingestion Scenario' -ForegroundColor White
-Write-Host "Base URL: $BaseUrl" -ForegroundColor Gray
-Write-Host 'Scenario: Auth -> Version Content -> Ingest -> Chunks -> Idempotent Re-ingest' -ForegroundColor Gray
+Write-Host ('Base URL: {0}' -f $BaseUrl) -ForegroundColor Gray
+Write-Host 'Scenario: Auth -> Version -> Ingest -> Chunks -> Re-ingest' -ForegroundColor Gray
 Write-Host '============================================================' -ForegroundColor DarkGray
 
 if ([string]::IsNullOrWhiteSpace($Username)) {
-    $Username = "ingestion_$(Get-Date -Format 'yyyyMMddHHmmssfff')"
+    $Username = 'ingestion_{0}' -f (Get-Date -Format 'yyyyMMddHHmmssfff')
 }
 
-$registerParams = @{
+$register = @{
     Name = 'Auth / register'
     Method = 'POST'
     Path = '/api/v1/auth/register'
     Body = @{ username = $Username; password = $Password }
     ExpectedStatus = @(200, 409)
 }
-Invoke-ScenarioRequest @registerParams | Out-Null
+Invoke-ScenarioRequest @register | Out-Null
 
-$loginParams = @{
-    Name = 'Auth / login'
-    Method = 'POST'
-    Path = '/api/v1/auth/login'
-    Body = @{ username = $Username; password = $Password }
-}
-$login = Invoke-ScenarioRequest @loginParams
+$login = Invoke-ScenarioRequest -Name 'Auth / login' -Method 'POST' -Path '/api/v1/auth/login' -Body @{ username = $Username; password = $Password }
 if ([string]::IsNullOrWhiteSpace($login.access_token)) { throw 'Login did not return access_token.' }
-$headers = @{ Authorization = "Bearer $($login.access_token)" }
+$headers = @{ Authorization = 'Bearer {0}' -f $login.access_token }
 
-$kbParams = @{
-    Name = 'Knowledge / create'
-    Method = 'POST'
-    Path = '/api/v1/knowledge'
-    Headers = $headers
-    Body = @{ name = "ingestion-$Username"; description = 'Document ingestion scenario' }
-}
-$kb = Invoke-ScenarioRequest @kbParams
+$kb = Invoke-ScenarioRequest -Name 'Knowledge / create' -Method 'POST' -Path '/api/v1/knowledge' -Headers $headers -Body @{ name = ('ingestion-{0}' -f $Username); description = 'Document ingestion scenario' }
 $kbId = [string]$kb.id
 if ([string]::IsNullOrWhiteSpace($kbId)) { throw 'Knowledge create did not return an id.' }
 
-$docParams = @{
-    Name = 'Knowledge / document create'
-    Method = 'POST'
-    Path = "/api/v1/knowledge/$kbId/documents"
-    Headers = $headers
-    Body = @{ title = 'Ingestion Scenario Document'; source_type = 'manual' }
-}
-$doc = Invoke-ScenarioRequest @docParams
+$docPath = '/api/v1/knowledge/{0}/documents' -f $kbId
+$doc = Invoke-ScenarioRequest -Name 'Knowledge / document create' -Method 'POST' -Path $docPath -Headers $headers -Body @{ title = 'Ingestion Scenario Document'; source_type = 'manual' }
 $docId = [string]$doc.id
 if ([string]::IsNullOrWhiteSpace($docId)) { throw 'Document create did not return an id.' }
 
-$content = "第一段：企业 AI Agent 平台。`n`n第二段：Knowledge Registry、Document、Version 与 Chunk 构成知识处理基础。`n`n第三段：本场景验证清洗、确定性分块、持久化与重复摄取。"
-$versionPath = "/api/v1/knowledge/$kbId/documents/$docId/versions"
+$content = 'Enterprise AI Agent Platform. Knowledge Registry, Document, Version and Chunk form the ingestion foundation. This scenario validates cleaning, deterministic chunking, persistence and repeated ingestion.'
+$versionPath = '/api/v1/knowledge/{0}/documents/{1}/versions' -f $kbId, $docId
 $versionBody = @{ version = 'v1'; status = 'draft'; content_text = $content }
 $version = Invoke-ScenarioRequest -Name 'Knowledge / version create' -Method 'POST' -Path $versionPath -Headers $headers -Body $versionBody
 $versionId = [string]$version.id
 if ([string]::IsNullOrWhiteSpace($versionId)) { throw 'Version create did not return an id.' }
 
+$ingestPath = '/api/v1/knowledge/versions/{0}/ingest' -f $versionId
 $ingestBody = @{ max_chars = 80; overlap_chars = 10 }
-$ingestPath = "/api/v1/knowledge/versions/$versionId/ingest"
 $ingest = Invoke-ScenarioRequest -Name 'Knowledge / ingest' -Method 'POST' -Path $ingestPath -Headers $headers -Body $ingestBody
 if ($ingest.ingestion_status -ne 'ready') { throw 'Ingestion did not reach ready status.' }
 if ([int]$ingest.chunk_count -lt 2) { throw 'Expected at least 2 chunks.' }
 
-$chunksPath = "/api/v1/knowledge/versions/$versionId/chunks"
+$chunksPath = '/api/v1/knowledge/versions/{0}/chunks' -f $versionId
 $chunks = Invoke-ScenarioRequest -Name 'Knowledge / chunks' -Path $chunksPath -Headers $headers
 $chunkItems = @($chunks)
 if ($chunkItems.Count -ne [int]$ingest.chunk_count) { throw 'Chunk list count does not match ingestion result.' }
@@ -134,7 +115,7 @@ if ([int]$ingestAgain.chunk_count -ne [int]$ingest.chunk_count) { throw 'Re-inge
 
 Write-Host '============================================================' -ForegroundColor DarkGray
 Write-Host '[PASS] Knowledge Ingestion scenario completed' -ForegroundColor Green
-Write-Host "Test user: $Username" -ForegroundColor Gray
-Write-Host "Version : $versionId" -ForegroundColor Gray
-Write-Host "Chunks  : $($ingestAgain.chunk_count)" -ForegroundColor Gray
+Write-Host ('Test user: {0}' -f $Username) -ForegroundColor Gray
+Write-Host ('Version : {0}' -f $versionId) -ForegroundColor Gray
+Write-Host ('Chunks  : {0}' -f $ingestAgain.chunk_count) -ForegroundColor Gray
 Write-Host '============================================================' -ForegroundColor DarkGray
