@@ -28,18 +28,27 @@ def upgrade() -> None:
     op.execute(
         sa.text(
             "INSERT INTO tenants (id, name, status, created_at) "
-            "VALUES (:id, :name, 'active', CURRENT_TIMESTAMP)"
+            "VALUES (CAST(:id AS UUID), :name, 'active', CURRENT_TIMESTAMP)"
         ).bindparams(id=_DEFAULT_TENANT_ID, name="Default Tenant")
     )
 
     op.add_column("users", sa.Column("tenant_id", sa.UUID(), nullable=True))
-    op.execute(sa.text("UPDATE users SET tenant_id = :tenant_id WHERE tenant_id IS NULL").bindparams(tenant_id=_DEFAULT_TENANT_ID))
+    op.execute(
+        sa.text("UPDATE users SET tenant_id = CAST(:tenant_id AS UUID) WHERE tenant_id IS NULL")
+        .bindparams(tenant_id=_DEFAULT_TENANT_ID)
+    )
     op.alter_column("users", "tenant_id", nullable=False)
     op.create_index("ix_users_tenant_id", "users", ["tenant_id"], unique=False)
     op.create_foreign_key("fk_users_tenant_id", "users", "tenants", ["tenant_id"], ["id"], ondelete="RESTRICT")
 
     op.add_column("workflows", sa.Column("tenant_id", sa.UUID(), nullable=True))
-    op.execute(sa.text("UPDATE workflows SET tenant_id = (SELECT tenant_id FROM users WHERE users.id = workflows.owner_id) WHERE workflows.tenant_id IS NULL"))
+    op.execute(
+        sa.text(
+            "UPDATE workflows "
+            "SET tenant_id = (SELECT tenant_id FROM users WHERE users.id = workflows.owner_id) "
+            "WHERE workflows.tenant_id IS NULL"
+        )
+    )
     op.alter_column("workflows", "tenant_id", nullable=False)
     op.create_index("ix_workflows_tenant_id", "workflows", ["tenant_id"], unique=False)
     op.create_foreign_key("fk_workflows_tenant_id", "workflows", "tenants", ["tenant_id"], ["id"], ondelete="RESTRICT")
