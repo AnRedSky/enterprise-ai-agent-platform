@@ -1,3 +1,4 @@
+import inspect
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +12,12 @@ from app.models.execution import Execution, ExecutionEvent
 class ObservabilityService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _add(self, instance: Any) -> None:
+        """Add an ORM instance while supporting both real and async test doubles."""
+        result = self.db.add(instance)
+        if inspect.isawaitable(result):
+            await result
 
     @staticmethod
     def _utc_naive(value: datetime | None) -> datetime | None:
@@ -38,7 +45,7 @@ class ObservabilityService:
             model_id=model_id,
             status="running",
         )
-        self.db.add(execution)
+        await self._add(execution)
         await self.db.flush()
         return execution
 
@@ -95,7 +102,7 @@ class ObservabilityService:
             error_message=error_message,
             metadata=metadata,
         )
-        self.db.add(event)
+        await self._add(event)
         await self.db.flush()
         return event
 
