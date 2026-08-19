@@ -35,8 +35,14 @@ class HybridRetrievalConfig:
 class HybridRetrievalService:
     """Fuse lexical-v2 and vector candidates without exposing provider details.
 
-    Both upstream contracts already expose normalized scores in the range 0..1.
-    The first hybrid version therefore uses deterministic weighted score fusion.
+    Both upstream contracts expose normalized scores in the range 0..1. When a
+    chunk is returned by both sources, its score is the configured weighted
+    fusion of the two normalized scores. A chunk returned by only one source
+    keeps that source's normalized score rather than being penalized merely for
+    missing from the other candidate set. This keeps single-source candidates
+    comparable with their originating retrieval signal while still rewarding
+    candidates supported by both sources.
+
     Ties are resolved by chunk_id so ranking remains stable across database
     execution order. Reranking/model-based fusion is intentionally deferred to
     the next phase.
@@ -77,14 +83,24 @@ class HybridRetrievalService:
         weight_total = self.config.lexical_weight + self.config.vector_weight
         fused: list[HybridCandidate] = []
         for chunk_id, candidate in candidates.items():
-            score = (
-                self.config.lexical_weight * lexical_scores.get(chunk_id, 0.0)
-                + self.config.vector_weight * vector_scores.get(chunk_id, 0.0)
-            ) / weight_total
+            lexical_score = lexical_scores.get(chunk_id)
+            vector_score = vector_scores.get(chunk_id)
+
+            if lexical_score is not None and vector_score is not None:
+                score = (
+                    self.config.lexical_weight * lexical_score
+                    + self.config.vector_weight * vector_score
+                ) / weight_total
+            elif lexical_score is not None:
+                score = lexical_score
+            else:
+                # Every candidate is guaranteed to come from at least one source.
+                score = vector_score  # type: ignore[assignment]
+
             source_parts: list[str] = []
-            if chunk_id in lexical_scores:
+            if lexical_score is not None:
                 source_parts.append("lexical")
-            if chunk_id in vector_scores:
+            if vector_score is not None:
                 source_parts.append("vector")
             fused.append(
                 HybridCandidate(
