@@ -18,11 +18,16 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.core.config import settings
 from app.dependencies.db import SessionLocal
 from app.services.mock_embedding_provider import MockEmbeddingProvider
+from app.services.retrieval_evaluation import (
+    RetrievalEvaluationCase,
+    RetrievalEvaluationObservation,
+    aggregate_observations,
+)
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
 
 DATASET = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_dataset.jsonl"
 FIXTURE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_fixture.jsonl"
-RESULTS = BACKEND_ROOT / "evaluation" / "vector_results.jsonl"
+BASELINE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_baseline.json"
 FIXTURE_NAMESPACE = uuid.UUID("00000000-0000-0000-0000-000000000100")
 KB_ID = uuid.UUID("00000000-0000-0000-0000-000000000101")
 DOC_ID = uuid.UUID("00000000-0000-0000-0000-000000000102")
@@ -37,7 +42,32 @@ def actual_chunk_id(evaluation_chunk_id: str) -> uuid.UUID:
     return uuid.uuid5(FIXTURE_NAMESPACE, evaluation_chunk_id)
 
 
+def load_cases() -> list[RetrievalEvaluationCase]:
+    return [
+        RetrievalEvaluationCase(item["query"], frozenset(item["relevant_chunk_ids"]))
+        for item in load_jsonl(DATASET)
+    ]
+
+
+def quality_gate(metrics: dict[str, float | int], baseline: dict) -> list[str]:
+    failures: list[str] = []
+    for metric in ("recall_at_k", "mrr"):
+        actual = float(metrics[metric])
+        expected = float(baseline.get(metric, 0.0))
+        if actual < expected:
+            failures.append(f"{metric} regressed: {actual} < baseline {expected}")
+    if float(metrics["error_rate"]) > 0:
+        failures.append(f"provider error rate is non-zero: {metrics['error_rate']}")
+    return failures
+
+
 async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
+    """Materialize deterministic evaluation content into the real DB tables.
+
+    The JSON fixture is only test-data input. Retrieval never reads it: after
+    this step, chunks and vectors are persisted in PostgreSQL/pgvector and all
+    evaluation queries execute through PgVectorRetrievalProvider.
+    """
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
@@ -112,16 +142,16 @@ async def cleanup_fixture(db) -> None:
     await db.commit()
 
 
-async def run(k: int) -> None:
+async def run(k: int) -> int:
     if settings.embedding_provider != "mock":
         raise SystemExit("Evaluation runner requires EMBEDDING_PROVIDER=mock for offline validation")
     if settings.vector_provider != "pgvector":
         raise SystemExit("Evaluation runner requires VECTOR_PROVIDER=pgvector")
 
-    cases = load_jsonl(DATASET)
+    cases = load_cases()
     fixtures = load_jsonl(FIXTURE)
     fixture_by_id = {row["chunk_id"]: row for row in fixtures}
-    missing = sorted({chunk_id for case in cases for chunk_id in case["relevant_chunk_ids"] if chunk_id not in fixture_by_id})
+    missing = sorted({chunk_id for case in cases for chunk_id in case.relevant_chunk_ids if chunk_id not in fixture_by_id})
     if missing:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
 
@@ -134,24 +164,23 @@ async def run(k: int) -> None:
         await prepare_fixture(db, fixtures, owner)
         try:
             fixture_embeddings = await provider.embed([row["content"] for row in fixtures])
-            records = []
-            for row, embedding in zip(fixtures, fixture_embeddings, strict=True):
-                records.append(
-                    VectorRecord(
-                        chunk_id=str(actual_chunk_id(row["chunk_id"])),
-                        embedding=tuple(embedding),
-                        metadata={
-                            "knowledge_base_id": str(KB_ID),
-                            "document_version_id": str(VERSION_ID),
-                            "evaluation_chunk_id": row["chunk_id"],
-                        },
-                    )
+            records = [
+                VectorRecord(
+                    chunk_id=str(actual_chunk_id(row["chunk_id"])),
+                    embedding=tuple(embedding),
+                    metadata={
+                        "knowledge_base_id": str(KB_ID),
+                        "document_version_id": str(VERSION_ID),
+                        "evaluation_chunk_id": row["chunk_id"],
+                    },
                 )
+                for row, embedding in zip(fixtures, fixture_embeddings, strict=True)
+            ]
             vector_provider = PgVectorRetrievalProvider(db, settings.embedding_dimension)
             await vector_provider.upsert(records)
 
-            query_embeddings = await provider.embed([case["query"] for case in cases])
-            output: list[dict] = []
+            query_embeddings = await provider.embed([case.query for case in cases])
+            observations: list[RetrievalEvaluationObservation] = []
             for case, query_embedding in zip(cases, query_embeddings, strict=True):
                 started = time.perf_counter()
                 error = None
@@ -167,32 +196,41 @@ async def run(k: int) -> None:
                 except Exception as exc:  # evaluation output must record provider failures
                     error = f"{type(exc).__name__}: {exc}"
                 latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                output.append({
-                    "query": case["query"],
-                    "mode": "mock-pgvector",
-                    "ranking": ranking,
-                    "latency_ms": latency_ms,
-                    "error": error,
-                })
+                observations.append(
+                    RetrievalEvaluationObservation(
+                        retrieved_chunk_ids=tuple(ranking),
+                        latency_ms=latency_ms,
+                        error=error,
+                    )
+                )
 
-            RESULTS.parent.mkdir(parents=True, exist_ok=True)
-            RESULTS.write_text(
-                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in output),
-                encoding="utf-8",
-            )
-            print(f"Generated {len(output)} retrieval observations: {RESULTS}")
+            metrics = aggregate_observations(cases, observations, k=k)
+            baseline_all = json.loads(BASELINE.read_text(encoding="utf-8"))
+            baseline = baseline_all.get("mock-pgvector", {})
+            failures = quality_gate(metrics, baseline)
+            report = {
+                "mode": "mock-pgvector",
+                "source": "postgresql/pgvector",
+                "k": k,
+                **metrics,
+                "quality_gate": "failed" if failures else "passed",
+                "failures": failures,
+            }
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 1 if failures else 0
         finally:
             await cleanup_fixture(db)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run deterministic Mock Embedding + PostgreSQL/pgvector retrieval evaluation")
+    parser = argparse.ArgumentParser(
+        description="Evaluate Knowledge Retrieval directly against PostgreSQL/pgvector using deterministic mock embeddings"
+    )
     parser.add_argument("--k", type=int, default=3)
     args = parser.parse_args()
     if args.k < 1:
         raise SystemExit("--k must be greater than zero")
-    asyncio.run(run(args.k))
-    return 0
+    return asyncio.run(run(args.k))
 
 
 if __name__ == "__main__":
