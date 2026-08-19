@@ -12,40 +12,29 @@ from app.models.execution import Execution, ExecutionEvent  # noqa: F401
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion  # noqa: F401
 from app.models.workflow import Workflow, WorkflowVersion  # noqa: F401
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution  # noqa: F401
-
+from app.models.workflow_trace import WorkflowTraceEvent  # noqa: F401
 
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
-
-# Keep Alembic and the application on the same DATABASE_URL/.env configuration.
 config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
 def run_migrations_offline():
-    context.configure(
-        url=settings.database_url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-    )
+    context.configure(url=settings.database_url, target_metadata=target_metadata, literal_binds=True,
+                      dialect_opts={"paramstyle": "named"})
     with context.begin_transaction():
         context.run_migrations()
 
 
 async def run_async_migrations():
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    connectable = async_engine_from_config(config.get_section(config.config_ini_section), prefix="sqlalchemy.",
+                                           poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         async with connection.begin():
             await prepare_alembic_version_table(connection)
-            await connection.run_sync(
-                lambda c: context.configure(connection=c, target_metadata=target_metadata)
-            )
+            await connection.run_sync(lambda c: context.configure(connection=c, target_metadata=target_metadata))
             await connection.run_sync(lambda _: context.run_migrations())
     await connectable.dispose()
 

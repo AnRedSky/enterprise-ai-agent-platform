@@ -13,7 +13,6 @@ class PageMeta(BaseModel):
 
 class ExecutionItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     execution_id: UUID = Field(validation_alias=AliasChoices("execution_id", "id"))
     request_id: str
     trace_id: str
@@ -34,7 +33,6 @@ class ExecutionListResponse(PageMeta):
 
 class ExecutionEventItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: UUID
     execution_id: UUID
     trace_id: str
@@ -56,17 +54,44 @@ class ExecutionTimelineResponse(BaseModel):
 
 class AuditLogItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: UUID
     actor_id: UUID | None = None
+    tenant_id: UUID | None = None
     agent_id: UUID | None = None
     tool_id: UUID | None = None
+    workflow_id: UUID | None = None
+    workflow_version_id: UUID | None = None
+    workflow_execution_id: UUID | None = None
     execution_id: UUID | None = None
     action: str
     status: str
     error_code: str | None = None
+    metadata: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("metadata", "metadata_json"))
     created_at: datetime
 
 
 class AuditLogListResponse(PageMeta):
     items: list[AuditLogItem]
+
+
+class WorkflowTraceItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    execution_id: UUID
+    workflow_id: UUID
+    workflow_version_id: UUID
+    node_id: str | None = None
+    event_type: str
+    status: str
+    trace_id: str
+    actor_id: UUID | None = None
+    data: dict[str, Any] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+
+
+class WorkflowTraceResponse(BaseModel):
+    execution_id: UUID
+    items: list[WorkflowTraceItem]

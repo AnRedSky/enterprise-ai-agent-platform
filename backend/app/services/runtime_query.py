@@ -1,11 +1,13 @@
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
 from app.models.core import Agent
 from app.models.execution import Execution, ExecutionEvent
+from app.models.workflow import Workflow
+from app.models.workflow_trace import WorkflowTraceEvent
 
 MAX_PAGE_SIZE = 100
 
@@ -25,20 +27,9 @@ class RuntimeQueryService:
             stmt = stmt.join(Agent, Agent.id == Execution.agent_id).where(Agent.owner_id == actor_id)
         return stmt
 
-    async def executions(
-        self,
-        actor_id: UUID,
-        is_admin: bool,
-        page=1,
-        page_size=20,
-        status=None,
-        agent_id=None,
-        trace_id=None,
-        request_id=None,
-        session_id=None,
-        started_from=None,
-        started_to=None,
-    ):
+    async def executions(self, actor_id: UUID, is_admin: bool, page=1, page_size=20, status=None,
+                         agent_id=None, trace_id=None, request_id=None, session_id=None,
+                         started_from=None, started_to=None):
         page, page_size, offset = self._page(page, page_size)
         stmt: Select = self._agent_scope(select(Execution), actor_id, is_admin)
         if agent_id:
@@ -56,13 +47,7 @@ class RuntimeQueryService:
         if started_to:
             stmt = stmt.where(Execution.started_at <= started_to)
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
-        rows = (
-            await self.db.execute(
-                stmt.order_by(Execution.started_at.desc(), Execution.id.desc())
-                .offset(offset)
-                .limit(page_size)
-            )
-        ).scalars().all()
+        rows = (await self.db.execute(stmt.order_by(Execution.started_at.desc(), Execution.id.desc()).offset(offset).limit(page_size))).scalars().all()
         return page, page_size, total, rows
 
     async def execution(self, actor_id: UUID, is_admin: bool, execution_id: UUID):
@@ -73,32 +58,37 @@ class RuntimeQueryService:
         execution = await self.execution(actor_id, is_admin, execution_id)
         if execution is None:
             return None, []
-        rows = (
-            await self.db.execute(
-                select(ExecutionEvent)
-                .where(ExecutionEvent.execution_id == execution_id)
-                .order_by(ExecutionEvent.created_at.asc(), ExecutionEvent.id.asc())
-            )
-        ).scalars().all()
+        rows = (await self.db.execute(select(ExecutionEvent).where(ExecutionEvent.execution_id == execution_id)
+                                      .order_by(ExecutionEvent.created_at.asc(), ExecutionEvent.id.asc()))).scalars().all()
         return execution, rows
 
-    async def audit_logs(self, actor_id: UUID, is_admin: bool, page=1, page_size=20, agent_id=None, tool_id=None, status=None):
+    async def audit_logs(self, actor_id: UUID, is_admin: bool, page=1, page_size=20,
+                         agent_id=None, tool_id=None, status=None, workflow_id=None, workflow_execution_id=None):
         page, page_size, offset = self._page(page, page_size)
         stmt = select(AuditLog)
         if not is_admin:
-            stmt = stmt.join(Agent, Agent.id == AuditLog.agent_id).where(Agent.owner_id == actor_id)
+            stmt = stmt.outerjoin(Agent, Agent.id == AuditLog.agent_id).outerjoin(Workflow, Workflow.id == AuditLog.workflow_id)
+            stmt = stmt.where(or_(Agent.owner_id == actor_id, Workflow.owner_id == actor_id))
         if agent_id:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
         if tool_id:
             stmt = stmt.where(AuditLog.tool_id == tool_id)
+        if workflow_id:
+            stmt = stmt.where(AuditLog.workflow_id == workflow_id)
+        if workflow_execution_id:
+            stmt = stmt.where(AuditLog.workflow_execution_id == workflow_execution_id)
         if status:
             stmt = stmt.where(AuditLog.status == status)
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
-        rows = (
-            await self.db.execute(
-                stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-                .offset(offset)
-                .limit(page_size)
-            )
-        ).scalars().all()
+        rows = (await self.db.execute(stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(offset).limit(page_size))).scalars().all()
         return page, page_size, total, rows
+
+    async def workflow_trace(self, actor_id: UUID, is_admin: bool, execution_id: UUID, tenant_id: UUID):
+        stmt = select(WorkflowTraceEvent).where(
+            WorkflowTraceEvent.execution_id == execution_id,
+            WorkflowTraceEvent.tenant_id == tenant_id,
+        )
+        if not is_admin:
+            stmt = stmt.join(Workflow, Workflow.id == WorkflowTraceEvent.workflow_id).where(Workflow.owner_id == actor_id)
+        rows = (await self.db.execute(stmt.order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc()))).scalars().all()
+        return rows

@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
+from app.models.workflow_trace import WorkflowTraceEvent
 from app.runtime.workflow_runtime import WorkflowRuntime
+from app.services.workflow_governance import WorkflowGovernanceService
 
 
 class WorkflowExecutionService:
@@ -19,6 +21,7 @@ class WorkflowExecutionService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.governance = WorkflowGovernanceService(db)
 
     async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict) -> WorkflowExecution:
         if workflow.published_version_id != version.id or version.status != "published":
@@ -33,6 +36,9 @@ class WorkflowExecutionService:
             input_data=input_data,
         )
         self.db.add(execution)
+        await self.db.flush()
+        await self.governance.audit(execution, actor_id, "workflow.execution.created", "success")
+        await self.governance.trace(execution, actor_id, "execution.created", "pending", data={"input_keys": sorted(input_data.keys())})
         await self.db.commit()
         await self.db.refresh(execution)
         return execution
@@ -51,6 +57,14 @@ class WorkflowExecutionService:
             select(WorkflowNodeExecution)
             .where(WorkflowNodeExecution.execution_id == execution.id)
             .order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
+        )
+        return list(result.scalars().all())
+
+    async def trace(self, execution: WorkflowExecution) -> list[WorkflowTraceEvent]:
+        result = await self.db.execute(
+            select(WorkflowTraceEvent)
+            .where(WorkflowTraceEvent.execution_id == execution.id, WorkflowTraceEvent.tenant_id == execution.tenant_id)
+            .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
         )
         return list(result.scalars().all())
 
@@ -79,6 +93,24 @@ class WorkflowExecutionService:
         if target_status in self.TERMINAL_EXECUTION_STATES:
             execution.ended_at = now
             execution.current_node_id = None
+        await self.governance.trace(
+            execution,
+            execution.created_by,
+            "execution.state_changed",
+            target_status,
+            node_id=node_id,
+            error_code=error_code,
+            error_message=error_message,
+            data={"from": current, "to": target_status},
+        )
+        if target_status in self.TERMINAL_EXECUTION_STATES:
+            await self.governance.audit(
+                execution,
+                execution.created_by,
+                f"workflow.execution.{target_status}",
+                "success" if target_status == "completed" else target_status,
+                error_code=error_code,
+            )
         await self.db.commit()
         await self.db.refresh(execution)
         return execution
@@ -116,6 +148,16 @@ class WorkflowExecutionService:
             execution.current_node_id = node_id
         if target_status in {"completed", "failed", "skipped"}:
             node.ended_at = now
+        await self.governance.trace(
+            execution,
+            execution.created_by,
+            "node.state_changed",
+            target_status,
+            node_id=node_id,
+            error_code=error_code,
+            error_message=error_message,
+            data={"input_present": input_data is not None, "output_present": output_data is not None},
+        )
         await self.db.commit()
         await self.db.refresh(node)
         return node
@@ -127,6 +169,7 @@ class WorkflowExecutionService:
             raise HTTPException(409, "只有 pending Execution 可以启动 Runtime")
         runtime = WorkflowRuntime(self.db)
         data = dict(execution.input_data or {})
+        await self.governance.audit(execution, actor_id, "workflow.execution.run", "started")
         try:
             await self.transition(execution, "running")
             for node in nodes:
