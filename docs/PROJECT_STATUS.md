@@ -22,7 +22,7 @@
 | Phase 1.4 | 已完成核心闭环 | Knowledge / RAG、pgvector、Embedding / Retrieval contract、Runtime Trace |
 | Phase 1.5-A | 已完成 | Workflow Definition Contract，本地 Backend 验收通过 |
 | Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
-| Phase 1.5-C | 修复待验收 | Workflow Execution State Machine；0016 migration metadata 兼容问题已修复代码并提交 main，等待开发者本地验证 |
+| Phase 1.5-C | 修复待验收 | Workflow Execution State Machine；migration metadata 已修复，但 Backend 全量回归因 Alembic 测试导入错误阻塞 |
 | Phase 1.5-D | 待开始 | Workflow Runtime Integration |
 | Phase 1.5-E | 待开始 | Governance / Audit / Trace |
 | Phase 1.5-F | 待开始 | Vue Workflow / Governance 管理端 |
@@ -42,49 +42,70 @@
 
 ### 已发现并修复的问题
 
+#### 0016 migration revision id 长度问题
+
 `0016_workflow_execution_state_machine` revision id 长度为 37，而历史 `alembic_version.version_num` 为 `VARCHAR(32)`，导致 PostgreSQL 在记录 migration head 时失败。
 
 错误记录：
 
 `docs/error-tracking/001-alembic-version-column-too-short.md`
 
-当前修复：
+修复：
 
-- `backend/alembic/env.py` 增加 Alembic version metadata preflight。
+- `backend/alembic/env.py` 调用统一的 Alembic metadata preflight。
 - 已存在且长度不足的 `alembic_version.version_num` 自动扩展至 `VARCHAR(64)`。
 - preflight 与 migration 保持同一事务。
-- 增加 `backend/tests/test_alembic_env.py` 覆盖扩展、缺表 no-op、已满足长度 no-op。
+- 开发者反馈已实际验证：`uv run alembic upgrade head` 成功，`alembic current` 为 `0016_workflow_execution_state_machine (head)`。
 
-## 4. 修复后的验收门禁
+#### Alembic 测试导入错误
+
+开发者反馈 Backend 全量回归失败：
+
+```text
+ImportError: cannot import name 'env' from 'alembic'
+```
+
+错误来源：`backend/tests/test_alembic_env.py` 直接执行 `from alembic import env`。
+
+错误记录：
+
+`docs/error-tracking/002-alembic-env-test-import.md`
+
+修复：
+
+- 将可测试的 `prepare_alembic_version_table()` 从 migration entrypoint 提取至 `backend/app/core/alembic_compat.py`。
+- `backend/alembic/env.py` 只负责 migration lifecycle，并调用该兼容函数。
+- 测试改为直接测试应用模块，避免导入 migration entrypoint 及其副作用。
+
+## 4. 当前验收门禁
 
 必须由开发者实际执行并反馈结果：
 
 ```powershell
 cd backend
+uv run pytest -q
 uv run alembic upgrade head
 uv run alembic current
-uv run pytest -q
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
 ```
 
-1.5-C 未完成本地验收前，不进入 1.5-D Runtime Integration。
+当前不能因 migration 已通过而提前进入 1.5-D；必须先确认 Backend 全量回归和 1.5-C 验收脚本均通过。
 
 ## 5. 测试结果记录
 
-### 最近已确认结果
+### 已确认结果
 
-- Backend 全量回归：`152 passed in 2.71s`，无 warnings（用户于 2026-08-19 提供的实际结果）。
-- 1.5-B Tenant Contract：用户反馈手动测试无异常。
+- `uv run alembic upgrade head`：通过，已到 `0016_workflow_execution_state_machine (head)`。
+- 1.5-C Workflow Execution State Machine Contract：`5 passed in 1.52s`。
+- 先前 Backend 全量回归：`152 passed in 2.71s`，无 warnings。
 
-### 当前待验证
+### 当前阻塞
 
-- 0016 migration 修复后的 `uv run alembic upgrade head`
-- 0016 migration 修复后的 `uv run alembic current`
-- 1.5-C Backend pytest
-- 1.5-C Backend 手工验证脚本
+- Backend `uv run pytest -q` 因 `tests/test_alembic_env.py` 导入错误在 collection 阶段失败；修复已直接提交 `main`，等待开发者重新验证。
 
 ## 6. 下一步
 
-1. 开发者本地验证 main 最新提交。
-2. 根据实际结果更新本文件与错误记录。
-3. 1.5-C 验收通过后继续 1.5-D Runtime Integration。
+1. 开发者拉取 / 同步 `main` 最新提交。
+2. 执行 1.5-C 全量 Backend pytest 与验收脚本。
+3. 根据实际结果更新本文件与错误记录。
+4. 只有 1.5-C 全量验收通过后，才进入 1.5-D Workflow Runtime Integration。
