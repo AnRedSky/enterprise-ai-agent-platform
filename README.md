@@ -1,19 +1,24 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 正在进行生产化深化与真实 Provider 替换验证。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 核心闭环已完成，当前主线进入 Phase 1.5 Workflow / Governance。
 
 ## 项目文档
 
 - [完整架构与实施流程](docs/00-企业级应用%20AI%20智能体系统完整开发架构与实施流程.md)
-- [开发文档](docs/DEVELOPMENT.md)
+- [开发准则](docs/DEVELOPMENT.md)
+- [项目开发进度](docs/PROJECT_STATUS.md)
 - [系统架构](docs/ARCHITECTURE.md)
 - [项目开发规划](docs/07-project-development-plan.md)
 - [Phase 1.4 Knowledge / RAG](docs/11-phase-1.4-knowledge-rag-plan.md)
 - [Phase 1.4-E Vector Retrieval Provider](docs/12-phase-1.4-e-vector-retrieval-provider.md)
+- [Phase 1.5 Workflow / Governance](docs/13-phase-1.5-workflow-governance-plan.md)
+- [错误跟踪记录](docs/error-tracking/README.md)
 - [本地功能测试与验收](docs/LOCAL_TESTING.md)
 - [提交规范](docs/CONTRIBUTING.md)
 
 ## 当前开发状态
+
+实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/DEVELOPMENT.md`。
 
 ### Phase 1.3
 
@@ -33,7 +38,7 @@
 
 ### Phase 1.4
 
-Knowledge / RAG 已完成：
+Knowledge / RAG 已完成核心闭环：
 
 1. Knowledge Registry
 2. Document / Version
@@ -44,18 +49,18 @@ Knowledge / RAG 已完成：
 7. lexical-v2 Evaluation baseline 与本地 quality gate
 8. OpenAI-compatible Embedding Provider contract 与可选真实 probe
 9. provider-neutral Vector Retrieval contract 与 deterministic in-memory adapter
+10. PostgreSQL + pgvector adapter 与 migration 0010
+11. Runtime execution / trace 与 Retrieval Debug 关联
 
-当前正在推进真实 Embedding / Vector DB provider replacement validation：
+### Phase 1.5
 
-- `EmbeddingProvider` 保持 provider-neutral contract
-- 已提供 OpenAI-compatible Embedding adapter
-- 已提供本地 `httpx.MockTransport` contract tests
-- 已提供可选真实 provider probe
-- 已提供 `VectorRetrievalProvider` contract
-- 已提供本地 deterministic in-memory vector adapter，仅用于 contract tests
-- 已提供 PostgreSQL + pgvector adapter 与 migration 0010
-- 本地 PostgreSQL 推荐通过 Docker Compose 使用 `pgvector/pgvector:pg16`
-- 后续继续真实 Embedding indexing 与 lexical / vector / hybrid 质量对比
+当前进入 Workflow / Governance：
+
+- 1.5-A Workflow Definition Contract：已验收
+- 1.5-B Publish Governance / Tenant Contract：已通过本地 Backend 手工验收
+- 1.5-C Workflow Execution State Machine：Backend Contract 已实现；当前完成 Alembic metadata 兼容问题修复，等待开发者本地重新验证
+
+Phase 1.5-C 的历史 migration 问题与修复经验统一记录在 `docs/error-tracking/001-alembic-version-column-too-short.md`。
 
 前后端按“后端 contract → 后端测试 → 前端 API/测试 → 联调 → Runtime 集成 → 全量回归”的顺序推进。
 
@@ -159,6 +164,13 @@ Backend：
 ```powershell
 cd backend
 uv run pytest -q
+```
+
+Phase 1.5-C Backend-only validation：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
 ```
 
 Vector / Embedding contract：
