@@ -40,27 +40,33 @@ WHERE alembic_version.version_num = '0015_tenant_contract'
 
 该错误不是 Workflow Execution 表结构本身的问题，而是 **migration revision metadata schema 与 revision naming convention 不兼容**。
 
-## 4. 修复原则
+## 4. 实际修复方案
 
-在 `0016` migration 开始执行时，先将：
+当前 0016 migration 文件本身不修改历史 Alembic metadata schema；兼容逻辑放在统一的 `backend/alembic/env.py` migration preflight 中：
 
-```text
-alembic_version.version_num
-VARCHAR(32) → VARCHAR(64)
+1. 检查 `public.alembic_version` 是否已经存在。
+2. 检查 `version_num` 的实际长度。
+3. 当历史长度小于 64 时，在 Alembic migration transaction 内执行：
+
+```sql
+ALTER TABLE alembic_version
+ALTER COLUMN version_num TYPE VARCHAR(64)
 ```
 
-然后再创建 Workflow Execution / Node Execution 表。
+4. 然后继续执行正常 Alembic migration。
+5. 新数据库尚不存在 `alembic_version` 时不执行任何操作，由 Alembic 正常创建版本表。
 
-Migration downgrade 时，在目标 revision 已回退到历史短 revision 后再恢复为 `VARCHAR(32)`，确保旧 schema 与 downgrade 顺序兼容。
+这样既兼容已有 `0015` 数据库，也不要求修改已经存在的 migration revision history。
 
 ## 5. 预防措施
 
 - 新增 Alembic revision 前检查 revision id 长度。
 - 不再假设历史 `alembic_version.version_num` 可以容纳任意新 revision id。
 - Migration 测试必须覆盖 `upgrade head`，不能只测试业务表是否创建成功。
-- 长期保留 `VARCHAR(64)` 作为 revision metadata 的容量基线。
+- 统一以 `VARCHAR(64)` 作为 revision metadata 容量基线。
 - 任何 migration failure 必须记录到 `docs/error-tracking/`。
 - Migration 相关变更完成后，必须实际执行 `uv run alembic upgrade head`，结果未执行前不得标记通过。
+- 新增 `backend/tests/test_alembic_env.py`，覆盖扩展、缺表 no-op、已有足够长度 no-op 三种场景。
 
 ## 6. 验证要求
 
@@ -71,10 +77,11 @@ cd backend
 uv run alembic upgrade head
 uv run alembic current
 uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
 ```
 
 如果数据库已经停留在 `0015_tenant_contract`，直接执行 `upgrade head`；如果本地数据库状态不一致，先确认 `alembic current`，禁止通过删除 migration history 的方式掩盖问题。
 
 ## 7. 状态
 
-代码修复已准备；本记录中的“验证通过”必须以开发者实际反馈为准。
+修复代码已提交 `main`；**尚未由开发者本地重新执行上述命令，因此不能记录为“验证通过”**。
