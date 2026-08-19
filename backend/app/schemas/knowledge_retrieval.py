@@ -19,6 +19,15 @@ class KnowledgeRetrievalRequest(BaseModel):
     vector_weight: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class HybridScoreBreakdown(BaseModel):
+    lexical_score: float | None = Field(default=None, ge=0, le=1)
+    vector_score: float | None = Field(default=None, ge=0, le=1)
+    lexical_weight: float = Field(ge=0)
+    vector_weight: float = Field(ge=0)
+    fused_score: float = Field(ge=0, le=1)
+    support: list[Literal["lexical", "vector"]] = Field(default_factory=list)
+
+
 class KnowledgeRetrievalSource(BaseModel):
     document_id: UUID
     document_version_id: UUID
@@ -32,6 +41,7 @@ class KnowledgeRetrievalSource(BaseModel):
     matched_terms: list[str] = Field(default_factory=list)
     retrieval_mode: str = "lexical-v2"
     retrieval_sources: list[str] = Field(default_factory=list)
+    hybrid_score_breakdown: HybridScoreBreakdown | None = None
 
 
 class KnowledgeRetrievalResponse(BaseModel):
