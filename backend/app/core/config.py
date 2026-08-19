@@ -10,7 +10,12 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 def _env_files() -> tuple[str, ...]:
     """Return environment files from lowest to highest file precedence.
 
-    Process environment variables always override values loaded from files.
+    `.env.example` is the lowest-precedence fallback so a fresh checkout can
+    start without creating a local `.env`. It is intentionally a safe,
+    non-secret configuration template. Real `.env` files and environment-
+    specific overrides take precedence, and process environment variables
+    always have the highest precedence.
+
     `APP_ENV` may be supplied by the process environment to select an
     environment-specific file; otherwise development is used as the default.
     `ENV_FILE` can explicitly add a deployment-specific file without changing
@@ -18,6 +23,7 @@ def _env_files() -> tuple[str, ...]:
     """
     app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
     files = [
+        ".env.example",
         ".env",
         ".env.local",
         f".env.{app_env}",
