@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.core import Base
@@ -43,8 +43,29 @@ class KnowledgeDocumentVersion(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True)
     version: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    ingestion_status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     source_uri: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KnowledgeDocumentChunk(Base):
+    __tablename__ = "knowledge_document_chunks"
+    __table_args__ = (
+        UniqueConstraint("document_version_id", "chunk_index", name="uq_knowledge_document_chunk_index"),
+        Index("ix_knowledge_document_chunks_version_index", "document_version_id", "chunk_index"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_document_versions.id", ondelete="CASCADE"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    char_start: Mapped[int] = mapped_column(Integer)
+    char_end: Mapped[int] = mapped_column(Integer)
+    content_hash: Mapped[str] = mapped_column(String(128))
+    token_count: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
