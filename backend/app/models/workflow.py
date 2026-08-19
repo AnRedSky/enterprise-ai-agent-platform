@@ -14,6 +14,7 @@ class Workflow(Base):
     name: Mapped[str] = mapped_column(String(100), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="RESTRICT"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
     published_version_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
