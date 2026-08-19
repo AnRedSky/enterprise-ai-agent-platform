@@ -20,18 +20,15 @@ Write-Host '[3/5] Full backend regression'
 uv run pytest -q
 if ($LASTEXITCODE -ne 0) { throw "Backend regression failed with exit code $LASTEXITCODE." }
 
-Write-Host '[4/5] Provider evaluation input check'
+Write-Host '[4/5] Knowledge Retrieval evaluation + quality gate'
 $results = Join-Path $backend 'evaluation\vector_results.jsonl'
-if (Test-Path $results) {
-    Write-Host "Found provider results: $results"
-    uv run python .\scripts\evaluate_knowledge_retrieval_provider.py $results
-    if ($LASTEXITCODE -ne 0) { throw "Retrieval provider quality gate failed with exit code $LASTEXITCODE." }
-} else {
-    Write-Host 'Provider results not found; quality gate remains pending.'
-    Write-Host 'Run the vector retrieval scenario with the real provider and save results to:'
-    Write-Host $results
-}
+& uv run python .\scripts\run_knowledge_retrieval_evaluation.py --k 3
+if ($LASTEXITCODE -ne 0) { throw "Knowledge Retrieval evaluation runner failed with exit code $LASTEXITCODE." }
+
+& uv run python .\scripts\evaluate_knowledge_retrieval_provider.py $results --k 3
+if ($LASTEXITCODE -ne 0) { throw "Retrieval provider quality gate failed with exit code $LASTEXITCODE." }
 
 Write-Host '[5/5] Validation summary'
 Write-Host 'Phase 1.4-E provider validation suite completed.'
-Write-Host 'A missing vector_results.jsonl means real Retrieval Evaluation is still pending.'
+Write-Host "Retrieval Evaluation results: $results"
+Write-Host 'Mock Embedding + PostgreSQL/pgvector validates the deterministic local retrieval pipeline; it does not prove real model semantic quality.'
