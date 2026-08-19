@@ -10,11 +10,18 @@ from app.core.config import settings
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
 from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from app.services.knowledge_retrieval import KnowledgeRetrievalService
+from app.services.mock_embedding_provider import MockEmbeddingProvider
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRetrievalProviderError
 
 
 class VectorKnowledgeRetrievalService:
-    """Query embedding + provider-neutral vector search + authorized chunk hydration."""
+    """Query embedding + PostgreSQL/pgvector search + authorized chunk hydration.
+
+    ``mock`` embeddings are intentionally supported for local deterministic
+    database-loop validation. They exercise the same PostgreSQL/pgvector
+    indexing/search path as a real embedding provider; they must not be used as
+    evidence of real model semantic quality.
+    """
 
     RETRIEVAL_MODE = "vector"
 
@@ -36,18 +43,26 @@ class VectorKnowledgeRetrievalService:
             raise HTTPException(status_code=422, detail="query 不能为空")
         if settings.vector_provider != "pgvector":
             raise HTTPException(status_code=503, detail="VECTOR_PROVIDER=pgvector is required for vector retrieval")
-        if settings.embedding_provider != "openai-compatible":
-            raise HTTPException(status_code=503, detail="VECTOR retrieval requires EMBEDDING_PROVIDER=openai-compatible")
-        if not settings.embedding_base_url or not settings.embedding_api_key or not settings.embedding_model:
+        if settings.embedding_provider not in {"openai-compatible", "mock"}:
+            raise HTTPException(
+                status_code=503,
+                detail="VECTOR retrieval requires EMBEDDING_PROVIDER=openai-compatible or mock",
+            )
+        if settings.embedding_provider == "openai-compatible" and (
+            not settings.embedding_base_url or not settings.embedding_api_key or not settings.embedding_model
+        ):
             raise HTTPException(status_code=503, detail="EMBEDDING_BASE_URL, EMBEDDING_API_KEY and EMBEDDING_MODEL are required")
 
         try:
-            embedding_provider = OpenAICompatibleEmbeddingProvider(
-                base_url=settings.embedding_base_url,
-                api_key=settings.embedding_api_key,
-                model=settings.embedding_model,
-                timeout_seconds=settings.embedding_timeout_seconds,
-            )
+            if settings.embedding_provider == "mock":
+                embedding_provider = MockEmbeddingProvider(dimension=settings.embedding_dimension)
+            else:
+                embedding_provider = OpenAICompatibleEmbeddingProvider(
+                    base_url=settings.embedding_base_url,
+                    api_key=settings.embedding_api_key,
+                    model=settings.embedding_model,
+                    timeout_seconds=settings.embedding_timeout_seconds,
+                )
             embeddings = await embedding_provider.embed([query])
             if len(embeddings) != 1:
                 raise EmbeddingProviderError("embedding provider returned an invalid query embedding")
