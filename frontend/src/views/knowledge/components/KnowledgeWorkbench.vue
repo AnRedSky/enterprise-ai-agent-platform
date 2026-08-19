@@ -52,11 +52,7 @@ function isKnowledgeDocument(value: unknown): value is KnowledgeDocument {
 function isKnowledgeVersion(value: unknown): value is KnowledgeVersion {
   if (!value || typeof value !== "object") return false;
   const row = value as Partial<KnowledgeVersion>;
-  return (
-    typeof row.id === "string" &&
-    typeof row.document_id === "string" &&
-    typeof row.version === "string"
-  );
+  return typeof row.id === "string" && typeof row.document_id === "string" && typeof row.version === "string";
 }
 
 async function loadBases() {
@@ -66,8 +62,7 @@ async function loadBases() {
     const page = await listKnowledgeBases();
     bases.value = page.items;
     if (selectedBase.value) {
-      selectedBase.value =
-        bases.value.find((item) => item.id === selectedBase.value?.id) ?? null;
+      selectedBase.value = bases.value.find((item) => item.id === selectedBase.value?.id) ?? null;
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : "知识库加载失败";
@@ -86,7 +81,6 @@ async function selectBase(base: KnowledgeBase | null) {
   results.value = [];
   selectedResult.value = null;
   if (!base) return;
-
   try {
     documents.value = (await listDocuments(base.id)).items;
   } catch (e) {
@@ -161,10 +155,7 @@ async function ingest(version: unknown) {
   if (!isKnowledgeVersion(version)) return;
   ingesting.value = version.id;
   try {
-    const out = await ingestVersion(version.id, {
-      max_chars: 1000,
-      overlap_chars: 100,
-    });
+    const out = await ingestVersion(version.id, { max_chars: 1000, overlap_chars: 100 });
     ElMessage.success(`切分完成：${out.chunk_count} 个 Chunk`);
     if (selectedDocument.value) await openDocument(selectedDocument.value);
   } catch (e) {
@@ -187,11 +178,7 @@ async function openChunks(version: unknown) {
 async function removeDocument(doc: unknown) {
   if (!selectedBase.value || !isKnowledgeDocument(doc)) return;
   try {
-    await ElMessageBox.confirm(
-      `确定删除文档「${doc.title}」吗？`,
-      "删除确认",
-      { type: "warning" },
-    );
+    await ElMessageBox.confirm(`确定删除文档「${doc.title}」吗？`, "删除确认", { type: "warning" });
     await deleteDocument(selectedBase.value.id, doc.id);
     await selectBase(selectedBase.value);
     ElMessage.success("文档已删除");
@@ -210,7 +197,6 @@ async function search() {
     selectedResult.value = null;
     return;
   }
-
   retrievalLoading.value = true;
   retrievalError.value = "";
   selectedResult.value = null;
@@ -221,9 +207,7 @@ async function search() {
       knowledge_base_id: selectedBase.value?.id,
     });
     results.value = out.results;
-    if (!out.results.length) {
-      retrievalError.value = "没有命中结果，请尝试调整问题或扩大知识库范围";
-    }
+    if (!out.results.length) retrievalError.value = "没有命中结果，请尝试调整问题或扩大知识库范围";
   } catch (e) {
     results.value = [];
     retrievalError.value = e instanceof Error ? e.message : "检索失败";
@@ -232,7 +216,7 @@ async function search() {
   }
 }
 
-function selectResult(result: RetrievalResult) {
+function selectResult(result: RetrievalResult | null) {
   selectedResult.value = result;
 }
 
@@ -249,24 +233,15 @@ onMounted(loadBases);
 <template>
   <div class="page">
     <div class="header">
-      <div>
-        <h1>Knowledge 知识管理</h1>
-        <p>知识库、文档、版本、Chunk 与 Retrieval 一体化管理。</p>
-      </div>
+      <div><h1>Knowledge 知识管理</h1><p>知识库、文档、版本、Chunk 与 Retrieval 一体化管理。</p></div>
       <el-button type="primary" @click="baseDialog = true">新建知识库</el-button>
     </div>
-
     <el-alert v-if="error" :title="error" type="error" show-icon />
 
     <div class="grid">
       <el-card class="panel">
         <template #header><b>知识库</b></template>
-        <el-table
-          v-loading="loading"
-          :data="bases"
-          highlight-current-row
-          @current-change="selectBase"
-        >
+        <el-table v-loading="loading" :data="bases" highlight-current-row @current-change="selectBase">
           <el-table-column prop="name" label="名称" />
           <el-table-column prop="status" label="状态" width="90" />
         </el-table>
@@ -275,62 +250,26 @@ onMounted(loadBases);
 
       <el-card class="panel">
         <template #header>
-          <div class="panel-head">
-            <b>文档</b>
-            <el-button
-              size="small"
-              type="primary"
-              :disabled="!selectedBase"
-              @click="docDialog = true"
-            >
-              新建文档
-            </el-button>
-          </div>
+          <div class="panel-head"><b>文档</b><el-button size="small" type="primary" :disabled="!selectedBase" @click="docDialog = true">新建文档</el-button></div>
         </template>
         <el-table :data="documents" @row-click="openDocument">
           <el-table-column prop="title" label="标题" />
           <el-table-column prop="source_type" label="来源" width="90" />
           <el-table-column prop="status" label="状态" width="90" />
-          <el-table-column label="操作" width="70">
-            <template #default="{ row }">
-              <el-button link type="danger" @click.stop="removeDocument(row)">删</el-button>
-            </template>
-          </el-table-column>
+          <el-table-column label="操作" width="70"><template #default="{ row }"><el-button link type="danger" @click.stop="removeDocument(row)">删</el-button></template></el-table-column>
         </el-table>
-        <el-empty
-          v-if="selectedBase && !documents.length"
-          description="暂无文档"
-        />
+        <el-empty v-if="selectedBase && !documents.length" description="暂无文档" />
       </el-card>
     </div>
 
     <el-card v-if="selectedDocument" class="section">
-      <template #header>
-        <div class="panel-head">
-          <b>版本：{{ selectedDocument.title }}</b>
-          <el-button size="small" type="primary" @click="versionDialog = true">
-            新建版本
-          </el-button>
-        </div>
-      </template>
+      <template #header><div class="panel-head"><b>版本：{{ selectedDocument.title }}</b><el-button size="small" type="primary" @click="versionDialog = true">新建版本</el-button></div></template>
       <el-table :data="versions">
         <el-table-column prop="version" label="版本" width="100" />
         <el-table-column prop="status" label="状态" width="90" />
         <el-table-column prop="ingestion_status" label="Ingestion" width="110" />
         <el-table-column prop="created_at" label="创建时间" />
-        <el-table-column label="操作" width="170">
-          <template #default="{ row }">
-            <el-button
-              link
-              type="success"
-              :loading="ingesting === row.id"
-              @click="ingest(row)"
-            >
-              Ingest
-            </el-button>
-            <el-button link type="primary" @click="openChunks(row)">Chunks</el-button>
-          </template>
-        </el-table-column>
+        <el-table-column label="操作" width="170"><template #default="{ row }"><el-button link type="success" :loading="ingesting === row.id" @click="ingest(row)">Ingest</el-button><el-button link type="primary" @click="openChunks(row)">Chunks</el-button></template></el-table-column>
       </el-table>
     </el-card>
 
@@ -345,98 +284,42 @@ onMounted(loadBases);
     </el-card>
 
     <el-card class="section retrieval-panel">
-      <template #header>
-        <div class="panel-head">
-          <div>
-            <b>Retrieval Debug</b>
-            <span class="hint">检索结果、Score、Chunk 与 Citation 可追溯查看</span>
-          </div>
-          <el-button v-if="query || results.length" link @click="clearRetrieval">清空</el-button>
-        </div>
-      </template>
+      <template #header><div class="panel-head"><div><b>Retrieval Debug</b><span class="hint">检索结果、Score、Chunk 与 Citation 可追溯查看</span></div><el-button v-if="query || results.length" link @click="clearRetrieval">清空</el-button></div></template>
       <div class="search">
-        <el-input
-          v-model="query"
-          placeholder="输入检索问题，例如：公司的报销规则是什么？"
-          clearable
-          @keyup.enter="search"
-        />
+        <el-input v-model="query" placeholder="输入检索问题，例如：公司的报销规则是什么？" clearable @keyup.enter="search" />
         <el-input-number v-model="topK" :min="1" :max="20" />
         <el-button type="primary" :loading="retrievalLoading" @click="search">检索</el-button>
       </div>
       <el-alert v-if="retrievalError" :title="retrievalError" type="warning" show-icon :closable="false" />
-
       <div v-if="results.length" class="retrieval-grid">
-        <el-table
-          :data="results"
-          highlight-current-row
-          class="result-table"
-          @current-change="selectResult"
-        >
+        <el-table :data="results" highlight-current-row class="result-table" @current-change="selectResult">
           <el-table-column prop="source_document" label="来源" width="180" />
           <el-table-column prop="relevance_score" label="Score" width="100" />
           <el-table-column prop="citation" label="Citation" width="220" />
           <el-table-column prop="content" label="内容" min-width="400" show-overflow-tooltip />
         </el-table>
-
         <el-card v-if="selectedResult" class="citation-card" shadow="never">
           <template #header><b>Citation Detail</b></template>
-          <div class="citation-meta">
-            <span><b>Document：</b>{{ selectedResult.source_document }}</span>
-            <span><b>Score：</b>{{ selectedResult.relevance_score }}</span>
-            <span><b>Citation：</b>{{ selectedResult.citation }}</span>
-          </div>
+          <div class="citation-meta"><span><b>Document：</b>{{ selectedResult.source_document }}</span><span><b>Score：</b>{{ selectedResult.relevance_score }}</span><span><b>Citation：</b>{{ selectedResult.citation }}</span></div>
           <div class="citation-content">{{ selectedResult.content }}</div>
-          <div v-if="selectedResult.source_uri" class="citation-source">
-            <b>Source URI：</b>{{ selectedResult.source_uri }}
-          </div>
+          <div v-if="selectedResult.source_uri" class="citation-source"><b>Source URI：</b>{{ selectedResult.source_uri }}</div>
         </el-card>
       </div>
-
-      <el-empty
-        v-if="!retrievalLoading && query && !results.length && !retrievalError"
-        description="没有命中结果"
-      />
+      <el-empty v-if="!retrievalLoading && query && !results.length && !retrievalError" description="没有命中结果" />
       <el-empty v-if="!query && !results.length" description="输入问题后执行 Retrieval Debug" />
     </el-card>
 
     <el-dialog v-model="baseDialog" title="新建知识库" width="520px">
-      <el-form label-width="90px">
-        <el-form-item label="名称"><el-input v-model="baseForm.name" /></el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="baseForm.description" type="textarea" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="baseDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveBase">创建</el-button>
-      </template>
+      <el-form label-width="90px"><el-form-item label="名称"><el-input v-model="baseForm.name" /></el-form-item><el-form-item label="描述"><el-input v-model="baseForm.description" type="textarea" /></el-form-item></el-form>
+      <template #footer><el-button @click="baseDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveBase">创建</el-button></template>
     </el-dialog>
-
     <el-dialog v-model="docDialog" title="新建文档" width="520px">
-      <el-form label-width="90px">
-        <el-form-item label="标题"><el-input v-model="docForm.title" /></el-form-item>
-        <el-form-item label="来源类型"><el-input v-model="docForm.source_type" /></el-form-item>
-        <el-form-item label="来源 URI"><el-input v-model="docForm.source_uri" /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="docDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveDocument">创建</el-button>
-      </template>
+      <el-form label-width="90px"><el-form-item label="标题"><el-input v-model="docForm.title" /></el-form-item><el-form-item label="来源类型"><el-input v-model="docForm.source_type" /></el-form-item><el-form-item label="来源 URI"><el-input v-model="docForm.source_uri" /></el-form-item></el-form>
+      <template #footer><el-button @click="docDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveDocument">创建</el-button></template>
     </el-dialog>
-
     <el-dialog v-model="versionDialog" title="新建文档版本" width="620px">
-      <el-form label-width="90px">
-        <el-form-item label="版本"><el-input v-model="versionForm.version" /></el-form-item>
-        <el-form-item label="来源 URI"><el-input v-model="versionForm.source_uri" /></el-form-item>
-        <el-form-item label="正文">
-          <el-input v-model="versionForm.content_text" type="textarea" :rows="10" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="versionDialog = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveVersion">创建</el-button>
-      </template>
+      <el-form label-width="90px"><el-form-item label="版本"><el-input v-model="versionForm.version" /></el-form-item><el-form-item label="来源 URI"><el-input v-model="versionForm.source_uri" /></el-form-item><el-form-item label="正文"><el-input v-model="versionForm.content_text" type="textarea" :rows="10" /></el-form-item></el-form>
+      <template #footer><el-button @click="versionDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveVersion">创建</el-button></template>
     </el-dialog>
   </div>
 </template>
@@ -452,17 +335,10 @@ onMounted(loadBases);
 .search { display: flex; gap: 10px; margin-bottom: 16px; }
 .search .el-input { flex: 1; }
 .retrieval-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr); gap: 16px; margin-top: 16px; }
-.result-table { min-width: 0; }
-.citation-card { min-width: 0; }
+.result-table, .citation-card { min-width: 0; }
 .citation-meta { display: grid; gap: 8px; color: #475467; font-size: 13px; }
 .citation-content { margin-top: 16px; padding: 14px; white-space: pre-wrap; line-height: 1.7; background: #f8fafc; border-radius: 6px; }
 .citation-source { margin-top: 12px; color: #667085; font-size: 12px; word-break: break-all; }
-@media (max-width: 1100px) {
-  .retrieval-grid { grid-template-columns: 1fr; }
-}
-@media (max-width: 900px) {
-  .grid { grid-template-columns: 1fr; }
-  .page { padding: 16px; }
-  .search { flex-wrap: wrap; }
-}
+@media (max-width: 1100px) { .retrieval-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .page { padding: 16px; } .search { flex-wrap: wrap; } }
 </style>
