@@ -152,7 +152,7 @@ Retrieval Debug / Runtime Trace
 
 ### 当前阶段
 
-**Phase 1.4-G-02 已完成：Runtime execution / trace 与 Retrieval Debug 关联已完成并通过本地 Backend 回归。当前主线准备进入 Phase 1.5 Workflow / Governance。**
+**Phase 1.4-G-02 已完成：Runtime execution / trace 与 Retrieval Debug 关联已完成并通过本地 Backend 回归。当前主线进入 Phase 1.5 Workflow / Governance。**
 
 G-02 已验证：
 
@@ -165,7 +165,9 @@ G-02 已验证：
 
 ### Phase 1.5 开发入口规则
 
-Phase 1.5 在具体业务代码开发前，必须先建立明确的 Workflow / Governance 开发基线，包括领域边界、状态机、数据模型、API contract、RBAC / audit 要求、验收场景与任务拆解。基线确认后，严格按照本文件固定开发顺序逐项推进。
+Phase 1.5 开发基线已建立，具体范围、领域边界、状态机、数据模型、API contract、RBAC / audit 要求、验收场景与任务拆解统一见 `docs/13-phase-1.5-workflow-governance-plan.md`。
+
+当前唯一下一开发项：**1.5-A Workflow Definition Contract**。在该 Backend Contract、Migration、pytest 与 Backend 手工验收完成前，不进入 Frontend Workflow UI，也不实现 Workflow Runtime Engine。
 
 ## 7. Git / 提交规范
 
