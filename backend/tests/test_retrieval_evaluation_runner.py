@@ -18,7 +18,8 @@ def test_real_lexical_v2_evaluation_has_expected_retrieval_contract() -> None:
     result = evaluate()
 
     assert result["mode"] == "lexical-v2"
-    assert result["cases"] == 5
+    assert result["case_count"] == 5
+    assert len(result["cases"]) == result["case_count"]
     assert 0 <= result["recall_at_k"] <= 1
     assert 0 <= result["precision_at_k"] <= 1
     assert 0 <= result["mrr"] <= 1
