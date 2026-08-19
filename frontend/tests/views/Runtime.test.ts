@@ -5,7 +5,7 @@ const { executions, executionEvents } = vi.hoisted(() => ({ executions: vi.fn(),
 vi.mock("../../src/api/runtime", () => ({ runtimeApi: { executions, executionEvents } }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 
-import Runtime from "../../src/views/Runtime.vue";
+import Runtime from "../../src/views/runtime/components/RuntimeExecutions.vue";
 
 const stubs = {
   "el-card": { template: "<div><slot name=\"header\"/><slot/></div>" },
@@ -18,7 +18,7 @@ const stubs = {
 };
 const global = { stubs, directives: { loading: () => undefined } };
 
-describe("Runtime.vue", () => {
+describe("RuntimeExecutions", () => {
   beforeEach(() => { executions.mockReset(); executionEvents.mockReset(); });
   it("renders empty state when execution list is empty", async () => {
     executions.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
