@@ -43,7 +43,10 @@ function Invoke-Json {
 Write-Host '[RUN ] Database / alembic upgrade head' -ForegroundColor Gray
 Push-Location $PSScriptRoot\..
 try {
-    python -m alembic upgrade head
+    # The Alembic package does not expose alembic.__main__ in the supported
+    # environment, so `python -m alembic` is not portable. Invoke Alembic's
+    # official CommandLine entry point directly with the same Python runtime.
+    python -c "from alembic.config import CommandLine; CommandLine().main(['upgrade','head'])"
     if ($LASTEXITCODE -ne 0) { throw ('Alembic upgrade failed with exit code ' + $LASTEXITCODE + '.') }
 }
 finally {
