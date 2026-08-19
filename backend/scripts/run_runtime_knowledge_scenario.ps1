@@ -36,41 +36,28 @@ function Invoke-Json {
     }
 }
 
-Write-Host '[RUN ] Database / alembic upgrade head' -ForegroundColor Gray
+Write-Host '[RUN ] Database / uv run alembic upgrade head' -ForegroundColor Gray
 Push-Location $PSScriptRoot\..
 try {
-    # Do not use `python -m alembic` or import `alembic.config` here.
-    # The repository itself contains backend/alembic/ (the migration package),
-    # which can shadow the installed Alembic distribution when Python is run
-    # from backend/. Invoke the real Alembic CLI executable instead.
-    $alembicCommand = Get-Command alembic -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($null -eq $alembicCommand) {
-        $pythonCommand = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($null -eq $pythonCommand) {
-            throw 'Python executable was not found in PATH.'
-        }
-
-        $pythonDir = Split-Path -Parent $pythonCommand.Source
-        $candidate = Join-Path $pythonDir 'Scripts\alembic.exe'
-        if (Test-Path $candidate) {
-            $alembicCommand = Get-Item $candidate
-        }
+    # Backend dependencies and commands are managed by uv. Always execute
+    # Alembic through `uv run` so the project .venv is selected explicitly.
+    # This also avoids importing backend/alembic as a Python package, which
+    # can shadow the installed Alembic distribution.
+    $uvCommand = Get-Command uv -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $uvCommand) {
+        throw 'uv executable was not found in PATH. Install uv and ensure it is available in PATH.'
     }
 
-    if ($null -eq $alembicCommand) {
-        throw 'Alembic CLI was not found. Install Alembic in the active Python environment or ensure alembic.exe is on PATH.'
-    }
-
-    Write-Host ('[INFO ] Alembic CLI: ' + $alembicCommand.Source) -ForegroundColor DarkGray
-    & $alembicCommand.Source upgrade head
+    Write-Host ('[INFO ] uv: ' + $uvCommand.Source) -ForegroundColor DarkGray
+    & $uvCommand.Source run alembic upgrade head
     if ($LASTEXITCODE -ne 0) {
-        throw ('Alembic upgrade failed with exit code ' + $LASTEXITCODE + '.')
+        throw ('uv run alembic upgrade failed with exit code ' + $LASTEXITCODE + '.')
     }
 }
 finally {
     Pop-Location
 }
-Write-Host '[ OK  ] Database / alembic upgrade head' -ForegroundColor Green
+Write-Host '[ OK  ] Database / uv run alembic upgrade head' -ForegroundColor Green
 
 $register = Invoke-Json -Name 'Auth / register' -Method 'POST' -Path '/api/v1/auth/register' -Body @{ username = $username; password = $password }
 $login = Invoke-Json -Name 'Auth / login' -Method 'POST' -Path '/api/v1/auth/login' -Body @{ username = $username; password = $password }
