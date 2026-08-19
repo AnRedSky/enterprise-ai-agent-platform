@@ -17,7 +17,7 @@
 | Phase 1.4-D | Runtime Knowledge integration | Auth → Knowledge → Ingest → AgentVersion → Runtime Chat → Citation 联调通过 |
 | Phase 1.4-E | Knowledge / Retrieval 生产化深化 | pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；mock + PostgreSQL/pgvector deterministic quality validation 已通过；真实 Embedding 语义质量仍待真实 Provider |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug / Runtime Trace | **G-01 / G-02 已完成；Backend 152 passed、0 warnings；migration 0012 已到 head** |
-| Phase 1.5 | Workflow / Governance | **1.5-A Backend 验收通过；1.5-B Publish Governance 已落地，等待本地 Backend 验收；Tenant contract 尚未完成** |
+| Phase 1.5 | Workflow / Governance | **1.5-A Backend 验收通过；1.5-B Publish Governance 已验收；Tenant contract 已落地，等待本地 Backend 验收** |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`、`docs/12-phase-1.4-e-vector-retrieval-provider.md` 与 `docs/13-phase-1.5-workflow-governance-plan.md`。
 
@@ -51,28 +51,29 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 
 ## 7. 当前任务
 
-**Phase 1.5-B Workflow Version / Publish Governance** 正在执行，当前已完成首轮 Backend 代码落地，等待开发者本地 Backend 验证：
+**Phase 1.5-B Tenant Contract** 已完成首轮 Backend 代码落地，等待开发者本地 Backend 验证：
 
-1. `Workflow.published_version_id` 已建立，用于明确当前生产 Published Version。
-2. 新增 Alembic `0014_workflow_publish_governance`。
-3. Publish 新版本时自动将旧 Published Version 标记为 `deprecated`。
-4. 重复发布当前活动版本保持幂等，不重复写入 Publish AuditLog。
-5. Publish 增加 Workflow / Version mismatch 防护。
-6. `GET/POST` Workflow 响应增加 `published_version_id`。
-7. 新增 Backend governance contract tests。
-8. Backend-only 验收脚本：`backend/scripts/run_phase_1_5_b_workflow_publish_governance_validation.ps1`。
-9. **Tenant isolation 不宣称完成，因为当前 Identity 尚无 tenant contract；1.5-B 后续必须补齐 Tenant contract。**
+1. 新增 `Tenant` domain 与 `tenants` 表。
+2. `User.tenant_id` / `Workflow.tenant_id` 建立非空 FK。
+3. 新增 Alembic `0015_tenant_contract`，历史数据迁移到稳定 Default Tenant。
+4. JWT access token 增加 `tenant_id` claim。
+5. 登录 / 注册响应包含 `tenant_id`。
+6. Workflow Registry 所有查询通过认证上下文执行 Tenant scope。
+7. Admin 仅可跨 Owner 查询当前 Tenant，不获得跨 Tenant 能力。
+8. Workflow API 不接受客户端提交 `tenant_id`。
+9. 新增 Backend-only Tenant contract validation script：`backend/scripts/run_phase_1_5_b_tenant_contract_validation.ps1`。
+10. **尚未写入本地测试结果；只有开发者本地验收通过后才标记 Tenant isolation 完成。**
 
 开发者本地验证命令：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_b_workflow_publish_governance_validation.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_b_tenant_contract_validation.ps1
 ```
 
 该脚本严格只执行 Backend migration / pytest，不调用 Frontend 测试；Frontend 必须按准则独立执行 `npm test` 与 `npm run build`。
 
-只有 1.5-B Backend 验证通过后，才进入 1.5-B Tenant contract / Frontend API Types / Vitest / UI。
+只有 Tenant contract Backend 验证通过后，才进入 1.5-C Workflow Execution State Machine；Frontend Workflow API/UI 按固定前后端顺序进入后续任务。
 
 ### 当前规则
 
