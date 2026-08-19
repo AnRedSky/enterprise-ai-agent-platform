@@ -97,7 +97,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] source document / score / citation / content 展示
 - [x] 与 Retrieval API 的 `retrieval_mode / matched_terms / min_score` contract 对齐
 - [x] G-01：Hybrid retrieval 来源与 lexical/vector/fused score breakdown 展示
-- [ ] G-02：Runtime execution / trace 与 Retrieval Debug 关联
+- [x] G-02：Runtime execution / trace 与 Retrieval Debug 关联
 
 ## 4. Phase 1.4-F Hybrid Retrieval
 
@@ -157,12 +157,14 @@ API response
 - [x] 本地真实 PostgreSQL/pgvector + FastAPI Retrieval API 质量评测通过
 - [x] 5 cases、k=3：lexical Recall@3=1.0 / Precision@3=1.0 / MRR=1.0；vector Recall@3=1.0 / Precision@3=0.466667 / MRR=1.0；hybrid Recall@3=1.0 / Precision@3=0.466667 / MRR=1.0
 - [x] error_rate=0，Hybrid 质量门禁通过
-- [x] 全量 Backend regression：148 passed，86 warnings
+- [x] 全量 Backend regression：152 passed，0 warnings
 
 ### 4.4 G-01 / G-02
 
 - [x] G-01：Retrieval Debug 展示 lexical/vector/hybrid 来源与 score 拆解；后端返回真实 breakdown，前端直接展示，不重新计算业务分数
-- [ ] G-02：Runtime execution / trace 与 Retrieval Debug 关联
+- [x] G-02：Runtime execution / trace 与 Retrieval Debug 关联；后端 runtime trace、RBAC、metadata contract 与前端 timeline 展示已完成
+- [x] G-02 本地 Backend pytest：152 passed，0 warnings
+- [x] G-02 数据库 migration：`0012_execution_event_metadata`，`alembic current` 为 head
 
 ## 5. 联调顺序
 
@@ -181,9 +183,9 @@ API response
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 mock Embedding + PostgreSQL/pgvector deterministic retrieval validation 已完成本地验收；Phase 1.4-F-01 / F-02 / F-03 已完成本地验收；G-01 已实现并等待开发者本地执行前后端验证脚本。**
+**Phase 1.4-A / B / C / D / E / F / G 已完成当前已定义范围的本地开发与回归验收。G-02 已完成，Backend 当前基线为 152 passed、0 warnings，PostgreSQL migration `0012_execution_event_metadata` 已处于 head。**
 
-当前任务：**Phase 1.4-G-01 Retrieval Debug：Hybrid 来源与 Score Breakdown 本地验收。**
+下一任务：**进入 Phase 1.5 Workflow / Governance 前，先建立并提交明确的 Phase 1.5 开发基线与任务拆解；在基线确认后严格按 Backend Contract → Migration/pytest → Frontend API/Vitest → UI → 手工验收 → 联调 → 全量回归顺序推进。**
 
 ## 7. 暂不在第一轮实现
 
