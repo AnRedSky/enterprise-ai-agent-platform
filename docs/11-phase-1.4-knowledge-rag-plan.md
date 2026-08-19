@@ -7,20 +7,12 @@
 Phase 1.4 聚焦 Knowledge / RAG，目标不是一次性接入某个具体向量数据库，而是先建立与现有 Agent Runtime、RBAC、Observability 解耦的知识领域边界，并形成可验收闭环：
 
 ```text
-Knowledge Base
-  → Document
-  → Version
-  → Chunk
-  → Index / Retrieval contract
-  → Context Builder
-  → Agent Runtime
-  → Citation / Trace
+Knowledge Base → Document → Version → Chunk → Index / Retrieval contract → Context Builder → Agent Runtime → Citation / Trace
 ```
 
 ## 2. 后端并行开发顺序
 
 ### 1.4-A Knowledge Registry
-
 - [x] KnowledgeBase 元数据、Owner、状态
 - [x] Document 元数据、来源、状态、版本关联
 - [x] RBAC owner isolation
@@ -31,7 +23,6 @@ Knowledge Base
 - [x] 本地手工验收：Knowledge Registry 场景已通过（CRUD、Version、分页、删除、Owner/RBAC）
 
 ### 1.4-B Document ingestion
-
 - [x] 文档内容抽象与 parser/cleaner contract
 - [x] 清洗、确定性分块策略 contract
 - [x] Chunk 持久化：migration `0008_knowledge_ingestion`
@@ -43,7 +34,6 @@ Knowledge Base
 - [x] 本地手工验收：Version → Ingest → Chunks → Re-ingest 已通过
 
 ### 1.4-C Retrieval contract
-
 - [x] Embedding provider interface
 - [x] Retriever interface
 - [x] Reranker interface（先定义 contract）
@@ -52,10 +42,9 @@ Knowledge Base
 - [x] 第一版 provider-neutral lexical retrieval 实现，不绑定具体向量数据库
 - [x] Knowledge Base owner isolation 在检索查询阶段执行
 - [x] 独立手工验收脚本：`backend/scripts/run_knowledge_retrieval_scenario.ps1`
-- [ ] 本地执行 pytest + retrieval 手工场景并记录最终验收结果
+- [x] 本地 pytest + Retrieval 手工验收已通过
 
 ### 1.4-D Runtime integration
-
 - [ ] AgentVersion 可声明 Knowledge 配置
 - [ ] Runtime Context Assembly 接入检索结果
 - [ ] 保持 `execution_id / trace_id / agent_version` 链路
@@ -65,23 +54,20 @@ Knowledge Base
 ## 3. 前端并行开发顺序
 
 ### 1.4-F Knowledge 管理端
-
-在 1.4-B Backend contract 验收通过后开始：
-
-- Knowledge Base 列表 / 创建 / 状态
-- Document 列表 / 上传入口 / ingestion 状态
-- Document Version 展示
-- Chunk 查看
-- 错误、空状态、分页
+- [x] 独立 `src/views/knowledge/index.vue + components/KnowledgeWorkbench.vue`
+- [x] Knowledge Base 列表 / 创建 / 状态展示
+- [x] Document 列表 / 创建 / 删除
+- [x] Document Version 展示 / 创建
+- [x] Chunk 查看
+- [x] ingestion 状态与 Ingest 操作
+- [x] 错误、空状态基础处理
+- [x] 独立 `tests/views/knowledge/KnowledgeWorkbench.test.ts`
 
 ### 1.4-G Retrieval / Debug
-
-必须等 1.4-C Retrieval Contract 稳定后开始：
-
-- 检索调试入口
-- query、top-k、过滤条件
-- source chunk / score / citation 展示
-- 与 Runtime execution 关联
+- [x] Retrieval 调试入口
+- [x] query / top-k / Knowledge Base 过滤
+- [x] source document / score / citation / content 展示
+- [ ] 与 Runtime execution 关联
 
 前端只通过 `/api/v1` 调用后端，不实现 Knowledge 核心业务规则。
 
@@ -114,7 +100,7 @@ Knowledge Base
 
 ## 6. 当前状态
 
-**Phase 1.4-A 已完成，Phase 1.4-B 已完成本地手工验收，当前开发位置进入 Phase 1.4-C Retrieval contract 本地验收阶段。** 当前已提交 provider-neutral Embedding / Retriever / Reranker interface、检索响应模型、RBAC 过滤的 lexical retrieval API、pytest 单元覆盖与独立 PowerShell 手工场景。下一步先完成 Retrieval contract 的 pytest + 手工验收，再进入前端 Knowledge 管理端与 Runtime integration。
+**Phase 1.4-A / B / C 已完成本地验收；当前进入前端 1.4-F / 1.4-G 管理与检索调试闭环。** 本轮新增 Knowledge API 类型封装、Knowledge 管理工作台、Retrieval Debug、独立前端测试与手工测试脚本。下一步在前端验收通过后进入 **1.4-D Runtime integration**：AgentVersion Knowledge 配置 → Context Assembly → RBAC → Citation / Trace。
 
 ## 7. 暂不在第一轮实现
 

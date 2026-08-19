@@ -1,0 +1,13 @@
+import { request } from "./request";
+export const listKnowledgeBases = (page=1,pageSize=20) => request.get("/knowledge",{params:{page,page_size:pageSize}}).then(r=>r.data);
+export const createKnowledgeBase = payload => request.post("/knowledge",payload).then(r=>r.data);
+export const updateKnowledgeBase = (id,payload) => request.patch(`/knowledge/${id}`,payload).then(r=>r.data);
+export const listDocuments = (id,page=1,pageSize=20) => request.get(`/knowledge/${id}/documents`,{params:{page,page_size:pageSize}}).then(r=>r.data);
+export const createDocument = (id,payload) => request.post(`/knowledge/${id}/documents`,payload).then(r=>r.data);
+export const updateDocument = (kbId,docId,payload) => request.patch(`/knowledge/${kbId}/documents/${docId}`,payload).then(r=>r.data);
+export const deleteDocument = (kbId,docId) => request.delete(`/knowledge/${kbId}/documents/${docId}`);
+export const listVersions = (kbId,docId) => request.get(`/knowledge/${kbId}/documents/${docId}/versions`).then(r=>r.data);
+export const createVersion = (kbId,docId,payload) => request.post(`/knowledge/${kbId}/documents/${docId}/versions`,payload).then(r=>r.data);
+export const ingestVersion = (versionId,payload) => request.post(`/knowledge/versions/${versionId}/ingest`,payload).then(r=>r.data);
+export const listChunks = versionId => request.get(`/knowledge/versions/${versionId}/chunks`).then(r=>r.data);
+export const retrieveKnowledge = payload => request.post("/knowledge/retrieve",payload).then(r=>r.data);
