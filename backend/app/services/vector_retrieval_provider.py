@@ -176,7 +176,7 @@ class PgVectorRetrievalProvider:
                        1 - (embedding <=> CAST(:embedding AS vector)) AS score,
                        metadata
                 FROM knowledge_chunks
-                WHERE (:knowledge_base_id IS NULL OR knowledge_base_id = CAST(:knowledge_base_id AS uuid))
+                WHERE (CAST(:knowledge_base_id AS uuid) IS NULL OR knowledge_base_id = CAST(:knowledge_base_id AS uuid))
                   AND 1 - (embedding <=> CAST(:embedding AS vector)) >= :min_score
                 ORDER BY embedding <=> CAST(:embedding AS vector) ASC, chunk_id ASC
                 LIMIT :top_k
