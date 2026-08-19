@@ -1,74 +1,13 @@
 {
-  "mode": "lexical-v2",
-  "cases": [
-    {
-      "query": "FastAPI Agent Runtime",
-      "ranking": [
-        "chunk-fastapi-runtime",
-        "chunk-runtime-debug",
-        "chunk-citation"
-      ],
-      "metrics": {
-        "recall_at_k": 1.0,
-        "precision_at_k": 0.333333,
-        "mrr": 1.0
-      }
-    },
-    {
-      "query": "报销规则",
-      "ranking": [
-        "chunk-expense-policy",
-        "chunk-expense-audit"
-      ],
-      "metrics": {
-        "recall_at_k": 1.0,
-        "precision_at_k": 0.5,
-        "mrr": 1.0
-      }
-    },
-    {
-      "query": "PostgreSQL 知识库",
-      "ranking": [
-        "chunk-postgres-knowledge",
-        "chunk-knowledge-catalog",
-        "chunk-postgres-tuning"
-      ],
-      "metrics": {
-        "recall_at_k": 1.0,
-        "precision_at_k": 0.333333,
-        "mrr": 1.0
-      }
-    },
-    {
-      "query": "审批流程",
-      "ranking": [
-        "chunk-approval-process",
-        "chunk-expense-policy",
-        "chunk-approval-audit",
-        "chunk-expense-audit"
-      ],
-      "metrics": {
-        "recall_at_k": 1.0,
-        "precision_at_k": 0.666667,
-        "mrr": 1.0
-      }
-    },
-    {
-      "query": "citation retrieval",
-      "ranking": [
-        "chunk-citation",
-        "chunk-citation-guide",
-        "chunk-fastapi-runtime"
-      ],
-      "metrics": {
-        "recall_at_k": 1.0,
-        "precision_at_k": 0.666667,
-        "mrr": 1.0
-      }
-    }
-  ],
-  "recall_at_k": 1.0,
-  "precision_at_k": 0.5,
-  "mrr": 1.0,
-  "case_count": 5
+  "lexical-v2": {
+    "recall_at_k": 1.0,
+    "precision_at_k": 0.5,
+    "mrr": 1.0
+  },
+  "mock-pgvector": {
+    "recall_at_k": 1.0,
+    "precision_at_k": 0.466667,
+    "mrr": 0.9
+  },
+  "note": "Mock-pgvector baseline measures the deterministic local embedding + real PostgreSQL/pgvector retrieval pipeline. It is not a semantic-quality baseline for a real embedding model."
 }
