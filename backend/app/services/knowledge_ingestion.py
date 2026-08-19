@@ -26,8 +26,8 @@ class KnowledgeIngestionService:
 
     @classmethod
     def chunk_text(cls, text: str, max_chars: int = 1000, overlap_chars: int = 100) -> list[dict]:
-        if max_chars < 100:
-            raise ValueError("max_chars must be at least 100")
+        if max_chars <= 0:
+            raise ValueError("max_chars must be greater than 0")
         if overlap_chars < 0 or overlap_chars >= max_chars:
             raise ValueError("overlap_chars must be >= 0 and smaller than max_chars")
         normalized = cls.normalize_text(text)
