@@ -70,8 +70,8 @@
 | Phase 1.3-C | Memory | 核心能力已完成；后续继续生产化治理 |
 | Phase 1.3-D | Observability | 核心执行链路已完成 |
 | Phase 1.3-E | Vue 管理端深化 | 基础管理闭环已完成 |
-| Phase 1.4-A | Knowledge Registry | **Backend contract / migration / API / pytest / 手工脚本已提交；待本地迁移与回归验收** |
-| Phase 1.4-B | Document ingestion / Chunk | 待开发 |
+| Phase 1.4-A | Knowledge Registry | **本地手工验收通过：CRUD、Version、分页、删除、Owner/RBAC 闭环通过** |
+| Phase 1.4-B | Document ingestion / Chunk | **Backend contract / migration / parser-cleaner / deterministic chunk / persistence / API / pytest / 手工脚本已提交；待本地迁移与回归验收** |
 | Phase 1.4-C | Retrieval contract | 待开发 |
 | Phase 1.4-D | Runtime Knowledge integration | 待开发 |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | 待开发 |
