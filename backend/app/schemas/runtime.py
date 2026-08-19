@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
@@ -45,6 +46,7 @@ class ExecutionEventItem(BaseModel):
     model_id: str | None = None
     tool_id: UUID | None = None
     error_code: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ExecutionTimelineResponse(BaseModel):
