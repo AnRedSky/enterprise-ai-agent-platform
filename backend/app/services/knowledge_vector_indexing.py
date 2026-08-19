@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
 from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
+from app.services.mock_embedding_provider import MockEmbeddingProvider
 from app.services.vector_retrieval_provider import VectorRecord, VectorRetrievalProviderError, PgVectorRetrievalProvider
 
 
@@ -66,17 +67,19 @@ class KnowledgeVectorIndexingService:
             return "skipped", 0
         if settings.vector_provider != "pgvector":
             raise HTTPException(status_code=503, detail=f"Unsupported VECTOR_PROVIDER: {settings.vector_provider}")
-        if settings.embedding_provider != "openai-compatible":
+        if settings.embedding_provider not in {"openai-compatible", "mock"}:
             version.vector_index_status = "failed"
             await self.db.commit()
-            raise HTTPException(status_code=503, detail="VECTOR_PROVIDER=pgvector requires EMBEDDING_PROVIDER=openai-compatible")
-        if not settings.embedding_base_url or not settings.embedding_api_key or not settings.embedding_model:
+            raise HTTPException(status_code=503, detail="VECTOR_PROVIDER=pgvector requires EMBEDDING_PROVIDER=openai-compatible or mock")
+        if settings.embedding_provider == "openai-compatible" and (
+            not settings.embedding_base_url or not settings.embedding_api_key or not settings.embedding_model
+        ):
             version.vector_index_status = "failed"
             await self.db.commit()
             raise HTTPException(status_code=503, detail="EMBEDDING_BASE_URL, EMBEDDING_API_KEY and EMBEDDING_MODEL are required for vector indexing")
 
         version.vector_index_status = "processing"
-        version.embedding_model = settings.embedding_model
+        version.embedding_model = settings.embedding_model or "mock-semantic-v1"
         await self.db.commit()
 
         try:
@@ -89,18 +92,23 @@ class KnowledgeVectorIndexingService:
                     )
                 ).scalars().all()
             )
-            embedding_provider = OpenAICompatibleEmbeddingProvider(
-                base_url=settings.embedding_base_url,
-                api_key=settings.embedding_api_key,
-                model=settings.embedding_model,
-                timeout_seconds=settings.embedding_timeout_seconds,
-            )
+            if settings.embedding_provider == "mock":
+                embedding_provider = MockEmbeddingProvider(dimension=settings.embedding_dimension)
+            else:
+                embedding_provider = OpenAICompatibleEmbeddingProvider(
+                    base_url=settings.embedding_base_url,
+                    api_key=settings.embedding_api_key,
+                    model=settings.embedding_model,
+                    timeout_seconds=settings.embedding_timeout_seconds,
+                )
             vector_provider = PgVectorRetrievalProvider(self.db, settings.embedding_dimension)
             batch_size = max(1, settings.embedding_batch_size)
             indexed = 0
             for start in range(0, len(chunks), batch_size):
                 batch = chunks[start : start + batch_size]
                 embeddings = await embedding_provider.embed([chunk.content for chunk in batch])
+                if any(len(embedding) != settings.embedding_dimension for embedding in embeddings):
+                    raise EmbeddingProviderError("embedding dimension does not match EMBEDDING_DIMENSION")
                 records = self.build_records(batch, embeddings, knowledge_base.id, version.id)
                 await vector_provider.upsert(records)
                 indexed += len(records)
