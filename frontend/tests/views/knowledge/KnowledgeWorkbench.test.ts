@@ -30,6 +30,9 @@ const global = {
     "el-button": true,
     "el-input": true,
     "el-input-number": true,
+    "el-select": true,
+    "el-option": true,
+    "el-slider": true,
     "el-empty": true,
     "el-dialog": true,
     "el-form": true,
@@ -66,6 +69,8 @@ describe("KnowledgeWorkbench", () => {
     vi.mocked(api.retrieveKnowledge).mockResolvedValue({
       query: "报销规则",
       top_k: 5,
+      min_score: 0,
+      retrieval_mode: "lexical-v2",
       results: [{
         document_id: "doc-1",
         document_version_id: "ver-1",
@@ -76,14 +81,71 @@ describe("KnowledgeWorkbench", () => {
         relevance_score: 0.93,
         citation: "员工手册#chunk-0",
         content: "差旅报销应在规定期限内提交。",
+        matched_terms: ["报销"],
+        retrieval_mode: "lexical-v2",
       }],
     });
     const wrapper = mount(KnowledgeWorkbench, { global });
     await vi.waitFor(() => expect(api.listKnowledgeBases).toHaveBeenCalled());
     wrapper.vm.query = "报销规则";
     await wrapper.vm.search();
-    expect(api.retrieveKnowledge).toHaveBeenCalledWith({ query: "报销规则", top_k: 5, knowledge_base_id: undefined });
+    expect(api.retrieveKnowledge).toHaveBeenCalledWith({
+      query: "报销规则",
+      top_k: 5,
+      knowledge_base_id: undefined,
+      mode: "lexical-v2",
+      lexical_weight: undefined,
+      vector_weight: undefined,
+    });
     expect(wrapper.vm.results[0].citation).toBe("员工手册#chunk-0");
+  });
+
+  it("sends hybrid weights and preserves score breakdown for debug", async () => {
+    vi.mocked(api.listKnowledgeBases).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 });
+    vi.mocked(api.retrieveKnowledge).mockResolvedValue({
+      query: "审批",
+      top_k: 5,
+      min_score: 0,
+      retrieval_mode: "hybrid",
+      results: [{
+        document_id: "doc-1",
+        document_version_id: "ver-1",
+        chunk_id: "chunk-1",
+        chunk_index: 1,
+        source_document: "审批制度",
+        source_uri: null,
+        relevance_score: 0.82,
+        citation: "审批制度#1",
+        content: "审批流程需要部门负责人确认。",
+        matched_terms: ["审批"],
+        retrieval_mode: "hybrid",
+        retrieval_sources: ["lexical", "vector"],
+        hybrid_score_breakdown: {
+          lexical_score: 0.9,
+          vector_score: 0.75,
+          lexical_weight: 0.4,
+          vector_weight: 0.6,
+          fused_score: 0.81,
+          support: ["lexical", "vector"],
+        },
+      }],
+    });
+    const wrapper = mount(KnowledgeWorkbench, { global });
+    await vi.waitFor(() => expect(api.listKnowledgeBases).toHaveBeenCalled());
+    wrapper.vm.query = "审批";
+    wrapper.vm.retrievalMode = "hybrid";
+    wrapper.vm.lexicalWeight = 0.4;
+    wrapper.vm.vectorWeight = 0.6;
+    await wrapper.vm.search();
+    expect(api.retrieveKnowledge).toHaveBeenCalledWith({
+      query: "审批",
+      top_k: 5,
+      knowledge_base_id: undefined,
+      mode: "hybrid",
+      lexical_weight: 0.4,
+      vector_weight: 0.6,
+    });
+    expect(wrapper.vm.results[0].hybrid_score_breakdown?.fused_score).toBe(0.81);
   });
 
   it("shows retrieval input validation without calling the API", async () => {
