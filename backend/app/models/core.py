@@ -31,7 +31,6 @@ class Agent(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
-    # The database FK is added by migration 0006 to avoid an ORM table-cycle.
     published_version_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -42,6 +41,7 @@ class AgentVersion(Base):
     version: Mapped[str] = mapped_column(String(32))
     system_prompt: Mapped[str] = mapped_column(Text)
     model_id: Mapped[str] = mapped_column(String(100))
+    knowledge_config: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     __table_args__ = (UniqueConstraint("agent_id", "version", name="uq_agent_version"),)
 
