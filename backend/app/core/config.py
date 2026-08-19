@@ -19,7 +19,9 @@ def _env_files() -> tuple[str, ...]:
     `APP_ENV` may be supplied by the process environment to select an
     environment-specific file; otherwise development is used as the default.
     `ENV_FILE` can explicitly add a deployment-specific file without changing
-    the application code.
+    the application code. Absolute explicit paths are preserved verbatim so
+    Unix container paths such as `/run/secrets/agent.env` remain portable when
+    configuration selection is tested on Windows.
     """
     app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
     files = [
@@ -31,8 +33,16 @@ def _env_files() -> tuple[str, ...]:
     ]
     explicit = os.getenv("ENV_FILE")
     if explicit:
-        files.append(explicit)
-    return tuple(str(BACKEND_ROOT / path) for path in files)
+        explicit_path = Path(explicit)
+        files.append(
+            explicit
+            if os.path.isabs(explicit)
+            else str(BACKEND_ROOT / explicit_path)
+        )
+    return tuple(
+        path if os.path.isabs(path) else str(BACKEND_ROOT / path)
+        for path in files
+    )
 
 
 class Settings(BaseSettings):
