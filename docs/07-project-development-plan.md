@@ -15,9 +15,9 @@
 | Phase 1.4-B | Document ingestion / Chunk | Backend contract、migration、chunk persistence、API、pytest、手工脚本验收通过 |
 | Phase 1.4-C | Retrieval contract | lexical-v2 核心检索与质量门禁已通过 |
 | Phase 1.4-D | Runtime Knowledge integration | Auth → Knowledge → Ingest → AgentVersion → Runtime Chat → Citation 联调通过 |
-| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | **pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；待本地真实 Embedding 配置后验收** |
-| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | 进行中 |
-| Phase 1.5 | Workflow / Governance | 后续 |
+| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；mock + PostgreSQL/pgvector deterministic quality validation 已通过；真实 Embedding 语义质量仍待真实 Provider |
+| Phase 1.4-F/G | Vue Knowledge / Retrieval Debug / Runtime Trace | **G-01 / G-02 已完成；Backend 152 passed、0 warnings；migration 0012 已到 head** |
+| Phase 1.5 | Workflow / Governance | 下一阶段：先建立明确开发基线与任务拆解 |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md` 与 `docs/12-phase-1.4-e-vector-retrieval-provider.md`。
 
@@ -51,15 +51,13 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 
 ## 7. 当前下一任务
 
-**Phase 1.4-E → Vector Retrieval API 闭环**：
+**Phase 1.5 Workflow / Governance 开发基线建立**：
 
-1. 本地执行 `uv run alembic upgrade head`，确认 migration 0011。
-2. 运行 vector / indexing contract tests。
-3. 如配置真实 Embedding，执行 `scripts/run_embedding_provider_validation.ps1`。
-4. 设置 `VECTOR_PROVIDER=pgvector` 后，通过 Knowledge ingest 验证 `Chunk → Embedding → pgvector upsert`，检查 `vector_index_status=ready`。
-5. Retrieval API 增加 `mode=vector`，保持 lexical-v2 不变。
-6. 使用现有 Evaluation Dataset 对 lexical-v2 / vector retrieval 做 Recall@K、Precision@K、MRR 对比。
-7. 稳定后进入 hybrid retrieval。
+1. 先从总体架构与现有 Runtime / RBAC / Tool / Observability 能力中明确 Workflow / Governance 的领域边界。
+2. 输出 Phase 1.5 的可验收任务拆解、API contract、数据模型与状态机，禁止在缺少任务基线时直接发明业务代码。
+3. 明确第一项可独立验收的 Backend Domain + API Contract 任务。
+4. 按 `docs/DEVELOPMENT.md` 固定顺序执行 migration / pytest → frontend API/Vitest → UI → 手工验收 → 联调 → 全量回归。
+5. 每项任务完成后同步更新开发/验收文档并直接提交 `main`。
 
 ### 当前规则
 
@@ -67,3 +65,4 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 - Backend 所有测试、脚本、Alembic 使用 `uv run` 项目环境。
 - 真实 `.env` / API Key / DB credentials 不提交 Git。
 - pgvector 必须由 PostgreSQL 服务端提供，不能通过 Python 依赖替代。
+- 不在没有 Phase 1.5 明确业务基线的情况下擅自实现 Workflow / Governance 领域模型。
