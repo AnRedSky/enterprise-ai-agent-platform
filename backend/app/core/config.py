@@ -1,4 +1,32 @@
+import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _env_files() -> tuple[str, ...]:
+    """Return environment files from lowest to highest file precedence.
+
+    Process environment variables always override values loaded from files.
+    `APP_ENV` may be supplied by the process environment to select an
+    environment-specific file; otherwise development is used as the default.
+    `ENV_FILE` can explicitly add a deployment-specific file without changing
+    the application code.
+    """
+    app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
+    files = [
+        ".env",
+        ".env.local",
+        f".env.{app_env}",
+        f".env.{app_env}.local",
+    ]
+    explicit = os.getenv("ENV_FILE")
+    if explicit:
+        files.append(explicit)
+    return tuple(str(BACKEND_ROOT / path) for path in files)
 
 
 class Settings(BaseSettings):
@@ -38,7 +66,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_env_files(),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 settings = Settings()
