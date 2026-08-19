@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import require_roles
 from app.dependencies.db import get_db
 from app.schemas.knowledge_retrieval import KnowledgeRetrievalRequest, KnowledgeRetrievalResponse
-from app.services.knowledge_retrieval import KnowledgeRetrievalService
+from app.services.vector_knowledge_retrieval import KnowledgeRetrievalRouterService
 
 router = APIRouter()
 
@@ -22,8 +22,9 @@ async def retrieve_knowledge(
     db: AsyncSession = Depends(get_db),
 ):
     owner_id, is_admin = _identity(claims)
-    service = KnowledgeRetrievalService(db)
-    results = await service.retrieve(
+    results, retrieval_mode, fallback_used = await KnowledgeRetrievalRouterService(db).retrieve(
+        mode=payload.mode,
+        fallback_to_lexical=payload.fallback_to_lexical,
         query=payload.query,
         top_k=payload.top_k,
         owner_id=owner_id,
@@ -37,6 +38,7 @@ async def retrieve_knowledge(
         "query": payload.query,
         "top_k": payload.top_k,
         "min_score": payload.min_score,
-        "retrieval_mode": service.RETRIEVAL_MODE,
+        "retrieval_mode": retrieval_mode,
+        "fallback_used": fallback_used,
         "results": results,
     }
