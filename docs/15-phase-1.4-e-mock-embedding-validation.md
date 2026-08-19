@@ -1,7 +1,7 @@
 # Phase 1.4-E Mock Embedding 实现记录
 
 > 日期：2026-08-19
-> 状态：Mock Embedding 代码与环境配置支持已完成；等待本地端到端验证
+> 状态：Mock Embedding 代码与环境配置支持已完成；本地环境回归测试发现并修复 Windows 下 `ENV_FILE` Unix 路径兼容问题；等待本地重新执行验证
 
 ## 1. 任务目的
 
@@ -51,7 +51,7 @@ Mock 模式仍然使用真实 `PgVectorRetrievalProvider`，因此不会把 Vect
 
 新增 embedding dimension 检查：任何 embedding 长度与 `EMBEDDING_DIMENSION` 不一致都会失败并将 Version 标记为 failed。
 
-### 2.3 分层环境配置与 `.env.example` 回退
+### 2.3 分层环境配置
 
 文件：
 
@@ -79,33 +79,28 @@ ENV_FILE 指定文件
 进程环境变量（最高优先级）
 ```
 
-`.env.example` 现在不仅是配置模板，同时是**无任何本地 `.env` 文件时的安全运行回退配置**。因此新 checkout 后无需创建 `.env` 即可读取默认开发配置；该文件不得包含真实密钥。
-
 说明：
 
-- 默认 `APP_ENV=development`，因此会继续尝试 `.env.development` / `.env.development.local`；如果这些文件不存在，则使用 `.env.example` 中的配置。
-- 测试环境可以通过进程环境 `APP_ENV=test` 选择 `.env.test` / `.env.test.local`；不存在时仍可回退到 `.env.example`。
+- 默认 `APP_ENV=development`，因此默认选择 `.env.development` / `.env.development.local`。
+- 如果没有任何本地 `.env` 文件，`.env.example` 作为最低优先级 fallback，保证 fresh checkout 可以直接启动。
+- 测试环境建议在启动命令中设置 `APP_ENV=test`，从而加载 `.env.test` / `.env.test.local`。
 - staging / production 使用对应 `APP_ENV`，或通过 `ENV_FILE` 指定部署环境文件。
-- `ENV_FILE` 位于文件层级最高位置；如果指定文件存在，其中配置覆盖前述环境文件。
+- `.env.example` 只提供安全默认模板，不包含任何真实密钥。
+- `ENV_FILE` 支持容器、部署脚本等无法依赖固定文件名的场景。
+- 绝对 `ENV_FILE` 路径保持原样，不会被当前操作系统重新拼接。例如 Windows 测试环境中的 `/run/secrets/agent.env` 必须仍保持该 Unix 容器路径；相对 `ENV_FILE` 则相对于 backend 根目录解析。
 - 进程环境变量始终覆盖所有文件中的同名配置，便于 CI、容器和部署平台注入配置。
-- 文件不存在不会导致配置加载失败；Pydantic Settings 会跳过不存在的环境文件。
 
 示例：
 
 ```powershell
-# 无 .env 时直接使用 .env.example
-Remove-Item .env -ErrorAction SilentlyContinue
-Remove-Item .env.local -ErrorAction SilentlyContinue
-Remove-Item .env.development -ErrorAction SilentlyContinue
-Remove-Item .env.development.local -ErrorAction SilentlyContinue
-Remove-Item Env:ENV_FILE -ErrorAction SilentlyContinue
-$env:APP_ENV = "development"
-uv run python -c "from app.core.config import settings; print(settings.app_env, settings.embedding_provider, settings.vector_provider)"
+$env:APP_ENV = "test"
+uv run pytest -q
 ```
 
-本地测试建议仍可以创建未提交的 `backend/.env.test`：
+本地测试建议：
 
 ```dotenv
+# backend/.env.test
 APP_ENV=test
 EMBEDDING_PROVIDER=mock
 EMBEDDING_MODEL=mock-semantic-v1
@@ -134,30 +129,55 @@ backend/tests/test_config_environment.py
 2. 向量维度正确并完成归一化。
 3. 共享 token 的文本相似度高于无关文本。
 4. 空白文本被拒绝。
-5. `.env.example` 始终作为最低优先级配置文件。
-6. 默认 development 环境文件选择。
-7. `APP_ENV=test` 能选择测试环境文件。
-8. `ENV_FILE` 位于文件层级最高位置。
-9. `.env.example` 存在，保证 fresh checkout 有可用的安全配置模板。
+5. 默认 development 环境文件选择。
+6. `APP_ENV=test` 能选择测试环境文件。
+7. `ENV_FILE` 位于文件层级最高位置。
+8. Unix 风格绝对 `ENV_FILE` 路径在 Windows 上保持原样。
+9. fresh checkout 存在 `.env.example`。
 
-本次 GitHub 代码修改没有执行用户本地 pytest，因此测试状态必须由本地开发者实际执行后回填。
+### 3.1 本地测试反馈与修复
+
+2026-08-19 本地 Windows 环境执行：
+
+```text
+138 passed, 1 failed
+```
+
+唯一失败项：`test_explicit_env_file_has_highest_file_precedence`。原因是旧实现直接执行 `BACKEND_ROOT / explicit`，导致 Windows 将 Unix 容器路径 `/run/secrets/agent.env` 转换成 `D:\run\secrets\agent.env`。
+
+已修复为：
+
+- 绝对 `ENV_FILE`：原样保留。
+- 相对 `ENV_FILE`：解析为 `BACKEND_ROOT / ENV_FILE`。
+
+修复提交：`db977af7e1a73068eae63bd44d03640091f44a6a`。
+
+用户本地反馈中曾出现 `embedding_provider=none` / `vector_provider=none`，随后再次读取已经得到 `mock` / `pgvector`。当前 `main` 的 `.env.example` 已明确提供 Mock + pgvector 默认值；需在修复提交后重新启动 Python 进程验证，避免旧进程/旧工作区配置造成误判。
+
+本次 GitHub 代码修改没有执行用户本地 pytest，因此最终测试状态必须由本地开发者重新执行后回填。
 
 ## 4. 本地验收
 
-### 4.1 无 `.env` 的 Fresh Checkout 验证
+### 4.1 Fresh checkout 环境配置检查
+
+在没有 `.env` / `.env.local` / `.env.development*` 的情况下：
 
 ```powershell
 cd backend
-Remove-Item .env -ErrorAction SilentlyContinue
-Remove-Item .env.local -ErrorAction SilentlyContinue
-Remove-Item .env.development -ErrorAction SilentlyContinue
-Remove-Item .env.development.local -ErrorAction SilentlyContinue
-Remove-Item Env:ENV_FILE -ErrorAction SilentlyContinue
 $env:APP_ENV = "development"
-uv run python -c "from app.core.config import settings; print(settings.app_env, settings.embedding_provider, settings.vector_provider)"
+uv run python -c "from app.core.config import settings; print('env=', settings.app_env); print('embedding=', settings.embedding_provider); print('vector=', settings.vector_provider); print('dimension=', settings.embedding_dimension)"
 ```
 
-预期读取 `backend/.env.example` 中的安全默认配置。
+预期：
+
+```text
+env= development
+embedding= mock
+vector= pgvector
+dimension= 1536
+```
+
+不要打印任何 API Key 或密码。
 
 ### 4.2 Backend regression
 
@@ -215,7 +235,9 @@ Mock 验证至少确认：
 - Vector retrieval ranking 正常。
 - Evaluation runner 正常。
 - provider error rate 统计正常。
-- 无 `.env` 时可以从 `.env.example` 启动；存在 `.env` / 环境专用文件 / `ENV_FILE` 时按优先级覆盖；进程环境变量始终具有最高优先级。
+- 环境文件在 development / test / staging / production 场景下可以通过 `APP_ENV` 或 `ENV_FILE` 选择，且进程环境变量具有最高优先级。
+- fresh checkout 在没有任何 `.env` 文件时可以通过 `.env.example` 启动。
+- Windows / Linux / container 场景下绝对 `ENV_FILE` 路径语义保持一致。
 
 如果 Mock Quality Gate 通过，只能得出“离线 Vector Retrieval pipeline 可用”的结论。
 
@@ -236,7 +258,8 @@ Mock 验证至少确认：
 
 | 优先级 | 任务 | 责任角色 | 状态 | 目标时间 |
 |---|---|---|---|---|
-| P0 | `.env.example` fresh checkout 回退与分层环境配置 | Backend / DevOps | 已实现，待本地验证 | 2026-08-19 |
+| P0 | 分层环境配置与 `.env.example` 补充 | Backend / DevOps | 已实现 | 2026-08-19 |
+| P0 | Windows / container `ENV_FILE` 路径兼容 | Backend / DevOps | 已修复，待本地回归 | 2026-08-19 |
 | P0 | Mock Embedding 单元测试 | Backend / QA | 已实现，待本地执行 | 2026-08-19 |
 | P0 | Mock + pgvector 端到端 | Backend / Knowledge | 待本地执行 | 2026-08-20 |
 | P0 | 生成真实运行产物 `vector_results.jsonl` | Backend / QA | 待本地执行 | 2026-08-20 |
@@ -254,5 +277,7 @@ Mock 验证至少确认：
 - `.env.example`：`1665506c39069c340a70c9193ca962cc6b293000`
 - Environment selection tests：`6d57d866091a55c489e43376d434fad60c1fe7f8`
 - `.env.example` fallback：`0e188a8e545288f84f2364d0c1b62dab68d62267`
-- Environment fallback tests：`2278b7483f8f085f9a88ecb21af8ff09f12c4231`
+- Environment precedence tests：`2278b7483f8f085f9a88ecb21af8ff09f12c4231`
+- Mock validation environment support：`ad23e400`
+- Windows / container explicit `ENV_FILE` compatibility fix：`db977af7e1a73068eae63bd44d03640091f44a6a`
 - Previous Provider Validation checkpoint：`45e213c9`
