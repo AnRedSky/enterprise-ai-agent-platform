@@ -14,11 +14,20 @@ class Base(DeclarativeBase):
     pass
 
 
+class Tenant(Base):
+    __tablename__ = "tenants"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="RESTRICT"), index=True, default=uuid.uuid4)
     status: Mapped[str] = mapped_column(String(20), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
 
