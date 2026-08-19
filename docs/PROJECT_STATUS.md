@@ -11,7 +11,7 @@
 - 当前任务：Phase 1.5-E Governance / Audit / Trace
 - 当前角色：开发执行
 - 开始时间：2026-08-20
-- 基线：远端 `main` 最新基线 `9ad4ad6abb53dbeb758f3686fe60bbd21c21b108`
+- 基线：远端 `main` 最新基线持续同步
 
 ## 2. 阶段状态
 
@@ -25,7 +25,7 @@
 | Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；开发者反馈本地验收无异常 |
-| Phase 1.5-E | 开发中 / 修复后待验收 | Governance / Audit / Trace；Migration 已升级至 0017，Governance contract 2 passed；full regression 曾因测试夹具缺少 `created_by` 失败，已修复，等待开发者重新执行全量验收 |
+| Phase 1.5-E | 开发中 / 修复后待验收 | Governance / Audit / Trace；Migration 已升级至 0017，Governance contract 2 passed；full regression 当前因状态机测试夹具缺少 tenant/workflow/version 上下文失败，已修复，等待开发者重新执行全量验收 |
 | Phase 1.5-F | 待开始 | Vue Workflow / Governance 管理端 |
 
 ## 3. 1.5-D 验收结论
@@ -86,33 +86,53 @@
    - Phase 1.5-E 实施与验收计划
 
 12. `backend/tests/test_workflow_execution_state_machine.py`
-   - 补齐 `created_by` 测试夹具，保持测试对象与 WorkflowExecution Domain Contract 一致
+   - 状态机测试统一使用包含 tenant / workflow / workflow version / actor 上下文的 Execution 夹具
 
 13. `docs/error-tracking/003-workflow-execution-governance-test-fixture-created-by.md`
-   - 记录 1.5-E Governance 接入后测试夹具不一致错误
+   - 记录 Governance 接入后测试夹具缺少 `created_by` 的错误
+
+14. `docs/error-tracking/004-workflow-execution-governance-test-fixture-tenant-context.md`
+   - 记录补齐 actor 后继续暴露的 tenant / workflow / workflow version 上下文缺失错误
 
 ## 5. 已记录问题与修复
 
 ### 003：Workflow Execution Governance 接入后测试夹具缺少 `created_by`
 
-开发者本地 `uv run pytest -q` 曾得到：
+开发者本地曾得到：
 
 ```text
 178 passed, 2 failed
 AttributeError: 'types.SimpleNamespace' object has no attribute 'created_by'
 ```
 
-根因是旧状态机单元测试夹具没有同步 Phase 1.5-E 引入的 Governance actor contract。修复方式为补齐测试夹具 `created_by=uuid4()`，不在生产代码中增加针对测试对象的降级逻辑。
+已补齐 `created_by=uuid4()`。
+
+### 004：Workflow Execution Governance Trace 接入后测试夹具缺少租户与工作流上下文
+
+补齐 `created_by` 后，开发者再次执行：
+
+```text
+178 passed, 2 failed
+AttributeError: 'types.SimpleNamespace' object has no attribute 'tenant_id'
+```
+
+根因是 Governance Trace / Audit 需要完整的 WorkflowExecution 关联上下文，而旧状态机测试夹具仍缺少：
+
+- `tenant_id`
+- `workflow_id`
+- `workflow_version_id`
+
+修复方式是统一 `_execution()` 测试夹具，补齐完整 Governance Domain Contract，不修改生产代码进行降级兼容。
 
 详细记录见：
 
 ```text
-docs/error-tracking/003-workflow-execution-governance-test-fixture-created-by.md
+docs/error-tracking/004-workflow-execution-governance-test-fixture-tenant-context.md
 ```
 
 ## 6. 当前验收门禁
 
-开发者尚未反馈修复后的 1.5-E 全量验收结果，因此当前不得标记为已完成。
+开发者尚未反馈本次修复后的 1.5-E 全量验收结果，因此当前不得标记为已完成。
 
 待执行：
 
