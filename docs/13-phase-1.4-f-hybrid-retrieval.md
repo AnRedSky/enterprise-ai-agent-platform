@@ -109,7 +109,67 @@ VECTOR_PROVIDER=pgvector
 
 密钥只允许存在未提交的 `backend/.env`。
 
-## 5. 边界
+## 5. F-03 真实 Hybrid Quality Evaluation
+
+F-03 已完成本地质量评测：
+
+- 评测输入为 Evaluation Fixture；实际 ranking 来自 FastAPI Retrieval API。
+- 数据源为真实 PostgreSQL/pgvector Knowledge Chunk；JSON fixture 不是 Retrieval 结果源。
+- `k=3`，5 个 evaluation cases，`EMBEDDING_PROVIDER=mock` 仅替代 embedding 生成。
+- lexical-v2：Recall@3=1.0、Precision@3=1.0、MRR=1.0、error_rate=0。
+- vector：Recall@3=1.0、Precision@3=0.466667、MRR=1.0、error_rate=0。
+- hybrid：Recall@3=1.0、Precision@3=0.466667、MRR=1.0、error_rate=0。
+- Hybrid quality gate：passed。
+- Full backend regression：148 passed，86 warnings。
+
+本轮没有通过修改 baseline 或隐藏错误来获得通过结果。
+
+## 6. G-01 Retrieval Debug
+
+G-01 已实现：
+
+### Backend
+
+Hybrid API response 新增：
+
+```json
+{
+  "retrieval_sources": ["lexical", "vector"],
+  "hybrid_score_breakdown": {
+    "lexical_score": 0.9,
+    "vector_score": 0.75,
+    "lexical_weight": 0.4,
+    "vector_weight": 0.6,
+    "fused_score": 0.81,
+    "support": ["lexical", "vector"]
+  }
+}
+```
+
+该 breakdown 由真实 Hybrid fusion service 生成，前端不重新计算业务分数。
+
+### Frontend
+
+Knowledge Retrieval Debug 已支持：
+
+- Lexical v2 / Vector / Hybrid 模式切换；
+- Hybrid lexical / vector 权重输入；
+- 来源拆解；
+- lexical score；
+- vector score；
+- fused score；
+- citation / source URI / content。
+
+新增本地验证入口：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_4_g_01_retrieval_debug_validation.ps1
+```
+
+该脚本执行 Backend hybrid contract、Frontend Retrieval Debug Vitest 和 frontend production build；不触发 GitHub Actions。
+
+## 7. 边界
 
 本阶段不做：
 
@@ -117,55 +177,47 @@ VECTOR_PROVIDER=pgvector
 - JSONL 作为线上检索结果源；
 - 新增独立 Vector DB；
 - 修改已有 Knowledge RBAC 规则；
-- 前端 Retrieval Debug UI 的 hybrid 展示。
+- Runtime trace 深度关联。
 
 后续：
 
-- F-03：Hybrid Evaluation Dataset + Recall@K / Precision@K / MRR + 权重质量门禁；
-- G-01：Retrieval Debug 展示 lexical/vector 来源与融合分数；
-- G-02：Runtime execution / trace 与 Retrieval Debug 关联。
+- G-02：Runtime execution / trace 与 Retrieval Debug 关联；
+- 后续再评估真实 Embedding Provider 的语义质量与 reranker。
 
-## 6. 测试
+## 8. 测试
 
-### 单元 / Contract
-
-```powershell
-cd backend
-uv run pytest -q tests/test_hybrid_knowledge_retrieval.py
-uv run pytest -q tests/test_hybrid_knowledge_retrieval_service.py tests/test_hybrid_retrieval_api_contract.py tests/test_vector_knowledge_retrieval.py
-```
-
-### 真实数据库闭环
+### Backend G-01
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_4_f_retrieval_db_loop.ps1
+uv run pytest -q tests/test_hybrid_knowledge_retrieval.py tests/test_hybrid_retrieval_api_contract.py tests/test_hybrid_knowledge_retrieval_service.py
 ```
 
-脚本只执行本地 `pytest` 和本地 Python/ASGI/数据库验证，不触发 GitHub Actions workflow。
+### Frontend G-01
 
-### 真实数据库手工验收重点
+```powershell
+cd frontend
+npm test -- --run tests/views/knowledge/KnowledgeWorkbench.test.ts
+npm run build
+```
 
-1. 启动 PostgreSQL + pgvector。
-2. 执行 `uv run alembic upgrade head`。
-3. 确认本地 `backend/.env` 已配置 `VECTOR_PROVIDER=pgvector`。
-4. 无真实 Embedding Provider 时设置 `EMBEDDING_PROVIDER=mock`；有真实 Provider 时配置 OpenAI-compatible endpoint/model/key。
-5. 执行 `run_phase_1_4_f_retrieval_db_loop.ps1`。
-6. 验证脚本输出 `source=PostgreSQL/pgvector`、`retrieval_mode=hybrid`、结果包含 `citation` / `content` / `source_document` / `relevance_score`。
-7. 对同时命中两路的结果验证 `retrieval_sources` 同时包含 `lexical` 和 `vector`。
-8. 使用 `knowledge_base_id` / `document_id` 验证 scope 与 RBAC 仍然有效。
-9. 检查临时 fixture 被清理，不留下线上检索 JSON/JSONL 结果文件。
+### 一键本地验证
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_4_g_01_retrieval_debug_validation.ps1
+```
 
 测试结果只能记录开发者实际执行并反馈的结果，不预填“通过”。
 
-## 7. 当前状态
+## 9. 当前状态
 
 | ID | 任务 | 状态 | 责任角色 | 目标时间 |
 |---|---|---|---|---|
-| 1.4-F-01 | Hybrid Retrieval Contract / score fusion | 已实现，已完成本地回归 | Backend / Knowledge | 2026-08-20 |
-| 1.4-F-02 | lexical-v2 + vector 真实服务编排、`mode=hybrid` API、Citation 闭环 | 已实现，新增真实 PostgreSQL/pgvector 本地闭环验收脚本，等待开发者执行 | Backend / Knowledge | 2026-08-20 |
-| 1.4-F-03 | Hybrid Evaluation Dataset、权重评测与 quality gate | 未开始 | Backend / QA | 2026-08-21 |
-| 1.4-G-01 | Retrieval Debug hybrid 来源/分数展示 | 未开始 | Frontend | 2026-08-22 |
-| 1.4-G-02 | Runtime execution / trace 与 Retrieval Debug 关联 | 未开始 | Backend / Frontend | 2026-08-24 |
+| 1.4-F-01 | Hybrid Retrieval Contract / score fusion | 已完成本地回归 | Backend / Knowledge | 2026-08-20 |
+| 1.4-F-02 | lexical-v2 + vector 真实服务编排、`mode=hybrid` API、Citation 闭环 | 已实现并完成真实 DB loop 验收 | Backend / Knowledge | 2026-08-20 |
+| 1.4-F-03 | Hybrid Evaluation Dataset、权重评测与 quality gate | 已完成，本地质量门禁通过 | Backend / QA | 2026-08-21 |
+| 1.4-G-01 | Retrieval Debug hybrid 来源/分数展示 | 已实现，等待开发者执行本地验证 | Frontend / Backend | 2026-08-22 |
+| 1.4-G-02 | Runtime execution / trace 与 Retrieval Debug 关联 | 下一任务 | Backend / Frontend | 2026-08-24 |
 
 真实 Embedding Provider、endpoint、API key 和数据库凭据仍只允许存在本地未提交 `backend/.env`。
