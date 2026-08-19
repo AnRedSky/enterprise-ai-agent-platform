@@ -6,7 +6,7 @@
 
 Phase 1.5 不直接追求一次性实现完整 Workflow Engine，而是先建立与现有 Agent Runtime、RBAC、Tool Runtime、Observability 解耦的 Workflow / Governance 领域边界，并形成可逐项验收的基础闭环。
 
-架构文档明确 Workflow 与 Governance 属于平台核心领域；Agent Runtime 应通过 Workflow Engine / State Machine 进行流程编排，Governance 负责审计、版本、发布与配置治理。fileciteturn543file6L1-L1
+架构文档明确 Workflow 与 Governance 属于平台核心领域；Agent Runtime 应通过 Workflow Engine / State Machine 进行流程编排，Governance 负责审计、版本、发布与配置治理。
 
 本阶段第一轮遵循“先 Contract、后执行引擎”的原则：
 
@@ -67,8 +67,8 @@ Governance / Audit / Trace
 
 | ID | 任务 | 目标 | 状态 |
 |---|---|---|---|
-| 1.5-A | Workflow Definition Contract | 建立 Workflow 定义、版本、生命周期与 RBAC/API contract | **执行中** |
-| 1.5-B | Workflow Version / Publish Governance | 发布版本、不可变版本与发布审计 | 待 1.5-A 验收 |
+| 1.5-A | Workflow Definition Contract | 建立 Workflow 定义、版本、生命周期与 RBAC/API contract | **Backend 验收通过** |
+| 1.5-B | Workflow Version / Publish Governance | 发布版本、不可变版本与发布审计；补齐 Tenant contract | **执行中：Publish Governance 已落地，等待本地 Backend 验收；Tenant contract 后续补齐** |
 | 1.5-C | Workflow Execution State Machine | 建立 execution / node state contract 与持久化 | 待 1.5-B 验收 |
 | 1.5-D | Workflow Runtime Integration | Workflow → Agent Runtime / Tool Runtime 执行链路 | 待 1.5-C 验收 |
 | 1.5-E | Governance / Audit / Trace | 发布、执行、失败、变更的治理闭环 | 待 1.5-D 验收 |
@@ -78,33 +78,9 @@ Governance / Audit / Trace
 
 ### 4.1 Backend Domain Contract
 
-建立 `Workflow` / `WorkflowVersion` provider-neutral domain。
+已建立 `Workflow` / `WorkflowVersion` provider-neutral domain。
 
-当前仓库已有 Identity/RBAC，但 JWT 与 User 模型尚未建立独立 Tenant domain / `tenant_id` claim。因此 **1.5-A 不虚构 tenant 来源**：本任务先落地现有可验证的 `owner_id + admin` scope；Tenant isolation 作为 1.5-B 的前置治理补齐项，在 Tenant contract 建立后再纳入 Workflow 数据模型。架构文档要求核心数据最终具备 `tenant_id`，本阶段不得用 `owner_id` 冒充 tenant。fileciteturn543file3L1-L1
-
-第一轮最小字段：
-
-```text
-Workflow
-- id
-- name
-- description
-- owner_id
-- status
-- created_at
-- updated_at
-
-WorkflowVersion
-- id
-- workflow_id
-- version
-- definition
-- status
-- created_by
-- created_at
-```
-
-字段命名必须最终以 Backend schema 为准，Frontend 不得自行扩展业务字段。
+当前仓库已有 Identity/RBAC，但 JWT 与 User 模型尚未建立独立 Tenant domain / `tenant_id` claim。因此 **1.5-A 不虚构 tenant 来源**：该任务已完成现有可验证的 `owner_id + admin` scope；Tenant isolation 作为 1.5-B 的治理补齐项，在 Tenant contract 建立后再纳入 Workflow 数据模型。不得用 `owner_id` 冒充 tenant。
 
 ### 4.2 生命周期
 
@@ -122,11 +98,11 @@ Deprecated
 Archived
 ```
 
-发布版本必须不可变；修改已发布定义必须创建新版本，不允许直接覆盖生产版本。该原则与架构文档中的 Agent 生命周期及“生产环境禁止直接修改 Running Agent”的治理思想保持一致。fileciteturn543file13L1-L1
+发布版本必须不可变；修改已发布定义必须创建新版本，不允许直接覆盖生产版本。
 
 ### 4.3 API Contract
 
-第一轮只建立 Registry / Version API，不实现 Workflow 执行：
+第一轮 Registry / Version API 已建立：
 
 ```text
 GET    /api/v1/workflows
@@ -140,98 +116,55 @@ GET    /api/v1/workflows/{workflow_id}/versions/{version_id}
 POST   /api/v1/workflows/{workflow_id}/versions/{version_id}/publish
 ```
 
-所有接口必须明确：
-
-- Request schema
-- Response schema
-- Error code
-- Authentication
-- Authorization / owner isolation
-- Pagination
-- Idempotency（涉及 publish 时）
-
-API 设计遵循项目既有 `/api/v1` 版本化与统一错误模型要求。fileciteturn543file3L1-L1
+1.5-B 在既有 API 上补充 `published_version_id` 返回字段，并允许经过治理校验的版本切换；重复发布当前活动版本保持幂等，不重复写入 Publish AuditLog。
 
 ### 4.4 RBAC / Governance Contract
 
-至少验证：
+已验证并持续维护：
 
 1. Owner 可以读取和管理自己的 Workflow。
 2. 非 Owner 无法越权读取、修改、删除或创建其 Workflow Version。
 3. Admin 可以跨 Owner 查询，但不能绕过发布状态约束。
 4. Published Version 不允许原地修改。
 5. Publish 操作必须产生可审计事件。
-6. Tenant isolation 暂不在 1.5-A 声称已完成；必须等待 Identity Tenant contract 后实施，不得通过 owner_id 假装实现 tenant isolation。
+6. 当前活动 Published Version 通过 `Workflow.published_version_id` 明确记录。
+7. 发布新版本时，旧活动版本转为 `deprecated`。
+8. 重复发布当前活动版本为幂等操作，不产生重复 AuditLog。
+9. Tenant isolation 仍未宣称完成；必须等待 Identity Tenant contract 后实施。
 
 ## 5. 数据模型 / Migration 原则
 
-1.5-A 必须先完成数据库设计，再实现依赖该结构的 Service/API。
+第一轮已完成数据库设计与 `0013_workflow_definition`。1.5-B 新增 `0014_workflow_publish_governance`：
 
-第一轮建议：
-
-```text
-workflows
-    │
-    └── workflow_versions
-```
-
-要求：
-
-- PostgreSQL
-- Alembic migration
-- owner scope
-- Workflow 与 Version 外键约束
-- 唯一版本约束
-- 时间字段使用 timezone-aware UTC
+- `workflows.published_version_id`
+- Workflow → active published WorkflowVersion 关联
+- FK `ON DELETE SET NULL`
+- 索引
+- PostgreSQL / Alembic contract
+- 时间字段继续使用 timezone-aware UTC 生成策略
 - 不使用 SQLAlchemy Declarative API 保留字段名 `metadata`
-- migration 必须可 `upgrade head`
-- 测试环境 schema 必须与 PostgreSQL contract 一致，不能通过 SQLite 特性掩盖 PostgreSQL 行为
 
 ## 6. Backend 测试范围
 
 严格遵循：Backend Contract → Migration + pytest。
 
-### Unit / Domain
+1.5-B 新增：
 
-- Workflow lifecycle transition
-- Version immutability
-- Version uniqueness
-- Definition schema validation
-- Publish idempotency / invalid transition
+- Publish 设置 active version
+- Publish 幂等性
+- Publish 新版本时旧版本 Deprecated
+- Archived version 禁止 Publish
+- Workflow / Version mismatch protection
+- API authentication contract
+- Full backend regression
 
-### API / RBAC
-
-- Owner CRUD
-- Cross-owner denial
-- Admin read scope
-- Pagination
-- Error mapping
-- Published version update denial
-
-### Migration
-
-- `alembic upgrade head`
-- Workflow / Version 表结构约束
-- 必填字段 / unique / FK
-
-### 独立手工脚本
-
-第一项任务完成后提供：
+独立手工脚本：
 
 ```text
-backend/scripts/run_phase_1_5_a_workflow_registry_validation.ps1
+backend/scripts/run_phase_1_5_b_workflow_publish_governance_validation.ps1
 ```
 
-脚本只执行 **Backend** 场景，不混入 Frontend 测试。必须明确打印：
-
-```text
-[1/4] Database migration to head
-[2/4] Workflow API / RBAC scenario
-[3/4] Backend regression
-[4/4] Result summary
-```
-
-Frontend 测试必须独立通过 `npm test` / `npm run build` 执行，不允许由 Backend 脚本调用或混淆。
+脚本只执行 **Backend** 场景，不混入 Frontend 测试。Frontend 测试必须独立通过 `npm test` / `npm run build` 执行。
 
 ## 7. 后续固定推进顺序
 
@@ -258,8 +191,6 @@ Frontend 测试必须独立通过 `npm test` / `npm run build` 执行，不允�
         ↓
 ⑩ 提交 main
 ```
-
-该顺序来自项目唯一开发准则。fileciteturn547file0L2-L2
 
 ## 8. 本阶段暂不实现
 
@@ -290,18 +221,14 @@ Frontend 测试必须独立通过 `npm test` / `npm run build` 执行，不允�
 
 ## 10. 当前任务状态
 
-**Phase 1.5 基线已建立。1.5-A Workflow Definition Contract 执行中。**
+**Phase 1.5-A 已完成本地 Backend 手工验收；Phase 1.5-B Workflow Version / Publish Governance 执行中。**
 
 责任角色：开发执行
 
-状态：In Progress
-
 开始时间：2026-08-19
 
-目标时间：本轮完成 Backend Domain + API Contract、Migration、pytest 与 Backend 手工验收后，再进入 Frontend。
+当前目标：完成 1.5-B Publish Governance + Tenant contract 的 Backend Domain、Migration、pytest 与本地手工验收后，再进入 1.5-C。
 
-阻塞项：Identity Tenant contract 尚未建立，但不阻塞 1.5-A owner/admin scope contract；Tenant isolation 不在 1.5-A 宣称完成。
+当前阻塞项：Identity Tenant contract 尚未建立。1.5-B Publish Governance 不依赖 Tenant，可先独立验收；Tenant isolation 不得提前宣称完成。
 
-资源依赖：PostgreSQL / Alembic / 现有 RBAC、Audit、Observability 能力
-
-下一阶段：1.5-B Workflow Version / Publish Governance + Tenant contract
+下一阶段：1.5-C Workflow Execution State Machine
