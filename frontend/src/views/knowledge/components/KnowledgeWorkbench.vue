@@ -28,6 +28,18 @@ const topK = ref(5);
 const saving = ref(false);
 const ingesting = ref("");
 
+function isKnowledgeDocument(value: unknown): value is KnowledgeDocument {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<KnowledgeDocument>;
+  return typeof row.id === "string" && typeof row.title === "string";
+}
+
+function isKnowledgeVersion(value: unknown): value is KnowledgeVersion {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<KnowledgeVersion>;
+  return typeof row.id === "string" && typeof row.document_id === "string" && typeof row.version === "string";
+}
+
 async function loadBases() {
   loading.value = true;
   error.value = "";
@@ -96,8 +108,8 @@ async function saveVersion() {
   } finally { saving.value = false; }
 }
 
-async function openDocument(doc: KnowledgeDocument) {
-  if (!selectedBase.value) return;
+async function openDocument(doc: unknown) {
+  if (!selectedBase.value || !isKnowledgeDocument(doc)) return;
   selectedDocument.value = doc;
   selectedVersion.value = null;
   chunks.value = [];
@@ -108,7 +120,8 @@ async function openDocument(doc: KnowledgeDocument) {
   }
 }
 
-async function ingest(version: KnowledgeVersion) {
+async function ingest(version: unknown) {
+  if (!isKnowledgeVersion(version)) return;
   ingesting.value = version.id;
   try {
     const out = await ingestVersion(version.id, { max_chars: 1000, overlap_chars: 100 });
@@ -119,14 +132,15 @@ async function ingest(version: KnowledgeVersion) {
   } finally { ingesting.value = ""; }
 }
 
-async function openChunks(version: KnowledgeVersion) {
+async function openChunks(version: unknown) {
+  if (!isKnowledgeVersion(version)) return;
   selectedVersion.value = version;
   try { chunks.value = await listChunks(version.id); }
   catch (e) { ElMessage.error(e instanceof Error ? e.message : "Chunk 加载失败"); }
 }
 
-async function removeDocument(doc: KnowledgeDocument) {
-  if (!selectedBase.value) return;
+async function removeDocument(doc: unknown) {
+  if (!selectedBase.value || !isKnowledgeDocument(doc)) return;
   try {
     await ElMessageBox.confirm(`确定删除文档「${doc.title}」吗？`, "删除确认", { type: "warning" });
     await deleteDocument(selectedBase.value.id, doc.id);
@@ -156,7 +170,7 @@ onMounted(loadBases);
       <el-card class="panel"><template #header><b>知识库</b></template><el-table v-loading="loading" :data="bases" highlight-current-row @current-change="selectBase"><el-table-column prop="name" label="名称"/><el-table-column prop="status" label="状态" width="90"/></el-table><el-empty v-if="!loading && !bases.length" description="暂无知识库"/></el-card>
       <el-card class="panel"><template #header><div class="panel-head"><b>文档</b><el-button size="small" type="primary" :disabled="!selectedBase" @click="docDialog = true">新建文档</el-button></div></template><el-table :data="documents" @row-click="openDocument"><el-table-column prop="title" label="标题"/><el-table-column prop="source_type" label="来源" width="90"/><el-table-column prop="status" label="状态" width="90"/><el-table-column label="操作" width="70"><template #default="{ row }"><el-button link type="danger" @click.stop="removeDocument(row)">删</el-button></template></el-table-column></el-table><el-empty v-if="selectedBase && !documents.length" description="暂无文档"/></el-card>
     </div>
-    <el-card v-if="selectedDocument" class="section"><template #header><div class="panel-head"><b>版本：{{ selectedDocument.title }}</b><el-button size="small" type="primary" @click="versionDialog = true">新建版本</el-button></div></template><el-table :data="versions"><el-table-column prop="version" label="版本" width="100"/><el-table-column prop="status" label="状态" width="90"/><el-table-column prop="ingestion_status" label="Ingestion" width="110"/><el-table-column prop="created_at" label="创建时间"/><el-table-column label="操作" width="170"><template #default="{ row }"><el-button link type="success" :loading="ingesting === row.id" @click="ingest(row)">Ingest</el-button><el-button link type="primary" @click="openChunks(row)">Chunks</el-button></template></el-table-column></el-table></el-card>
+    <el-card v-if="selectedDocument" class="section"><template #header><div class="panel-head"><b>版本：{{ selectedDocument.title }}</b><el-button size="small" type="primary" @click="versionDialog = true">新建版本</el-button></div></template><el-table :data="versions"><el-table-column prop="version" label="版本" width="100"/><el-table-column prop="status" label="状态" width="90"/><el-table-column prop="ingestion_status" label="Ingestion" width="110"/><el-table-column prop="created_at" label="创建时间"/><el-table-column label="操作" width="170"><template #default="{ row }"><el-button link type="success" :loading="ingesting === row.id" @click="ingest(row)">Ingest</el-button><el-button link type="primary" @click="openChunks(row)">Chunks</el-button></template></el-table></el-card>
     <el-card v-if="selectedVersion" class="section"><template #header><b>Chunk：{{ selectedVersion.version }}</b></template><el-table :data="chunks"><el-table-column prop="chunk_index" label="#" width="60"/><el-table-column prop="start_offset" label="Start" width="80"/><el-table-column prop="end_offset" label="End" width="80"/><el-table-column prop="content" label="内容" min-width="400"/></el-table></el-card>
     <el-card class="section"><template #header><b>Retrieval Debug</b></template><div class="search"><el-input v-model="query" placeholder="输入检索问题" @keyup.enter="search"/><el-input-number v-model="topK" :min="1" :max="20"/><el-button type="primary" @click="search">检索</el-button></div><el-table :data="results"><el-table-column prop="source_document" label="来源" width="180"/><el-table-column prop="relevance_score" label="Score" width="100"/><el-table-column prop="citation" label="Citation" width="220"/><el-table-column prop="content" label="内容"/></el-table><el-empty v-if="query && !results.length" description="没有命中结果"/></el-card>
     <el-dialog v-model="baseDialog" title="新建知识库" width="520px"><el-form label-width="90px"><el-form-item label="名称"><el-input v-model="baseForm.name"/></el-form-item><el-form-item label="描述"><el-input v-model="baseForm.description" type="textarea"/></el-form-item></el-form><template #footer><el-button @click="baseDialog = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveBase">创建</el-button></template></el-dialog>
