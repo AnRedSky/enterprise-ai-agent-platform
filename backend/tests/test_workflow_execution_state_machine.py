@@ -16,7 +16,7 @@ async def test_pending_execution_can_start_and_complete():
     db.refresh = AsyncMock()
     service = WorkflowExecutionService(db)
     execution = SimpleNamespace(
-        id=uuid4(), status="pending", current_node_id=None, started_at=None,
+        id=uuid4(), created_by=uuid4(), status="pending", current_node_id=None, started_at=None,
         ended_at=None, output_data=None, error_code=None, error_message=None,
     )
 
@@ -37,7 +37,7 @@ async def test_terminal_execution_cannot_transition_again():
     db = AsyncMock()
     service = WorkflowExecutionService(db)
     execution = SimpleNamespace(
-        id=uuid4(), status="completed", current_node_id=None, started_at=None,
+        id=uuid4(), created_by=uuid4(), status="completed", current_node_id=None, started_at=None,
         ended_at=None, output_data=None, error_code=None, error_message=None,
     )
 
@@ -52,7 +52,7 @@ async def test_pending_execution_can_be_cancelled_but_running_cannot_complete_tw
     db.refresh = AsyncMock()
     service = WorkflowExecutionService(db)
     execution = SimpleNamespace(
-        id=uuid4(), status="pending", current_node_id=None, started_at=None,
+        id=uuid4(), created_by=uuid4(), status="pending", current_node_id=None, started_at=None,
         ended_at=None, output_data=None, error_code=None, error_message=None,
     )
 

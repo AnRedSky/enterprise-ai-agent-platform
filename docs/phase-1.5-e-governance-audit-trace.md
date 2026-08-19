@@ -82,7 +82,21 @@ Backend 验证脚本只执行 Backend migration / pytest，不调用 frontend np
 
 Frontend 测试必须独立执行。
 
-## 5. 验收标准
+## 5. 已发生错误与修复
+
+### 5.1 测试夹具缺少 `created_by`
+
+1.5-E 在 `WorkflowExecutionService.transition()` 中接入 Governance Trace 后，旧状态机单元测试的 `SimpleNamespace` Execution 夹具未包含真实 Domain Contract 所需的 `created_by`，导致 full regression 出现 2 个 `AttributeError`。
+
+修复方式：补齐 `backend/tests/test_workflow_execution_state_machine.py` 中的 `created_by=uuid4()`，保持测试夹具与真实 `WorkflowExecution` contract 一致；不在生产代码中添加针对测试对象的降级访问。
+
+详细错误知识库记录：
+
+```text
+docs/error-tracking/003-workflow-execution-governance-test-fixture-created-by.md
+```
+
+## 6. 验收标准
 
 1. Workflow 创建会生成 Audit 与 Trace。
 2. Execution / Node 状态变化会生成 Trace。
@@ -94,7 +108,7 @@ Frontend 测试必须独立执行。
 8. Backend 全量 pytest 通过且无未解释 warning。
 9. 实际验收结果写回 `docs/PROJECT_STATUS.md` 后才允许进入 1.5-F。
 
-## 6. 明确边界
+## 7. 明确边界
 
 本阶段不实现：
 
