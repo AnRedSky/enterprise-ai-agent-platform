@@ -60,7 +60,7 @@ def test_aggregate_observations_reports_quality_latency_and_errors():
         "cases": 3,
         "successful_cases": 2,
         "error_cases": 1,
-        "error_rate": 1 / 3,
+        "error_rate": 0.333333,
         "recall_at_k": 1.0,
         "precision_at_k": 0.75,
         "mrr": 0.75,
