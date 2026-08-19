@@ -18,9 +18,10 @@ class Settings(BaseSettings):
     embedding_api_key: str | None = None
     embedding_model: str | None = None
     embedding_timeout_seconds: float = 30.0
+    embedding_dimension: int = 1536
 
-    # Vector retrieval is provider-neutral. Keep `none` until a real Vector DB
-    # adapter is selected; the in-memory implementation is test-only.
+    # Vector retrieval is provider-neutral. Keep `none` until PostgreSQL + pgvector
+    # is enabled locally; the in-memory implementation remains test-only.
     vector_provider: str = "none"
     vector_db_url: str | None = None
     vector_db_collection: str = "knowledge_chunks"
