@@ -26,6 +26,7 @@ const documents = ref<KnowledgeDocument[]>([]);
 const versions = ref<KnowledgeVersion[]>([]);
 const chunks = ref<KnowledgeChunk[]>([]);
 const results = ref<RetrievalResult[]>([]);
+const selectedResult = ref<RetrievalResult | null>(null);
 const selectedBase = ref<KnowledgeBase | null>(null);
 const selectedDocument = ref<KnowledgeDocument | null>(null);
 const selectedVersion = ref<KnowledgeVersion | null>(null);
@@ -39,6 +40,8 @@ const query = ref("");
 const topK = ref(5);
 const saving = ref(false);
 const ingesting = ref("");
+const retrievalLoading = ref(false);
+const retrievalError = ref("");
 
 function isKnowledgeDocument(value: unknown): value is KnowledgeDocument {
   if (!value || typeof value !== "object") return false;
@@ -80,6 +83,8 @@ async function selectBase(base: KnowledgeBase | null) {
   documents.value = [];
   versions.value = [];
   chunks.value = [];
+  results.value = [];
+  selectedResult.value = null;
   if (!base) return;
 
   try {
@@ -198,17 +203,44 @@ async function removeDocument(doc: unknown) {
 }
 
 async function search() {
-  if (!query.value.trim()) return;
+  const text = query.value.trim();
+  if (!text) {
+    retrievalError.value = "请输入检索问题";
+    results.value = [];
+    selectedResult.value = null;
+    return;
+  }
+
+  retrievalLoading.value = true;
+  retrievalError.value = "";
+  selectedResult.value = null;
   try {
     const out = await retrieveKnowledge({
-      query: query.value.trim(),
+      query: text,
       top_k: topK.value,
       knowledge_base_id: selectedBase.value?.id,
     });
     results.value = out.results;
+    if (!out.results.length) {
+      retrievalError.value = "没有命中结果，请尝试调整问题或扩大知识库范围";
+    }
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "检索失败");
+    results.value = [];
+    retrievalError.value = e instanceof Error ? e.message : "检索失败";
+  } finally {
+    retrievalLoading.value = false;
   }
+}
+
+function selectResult(result: RetrievalResult) {
+  selectedResult.value = result;
+}
+
+function clearRetrieval() {
+  query.value = "";
+  results.value = [];
+  selectedResult.value = null;
+  retrievalError.value = "";
 }
 
 onMounted(loadBases);
@@ -312,27 +344,60 @@ onMounted(loadBases);
       </el-table>
     </el-card>
 
-    <el-card class="section">
-      <template #header><b>Retrieval Debug</b></template>
+    <el-card class="section retrieval-panel">
+      <template #header>
+        <div class="panel-head">
+          <div>
+            <b>Retrieval Debug</b>
+            <span class="hint">检索结果、Score、Chunk 与 Citation 可追溯查看</span>
+          </div>
+          <el-button v-if="query || results.length" link @click="clearRetrieval">清空</el-button>
+        </div>
+      </template>
       <div class="search">
         <el-input
           v-model="query"
-          placeholder="输入检索问题"
+          placeholder="输入检索问题，例如：公司的报销规则是什么？"
+          clearable
           @keyup.enter="search"
         />
         <el-input-number v-model="topK" :min="1" :max="20" />
-        <el-button type="primary" @click="search">检索</el-button>
+        <el-button type="primary" :loading="retrievalLoading" @click="search">检索</el-button>
       </div>
-      <el-table :data="results">
-        <el-table-column prop="source_document" label="来源" width="180" />
-        <el-table-column prop="relevance_score" label="Score" width="100" />
-        <el-table-column prop="citation" label="Citation" width="220" />
-        <el-table-column prop="content" label="内容" />
-      </el-table>
+      <el-alert v-if="retrievalError" :title="retrievalError" type="warning" show-icon :closable="false" />
+
+      <div v-if="results.length" class="retrieval-grid">
+        <el-table
+          :data="results"
+          highlight-current-row
+          class="result-table"
+          @current-change="selectResult"
+        >
+          <el-table-column prop="source_document" label="来源" width="180" />
+          <el-table-column prop="relevance_score" label="Score" width="100" />
+          <el-table-column prop="citation" label="Citation" width="220" />
+          <el-table-column prop="content" label="内容" min-width="400" show-overflow-tooltip />
+        </el-table>
+
+        <el-card v-if="selectedResult" class="citation-card" shadow="never">
+          <template #header><b>Citation Detail</b></template>
+          <div class="citation-meta">
+            <span><b>Document：</b>{{ selectedResult.source_document }}</span>
+            <span><b>Score：</b>{{ selectedResult.relevance_score }}</span>
+            <span><b>Citation：</b>{{ selectedResult.citation }}</span>
+          </div>
+          <div class="citation-content">{{ selectedResult.content }}</div>
+          <div v-if="selectedResult.source_uri" class="citation-source">
+            <b>Source URI：</b>{{ selectedResult.source_uri }}
+          </div>
+        </el-card>
+      </div>
+
       <el-empty
-        v-if="query && !results.length"
+        v-if="!retrievalLoading && query && !results.length && !retrievalError"
         description="没有命中结果"
       />
+      <el-empty v-if="!query && !results.length" description="输入问题后执行 Retrieval Debug" />
     </el-card>
 
     <el-dialog v-model="baseDialog" title="新建知识库" width="520px">
@@ -377,5 +442,27 @@ onMounted(loadBases);
 </template>
 
 <style scoped>
-.page{padding:32px}.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}.header p{color:#667085}.grid{display:grid;grid-template-columns:1fr 1.6fr;gap:18px}.panel,.section{margin-bottom:18px}.panel-head{display:flex;justify-content:space-between;align-items:center}.search{display:flex;gap:10px;margin-bottom:16px}.search .el-input{flex:1}@media(max-width:900px){.grid{grid-template-columns:1fr}.page{padding:16px}}
+.page { padding: 32px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 22px; }
+.header p { color: #667085; }
+.grid { display: grid; grid-template-columns: 1fr 1.6fr; gap: 18px; }
+.panel, .section { margin-bottom: 18px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.hint { margin-left: 10px; color: #667085; font-size: 12px; font-weight: normal; }
+.search { display: flex; gap: 10px; margin-bottom: 16px; }
+.search .el-input { flex: 1; }
+.retrieval-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.8fr); gap: 16px; margin-top: 16px; }
+.result-table { min-width: 0; }
+.citation-card { min-width: 0; }
+.citation-meta { display: grid; gap: 8px; color: #475467; font-size: 13px; }
+.citation-content { margin-top: 16px; padding: 14px; white-space: pre-wrap; line-height: 1.7; background: #f8fafc; border-radius: 6px; }
+.citation-source { margin-top: 12px; color: #667085; font-size: 12px; word-break: break-all; }
+@media (max-width: 1100px) {
+  .retrieval-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+  .page { padding: 16px; }
+  .search { flex-wrap: wrap; }
+}
 </style>
