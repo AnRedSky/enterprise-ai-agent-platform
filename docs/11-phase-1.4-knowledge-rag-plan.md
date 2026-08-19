@@ -73,6 +73,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] mock Embedding + PostgreSQL/pgvector deterministic retrieval quality gate
 - [x] 本地 Provider Validation 已通过：Recall@3=1.0、Precision@3=0.466667、MRR=0.9、error_rate=0、quality gate=passed
 - [x] 评估结果直接来自 PostgreSQL/pgvector `knowledge_chunks`，JSON fixture 仅作为测试数据输入，不作为检索结果数据源
+- [x] `EMBEDDING_PROVIDER=mock` 可用于真实 PostgreSQL/pgvector retrieval loop；mock 仅替代 embedding 生成
 - [ ] 使用真实 Embedding Provider 完成 endpoint / model / dimension / error boundary 联调
 - [ ] 使用真实 Embedding Provider 完成 5 条 Dataset 的真实语义质量对比
 
@@ -102,7 +103,7 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 ### 4.1 F-01：Contract / score fusion
 
-已开始并直接提交 `main`：
+已实现并直接提交 `main`：
 
 - `backend/app/services/hybrid_knowledge_retrieval.py`
 - `backend/tests/test_hybrid_knowledge_retrieval.py`
@@ -116,12 +117,46 @@ lexical-v2 candidates ──┐
 vector candidates ──────┘
 ```
 
-默认 lexical / vector 权重均为 `0.5`，分数均假定已经归一化到 `0..1`。相同 chunk 的单路重复候选取最高分；只命中单一路的候选按另一侧 0 分计算；最终按 score 降序、chunk_id 升序稳定排序。
+默认 lexical / vector 权重均为 `0.5`，分数均假定已经归一化到 `0..1`。相同 chunk 的单路重复候选取最高分；只命中单一路的候选按另一侧 0 分计算但不人为降权；多信号候选优先，同层按 score 降序、chunk_id 升序稳定排序。
 
-### 4.2 后续 F-02 / F-03
+### 4.2 F-02：真实数据库服务编排与 Citation 闭环
 
-- [ ] F-02：将 lexical-v2 + vector 两路真实检索编排接入 Hybrid Retrieval，并增加 `mode=hybrid` API
-- [ ] F-03：使用固定 Evaluation Dataset 做 hybrid 权重评测与 quality gate
+已实现并直接提交 `main`：
+
+- `KnowledgeRetrievalService`：真实 PostgreSQL Knowledge Chunk lexical retrieval
+- `VectorKnowledgeRetrievalService`：Embedding + PostgreSQL/pgvector retrieval
+- `HybridKnowledgeRetrievalService`：两路真实 service orchestration + provider-neutral fusion
+- `POST /api/v1/knowledge/retrieve`：`mode=hybrid`
+- Citation / source hydration：从数据库中的 Document / Version / Chunk 真实回填
+- `backend/scripts/run_phase_1_4_f_retrieval_db_loop.py`：真实数据库闭环验证
+- `backend/scripts/run_phase_1_4_f_retrieval_db_loop.ps1`：本地手工测试入口
+
+真实链路：
+
+```text
+Retrieval API
+ ↓
+HybridKnowledgeRetrievalService
+ ├─ lexical-v2 → PostgreSQL knowledge_document_chunks
+ └─ vector → Embedding Provider → PostgreSQL/pgvector knowledge_chunks
+ ↓
+HybridRetrievalService.fuse()
+ ↓
+Document / Version / Chunk hydration
+ ↓
+Citation / content / source_uri
+ ↓
+API response
+```
+
+本地无真实 Embedding 模型时允许 `EMBEDDING_PROVIDER=mock`，但 SQL、pgvector、ingestion、RBAC、API、fusion、citation 等其余链路仍走真实实现；不得用 JSON/JSONL 检索结果替代数据库。
+
+### 4.3 F-03
+
+- [ ] Hybrid Evaluation Dataset + Recall@K / Precision@K / MRR + 权重质量门禁
+
+### 4.4 G-01 / G-02
+
 - [ ] G-01：Retrieval Debug 展示 lexical/vector/hybrid 来源与分数拆解
 - [ ] G-02：Runtime execution / trace 与 Retrieval Debug 关联
 
@@ -142,9 +177,9 @@ vector candidates ──────┘
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 mock Embedding + PostgreSQL/pgvector deterministic retrieval validation 已完成本地验收。** 用户反馈的实际结果为：Backend regression 140 passed、Recall@3=1.0、Precision@3=0.466667、MRR=0.9、error_rate=0、quality gate=passed。
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 mock Embedding + PostgreSQL/pgvector deterministic retrieval validation 已完成本地验收。Phase 1.4-F-01 已完成本地回归，F-02 的真实数据库闭环代码与本地手工验收脚本已完成，等待开发者执行真实 PostgreSQL/pgvector DB loop。**
 
-真实 Embedding Provider 尚未验证，因此不能把当前结果描述为真实模型语义质量通过。当前项目进入 **Phase 1.4-F Hybrid Retrieval Contract**；F-01 已实现，等待本地 pytest 验证后继续 F-02。
+当前任务：**Phase 1.4-F-02 Retrieval API → Vector → Hybrid → Citation 真实数据库闭环本地验收**。
 
 ## 7. 暂不在第一轮实现
 
