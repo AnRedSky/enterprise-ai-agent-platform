@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import KnowledgeWorkbench from "@/views/knowledge/components/KnowledgeWorkbench.vue";
 import * as api from "@/api/knowledge";
@@ -19,14 +19,17 @@ vi.mock("@/api/knowledge", () => ({
 }));
 
 const global = {
+  directives: {
+    loading: () => undefined,
+  },
   stubs: {
-    "el-table": true,
-    "el-table-column": true,
-    "el-card": true,
+    "el-card": { template: "<section><slot name=\"header\"/><slot /></section>" },
+    "el-alert": { props: ["title"], template: "<div class=\"alert\">{{ title }}</div>" },
+    "el-table": { template: "<div><slot /></div>" },
+    "el-table-column": { template: "<div><slot :row=\"{}\" /></div>" },
     "el-button": true,
     "el-input": true,
     "el-input-number": true,
-    "el-alert": true,
     "el-empty": true,
     "el-dialog": true,
     "el-form": true,
