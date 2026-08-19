@@ -1,0 +1,11 @@
+{"chunk_id":"chunk-fastapi-runtime","content":"FastAPI Agent Runtime 通过 SSE 提供 Agent 执行流，关联 execution_id、trace_id 和 agent_version，并支持 Knowledge Retrieval Context Assembly。"}
+{"chunk_id":"chunk-expense-policy","content":"报销规则规定差旅、办公及采购费用需要按照企业报销规则提交凭证，并经过审批流程。"}
+{"chunk_id":"chunk-postgres-knowledge","content":"PostgreSQL 知识库用于保存企业 Knowledge Base、Document、Version 与 Chunk 元数据。"}
+{"chunk_id":"chunk-approval-process","content":"审批流程包含申请、部门审批、财务审批和最终归档步骤。"}
+{"chunk_id":"chunk-citation","content":"Retrieval citation 用于标识来源 document、chunk 与 source URI，Runtime 会通过 SSE 返回 citation。"}
+{"chunk_id":"chunk-runtime-debug","content":"Runtime Debug 页面用于查看执行状态、trace 信息和 Agent Runtime 调试数据。"}
+{"chunk_id":"chunk-expense-audit","content":"报销审计记录用于核对费用凭证、报销金额和历史审批记录。"}
+{"chunk_id":"chunk-postgres-tuning","content":"PostgreSQL 性能调优包括索引、连接池、查询计划和数据库监控。"}
+{"chunk_id":"chunk-knowledge-catalog","content":"Knowledge Base Catalog 展示知识库名称、状态、文档数量和更新时间。"}
+{"chunk_id":"chunk-approval-audit","content":"审批审计用于追踪审批节点、审批人和历史操作记录。"}
+{"chunk_id":"chunk-citation-guide","content":"Citation Guide 说明如何展示来源、文档标题、chunk 标识和 retrieval citation。"}
