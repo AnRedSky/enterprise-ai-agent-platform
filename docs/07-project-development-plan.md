@@ -15,7 +15,7 @@
 | Phase 1.4-B | Document ingestion / Chunk | **Backend contract / migration / parser-cleaner / deterministic chunk / persistence / API / pytest / 手工脚本已提交；本地迁移与回归验收通过** |
 | Phase 1.4-C | Retrieval contract | **核心检索服务已实现；本地 pytest + Retrieval 手工验收通过** |
 | Phase 1.4-D | Runtime Knowledge integration | **联调门禁已建立；Auth → Knowledge → Document → Version → Ingest → AgentVersion → Runtime Chat → Citation → Audit/Observability 已完成本地回归** |
-| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | **lexical-v2、Evaluation Dataset、Recall/Precision/MRR quality gate、OpenAI-compatible Embedding Provider、Vector Retrieval provider-neutral contract 已完成；进入真实 Vector DB provider replacement validation** |
+| Phase 1.4-E | Knowledge / Retrieval 生产化深化 | **lexical-v2、Evaluation Dataset、Recall/Precision/MRR quality gate、OpenAI-compatible Embedding Provider、Vector Retrieval provider-neutral contract、PostgreSQL + pgvector adapter、0010 migration、scope/dimension contract 已完成；等待本地 PostgreSQL + pgvector round-trip 验收** |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug | **进行中：Knowledge Workbench、Retrieval Debug、检索 loading/error/empty、结果与 Citation Detail 已落地；继续补齐 Runtime execution 关联与浏览器验收** |
 | Phase 1.5 | Workflow / Governance | 后续 |
 
@@ -51,13 +51,13 @@ Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内
 
 ## 7. 当前下一任务
 
-**Phase 1.4-E → 真实 Vector DB adapter replacement validation**：
+**Phase 1.4-E → 真实 Embedding → pgvector indexing / vector retrieval 闭环**：
 
-1. 定义真实 Vector DB adapter 的 connection / collection / dimension contract。
-2. 增加 metadata filter 与 Knowledge Base scope contract。
-3. 先实现 PostgreSQL + pgvector adapter，再做本地手工联调。
-4. 将真实 embedding 输出写入向量索引并完成 query/search 闭环。
+1. 本地 PostgreSQL 执行 migration 0010，确认 pgvector extension、table、HNSW index。
+2. 执行 pgvector round-trip probe，确认 upsert、cosine search、Knowledge Base scope、cleanup。
+3. 将真实 Embedding Provider 接入 Document Chunk indexing，建立 Chunk → Embedding → pgvector upsert 链路。
+4. Retrieval API 增加 vector retrieval mode，并保留 lexical-v2。
 5. 使用现有 5 条 Evaluation Dataset 对 lexical-v2 / vector retrieval 做 Recall@K、Precision@K、MRR 对比。
-6. 在 vector retrieval 稳定后再进入 hybrid retrieval。
+6. vector retrieval 稳定后进入 hybrid retrieval（lexical + vector）。
 
 当前阶段不执行 GitHub Actions CI；测试由本地 `uv run` 环境执行并由开发者反馈结果。
