@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx
 from sqlalchemy import delete, select, text
 
 from app.core.auth import current_claims
 from app.core.config import settings
-from app.dependencies.db import SessionLocal, engine
+from app.dependencies.db import SessionLocal, engine, get_db
 from app.main import app
 from app.models.core import User
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion
@@ -79,7 +79,7 @@ async def run() -> None:
             "sub": str(owner.id),
             "roles": ["user"],
         }
-        app.dependency_overrides[__import__("app.dependencies.db", fromlist=["get_db"]).get_db] = override_db
+        app.dependency_overrides[get_db] = override_db
 
         try:
             _, chunk_count = await KnowledgeIngestionService(db).ingest(version_id, owner.id)
@@ -116,7 +116,15 @@ async def run() -> None:
                 raise RuntimeError("hybrid retrieval returned no results")
 
             for item in results:
-                required = {"document_id", "document_version_id", "chunk_id", "citation", "content", "source_document", "relevance_score"}
+                required = {
+                    "document_id",
+                    "document_version_id",
+                    "chunk_id",
+                    "citation",
+                    "content",
+                    "source_document",
+                    "relevance_score",
+                }
                 missing = sorted(required - item.keys())
                 if missing:
                     raise RuntimeError(f"citation hydration missing fields: {missing}")
@@ -131,9 +139,12 @@ async def run() -> None:
                 )
         finally:
             app.dependency_overrides.pop(current_claims, None)
-            app.dependency_overrides.pop(__import__("app.dependencies.db", fromlist=["get_db"]).get_db, None)
+            app.dependency_overrides.pop(get_db, None)
             await db.rollback()
-            await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :knowledge_base_id"), {"knowledge_base_id": str(knowledge_base_id)})
+            await db.execute(
+                text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :knowledge_base_id"),
+                {"knowledge_base_id": str(knowledge_base_id)},
+            )
             await db.execute(delete(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id))
             await db.commit()
 
