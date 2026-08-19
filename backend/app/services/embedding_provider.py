@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from typing import Sequence
+
+import httpx
+
+
+class EmbeddingProviderError(RuntimeError):
+    """Raised when an embedding provider returns an invalid or failed response."""
+
+
+class OpenAICompatibleEmbeddingProvider:
+    """Embedding adapter for providers exposing an OpenAI-compatible /embeddings API."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        model: str,
+        timeout_seconds: float = 30.0,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+        self._client = client
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        if any(not text.strip() for text in texts):
+            raise EmbeddingProviderError("embedding texts must not contain empty values")
+
+        payload = {"model": self.model, "input": list(texts)}
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        owns_client = self._client is None
+        client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        try:
+            response = await client.post(
+                f"{self.base_url}/embeddings",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise EmbeddingProviderError("embedding provider request failed") from exc
+        finally:
+            if owns_client:
+                await client.aclose()
+
+        data = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(data, list) or len(data) != len(texts):
+            raise EmbeddingProviderError("embedding provider returned an invalid data length")
+
+        ordered: list[tuple[int, list[float]]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                raise EmbeddingProviderError("embedding provider returned an invalid item")
+            index = item.get("index")
+            embedding = item.get("embedding")
+            if not isinstance(index, int) or not isinstance(embedding, list):
+                raise EmbeddingProviderError("embedding provider returned an invalid embedding item")
+            if not all(isinstance(value, (int, float)) for value in embedding):
+                raise EmbeddingProviderError("embedding vector contains a non-numeric value")
+            ordered.append((index, [float(value) for value in embedding]))
+
+        ordered.sort(key=lambda item: item[0])
+        if [index for index, _ in ordered] != list(range(len(texts))):
+            raise EmbeddingProviderError("embedding provider returned non-contiguous indexes")
+        return [embedding for _, embedding in ordered]
