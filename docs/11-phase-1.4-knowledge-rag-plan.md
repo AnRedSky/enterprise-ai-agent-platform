@@ -28,15 +28,19 @@ Knowledge Base
 - [x] Alembic migration `0007_knowledge_registry`
 - [x] Backend pytest：API contract 回归测试已提交
 - [x] 独立手工验收脚本：`backend/scripts/run_knowledge_registry_scenario.ps1`
-- [ ] 本地执行 migration + pytest + 手工场景并记录最终验收结果
+- [x] 本地手工验收：Knowledge Registry 场景已通过（CRUD、Version、分页、删除、Owner/RBAC）
 
 ### 1.4-B Document ingestion
 
-- 文档内容抽象与 parser contract
-- 清洗、分块策略 contract
-- Chunk 持久化
-- 增量更新与删除状态
-- ingestion 状态机：`pending → processing → ready / failed`
+- [x] 文档内容抽象与 parser/cleaner contract
+- [x] 清洗、确定性分块策略 contract
+- [x] Chunk 持久化：migration `0008_knowledge_ingestion`
+- [x] 增量重新摄取：同一 Version 先删除旧 Chunk 再生成新 Chunk
+- [x] ingestion 状态机：`pending → processing → ready / failed`
+- [x] Chunk 与 Document Version 可追溯
+- [x] Backend pytest：chunk contract / API contract
+- [x] 独立手工验收脚本：`backend/scripts/run_knowledge_ingestion_scenario.ps1`
+- [ ] 本地执行 migration + pytest + ingestion 手工场景并记录最终验收结果
 
 ### 1.4-C Retrieval contract
 
@@ -58,11 +62,12 @@ Knowledge Base
 
 ### 1.4-F Knowledge 管理端
 
-必须等 1.4-A Backend Contract 验收通过后开始：
+在 1.4-B Backend contract 验收通过后开始：
 
 - Knowledge Base 列表 / 创建 / 状态
 - Document 列表 / 上传入口 / ingestion 状态
 - Document Version 展示
+- Chunk 查看
 - 错误、空状态、分页
 
 ### 1.4-G Retrieval / Debug
@@ -105,7 +110,7 @@ Knowledge Base
 
 ## 6. 当前状态
 
-**Phase 1.4-A Backend Contract 已进入本地验收阶段。** 本轮提交了模型、migration、schema、service、API、回归测试和独立 PowerShell 手工脚本。尚未宣称 1.4-A 最终验收完成；必须由本地环境执行 migration、pytest 和手工场景后再关闭该阶段。
+**Phase 1.4-A 已完成本地手工验收。当前开发位置为 Phase 1.4-B Document ingestion / Chunk 的本地验收阶段。** 本轮已提交 migration、chunk model、parser/cleaner、deterministic chunk service、ingestion API、pytest 与独立 PowerShell 手工脚本；尚未宣称 1.4-B 最终验收完成。
 
 ## 7. 暂不在第一轮实现
 
