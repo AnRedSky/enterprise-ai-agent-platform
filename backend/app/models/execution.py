@@ -6,7 +6,7 @@ from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.core import Base
+from app.models.core import Base, utcnow_naive
 
 
 # Keep PostgreSQL storage as JSONB while using portable JSON for SQLite-based
@@ -29,12 +29,12 @@ class Execution(Base):
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="started", index=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
 
 
 class ExecutionEvent(Base):
@@ -46,7 +46,7 @@ class ExecutionEvent(Base):
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
     span_type: Mapped[str] = mapped_column(String(32), index=True)
     status: Mapped[str] = mapped_column(String(20), default="completed")
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -59,7 +59,7 @@ class ExecutionEvent(Base):
     # PostgreSQL column remains `metadata` for schema compatibility, while the
     # Python attribute avoids SQLAlchemy Declarative API's reserved name.
     event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", EVENT_METADATA_TYPE, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
 
     def __init__(self, **kwargs: Any) -> None:
         # Keep the G-02 application/test contract (`metadata=...`) without
