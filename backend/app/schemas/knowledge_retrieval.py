@@ -13,8 +13,10 @@ class KnowledgeRetrievalRequest(BaseModel):
     dedupe: bool = True
     knowledge_base_id: UUID | None = None
     document_id: UUID | None = None
-    mode: Literal["lexical-v2", "vector"] = "lexical-v2"
+    mode: Literal["lexical-v2", "vector", "hybrid"] = "lexical-v2"
     fallback_to_lexical: bool = False
+    lexical_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    vector_weight: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class KnowledgeRetrievalSource(BaseModel):
@@ -29,6 +31,7 @@ class KnowledgeRetrievalSource(BaseModel):
     content: str
     matched_terms: list[str] = Field(default_factory=list)
     retrieval_mode: str = "lexical-v2"
+    retrieval_sources: list[str] = Field(default_factory=list)
 
 
 class KnowledgeRetrievalResponse(BaseModel):
