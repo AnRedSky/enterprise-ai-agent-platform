@@ -70,6 +70,7 @@ class KnowledgeDocumentVersionOut(BaseModel):
     document_id: UUID
     version: str
     status: str
+    ingestion_status: str
     source_uri: str | None
     content_hash: str | None
     content_text: str | None
