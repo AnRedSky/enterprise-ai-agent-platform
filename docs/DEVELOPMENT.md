@@ -25,7 +25,7 @@
         ↓
 ④ Frontend API Types + Vitest
         ↓
-⑤ Frontend UI（index.vue + components/）
+⑤ Frontend UI（index.vue + components）
         ↓
 ⑥ Backend API Scenario / 手工验收脚本
         ↓
@@ -88,9 +88,10 @@ Phase 1.4 目标为 Knowledge / RAG 闭环，固定按以下顺序推进：
 3. Retrieval contract：Embedding、Retriever、Reranker contract，以及统一 source / score / citation 结果。
 4. Runtime integration：Context Assembly、权限过滤、execution/trace 关联、citation/observability。
 5. Frontend Knowledge 管理与 Retrieval Debug。
-6. 联调与全量回归。
+6. Retrieval Evaluation：Evaluation Dataset + Recall@K / Precision@K / MRR。
+7. 真实 Embedding / Vector DB provider 替换性验证。
 
-当前开发位置：**Phase 1.4-D Runtime Integration 联调前实现阶段**。1.4-A/B/C 已完成本地手工验收；1.4-F/G 前端 Knowledge 管理与 Retrieval Debug 已完成基础实现。本轮已完成 AgentVersion Knowledge 配置、Runtime Context Assembly、Owner/RBAC 前置过滤、Citation 与 Retrieval Observability contract。下一步必须完成 Runtime + Knowledge 手工联调，再进行前后端全量回归与验收文档闭环。
+当前开发位置：**Phase 1.4-E Retrieval Evaluation / Provider Replacement Validation**。1.4-A/B/C/D 已完成本地验收；1.4-E 的 lexical-v2 production baseline 已完成 deterministic ranking、中文 tokenization、min_score、dedupe、candidate cap 与 retrieval metadata。当前已补齐离线评测指标 contract、5 条基线 Evaluation Dataset 与 provider-neutral runner。下一步使用真实 lexical retrieval 输出生成基线指标快照，再进行真实 Embedding / Vector DB provider 替换性联调。
 
 ## 7. 前端目录与测试约束
 
@@ -131,6 +132,8 @@ frontend/
 - Test：`backend/tests/test_<domain>_<scope>.py`
 - Migration：`backend/alembic/versions/<4位序号>_<domain_or_change>.py`
 - 手工 API 场景：`backend/scripts/run_<domain>_scenario.ps1`
+- 离线评测数据：`backend/evaluation/<domain>_dataset.jsonl`
+- 离线评测 runner：`backend/scripts/evaluate_<domain>.py`
 
 ### Frontend
 
