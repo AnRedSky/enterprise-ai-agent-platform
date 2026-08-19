@@ -1,7 +1,7 @@
 # Phase 1.4-E Mock Embedding 实现记录
 
 > 日期：2026-08-19
-> 状态：Mock Embedding 代码与环境配置支持已完成；本地环境回归测试发现并修复 Windows 下 `ENV_FILE` Unix 路径兼容问题；等待本地重新执行验证
+> 状态：Mock Embedding、分层环境配置、PostgreSQL + pgvector round-trip、自动 Retrieval Evaluation Runner 已实现；等待本地完整 Phase 1.4-E Quality Gate 回归
 
 ## 1. 任务目的
 
@@ -90,29 +90,50 @@ ENV_FILE 指定文件
 - 绝对 `ENV_FILE` 路径保持原样，不会被当前操作系统重新拼接。例如 Windows 测试环境中的 `/run/secrets/agent.env` 必须仍保持该 Unix 容器路径；相对 `ENV_FILE` 则相对于 backend 根目录解析。
 - 进程环境变量始终覆盖所有文件中的同名配置，便于 CI、容器和部署平台注入配置。
 
-示例：
+### 2.4 自动 Retrieval Evaluation Runner
 
-```powershell
-$env:APP_ENV = "test"
-uv run pytest -q
+新增：
+
+```text
+backend/scripts/run_knowledge_retrieval_evaluation.py
+backend/evaluation/knowledge_retrieval_fixture.jsonl
 ```
 
-本地测试建议：
+Runner 在测试数据库中创建临时 Knowledge Base / Document / Version / Chunk Fixture，使用当前 `MockEmbeddingProvider` 生成 embedding，再通过真实 `PgVectorRetrievalProvider` 完成 upsert 和 scoped search，最终生成：
 
-```dotenv
-# backend/.env.test
-APP_ENV=test
-EMBEDDING_PROVIDER=mock
-EMBEDDING_MODEL=mock-semantic-v1
-EMBEDDING_DIMENSION=1536
-VECTOR_PROVIDER=pgvector
-VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
-VECTOR_DB_COLLECTION=knowledge_chunks
-VECTOR_TOP_K=5
-VECTOR_MIN_SCORE=0.0
+```text
+backend/evaluation/vector_results.jsonl
 ```
 
-真实 Provider 的 endpoint、API key、model 不写入 Git；仅在未提交的本地 `.env` / `.env.*.local` 或部署 Secret 中配置。
+Fixture 使用稳定 UUID 映射保存到 PostgreSQL，结果文件恢复为 Evaluation Dataset 使用的逻辑 `chunk_id`，因此不会修改固定 Dataset 的相关性标注。
+
+Runner 在完成结果生成后自动清理临时 Knowledge Base 数据，不把测试数据残留到开发数据库。
+
+设计约束：
+
+- 不直接构造 ranking 结果。
+- ranking 必须来自真实 pgvector search。
+- provider 异常写入 `error` 字段，并由 Quality Gate 统计。
+- 仅允许 `EMBEDDING_PROVIDER=mock` + `VECTOR_PROVIDER=pgvector` 的离线验证模式。
+- 不使用真实模型语义质量作为 Mock Quality Gate 的结论。
+
+### 2.5 一键 Phase 1.4-E Quality Gate
+
+`backend/scripts/run_phase_1_4_e_provider_validation.ps1` 第 4 阶段现在自动执行：
+
+```text
+run_knowledge_retrieval_evaluation.py
+        ↓
+vector_results.jsonl
+        ↓
+evaluate_knowledge_retrieval_provider.py
+        ↓
+Recall@3 / Precision@3 / MRR / latency / error rate
+        ↓
+Quality Gate
+```
+
+因此不再依赖人工准备 `vector_results.jsonl`。
 
 ## 3. 测试
 
@@ -137,7 +158,7 @@ backend/tests/test_config_environment.py
 
 ### 3.1 本地测试反馈与修复
 
-2026-08-19 本地 Windows 环境执行：
+2026-08-19 本地 Windows 环境曾执行：
 
 ```text
 138 passed, 1 failed
@@ -152,9 +173,15 @@ backend/tests/test_config_environment.py
 
 修复提交：`db977af7e1a73068eae63bd44d03640091f44a6a`。
 
-用户本地反馈中曾出现 `embedding_provider=none` / `vector_provider=none`，随后再次读取已经得到 `mock` / `pgvector`。当前 `main` 的 `.env.example` 已明确提供 Mock + pgvector 默认值；需在修复提交后重新启动 Python 进程验证，避免旧进程/旧工作区配置造成误判。
+用户随后本地反馈 pgvector round-trip：
 
-本次 GitHub 代码修改没有执行用户本地 pytest，因此最终测试状态必须由本地开发者重新执行后回填。
+```text
+pgvector validation passed: dimension=1536, top_k=5, score=1.0
+```
+
+该结果确认 PostgreSQL + pgvector upsert/search 基础链路已通过。
+
+本次新增 Evaluation Runner / Phase Gate 修改通过 GitHub 提交完成，但未在本消息环境中执行用户本地数据库测试；最终测试状态必须由本地开发者回归后记录。
 
 ## 4. 本地验收
 
@@ -185,7 +212,7 @@ dimension= 1536
 uv run pytest -q
 ```
 
-### 4.3 Mock + pgvector
+### 4.3 Mock + pgvector Round-trip
 
 启动：
 
@@ -193,36 +220,40 @@ uv run pytest -q
 docker compose up -d postgres redis
 ```
 
-`.env.test`：
+然后：
 
-```dotenv
-APP_ENV=test
-EMBEDDING_PROVIDER=mock
-EMBEDDING_MODEL=mock-semantic-v1
-EMBEDDING_DIMENSION=1536
-VECTOR_PROVIDER=pgvector
-VECTOR_DB_URL=postgresql+asyncpg://agent:agent@localhost:5432/agent_platform
-VECTOR_TOP_K=5
-VECTOR_MIN_SCORE=0.0
+```powershell
+uv run python scripts/validate_pgvector.py
 ```
 
-然后执行现有 Phase 1.4-E provider validation suite，并使用固定的 5 条 Dataset 完成向量索引和检索。
+当前本地已验证：
 
-### 4.4 Evaluation
+```text
+pgvector validation passed: dimension=1536, top_k=5, score=1.0
+```
 
-结果写入本地：
+### 4.4 完整 Retrieval Evaluation
+
+执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_4_e_provider_validation.ps1
+```
+
+或者仅执行 Retrieval Evaluation：
+
+```powershell
+uv run python scripts/run_knowledge_retrieval_evaluation.py --k 3
+uv run python scripts/evaluate_knowledge_retrieval_provider.py .\evaluation\vector_results.jsonl --k 3
+```
+
+结果写入：
 
 ```text
 backend/evaluation/vector_results.jsonl
 ```
 
-再执行：
-
-```powershell
-uv run python scripts/evaluate_knowledge_retrieval_provider.py .\evaluation\vector_results.jsonl
-```
-
-不能手工编造 `vector_results.jsonl`；必须由实际检索产生。
+不能手工编造 `vector_results.jsonl`；必须由实际 Mock Embedding + PostgreSQL/pgvector 检索产生。
 
 ## 5. 验收标准
 
@@ -232,9 +263,11 @@ Mock 验证至少确认：
 - embedding dimension contract 正常。
 - pgvector upsert/search 正常。
 - Knowledge Base scope 正常。
-- Vector retrieval ranking 正常。
-- Evaluation runner 正常。
+- Vector retrieval ranking 来自实际 pgvector 查询。
+- Evaluation Runner 正常生成 JSONL。
 - provider error rate 统计正常。
+- Recall@3、MRR 不低于 baseline。
+- error rate 必须为 0。
 - 环境文件在 development / test / staging / production 场景下可以通过 `APP_ENV` 或 `ENV_FILE` 选择，且进程环境变量具有最高优先级。
 - fresh checkout 在没有任何 `.env` 文件时可以通过 `.env.example` 启动。
 - Windows / Linux / container 场景下绝对 `ENV_FILE` 路径语义保持一致。
@@ -253,19 +286,22 @@ Mock 验证至少确认：
 - Mock provider 不具备真实模型语义泛化能力。
 - 跨 Version embedding 复用尚未实现。
 - Hybrid Retrieval 尚未开始。
+- 当前 Evaluation Runner 依赖测试数据库至少存在一个用户，用于满足 Knowledge Base / Document Version 外键约束。
 
 ## 7. 当前任务状态与下一阶段任务
 
 | 优先级 | 任务 | 责任角色 | 状态 | 目标时间 |
 |---|---|---|---|---|
 | P0 | 分层环境配置与 `.env.example` 补充 | Backend / DevOps | 已实现 | 2026-08-19 |
-| P0 | Windows / container `ENV_FILE` 路径兼容 | Backend / DevOps | 已修复，待本地回归 | 2026-08-19 |
-| P0 | Mock Embedding 单元测试 | Backend / QA | 已实现，待本地执行 | 2026-08-19 |
-| P0 | Mock + pgvector 端到端 | Backend / Knowledge | 待本地执行 | 2026-08-20 |
-| P0 | 生成真实运行产物 `vector_results.jsonl` | Backend / QA | 待本地执行 | 2026-08-20 |
-| P0 | 执行 Mock Quality Gate 并记录指标 | QA / Knowledge | 待本地执行 | 2026-08-20 |
+| P0 | Windows / container `ENV_FILE` 路径兼容 | Backend / DevOps | 已修复 | 2026-08-19 |
+| P0 | Mock Embedding 单元测试 | Backend / QA | 已实现 | 2026-08-19 |
+| P0 | PostgreSQL + pgvector round-trip | Backend / Knowledge | 已本地通过 | 2026-08-19 |
+| P0 | 自动生成 `vector_results.jsonl` | Backend / QA | 已实现，待本地执行 | 2026-08-20 |
+| P0 | Mock Retrieval Quality Gate | QA / Knowledge | 已接入一键脚本，待本地执行 | 2026-08-20 |
+| P0 | 完整 Phase 1.4-E 回归验收 | Tech Lead | 待 P0 本地回归 | 2026-08-20 |
 | P0 | 有真实资源后使用相同 Dataset 重跑 Real Embedding | Backend / Knowledge | 待资源 | 待定 |
-| P1 | Phase 1.4-E 最终验收 | Tech Lead | 待 P0 | 2026-08-21 |
+| P1 | Retrieval failure / fallback 策略完善 | Backend / Architecture | 待 Phase 1.4-E | 2026-08-21 |
+| P1 | Incremental / rebuild indexing 策略 | Backend / Knowledge | 待 Phase 1.4-E | 2026-08-24 |
 | P1 | Hybrid Retrieval contract | Architecture / Backend | 待 Phase 1.4-E | 2026-08-24 |
 
 ## 8. 变更追踪
@@ -280,4 +316,7 @@ Mock 验证至少确认：
 - Environment precedence tests：`2278b7483f8f085f9a88ecb21af8ff09f12c4231`
 - Mock validation environment support：`ad23e400`
 - Windows / container explicit `ENV_FILE` compatibility fix：`db977af7e1a73068eae63bd44d03640091f44a6a`
-- Previous Provider Validation checkpoint：`45e213c9`
+- pgvector nullable scope parameter fix：`ffe9d62e5d515eda1b4ce61bbe4e907b2cf49de0`
+- Retrieval fixture：`546a2d452acf98c81640bc078e204489f7b049e7`
+- Retrieval Evaluation Runner：`d19007cba18c065bc5a8b64b96d4f4b4efd90cdb`
+- Phase Quality Gate integration：`40c8c0838cf6f1e7935ad9dd63a164508b8304d7`
