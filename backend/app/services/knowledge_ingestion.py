@@ -113,6 +113,9 @@ class KnowledgeIngestionService:
             raise
         except Exception:
             await self.db.rollback()
+            failed = await self._get_version(version_id, owner_id, is_admin)
+            failed.ingestion_status = "failed"
+            await self.db.commit()
             raise
 
     async def list_chunks(self, version_id: UUID, owner_id: UUID, is_admin: bool = False) -> list[KnowledgeDocumentChunk]:
