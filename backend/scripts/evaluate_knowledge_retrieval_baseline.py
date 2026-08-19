@@ -53,7 +53,12 @@ def evaluate() -> dict:
         {"query": case.query, "ranking": ranking, "metrics": evaluate_case(case, ranking, k=3)}
         for case, ranking in zip(cases, rankings)
     ]
-    return {"mode": KnowledgeRetrievalService.RETRIEVAL_MODE, **summary, "cases": details}
+    return {
+        "mode": KnowledgeRetrievalService.RETRIEVAL_MODE,
+        **summary,
+        "case_count": len(cases),
+        "cases": details,
+    }
 
 
 def main() -> int:
