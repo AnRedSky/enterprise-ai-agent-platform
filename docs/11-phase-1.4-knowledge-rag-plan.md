@@ -65,8 +65,11 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 - [x] 增加 retrieval quality / API contract 单元测试
 - [x] 增加离线 Evaluation Case contract：Recall@K / Precision@K / MRR
 - [x] 增加基线 Retrieval Evaluation Dataset：`backend/evaluation/knowledge_retrieval_dataset.jsonl`
-- [x] 增加 provider-neutral 离线评测 runner：`backend/scripts/evaluate_knowledge_retrieval.py`
-- [ ] 用真实 lexical retrieval 输出运行 Evaluation Dataset，形成基线指标快照
+- [x] 增加 provider-neutral 离线评测 runner：`backend/scripts/evaluate_knowledge_retrieval_baseline.py`
+- [x] 用真实 lexical retrieval 输出运行 Evaluation Dataset，形成基线指标快照：`backend/evaluation/knowledge_retrieval_baseline.json`
+- [x] 增加 Retrieval baseline quality gate：`backend/scripts/check_knowledge_retrieval_quality.py`
+- [x] quality gate 纳入 CI，Backend pytest 后必须执行 `uv run python scripts/check_knowledge_retrieval_quality.py`
+- [x] quality gate 回归测试覆盖 aggregate / case-level 指标下降及 case-set 漂移
 - [ ] 与真实 Embedding / Vector DB provider 的替换性联调
 - [ ] 真实 provider 上的 Recall / Precision / MRR 对比评测
 
@@ -120,7 +123,9 @@ Knowledge Base → Document → Version → Chunk → Index / Retrieval contract
 
 ## 6. 当前状态
 
-**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 已进入 Retrieval Evaluation 与 provider replacement validation。** 当前 lexical-v2 retrieval 已具备 deterministic ranking、中文短语 tokenization、min_score、dedupe、candidate cap 和 retrieval metadata。此次继续补齐了离线评测指标 contract、5 条基线 Evaluation Dataset 与 provider-neutral runner。下一步先用真实 lexical retrieval 输出跑出基线 Recall@K / Precision@K / MRR，再进行真实 Embedding / Vector DB provider 替换性验证。
+**Phase 1.4-A / B / C / D 已完成本地验收；Phase 1.4-E 的 lexical-v2 Evaluation baseline 已完成并纳入 CI quality gate。** 当前离线基线为 5 个 Evaluation Case，aggregate `Recall@K=1.0`、`Precision@K=0.5`、`MRR=1.0`。Quality gate 只允许指标保持或提升，并拒绝 case 数量、case 集合及单 case 指标回归，从而避免出现“pytest 通过但检索质量悄然下降”的情况。
+
+下一步进入真实 Embedding / Vector DB provider replacement validation，并在保持 provider-neutral contract 的前提下对比 lexical-v2 与真实 provider 的 Recall / Precision / MRR。
 
 ## 7. 暂不在第一轮实现
 
