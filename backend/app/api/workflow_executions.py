@@ -59,6 +59,14 @@ def _node_response(item):
             "started_at": item.started_at, "ended_at": item.ended_at, "created_at": item.created_at}
 
 
+def _trace_response(item):
+    return {"id": item.id, "tenant_id": item.tenant_id, "execution_id": item.execution_id,
+            "workflow_id": item.workflow_id, "workflow_version_id": item.workflow_version_id,
+            "node_id": item.node_id, "event_type": item.event_type, "status": item.status,
+            "trace_id": item.trace_id, "actor_id": item.actor_id, "data": item.data,
+            "error_code": item.error_code, "error_message": item.error_message, "created_at": item.created_at}
+
+
 @router.post("/{workflow_id}/executions", status_code=201)
 async def create_execution(workflow_id: UUID, payload: WorkflowExecutionCreate,
                            claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
@@ -94,6 +102,13 @@ async def list_execution_nodes(execution_id: UUID, claims=Depends(current_claims
     service = WorkflowExecutionService(db)
     execution = await service.get(execution_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return [_node_response(item) for item in await service.nodes(execution)]
+
+
+@router.get("/executions/{execution_id}/trace")
+async def list_execution_trace(execution_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
+    service = WorkflowExecutionService(db)
+    execution = await service.get(execution_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    return [_trace_response(item) for item in await service.trace(execution)]
 
 
 @router.post("/executions/{execution_id}/transition")
