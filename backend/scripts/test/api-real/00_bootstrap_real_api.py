@@ -58,7 +58,7 @@ def create_retry_agent(client):
             "name": f"API Retry Agent {uuid.uuid4().hex[:8]}",
             "description": "Automated real API node retry governance fixture agent",
             "system_prompt": "You are a deterministic validation agent.",
-            "model_id": "mock-model",
+            "model_id": "mock-http-404",
         },
     ).json()
     versions = request(client, "GET", f"/agents/{agent['id']}/versions").json()
@@ -75,11 +75,10 @@ def create_retry_agent(client):
 
 
 def create_retry_fixture(client):
-    # The real Agent establishes the normal tenant/ownership context. The node then
-    # deliberately points at a non-existent Agent UUID so Runtime deterministically
-    # classifies the failure as HTTP_404 and exercises the retry/attempt governance path.
-    create_retry_agent(client)
-    invalid_agent_id = str(uuid.uuid4())
+    # Use a real, published Agent so Runtime passes tenant/ownership/version checks.
+    # Its deterministic mock provider then raises HTTP 404, which exercises the
+    # production retry/attempt governance path without depending on external APIs.
+    agent_id = create_retry_agent(client)
     workflow = request(
         client,
         "POST",
@@ -101,7 +100,7 @@ def create_retry_fixture(client):
                         "id": "retry-agent",
                         "type": "agent",
                         "config": {
-                            "agent_id": invalid_agent_id,
+                            "agent_id": agent_id,
                             "prompt": "Trigger deterministic node retry validation.",
                             "retry": {
                                 "max_attempts": 2,
