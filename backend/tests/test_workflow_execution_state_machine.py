@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -29,10 +29,17 @@ def _execution(*, status: str) -> SimpleNamespace:
     )
 
 
+def _db() -> AsyncMock:
+    """Build an async-session test double with sync SQLAlchemy add()."""
+    db = AsyncMock()
+    db.add = Mock()
+    db.refresh = AsyncMock()
+    return db
+
+
 @pytest.mark.asyncio
 async def test_pending_execution_can_start_and_complete():
-    db = AsyncMock()
-    db.refresh = AsyncMock()
+    db = _db()
     service = WorkflowExecutionService(db)
     execution = _execution(status="pending")
 
@@ -50,7 +57,7 @@ async def test_pending_execution_can_start_and_complete():
 
 @pytest.mark.asyncio
 async def test_terminal_execution_cannot_transition_again():
-    db = AsyncMock()
+    db = _db()
     service = WorkflowExecutionService(db)
     execution = _execution(status="completed")
 
@@ -61,8 +68,7 @@ async def test_terminal_execution_cannot_transition_again():
 
 @pytest.mark.asyncio
 async def test_pending_execution_can_be_cancelled_but_running_cannot_complete_twice():
-    db = AsyncMock()
-    db.refresh = AsyncMock()
+    db = _db()
     service = WorkflowExecutionService(db)
     execution = _execution(status="pending")
 
