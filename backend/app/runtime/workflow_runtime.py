@@ -14,22 +14,45 @@ class WorkflowRuntime:
     """Execute the stable Phase 1.5-D sequential workflow contract.
 
     Definition contract:
-    {"nodes": [{"id": "...", "type": "input|agent|output", "config": {...}}]}
+    {"nodes": [{"id": "...", "type": "input|agent|output", "config": {...}}],
+     "config": {"timeout_ms": 30000}}
     Nodes execute in declaration order. Branching and parallel scheduling remain
     outside this phase and must not be inferred from arbitrary definition data.
     """
 
     NODE_TYPES = {"input", "agent", "output"}
+    DEFAULT_TIMEOUT_MS = 30_000
+    MAX_TIMEOUT_MS = 300_000
 
     def __init__(self, db: AsyncSession):
         self.db = db
         self.gateway = ModelGateway()
 
     @classmethod
+    def validate_timeout_ms(cls, value: object, *, field: str = "timeout_ms") -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise HTTPException(422, f"{field} 必须为整数毫秒")
+        if value <= 0 or value > cls.MAX_TIMEOUT_MS:
+            raise HTTPException(422, f"{field} 必须在 1-{cls.MAX_TIMEOUT_MS} 毫秒范围内")
+        return value
+
+    @classmethod
+    def resolve_timeout_ms(cls, config: dict | None, *, field: str = "timeout_ms") -> int:
+        config = config or {}
+        value = config.get(field, cls.DEFAULT_TIMEOUT_MS)
+        return cls.validate_timeout_ms(value, field=field)
+
+    @classmethod
     def validate_definition(cls, definition: dict) -> list[dict]:
-        nodes = definition.get("nodes") if isinstance(definition, dict) else None
+        if not isinstance(definition, dict):
+            raise HTTPException(422, "Workflow definition 必须为对象")
+        nodes = definition.get("nodes")
         if not isinstance(nodes, list) or not nodes:
             raise HTTPException(422, "Workflow definition 必须包含非空 nodes")
+        runtime_config = definition.get("config") or {}
+        if not isinstance(runtime_config, dict):
+            raise HTTPException(422, "Workflow config 必须为对象")
+        cls.resolve_timeout_ms(runtime_config)
         seen: set[str] = set()
         normalized: list[dict] = []
         for raw in nodes:
@@ -43,8 +66,12 @@ class WorkflowRuntime:
                 raise HTTPException(422, f"Workflow node id 重复: {node_id}")
             if node_type not in cls.NODE_TYPES:
                 raise HTTPException(422, f"不支持的 Workflow node type: {node_type}")
+            config = raw.get("config") or {}
+            if not isinstance(config, dict):
+                raise HTTPException(422, f"Workflow node config 必须为对象: {node_id}")
+            cls.resolve_timeout_ms(config)
             seen.add(node_id)
-            normalized.append({"id": node_id, "type": node_type, "config": raw.get("config") or {}})
+            normalized.append({"id": node_id, "type": node_type, "config": config})
         return normalized
 
     async def execute_node(
