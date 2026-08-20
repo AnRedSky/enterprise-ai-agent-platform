@@ -28,14 +28,6 @@ CLOSED
 
 ## 2. 当前 main 基线
 
-当前远端 `main`：
-
-`172728f916029cb589ee2519e83ba9fc85617b3f`
-
-最近提交：
-
-`fix: count only transient failures toward circuit threshold`
-
 当前已落地：
 
 1. `WorkflowCircuitState` 持久化模型。
@@ -48,7 +40,32 @@ CLOSED
 8. transient failure 分类，避免 404 / 403 / 422 等业务错误错误触发熔断。
 9. Circuit Breaker Unit Test 与 Runtime Contract Test。
 
-## 3. 本轮强制验收
+## 3. 测试 Gate 结构调整
+
+此前的 `backend/scripts/test/integration/01_frontend_backend_gate.ps1` 只是重复编排 Backend regression、Migration、Real API 和 Frontend test/build，不提供独立的 Frontend/Backend E2E 测试能力，已从 `main` 删除。
+
+当前全套质量门统一由：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
+```
+
+负责编排：
+
+```text
+Backend regression
+    ↓
+Migration/head verification
+    ↓
+Real HTTP API Gate
+    ↓
+Frontend test + production build
+```
+
+`backend/scripts/test/integration/` 当前仅保留未来真正 Browser / Frontend-Backend E2E 编排职责，不得重新复制已有测试 Gate。
+
+## 4. 本轮强制验收
 
 必须由开发者本地实际执行：
 
@@ -63,16 +80,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 cd ..\frontend
 npm test
 npm run build
-```
 
-随后执行前后端联调：
-
-```powershell
 cd ..\backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_frontend_backend_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
 ```
 
-## 4. Real API 边界验收
+不得以未实际执行的结果标记 Phase 1.5-G 通过。
+
+## 5. Real API 边界验收
 
 Real API 必须覆盖至少以下场景：
 
@@ -89,14 +104,15 @@ Real API 必须覆盖至少以下场景：
 11. Retry delay 与 Workflow deadline 的既有治理规则不得被 Circuit Breaker 绕过。
 12. Execution / Node / Trace / Audit 最终状态保持一致。
 
-## 5. 当前状态
+## 6. 当前状态
 
+- 测试基础设施治理：已完成，重复 Frontend/Backend 全套 Gate 已删除并迁移到 Release / Full Regression Gate。
 - 实现：已提交到 `main`。
 - Migration：已创建 0020，待开发者本地执行 head 验证。
 - Unit / Contract：已存在，待开发者本地全量回归确认。
-- Real API：待增加/确认 Circuit Breaker 真实边界 fixture 后执行验收。
+- Real API：待完成 Circuit Breaker 真实边界验收。
 - Frontend：Circuit Breaker 当前无独立 UI 需求，仍需执行既有前端测试与生产构建作为阶段门禁。
 
-## 6. 下一步
+## 7. 下一步
 
 优先完成 Circuit Breaker Real API 边界验收；若全部通过，则更新 `docs/PROJECT_STATUS.md` 收口 Phase 1.5-G，再进入 Workflow Execution 查询/历史治理，并最终进入异步 Worker / 调度能力。
