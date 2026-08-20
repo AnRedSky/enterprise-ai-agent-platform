@@ -26,7 +26,7 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；基础 Execution 可观测闭环已完成，新增 Cancel / Retry / Retry lineage，待开发者执行完整测试链和真实浏览器联调 |
+| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage 已完成，当前进入 Reliability Hardening |
 | 测试基础设施治理 | 持续治理 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；不新增重复测试入口或混用开发/测试脚本 |
 
 ## 3. 强制测试链
@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 最近一次开发者反馈：
 
 ```text
-172 passed, 5 deselected
+176 passed, 5 deselected
 ```
 
 ### Migration
@@ -66,7 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 最近一次开发者反馈：
 
 ```text
-0017_workflow_governance_audit_trace (head)
+0018_workflow_execution_retry_lineage (head)
 ```
 
 ### Real API Gate
@@ -74,7 +74,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 最近一次开发者反馈：
 
 ```text
-Real API context prepared: api_real_test_d4ada0d75a68
+Real API context prepared: api_real_test_c22eb9342ecd
 5 passed
 [PASS] Real API gate completed.
 ```
@@ -108,64 +108,65 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 13. Frontend Workflow API tests 增加 Cancel / Retry contract coverage。
 14. Backend API contract tests 增加 Cancel / Retry route coverage。
 15. Backend unit tests 增加 Cancel / Retry 状态治理测试。
+16. Execution Idempotency-Key contract：通过 HTTP `Idempotency-Key` 请求头关联同 Tenant 的 Execution 创建请求。
+17. Idempotency-Key 唯一约束：同 Tenant 下重复 Key 返回原 Execution；跨 Workflow / Version 重用返回 409；并处理并发插入竞争。
+18. Idempotency 创建链路写入 Audit / Trace 时只记录 key 是否存在，不记录具体 key 值。
 
-## 6. 本轮新增数据库变更
+## 6. 本轮数据库变更
 
-新增 Alembic migration：
+已完成并提交：
 
 ```text
 0018_workflow_execution_retry_lineage
+0019_workflow_execution_idempotency
 ```
 
-内容：
+0019 内容：
 
-- `workflow_executions.retry_of_execution_id`
-- self-referencing foreign key
-- retry lineage index
+- `workflow_executions.idempotency_key`
+- `(tenant_id, idempotency_key)` 唯一约束
 
-Retry 原则：
+幂等原则：
 
 ```text
-Failed Execution A
-       ↓ Retry
-Pending Execution B
-       ↓
-B.retry_of_execution_id = A.id
+同 Tenant + 同 Idempotency-Key
+          ↓
+返回原 Execution
+          ↓
+避免重复创建业务执行
 ```
 
-原 Execution A 保持不可变，不通过 Retry 直接修改其状态或结果。
+如果同一 Key 被用于不同 Workflow / Version，则返回 `409 Conflict`，避免请求语义漂移。
 
 ## 7. 当前待验收
 
-开发者需要按强制测试链执行：
+本轮 Reliability Hardening 代码已提交到 `main`，尚未宣称本地验收通过。开发者需要按强制测试链执行：
 
 1. `cd backend && uv run pytest -q`
 2. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1`
 3. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1`
 4. `cd frontend && npm test`
 5. `cd frontend && npm run build`
-6. 浏览器级验证 Workflow → Execution → Cancel / Retry → Audit / Trace
+6. 浏览器级验证 Workflow → Execution → Idempotent Create → Cancel / Retry → Audit / Trace
 
 特别验证：
 
-- `completed` / `cancelled` Execution 不允许再次 Cancel。
-- 非 `failed` Execution 不允许 Retry。
-- Retry 必须生成新的 `execution_id`。
-- 新 Execution 的 `retry_of_execution_id` 必须指向原 failed Execution。
-- 原 failed Execution 保持不变。
-- Cancel / Retry 均产生对应 Audit / Trace。
+- 相同 Tenant + 相同 `Idempotency-Key` 不创建第二条 Execution。
+- 相同 Key 跨 Workflow / Version 使用返回 `409`。
+- 并发重复创建最终只保留一条 Execution。
+- 无 `Idempotency-Key` 的历史调用保持原有行为。
+- Cancel / Retry 既有治理语义保持不变。
+- 全量测试无新增 warning。
 
 ## 8. 下一步
 
 当前不继续人为拆分 vendor chunk，也不新增重复测试入口。
 
-待本轮 Cancel / Retry 完整验收后，继续 Phase 1.5-F 的下一项：
-
-**Workflow Execution Reliability Hardening**
+**当前工作项：Workflow Execution Reliability Hardening**
 
 优先顺序：
 
-1. Execution 并发/幂等控制。
+1. **Execution 并发/幂等控制**：本轮先完成 Idempotency-Key；下一轮补齐运行状态并发锁与状态竞争边界。
 2. Runtime 超时与失败恢复边界。
 3. Node-level retry / attempt 治理。
 4. Execution 查询列表与历史执行治理。
