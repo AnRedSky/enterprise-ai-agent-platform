@@ -14,8 +14,10 @@ const audits = ref<Array<Record<string, unknown>>>([]);
 const loading = ref(false);
 const auditLoading = ref(false);
 const executionLoading = ref(false);
+const executionActionLoading = ref(false);
 const form = ref({ name: "", description: "" });
 const definitionText = ref('{\n  "nodes": [],\n  "edges": []\n}');
+const executionInputText = ref("{}");
 const executionId = ref("");
 const traceExecutionId = ref("");
 
@@ -71,6 +73,35 @@ async function publishVersion(version: WorkflowVersion) {
   } catch (error) {
     if (error !== "cancel") ElMessage.error("Workflow Version 发布失败");
   }
+}
+
+async function createExecution() {
+  if (!selected.value?.published_version_id) return ElMessage.warning("请先发布 Workflow Version");
+  try {
+    const inputData = JSON.parse(executionInputText.value) as Record<string, unknown>;
+    executionActionLoading.value = true;
+    const response = await workflowApi.createExecution(selected.value.id, inputData);
+    execution.value = response.data;
+    executionId.value = response.data.id;
+    executionNodes.value = [];
+    ElMessage.success("Workflow Execution 创建成功");
+  } catch (error) {
+    ElMessage.error(error instanceof SyntaxError ? "Execution Input 不是合法 JSON" : "Workflow Execution 创建失败");
+  } finally { executionActionLoading.value = false; }
+}
+
+async function runExecution() {
+  const id = execution.value?.id || executionId.value.trim();
+  if (!id) return ElMessage.warning("请先创建或输入 Workflow Execution ID");
+  executionActionLoading.value = true;
+  try {
+    execution.value = (await workflowApi.runExecution(id)).data;
+    executionId.value = id;
+    const nodesResponse = await workflowApi.executionNodes(id);
+    executionNodes.value = nodesResponse.data;
+    ElMessage.success("Workflow Execution 已完成运行请求");
+  } catch { ElMessage.error("Workflow Execution 运行失败"); }
+  finally { executionActionLoading.value = false; }
 }
 
 async function loadExecution() {
@@ -157,8 +188,16 @@ onMounted(load);
               <el-button type="primary" @click="saveVersion">创建新 Version</el-button>
             </el-tab-pane>
             <el-tab-pane label="Execution" name="execution">
-              <el-alert title="输入 Workflow Execution ID 查看执行状态与节点状态。" type="info" :closable="false" />
-              <div class="trace-query"><el-input v-model="executionId" placeholder="execution UUID" @keyup.enter="loadExecution" /><el-button type="primary" :loading="executionLoading" @click="loadExecution">查询执行</el-button></div>
+              <el-alert title="可直接创建并运行当前已发布版本，也可以输入已有 Execution ID 查询状态。" type="info" :closable="false" />
+              <el-input v-model="executionInputText" type="textarea" :rows="5" class="execution-input" placeholder='{"key":"value"}' />
+              <div class="trace-query">
+                <el-button type="primary" :loading="executionActionLoading" :disabled="!selected.published_version_id" @click="createExecution">创建 Execution</el-button>
+                <el-button type="success" :loading="executionActionLoading" :disabled="!execution" @click="runExecution">运行 Execution</el-button>
+              </div>
+              <div class="trace-query">
+                <el-input v-model="executionId" placeholder="execution UUID" @keyup.enter="loadExecution" />
+                <el-button type="primary" :loading="executionLoading" @click="loadExecution">查询执行</el-button>
+              </div>
               <template v-if="execution">
                 <el-descriptions :column="2" border class="execution-summary">
                   <el-descriptions-item label="Execution ID">{{ execution.id }}</el-descriptions-item>
@@ -210,6 +249,7 @@ onMounted(load);
 .workflow-page { padding: 16px; }
 .header { display: flex; align-items: center; justify-content: space-between; }
 .definition { margin: 12px 0; font-family: monospace; }
+.execution-input { margin-top: 12px; font-family: monospace; }
 .trace-query { display: flex; gap: 8px; margin-top: 12px; }
 .trace-query .el-input { flex: 1; }
 .execution-summary { margin-top: 16px; }
