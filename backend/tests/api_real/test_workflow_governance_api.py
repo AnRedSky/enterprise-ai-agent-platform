@@ -9,6 +9,8 @@ BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
 WORKFLOW_ID = os.getenv("WORKFLOW_ID")
 EXECUTION_ID = os.getenv("WORKFLOW_EXECUTION_ID")
+TRIGGER_WORKFLOW_ID = os.getenv("TRIGGER_WORKFLOW_ID")
+TRIGGER_ID = os.getenv("TRIGGER_ID")
 RETRY_WORKFLOW_ID = os.getenv("RETRY_WORKFLOW_ID")
 RETRY_EXECUTION_ID = os.getenv("RETRY_EXECUTION_ID")
 RETRY_BUDGET_WORKFLOW_ID = os.getenv("RETRY_BUDGET_WORKFLOW_ID")
@@ -69,6 +71,69 @@ def test_workflow_detail_and_versions_real_http_calls():
     assert workflow.status_code == 200, workflow.text
     assert versions.status_code == 200, versions.text
     assert isinstance(versions.json(), list)
+
+
+def test_workflow_trigger_real_http_contract():
+    if not TRIGGER_WORKFLOW_ID or not TRIGGER_ID:
+        pytest.fail("Trigger fixture context is required")
+    with _client() as client:
+        listing = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers")
+        detail = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{TRIGGER_ID}")
+    assert listing.status_code == 200, listing.text
+    assert detail.status_code == 200, detail.text
+    assert any(item["id"] == TRIGGER_ID and item["status"] == "enabled" for item in listing.json())
+    trigger = detail.json()
+    assert trigger["id"] == TRIGGER_ID
+    assert trigger["workflow_id"] == TRIGGER_WORKFLOW_ID
+    assert trigger["tenant_id"] is not None
+    assert trigger["trigger_type"] == "manual"
+
+
+def test_workflow_trigger_invoke_is_idempotent_and_audited():
+    if not TRIGGER_WORKFLOW_ID or not TRIGGER_ID:
+        pytest.fail("Trigger fixture context is required")
+    key = f"real-trigger-idempotency-{os.urandom(6).hex()}"
+    with _client() as client:
+        first = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{TRIGGER_ID}/invoke",
+            headers={"Idempotency-Key": key},
+            json={"input_data": {"source": "trigger-real-api"}},
+        )
+        assert first.status_code == 200, first.text
+        first_payload = first.json()
+        second = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{TRIGGER_ID}/invoke",
+            headers={"Idempotency-Key": key},
+            json={"input_data": {"source": "trigger-real-api-repeated"}},
+        )
+        assert second.status_code == 200, second.text
+        second_payload = second.json()
+        nodes, trace_items, audit_items = _get_governance(client, first_payload["id"], TRIGGER_WORKFLOW_ID)
+    assert second_payload["id"] == first_payload["id"]
+    assert first_payload["workflow_id"] == TRIGGER_WORKFLOW_ID
+    assert first_payload["status"] == "completed"
+    assert nodes
+    trigger_events = [item for item in trace_items if item["event_type"] == "trigger.invoked"]
+    assert trigger_events and trigger_events[0]["data"]["trigger_id"] == TRIGGER_ID
+    trigger_audits = [item for item in audit_items if item["action"] == "workflow.trigger.invoked"]
+    assert trigger_audits and trigger_audits[0]["metadata_json"]["trigger_id"] == TRIGGER_ID
+
+
+def test_workflow_trigger_disabled_fast_fails():
+    if not TRIGGER_WORKFLOW_ID or not TRIGGER_ID:
+        pytest.fail("Trigger fixture context is required")
+    with _client() as client:
+        updated = client.patch(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{TRIGGER_ID}",
+            json={"status": "disabled"},
+        )
+        assert updated.status_code == 200, updated.text
+        response = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{TRIGGER_ID}/invoke",
+            json={"input_data": {"source": "disabled-trigger"}},
+        )
+        assert response.status_code == 409, response.text
+        assert "禁用" in response.text
 
 
 def test_audit_real_http_call():
