@@ -21,126 +21,100 @@ def request(client, method, path, **kwargs):
 
 
 def create_executable_fixture(client):
-    workflow = request(
-        client,
-        "POST",
-        "/workflows",
-        json={
-            "name": f"API Real Validation {uuid.uuid4().hex[:8]}",
-            "description": "Automated real API validation fixture",
-        },
-    ).json()
-    version = request(
-        client,
-        "POST",
-        f"/workflows/{workflow['id']}/versions",
-        json={
-            "definition": {
-                "nodes": [
-                    {"id": "input", "type": "input", "config": {}},
-                    {"id": "output", "type": "output", "config": {}},
-                ],
-                "edges": [],
-            }
-        },
-    ).json()
+    workflow = request(client, "POST", "/workflows", json={
+        "name": f"API Real Validation {uuid.uuid4().hex[:8]}",
+        "description": "Automated real API validation fixture",
+    }).json()
+    version = request(client, "POST", f"/workflows/{workflow['id']}/versions", json={
+        "definition": {"nodes": [
+            {"id": "input", "type": "input", "config": {}},
+            {"id": "output", "type": "output", "config": {}},
+        ], "edges": []}
+    }).json()
     request(client, "POST", f"/workflows/{workflow['id']}/versions/{version['id']}/publish")
     return workflow["id"]
 
 
 def create_retry_agent(client):
-    """Create and publish a real Agent for the retry fixture's Runtime ownership context."""
-    agent = request(
-        client,
-        "POST",
-        "/agents",
-        json={
-            "name": f"API Retry Agent {uuid.uuid4().hex[:8]}",
-            "description": "Automated real API node retry governance fixture agent",
-            "system_prompt": "You are a deterministic validation agent.",
-            "model_id": "mock-http-404",
-        },
-    ).json()
+    agent = request(client, "POST", "/agents", json={
+        "name": f"API Retry Agent {uuid.uuid4().hex[:8]}",
+        "description": "Automated real API node retry governance fixture agent",
+        "system_prompt": "You are a deterministic validation agent.",
+        "model_id": "mock-http-404",
+    }).json()
     versions = request(client, "GET", f"/agents/{agent['id']}/versions").json()
     if not versions:
         raise RuntimeError(f"Agent {agent['id']} was created without a version")
-    version_id = versions[0]["id"]
-    request(
-        client,
-        "POST",
-        f"/agents/{agent['id']}/publish",
-        json={"version_id": version_id},
-    )
+    request(client, "POST", f"/agents/{agent['id']}/publish", json={"version_id": versions[0]["id"]})
     return agent["id"]
 
 
-def create_retry_fixture(client):
-    # Use a real, published Agent so Runtime passes tenant/ownership/version checks.
-    # Its deterministic mock provider then raises HTTP 404, which exercises the
-    # production retry/attempt governance path without depending on external APIs.
-    agent_id = create_retry_agent(client)
-    workflow = request(
-        client,
-        "POST",
-        "/workflows",
-        json={
-            "name": f"API Retry Governance Validation {uuid.uuid4().hex[:8]}",
-            "description": "Automated real API node retry governance fixture",
+def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_config=None, expected_status="failed", expected_error="HTTP_404"):
+    workflow = request(client, "POST", "/workflows", json={
+        "name": f"{name} {uuid.uuid4().hex[:8]}",
+        "description": "Automated real API retry boundary fixture",
+    }).json()
+    node_config = {
+        "agent_id": agent_id,
+        "prompt": "Trigger deterministic node retry boundary validation.",
+        "retry": retry_config or {
+            "max_attempts": 2,
+            "backoff_ms": 0,
+            "max_backoff_ms": 0,
+            "jitter_ms": 0,
+            "retryable_error_codes": ["HTTP_404"],
         },
-    ).json()
-    version = request(
-        client,
-        "POST",
-        f"/workflows/{workflow['id']}/versions",
-        json={
-            "definition": {
-                "config": {"timeout_ms": 30_000},
-                "nodes": [
-                    {
-                        "id": "retry-agent",
-                        "type": "agent",
-                        "config": {
-                            "agent_id": agent_id,
-                            "prompt": "Trigger deterministic node retry validation.",
-                            "retry": {
-                                "max_attempts": 2,
-                                "backoff_ms": 0,
-                                "max_backoff_ms": 0,
-                                "jitter_ms": 0,
-                                "retryable_error_codes": ["HTTP_404"],
-                            },
-                        },
-                    }
-                ],
-                "edges": [],
-            }
-        },
-    ).json()
+    }
+    version = request(client, "POST", f"/workflows/{workflow['id']}/versions", json={
+        "definition": {
+            "config": runtime_config or {"timeout_ms": 30_000},
+            "nodes": [{"id": "retry-agent", "type": "agent", "config": node_config}],
+            "edges": [],
+        }
+    }).json()
     request(client, "POST", f"/workflows/{workflow['id']}/versions/{version['id']}/publish")
-    execution = request(
-        client,
-        "POST",
-        f"/workflows/{workflow['id']}/executions",
-        json={"input_data": {"source": "real_api_node_retry_validation"}},
-    ).json()
-
-    # HTTP_404 is intentional here: the mock provider failure must be surfaced by
-    # the run endpoint while the Execution remains persisted as failed. Do not use
-    # request(), whose generic >=400 guard would abort the bootstrap before the
-    # governance assertions can inspect Execution / Attempt / Trace / Audit.
+    execution = request(client, "POST", f"/workflows/{workflow['id']}/executions", json={
+        "input_data": {"source": "real_api_retry_boundary_validation"}
+    }).json()
     response = client.post(f"/workflows/executions/{execution['id']}/run")
     if response.status_code != 404:
-        raise RuntimeError(
-            f"POST /workflows/executions/{execution['id']}/run -> expected HTTP 404 from deterministic "
-            f"mock provider, got {response.status_code}: {response.text}"
-        )
-
+        raise RuntimeError(f"POST /workflows/executions/{execution['id']}/run -> expected HTTP 404 from deterministic mock provider, got {response.status_code}: {response.text}")
     persisted = request(client, "GET", f"/workflows/executions/{execution['id']}").json()
-    if persisted.get("status") != "failed" or persisted.get("error_code") != "HTTP_404":
-        raise RuntimeError(
-            f"Retry fixture execution did not persist expected failure: {json.dumps(persisted, ensure_ascii=False)}"
-        )
+    if persisted.get("status") != expected_status or persisted.get("error_code") != expected_error:
+        raise RuntimeError(f"Retry boundary fixture persisted unexpected state: {json.dumps(persisted, ensure_ascii=False)}")
     return workflow["id"], execution["id"]
+
+
+def create_retry_boundary_fixtures(client, agent_id):
+    retry_workflow_id, retry_execution_id = create_retry_fixture(
+        client, agent_id, name="API Retry Governance Validation"
+    )
+    budget_workflow_id, budget_execution_id = create_retry_fixture(
+        client, agent_id,
+        name="API Retry Budget Exhausted Validation",
+        runtime_config={"timeout_ms": 30_000, "retry_budget": {"max_retries": 0}},
+    )
+    deadline_workflow_id, deadline_execution_id = create_retry_fixture(
+        client, agent_id,
+        name="API Retry Deadline Validation",
+        runtime_config={"timeout_ms": 10},
+        retry_config={
+            "max_attempts": 3,
+            "backoff_ms": 100,
+            "max_backoff_ms": 100,
+            "jitter_ms": 0,
+            "retryable_error_codes": ["HTTP_404"],
+        },
+        expected_error="WORKFLOW_TIMEOUT",
+    )
+    return {
+        "retry_workflow_id": retry_workflow_id,
+        "retry_execution_id": retry_execution_id,
+        "budget_workflow_id": budget_workflow_id,
+        "budget_execution_id": budget_execution_id,
+        "deadline_workflow_id": deadline_workflow_id,
+        "deadline_execution_id": deadline_execution_id,
+    }
 
 
 def find_executable_published_workflow(client, workflows):
@@ -149,12 +123,8 @@ def find_executable_published_workflow(client, workflows):
         if not published_version_id:
             continue
         versions = request(client, "GET", f"/workflows/{workflow['id']}/versions").json()
-        published = next(
-            (item for item in versions if str(item.get("id")) == str(published_version_id)),
-            None,
-        )
-        definition = (published or {}).get("definition") or {}
-        if definition.get("nodes"):
+        published = next((item for item in versions if str(item.get("id")) == str(published_version_id)), None)
+        if ((published or {}).get("definition") or {}).get("nodes"):
             return workflow["id"]
     return None
 
@@ -172,30 +142,17 @@ def main():
         client.headers["Authorization"] = f"Bearer {token}"
 
         workflows = request(client, "GET", "/workflows").json()
-        workflow_id = find_executable_published_workflow(client, workflows)
-        if workflow_id is None:
-            workflow_id = create_executable_fixture(client)
+        workflow_id = find_executable_published_workflow(client, workflows) or create_executable_fixture(client)
+        execution = request(client, "POST", f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "real_api_validation"}}).json()
+        agent_id = create_retry_agent(client)
+        boundary = create_retry_boundary_fixtures(client, agent_id)
 
-        execution = request(
-            client,
-            "POST",
-            f"/workflows/{workflow_id}/executions",
-            json={"input_data": {"source": "real_api_validation"}},
-        ).json()
-        retry_workflow_id, retry_execution_id = create_retry_fixture(client)
-
-    ENV_FILE.write_text(
-        json.dumps(
-            {
-                "ACCESS_TOKEN": token,
-                "WORKFLOW_ID": str(workflow_id),
-                "WORKFLOW_EXECUTION_ID": str(execution["id"]),
-                "RETRY_WORKFLOW_ID": str(retry_workflow_id),
-                "RETRY_EXECUTION_ID": str(retry_execution_id),
-            }
-        ),
-        encoding="utf-8",
-    )
+    ENV_FILE.write_text(json.dumps({
+        "ACCESS_TOKEN": token,
+        "WORKFLOW_ID": str(workflow_id),
+        "WORKFLOW_EXECUTION_ID": str(execution["id"]),
+        **{key.upper(): str(value) for key, value in boundary.items()},
+    }), encoding="utf-8")
     print(f"Real API context prepared: {username}")
     return 0
 
