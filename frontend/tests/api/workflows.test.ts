@@ -32,6 +32,14 @@ describe("workflowApi", () => {
     expect(post).toHaveBeenNthCalledWith(2, "/workflows/w1/versions/v1/publish");
   });
 
+  it("creates and runs an execution", async () => {
+    post.mockResolvedValue({ data: {} });
+    await workflowApi.createExecution("w1", { order_id: "o1" });
+    await workflowApi.runExecution("e1");
+    expect(post).toHaveBeenNthCalledWith(1, "/workflows/w1/executions", { input_data: { order_id: "o1" } });
+    expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e1/run");
+  });
+
   it("queries execution status, nodes, trace and audit", async () => {
     get.mockResolvedValue({ data: { items: [] } });
     await workflowApi.execution("e1");
