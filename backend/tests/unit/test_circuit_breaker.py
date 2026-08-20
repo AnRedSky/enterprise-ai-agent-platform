@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -10,9 +10,11 @@ from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 
 
 def _service(state=None):
-    db = AsyncMock()
-    result = SimpleNamespace(scalar_one_or_none=lambda: state)
-    db.execute.return_value = result
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: state)
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
     return CircuitBreakerService(db), db
 
 
@@ -58,9 +60,29 @@ async def test_first_failure_persists_circuit_policy():
     )
     state = db.add.call_args.args[0]
     assert result == "closed"
+    assert state.state == "closed"
+    assert state.failure_count == 1
+    assert state.success_count == 0
     assert state.failure_threshold == 2
     assert state.recovery_timeout_ms == 5000
     assert state.half_open_max_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_before_call_initializes_closed_state_counters():
+    tenant_id = uuid4()
+    service, db = _service()
+    result = await service.before_call(
+        tenant_id,
+        "agent:a:model:m",
+        {"circuit_breaker": {"enabled": True, "failure_threshold": 2}},
+    )
+    state = db.add.call_args.args[0]
+    assert result == "closed"
+    assert state.state == "closed"
+    assert state.failure_count == 0
+    assert state.success_count == 0
+    assert state.failure_threshold == 2
 
 
 @pytest.mark.asyncio
