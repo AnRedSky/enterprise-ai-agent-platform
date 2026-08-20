@@ -1,4 +1,5 @@
 import pytest
+from fastapi import HTTPException
 
 from app.runtime.model_gateway import ModelGateway, MockProvider
 from app.runtime.openai_provider import OpenAICompatibleProvider
@@ -9,6 +10,14 @@ async def test_mock_provider():
     gateway = ModelGateway(MockProvider())
     result = await gateway.generate("mock-model", [{"role": "user", "content": "hello"}])
     assert "hello" in result.content
+
+
+@pytest.mark.asyncio
+async def test_mock_http_503_provider_is_deterministic():
+    gateway = ModelGateway(MockProvider())
+    with pytest.raises(HTTPException) as exc:
+        await gateway.generate("mock-http-503", [{"role": "user", "content": "circuit"}])
+    assert exc.value.status_code == 503
 
 
 @pytest.mark.asyncio
