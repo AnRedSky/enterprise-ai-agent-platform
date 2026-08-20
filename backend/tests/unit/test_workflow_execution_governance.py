@@ -10,7 +10,11 @@ from app.services.workflow_execution import WorkflowExecutionService
 
 @pytest.mark.asyncio
 async def test_cancel_allows_pending_and_running_only():
-    service = WorkflowExecutionService(AsyncMock())
+    db = AsyncMock()
+    # AsyncSession.add() is synchronous; keep it as a regular Mock so the
+    # governance audit/trace path does not create un-awaited coroutines.
+    db.add = Mock()
+    service = WorkflowExecutionService(db)
     actor_id = uuid4()
     execution = SimpleNamespace(
         id=uuid4(),
@@ -23,6 +27,8 @@ async def test_cancel_allows_pending_and_running_only():
     result = await service.cancel(execution, actor_id)
 
     assert result.status == "cancelled"
+    assert db.add.call_count == 2
+    db.flush.assert_awaited()
 
 
 @pytest.mark.asyncio
