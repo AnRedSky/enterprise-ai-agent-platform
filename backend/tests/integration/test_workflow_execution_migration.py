@@ -23,7 +23,8 @@ class _MigrationOpSpy:
 
 
 def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / "0016_workflow_execution_state_machine.py"
+    # tests/integration -> backend -> alembic/versions
+    path = Path(__file__).parents[2] / "alembic" / "versions" / "0016_workflow_execution_state_machine.py"
     spec = importlib.util.spec_from_file_location("workflow_execution_migration", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
