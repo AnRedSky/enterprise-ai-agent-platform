@@ -22,6 +22,12 @@ describe("runtimeApi", () => {
     expect(get).toHaveBeenCalledWith("/runtime/executions/execution-1/events");
   });
 
+  it("requests workflow trace by execution id", async () => {
+    get.mockResolvedValue({ data: { execution_id: "execution-1", items: [] } });
+    await runtimeApi.executionTrace("execution-1");
+    expect(get).toHaveBeenCalledWith("/runtime/executions/execution-1/trace");
+  });
+
   it("requests audit logs with filters", async () => {
     get.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
     await runtimeApi.auditLogs({ page: 1, page_size: 20, agent_id: "agent-1" });
