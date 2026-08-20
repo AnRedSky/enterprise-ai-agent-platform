@@ -1,17 +1,16 @@
 # 项目开发进度
 
 > 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。
-> 工程开发规则统一维护在 `docs/DEVELOPMENT.md`，不得在本文件复制或替代开发准则。
+> 工程开发规则统一维护在 `docs/DEVELOPMENT_GUIDELINES.md`，不得在本文件复制或替代开发准则。
 
 ## 1. 当前主线
 
 - 主分支：`main`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - 当前阶段：Phase 1.5 Workflow / Governance
-- 当前任务：Phase 1.5-F Vue Workflow / Governance 管理端
+- 当前任务：Phase 1.5-F Vue Workflow / Governance 管理端验收及测试基础设施治理
 - 当前角色：开发执行
-- 开始时间：2026-08-20
-- 基线：远端 `main` 最新基线持续同步
+- 基线：2026-08-20 远端 `main` 已同步到最新整改提交
 
 ## 2. 阶段状态
 
@@ -24,113 +23,72 @@
 | Phase 1.5-A | 已完成 | Workflow Definition Contract，本地 Backend 验收通过 |
 | Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
-| Phase 1.5-D | 已完成 | Workflow Runtime Integration；开发者反馈本地验收无异常 |
-| Phase 1.5-E | 已完成 | Governance / Audit / Trace；开发者反馈全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 / Frontend build 已通过 | Vue Workflow / Governance 管理端；production build 成功，但存在第三方 Rollup PURE annotation 与 bundle size warning，已记录并不阻塞当前 build |
+| Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
+| Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
+| Phase 1.5-F | 开发中 / Frontend build 已通过 | Vue Workflow / Governance 管理端；待 Frontend test、Backend regression、Real API Gate 和浏览器联调最终关闭 |
+| 测试基础设施治理 | 整改中 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；历史遗留测试/评估脚本继续按职责迁移，不允许新增根目录文件 |
 
-## 3. 1.5-E 最终验收
+## 3. 本轮测试体系整改
 
-开发者已反馈：
+已完成：
+
+1. `backend/tests/` 明确划分 `unit/`、`integration/`、`api_contract/`、`api_real/`。
+2. 已将原根目录 API endpoint 测试迁移至 `tests/api_contract/`，并删除旧重复文件。
+3. 已将 Real API bootstrap / runner 迁移至 `scripts/test/api-real/`。
+4. 已将 Frontend / Backend Integration Gate 迁移至 `scripts/test/integration/`。
+5. 新增 `scripts/test/regression/`、`scripts/evaluation/knowledge/`、`scripts/evaluation/embedding/` 职责边界。
+6. 更新 `backend/tests/README.md`、`backend/scripts/README.md`、`docs/DEVELOPMENT_GUIDELINES.md`，明确测试实现与脚本编排分离。
+
+## 4. 强制测试链
 
 ```text
-测试通过
+Unit → Integration → API Contract → Real API → Frontend Test/Build → Browser 联调
 ```
 
-Phase 1.5-E 已关闭，允许进入 Phase 1.5-F。
+Real API Gate：
 
-## 4. Phase 1.5-F 已实施范围
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```
 
-1. `frontend/src/api/workflows.ts`
-   - Workflow / Version / Trace API Types
-   - Workflow Registry API
-   - Version Create / Publish
-   - Audit / Trace 查询
+统一联调 Gate：
 
-2. `frontend/src/views/workflows/index.vue`
-   - Workflow Registry 列表
-   - Workflow 创建
-   - Version 管理
-   - JSON Definition 编辑
-   - Version Publish
-   - Audit 查询
-   - Execution Trace 查询
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_frontend_backend_gate.ps1
+```
 
-3. `frontend/src/router/index.ts`
-   - 新增 `/workflows` 管理端路由
-
-4. `docs/phase-1.5-f-vue-workflow-governance.md`
-   - Phase 1.5-F 范围、Contract、验收门禁与手工场景
+禁止手工填写 `ACCESS_TOKEN`、`WORKFLOW_ID`、`WORKFLOW_EXECUTION_ID` 作为 Real API 测试前置条件。
 
 ## 5. 当前验收结果
 
 ### Frontend production build
 
-开发者已反馈：
+开发者已反馈 `npm run build` 成功：
 
 ```text
-vite v6.4.3 building for production...
 ✓ 1704 modules transformed.
 ✓ built in 10.34s
 ```
 
-结论：`npm run build` **通过**。
+存在第三方 `@vueuse/core` PURE annotation 与 bundle chunk size warning，已记录为非阻断项。
 
-同时发现并记录以下非阻断 warning：
+### Phase 1.5-F 最终关闭条件
 
-1. `@vueuse/core` 构建产物中的 `/* #__PURE__ */` annotation 位置无法被当前 Rollup 完整解析，Rollup 自动移除该 annotation。
-2. production bundle 中存在超过 500 kB 的 chunk。
+仍待开发者本地执行并反馈：
 
-详细记录：
-
-```text
-docs/error-tracking/006-frontend-vite-rollup-third-party-pure-annotation-warning.md
-```
-
-当前不直接修改 `node_modules`，也不简单通过提高 `chunkSizeWarningLimit` 掩盖问题；后续性能优化阶段评估依赖升级、route-level dynamic import 与 manualChunks。
-
-### 尚未完成的验收门禁
-
-Phase 1.5-F 尚不能标记完成，仍待开发者实际反馈：
-
-```powershell
-cd frontend
-npm test
-```
-
-Backend full regression + migration head：
-
-```powershell
-cd backend
-uv run pytest -q
-uv run alembic upgrade head
-uv run alembic current
-```
-
-随后执行前后端联调：
-
-```powershell
-cd ..\frontend
-npm test
-npm run build
-```
-
-手工联调：
-
-1. 登录进入 `/workflows`。
-2. 创建 Workflow。
-3. 查看 Version。
-4. 创建新 Definition Version。
-5. 发布 Version。
-6. 查询 Workflow Audit。
-7. 输入真实 Workflow Execution ID 查询 Trace。
-8. 验证普通用户的 tenant / owner 隔离。
-9. 验证管理员治理查询范围。
+1. `cd frontend && npm test`
+2. `cd backend && uv run pytest -q`
+3. `cd backend && uv run alembic upgrade head && uv run alembic current`
+4. Real API Gate
+5. Frontend / Backend 浏览器级联调
 
 ## 6. 下一步
 
-1. 开发者在最新 `main` 基线执行 `frontend/npm test`。
-2. 执行 Backend full regression + migration head verification。
-3. 执行 Phase 1.5-F Workflow / Governance 本地手工联调。
-4. 若出现错误，先记录到 `docs/error-tracking/`，再修复。
-5. 只有 Frontend、Backend、Migration、手工联调全部通过后，才能关闭 Phase 1.5-F。
-6. Phase 1.5-F 关闭后重新规划下一阶段，不提前虚构新的 Phase 任务。
+1. 开发者拉取最新 `main`，执行测试基础设施整改后的完整回归。
+2. 首先验证 Backend full regression 与 migration head。
+3. 再执行 Real API Gate；通过后才能进行前后端联调。
+4. 完成 Phase 1.5-F 浏览器级验收并关闭 Phase 1.5-F。
+5. 测试基础设施治理的剩余历史文件继续按实际职责迁移，迁移后必须通过完整回归才能删除旧入口。
+6. Phase 1.5-F 关闭后，再根据实际完成情况规划下一阶段，不提前虚构 Phase 任务。
