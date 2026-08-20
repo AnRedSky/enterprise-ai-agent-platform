@@ -1,4 +1,6 @@
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import httpx
@@ -171,11 +173,44 @@ def test_circuit_breaker_opens_and_fast_fails_real_business_boundary():
     assert not any(item["event_type"] == "node.retry.scheduled" for item in second_trace)
 
 
+def test_circuit_breaker_half_open_probe_quota_real_business_boundary():
+    if not CIRCUIT_OPEN_WORKFLOW_ID or not CIRCUIT_RECOVERY_WORKFLOW_ID:
+        pytest.fail("Circuit recovery fixture context is required")
+    time.sleep(10.25)
+
+    def run_execution():
+        with _client() as client:
+            created = client.post(
+                f"/workflows/{CIRCUIT_RECOVERY_WORKFLOW_ID}/executions",
+                json={"input_data": {"source": "circuit-half-open-concurrent"}},
+            )
+            assert created.status_code == 201, created.text
+            execution_id = created.json()["id"]
+            response = client.post(f"/workflows/executions/{execution_id}/run")
+            return execution_id, response.status_code, response.text
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.map(lambda _index: run_execution(), (1, 2))
+
+    results = [first, second]
+    assert sorted(result[1] for result in results) == [200, 503]
+    failed_id = next(result[0] for result in results if result[1] == 503)
+    successful_id = next(result[0] for result in results if result[1] == 200)
+    with _client() as client:
+        failed = _assert_failed_execution(client, failed_id, "CIRCUIT_OPEN")
+        successful = client.get(f"/workflows/executions/{successful_id}")
+        failed_nodes, failed_trace, _ = _get_governance(client, failed_id, CIRCUIT_RECOVERY_WORKFLOW_ID)
+    assert failed["error_code"] == "CIRCUIT_OPEN"
+    assert failed_nodes[0]["attempt"] == 1
+    assert failed_nodes[0]["error_code"] == "CIRCUIT_OPEN"
+    assert not any(item["event_type"] == "node.retry.scheduled" for item in failed_trace)
+    assert successful.status_code == 200, successful.text
+    assert successful.json()["status"] == "completed"
+
+
 def test_circuit_breaker_half_open_probe_recovers_and_closes():
     if not CIRCUIT_OPEN_WORKFLOW_ID or not CIRCUIT_RECOVERY_WORKFLOW_ID:
         pytest.fail("Circuit recovery fixture context is required")
-    import time
-    time.sleep(0.25)
     with _client() as client:
         execution = client.post(f"/workflows/{CIRCUIT_RECOVERY_WORKFLOW_ID}/executions", json={"input_data": {"source": "circuit-recovery"}})
         assert execution.status_code == 201, execution.text
