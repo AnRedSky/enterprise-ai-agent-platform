@@ -196,7 +196,7 @@ backend/scripts/test/api-real/01_run_real_api_tests.ps1
 
 ## 9. 后续固定推进顺序
 
-每个 Phase 1.5 小版本严格执行：
+Phase 1.5 已关闭。后续阶段继续遵循：
 
 ```text
 ① Backend Domain + API Contract
@@ -213,7 +213,7 @@ backend/scripts/test/api-real/01_run_real_api_tests.ps1
         ↓
 ⑦ Runtime Integration（需要时）
         ↓
-⑧ Backend pytest + Frontend npm test + npm run build
+⑧ Backend Gate 与 Frontend Gate 分别执行
         ↓
 ⑨ 更新开发 / 验收文档
         ↓
@@ -261,12 +261,14 @@ backend/scripts/test/api-real/01_run_real_api_tests.ps1
 → [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-因此 Phase 1.5-G 已满足本阶段最终本地验收门禁。
+因此 Phase 1.5-G 已满足本阶段最终本地验收门禁，Phase 1.5 正式关闭。
 
 ## 13. 当前任务状态
 
-**Phase 1.5-A / B / C / D / E / F / G 均已完成；Phase 1.5-G 已完成真实 PostgreSQL + HTTP Real API 最终验收。**
+**Phase 1.5-A / B / C / D / E / F / G 均已完成。**
 
 责任角色：开发执行
 
-下一目标：进入下一项 Phase 1.5 Workflow / Governance 任务，继续严格遵循 Backend / Frontend 独立测试 Gate 与固定开发顺序。
+下一阶段：**Phase 1.6 Workflow Production Hardening**。
+
+下一项执行任务：**Phase 1.6-A Workflow Trigger Contract**，正式基线见 `docs/15-phase-1.6-workflow-production-hardening-plan.md`。
