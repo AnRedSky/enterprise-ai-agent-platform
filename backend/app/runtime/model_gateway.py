@@ -1,3 +1,4 @@
+import asyncio
 from typing import AsyncIterator
 from uuid import UUID
 
@@ -14,6 +15,8 @@ class MockProvider:
             raise HTTPException(404, "Mock provider HTTP 404")
         if model == "mock-http-503":
             raise HTTPException(503, "Mock provider HTTP 503")
+        if model == "mock-slow-success":
+            await asyncio.sleep(0.25)
         return ModelResult(content=f"【Mock】模型={model}\n{messages[-1]['content']}", model=model)
 
     async def stream(self, model: str, messages: list[dict]) -> AsyncIterator[str]:
