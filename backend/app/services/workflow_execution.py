@@ -93,14 +93,7 @@ class WorkflowExecutionService:
         return list(result.scalars().all())
 
     async def _lock_execution(self, execution: WorkflowExecution) -> WorkflowExecution:
-        """Reload the execution under a row lock before changing its state.
-
-        Production uses a real AsyncSession, where PostgreSQL's SELECT ... FOR UPDATE
-        serializes competing state transitions in the current transaction. Lightweight
-        unit tests often use AsyncMock instead of AsyncSession, so they keep exercising
-        the in-memory state-machine behavior without pretending to provide database
-        locking semantics.
-        """
+        """Reload the execution under a row lock before changing its state."""
         if not isinstance(self.db, AsyncSession):
             return execution
         locked = (await self.db.execute(
@@ -151,13 +144,12 @@ class WorkflowExecutionService:
         return execution
 
     async def cancel(self, execution: WorkflowExecution, actor_id: UUID, reason: str | None = None) -> WorkflowExecution:
-        if execution.status not in {"pending", "running"}:
-            raise HTTPException(409, f"{execution.status} Execution 不允许取消")
         message = reason.strip() if reason and reason.strip() else "Workflow Execution cancelled by operator"
         return await self.transition(execution, "cancelled", error_code="EXECUTION_CANCELLED",
                                      error_message=message, actor_id=actor_id)
 
     async def retry(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
+        execution = await self._lock_execution(execution)
         if execution.status != "failed":
             raise HTTPException(409, "只有 failed Execution 可以 Retry")
         WorkflowRuntime.validate_definition((await self.db.execute(
@@ -187,6 +179,7 @@ class WorkflowExecutionService:
                               error_code: str | None = None, error_message: str | None = None) -> WorkflowNodeExecution:
         if target_status not in self.NODE_STATES:
             raise HTTPException(400, "不支持的 Node Execution 状态")
+        execution = await self._lock_execution(execution)
         if execution.status in self.TERMINAL_EXECUTION_STATES:
             raise HTTPException(409, "已结束 Execution 不允许继续推进节点")
         node = (await self.db.execute(select(WorkflowNodeExecution).where(
@@ -225,6 +218,7 @@ class WorkflowExecutionService:
     async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID,
                   is_admin: bool = False) -> WorkflowExecution:
         nodes = WorkflowRuntime.validate_definition(version.definition)
+        execution = await self._lock_execution(execution)
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以启动 Runtime")
         runtime = WorkflowRuntime(self.db)
