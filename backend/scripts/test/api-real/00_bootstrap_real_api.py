@@ -194,7 +194,7 @@ def create_retry_boundary_fixtures(client, agent_id):
         "budget_workflow_id": budget_workflow_id,
         "budget_execution_id": budget_execution_id,
         "deadline_workflow_id": deadline_workflow_id,
-        "deadline_execution_id": deadline_workflow_id,
+        "deadline_execution_id": deadline_execution_id,
     }
 
 
