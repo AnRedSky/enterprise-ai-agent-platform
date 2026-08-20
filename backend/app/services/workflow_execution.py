@@ -194,7 +194,7 @@ class WorkflowExecutionService:
         allowed = {"pending": {"running", "skipped"}, "running": {"completed", "failed", "skipped"},
                    "completed": set(), "failed": {"running"}, "skipped": set()}
         if target_status not in allowed[node.status]:
-            raise HTTPException(409, f"Node 不允许从 {node.status} 转换到 {target_status}")
+            raise HTTPException(409, f"Node 不允许从 {node.status} 到 {target_status}")
         now = datetime.now(UTC).replace(tzinfo=None)
         previous_status = node.status
         if target_status == "running" and previous_status == "failed":
@@ -284,13 +284,10 @@ class WorkflowExecutionService:
                     if not isinstance(raw_attempt, int) or isinstance(raw_attempt, bool):
                         raw_attempt = getattr(node_execution, "attempt", 1)
                     attempt = raw_attempt if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool) else 1
-                    can_retry = (
-                        error_code in retry_policy["retryable_error_codes"]
-                        and error_code not in {"WORKFLOW_TIMEOUT", "CIRCUIT_OPEN"}
-                        and attempt < retry_policy["max_attempts"]
-                    )
+                    retryable = error_code in retry_policy["retryable_error_codes"] and error_code not in {"WORKFLOW_TIMEOUT", "CIRCUIT_OPEN"}
+                    can_retry = retryable and attempt < retry_policy["max_attempts"]
                     if not can_retry:
-                        if error_code in retry_policy["retryable_error_codes"] and attempt >= retry_policy["max_attempts"]:
+                        if retryable and attempt >= retry_policy["max_attempts"]:
                             await self.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
                                                         error_code=error_code)
                             await self.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
