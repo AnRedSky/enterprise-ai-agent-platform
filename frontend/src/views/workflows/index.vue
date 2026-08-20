@@ -104,18 +104,55 @@ async function runExecution() {
   finally { executionActionLoading.value = false; }
 }
 
+async function cancelExecution() {
+  if (!execution.value || !["pending", "running"].includes(execution.value.status)) return;
+  try {
+    const result = await ElMessageBox.prompt("可选：填写取消原因", "取消 Workflow Execution", {
+      inputPlaceholder: "例如：业务方要求停止",
+      confirmButtonText: "确认取消",
+      cancelButtonText: "返回",
+      inputValidator: (value) => value.length <= 500 || "取消原因不能超过 500 个字符",
+      type: "warning",
+    });
+    executionActionLoading.value = true;
+    execution.value = (await workflowApi.cancelExecution(execution.value.id, result.value)).data;
+    await loadExecutionDetails(execution.value.id);
+    ElMessage.success("Workflow Execution 已取消");
+  } catch (error) {
+    if (error !== "cancel" && error !== "close") ElMessage.error("Workflow Execution 取消失败");
+  } finally { executionActionLoading.value = false; }
+}
+
+async function retryExecution() {
+  if (!execution.value || execution.value.status !== "failed") return;
+  try {
+    await ElMessageBox.confirm("将基于原失败 Execution 的输入和版本创建新的 Execution，是否继续？", "Retry Workflow Execution", { type: "warning" });
+    executionActionLoading.value = true;
+    execution.value = (await workflowApi.retryExecution(execution.value.id)).data;
+    executionId.value = execution.value.id;
+    executionNodes.value = [];
+    ElMessage.success("Retry Execution 已创建，可继续运行");
+  } catch (error) {
+    if (error !== "cancel") ElMessage.error("Retry Execution 创建失败");
+  } finally { executionActionLoading.value = false; }
+}
+
+async function loadExecutionDetails(id: string) {
+  const [executionResponse, nodesResponse] = await Promise.all([
+    workflowApi.execution(id),
+    workflowApi.executionNodes(id),
+  ]);
+  execution.value = executionResponse.data;
+  executionNodes.value = nodesResponse.data;
+  executionId.value = id;
+}
+
 async function loadExecution() {
   const id = executionId.value.trim();
   if (!id) return ElMessage.warning("请输入 Workflow Execution ID");
   executionLoading.value = true;
-  try {
-    const [executionResponse, nodesResponse] = await Promise.all([
-      workflowApi.execution(id),
-      workflowApi.executionNodes(id),
-    ]);
-    execution.value = executionResponse.data;
-    executionNodes.value = nodesResponse.data;
-  } catch { ElMessage.error("Workflow Execution 查询失败"); }
+  try { await loadExecutionDetails(id); }
+  catch { ElMessage.error("Workflow Execution 查询失败"); }
   finally { executionLoading.value = false; }
 }
 
@@ -188,11 +225,13 @@ onMounted(load);
               <el-button type="primary" @click="saveVersion">创建新 Version</el-button>
             </el-tab-pane>
             <el-tab-pane label="Execution" name="execution">
-              <el-alert title="可直接创建并运行当前已发布版本，也可以输入已有 Execution ID 查询状态。" type="info" :closable="false" />
+              <el-alert title="可直接创建并运行当前已发布版本，也可以输入已有 Execution ID 查询、取消或 Retry。" type="info" :closable="false" />
               <el-input v-model="executionInputText" type="textarea" :rows="5" class="execution-input" placeholder='{"key":"value"}' />
               <div class="trace-query">
                 <el-button type="primary" :loading="executionActionLoading" :disabled="!selected.published_version_id" @click="createExecution">创建 Execution</el-button>
-                <el-button type="success" :loading="executionActionLoading" :disabled="!execution" @click="runExecution">运行 Execution</el-button>
+                <el-button type="success" :loading="executionActionLoading" :disabled="!execution || execution.status !== 'pending'" @click="runExecution">运行 Execution</el-button>
+                <el-button type="warning" :loading="executionActionLoading" :disabled="!execution || !['pending', 'running'].includes(execution.status)" @click="cancelExecution">取消 Execution</el-button>
+                <el-button type="danger" :loading="executionActionLoading" :disabled="!execution || execution.status !== 'failed'" @click="retryExecution">Retry</el-button>
               </div>
               <div class="trace-query">
                 <el-input v-model="executionId" placeholder="execution UUID" @keyup.enter="loadExecution" />
@@ -203,6 +242,7 @@ onMounted(load);
                   <el-descriptions-item label="Execution ID">{{ execution.id }}</el-descriptions-item>
                   <el-descriptions-item label="Status"><el-tag>{{ execution.status }}</el-tag></el-descriptions-item>
                   <el-descriptions-item label="Workflow Version">{{ execution.workflow_version_id }}</el-descriptions-item>
+                  <el-descriptions-item label="Retry Of">{{ execution.retry_of_execution_id || '-' }}</el-descriptions-item>
                   <el-descriptions-item label="Current Node">{{ execution.current_node_id || '-' }}</el-descriptions-item>
                   <el-descriptions-item label="Started">{{ execution.started_at || '-' }}</el-descriptions-item>
                   <el-descriptions-item label="Ended">{{ execution.ended_at || '-' }}</el-descriptions-item>
