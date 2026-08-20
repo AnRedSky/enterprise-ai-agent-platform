@@ -121,18 +121,24 @@ def create_retry_fixture(client):
         client,
         "POST",
         f"/workflows/{workflow['id']}/executions",
-        json={
-            "input_data": {
-                "source": "real_api_node_retry_validation",
-            }
-        },
+        json={"input_data": {"source": "real_api_node_retry_validation"}},
     ).json()
-    response = request(client, "POST", f"/workflows/executions/{execution['id']}/run")
-    payload = response.json()
-    if payload.get("status") != "failed":
+
+    # HTTP_404 is intentional here: the mock provider failure must be surfaced by
+    # the run endpoint while the Execution remains persisted as failed. Do not use
+    # request(), whose generic >=400 guard would abort the bootstrap before the
+    # governance assertions can inspect Execution / Attempt / Trace / Audit.
+    response = client.post(f"/workflows/executions/{execution['id']}/run")
+    if response.status_code != 404:
         raise RuntimeError(
-            f"POST /workflows/executions/{execution['id']}/run -> expected failed execution, "
-            f"got {response.status_code}: {response.text}"
+            f"POST /workflows/executions/{execution['id']}/run -> expected HTTP 404 from deterministic "
+            f"mock provider, got {response.status_code}: {response.text}"
+        )
+
+    persisted = request(client, "GET", f"/workflows/executions/{execution['id']}").json()
+    if persisted.get("status") != "failed" or persisted.get("error_code") != "HTTP_404":
+        raise RuntimeError(
+            f"Retry fixture execution did not persist expected failure: {json.dumps(persisted, ensure_ascii=False)}"
         )
     return workflow["id"], execution["id"]
 
