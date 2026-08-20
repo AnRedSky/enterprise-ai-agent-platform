@@ -13,6 +13,8 @@ try{
   $env:ACCESS_TOKEN=[string]$context.ACCESS_TOKEN
   $env:WORKFLOW_ID=[string]$context.WORKFLOW_ID
   $env:WORKFLOW_EXECUTION_ID=[string]$context.WORKFLOW_EXECUTION_ID
+  $env:TRIGGER_WORKFLOW_ID=[string]$context.TRIGGER_WORKFLOW_ID
+  $env:TRIGGER_ID=[string]$context.TRIGGER_ID
   $env:RETRY_WORKFLOW_ID=[string]$context.RETRY_WORKFLOW_ID
   $env:RETRY_EXECUTION_ID=[string]$context.RETRY_EXECUTION_ID
   $env:RETRY_BUDGET_WORKFLOW_ID=[string]$context.RETRY_BUDGET_WORKFLOW_ID
@@ -31,6 +33,8 @@ try{
   Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:WORKFLOW_ID -ErrorAction SilentlyContinue
   Remove-Item Env:WORKFLOW_EXECUTION_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:TRIGGER_WORKFLOW_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:TRIGGER_ID -ErrorAction SilentlyContinue
   Remove-Item Env:RETRY_WORKFLOW_ID -ErrorAction SilentlyContinue
   Remove-Item Env:RETRY_EXECUTION_ID -ErrorAction SilentlyContinue
   Remove-Item Env:RETRY_BUDGET_WORKFLOW_ID -ErrorAction SilentlyContinue
