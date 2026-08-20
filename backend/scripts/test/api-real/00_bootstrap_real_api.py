@@ -90,7 +90,8 @@ def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_c
 
 
 def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_config, retry_config,
-                           expected_error="CIRCUIT_OPEN", expected_http_status=503):
+                           expected_error="CIRCUIT_OPEN", expected_http_status=503,
+                           recovery_timeout_ms=1000):
     workflow = request(client, "POST", "/workflows", json={
         "name": f"{name} {uuid.uuid4().hex[:8]}",
         "description": "Automated real API Circuit Breaker boundary fixture",
@@ -103,7 +104,7 @@ def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_confi
             "enabled": True,
             "key": circuit_key,
             "failure_threshold": 1,
-            "recovery_timeout_ms": 200,
+            "recovery_timeout_ms": recovery_timeout_ms,
             "half_open_max_calls": 1,
         },
     }
@@ -218,6 +219,7 @@ def create_circuit_breaker_fixtures(client):
             "jitter_ms": 0,
             "retryable_error_codes": ["HTTP_503"],
         },
+        recovery_timeout_ms=1000,
     )
     recovery_workflow_id = create_circuit_recovery_fixture(
         client,
