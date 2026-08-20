@@ -41,31 +41,49 @@ unit → integration → api_contract → api_real
 ### 测试 Gate 严格隔离
 
 ```text
+Backend Gate
 ① Backend default regression
         ↓
 ② Database migration/head verification
         ↓
 ③ Real HTTP API Gate
+
+Frontend Gate（独立执行）
+① Frontend test
         ↓
-④ Frontend test + production build
-        ↓
-⑤ Browser / Frontend-Backend E2E（独立层，当前未实现）
+② Frontend production build
+
+Browser / Frontend-Backend E2E（独立层，当前未实现）
 ```
 
-Real API Gate 是前后端联调的强制前置条件。未通过 Real API Gate，禁止进入浏览器或前后端业务联调。
+Backend Gate 与 Frontend Gate 必须保持脚本、工作目录、运行时、依赖和失败状态完全独立：
 
-默认回归：
+- Backend 测试脚本**不得调用** `npm test` 或 `npm run build`。
+- Frontend 测试脚本**不得调用** `uv run pytest`、Alembic migration 或 Real API Gate。
+- Backend Gate 失败不得自动执行 Frontend Gate。
+- Frontend Gate 失败不得自动执行 Backend Gate。
+- 不得再创建一个同时执行 Backend 与 Frontend 测试的 `Full Regression Gate`。
+- Browser / Frontend-Backend E2E 未来必须作为第三个独立层实现，不得复制 Backend 或 Frontend 现有 Gate。
+
+Backend 默认回归：
 
 ```powershell
 cd backend
 uv run pytest -q
 ```
 
-正式 Full Regression / Release Gate：
+Backend Release / Regression Gate：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+```
+
+Frontend Release / Regression Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\02_frontend_regression_gate.ps1
 ```
 
 Real API 唯一入口：
@@ -75,7 +93,7 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-`backend/scripts/test/integration/` 仅用于未来真正的 Frontend / Backend E2E 或联调编排，不得复制 Full Regression、Backend regression、Real API 或 Frontend regression 已有测试。当前不存在 `01_frontend_backend_gate.ps1`。
+`backend/scripts/test/integration/` 仅用于未来真正的 Frontend / Backend E2E 或联调编排，不得复制 Backend regression、Migration、Real API 或 Frontend regression 已有测试。当前不存在 `01_frontend_backend_gate.ps1`。
 
 Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api.py` 自动准备，禁止手工填写或在其他脚本复制 Bootstrap/Fixture 逻辑。
 
@@ -83,25 +101,15 @@ Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api
 
 ```text
 ① 需求 / 架构文档确认
-        ↓
 ② Backend Domain + API Contract
-        ↓
 ③ Database Migration + Backend tests
-        ↓
 ④ Frontend API Types + Vitest
-        ↓
 ⑤ Frontend UI
-        ↓
 ⑥ Real API Gate
-        ↓
-⑦ Frontend test + production build
-        ↓
+⑦ Backend Gate 与 Frontend Gate 分别执行
 ⑧ Frontend / Backend 联调
-        ↓
-⑨ 全量回归 / Release Gate
-        ↓
+⑨ Browser / Frontend-Backend E2E（独立层）
 ⑩ 更新开发 / 验收文档
-        ↓
 ⑪ 提交 main
 ```
 
@@ -113,7 +121,7 @@ Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api
 4. 前端测试必须与业务源码分离，只放在 `frontend/tests/`。
 5. Backend 测试脚本不得调用 `npm test`、`npm run build`；Frontend 测试独立执行。
 6. Runtime Integration 必须在基础 API Contract 稳定、Real API 可验收后进行。
-7. 联调完成后必须执行前后端全量回归和生产构建。
+7. 联调完成后必须分别执行 Backend Gate、Frontend Gate，以及未来独立的 E2E Gate。
 8. 验收文档必须在代码提交前同步更新。
 9. 功能完成、延期、阻塞或范围变更时，必须同步更新 `docs/PROJECT_STATUS.md` 与对应 Phase 计划文档。
 10. **禁止创建任何功能分支、临时分支、开发分支或长期分支；所有开发、修复、文档与测试变更均直接基于并提交 `main`。**
