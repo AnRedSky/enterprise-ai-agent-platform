@@ -76,9 +76,9 @@ def test_node_retry_real_business_loop():
         pytest.fail("Retry fixture context is required for node retry governance validation")
 
     with _client() as client:
-        execution = client.get(f"/executions/{RETRY_EXECUTION_ID}")
-        nodes = client.get(f"/executions/{RETRY_EXECUTION_ID}/nodes")
-        trace = client.get(f"/executions/{RETRY_EXECUTION_ID}/trace")
+        execution = client.get(f"/workflows/executions/{RETRY_EXECUTION_ID}")
+        nodes = client.get(f"/workflows/executions/{RETRY_EXECUTION_ID}/nodes")
+        trace = client.get(f"/workflows/executions/{RETRY_EXECUTION_ID}/trace")
         audit = client.get(
             "/runtime/audit-logs",
             params={"workflow_execution_id": RETRY_EXECUTION_ID, "workflow_id": RETRY_WORKFLOW_ID},
@@ -99,7 +99,7 @@ def test_node_retry_real_business_loop():
     assert node["error_code"] == "HTTP_404"
 
     assert trace.status_code == 200, trace.text
-    trace_items = trace.json()["items"]
+    trace_items = trace.json()
     assert any(item["event_type"] == "node.retry.scheduled" and item["status"] == "retrying" for item in trace_items)
     retry_state_events = [
         item for item in trace_items
