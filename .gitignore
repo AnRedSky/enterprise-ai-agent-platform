@@ -8,3 +8,4 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+backend/scripts/.api_real_validation.env.json
