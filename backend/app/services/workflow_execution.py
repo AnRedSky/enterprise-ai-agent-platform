@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import Workflow, WorkflowVersion
@@ -23,22 +24,49 @@ class WorkflowExecutionService:
         self.db = db
         self.governance = WorkflowGovernanceService(db)
 
-    async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict) -> WorkflowExecution:
+    async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict,
+                     idempotency_key: str | None = None) -> WorkflowExecution:
         if workflow.published_version_id != version.id or version.status != "published":
             raise HTTPException(409, "只能执行当前已发布版本")
         WorkflowRuntime.validate_definition(version.definition)
+        if idempotency_key:
+            existing = (await self.db.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == workflow.tenant_id,
+                WorkflowExecution.idempotency_key == idempotency_key,
+            ))).scalar_one_or_none()
+            if existing is not None:
+                if existing.workflow_id != workflow.id or existing.workflow_version_id != version.id:
+                    raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
+                return existing
         execution = WorkflowExecution(
             tenant_id=workflow.tenant_id,
             workflow_id=workflow.id,
             workflow_version_id=version.id,
             created_by=actor_id,
+            idempotency_key=idempotency_key,
             status="pending",
             input_data=input_data,
         )
         self.db.add(execution)
-        await self.db.flush()
+        try:
+            await self.db.flush()
+        except IntegrityError:
+            if not idempotency_key:
+                raise
+            await self.db.rollback()
+            existing = (await self.db.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == workflow.tenant_id,
+                WorkflowExecution.idempotency_key == idempotency_key,
+            ))).scalar_one_or_none()
+            if existing is None:
+                raise
+            if existing.workflow_id != workflow.id or existing.workflow_version_id != version.id:
+                raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
+            return existing
         await self.governance.audit(execution, actor_id, "workflow.execution.created", "success")
-        await self.governance.trace(execution, actor_id, "execution.created", "pending", data={"input_keys": sorted(input_data.keys())})
+        await self.governance.trace(execution, actor_id, "execution.created", "pending", data={
+            "input_keys": sorted(input_data.keys()), "idempotency_key_present": idempotency_key is not None,
+        })
         await self.db.commit()
         await self.db.refresh(execution)
         return execution
@@ -53,19 +81,15 @@ class WorkflowExecutionService:
         return execution
 
     async def nodes(self, execution: WorkflowExecution) -> list[WorkflowNodeExecution]:
-        result = await self.db.execute(
-            select(WorkflowNodeExecution)
-            .where(WorkflowNodeExecution.execution_id == execution.id)
-            .order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
-        )
+        result = await self.db.execute(select(WorkflowNodeExecution).where(
+            WorkflowNodeExecution.execution_id == execution.id
+        ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))
         return list(result.scalars().all())
 
     async def trace(self, execution: WorkflowExecution) -> list[WorkflowTraceEvent]:
-        result = await self.db.execute(
-            select(WorkflowTraceEvent)
-            .where(WorkflowTraceEvent.execution_id == execution.id, WorkflowTraceEvent.tenant_id == execution.tenant_id)
-            .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
-        )
+        result = await self.db.execute(select(WorkflowTraceEvent).where(
+            WorkflowTraceEvent.execution_id == execution.id, WorkflowTraceEvent.tenant_id == execution.tenant_id
+        ).order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc()))
         return list(result.scalars().all())
 
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
@@ -94,24 +118,13 @@ class WorkflowExecutionService:
             execution.ended_at = now
             execution.current_node_id = None
         audit_actor = actor_id or execution.created_by
-        await self.governance.trace(
-            execution,
-            audit_actor,
-            "execution.state_changed",
-            target_status,
-            node_id=node_id,
-            error_code=error_code,
-            error_message=error_message,
-            data={"from": current, "to": target_status},
-        )
+        await self.governance.trace(execution, audit_actor, "execution.state_changed", target_status,
+                                     node_id=node_id, error_code=error_code, error_message=error_message,
+                                     data={"from": current, "to": target_status})
         if target_status in self.TERMINAL_EXECUTION_STATES:
-            await self.governance.audit(
-                execution,
-                audit_actor,
-                f"workflow.execution.{target_status}",
-                "success" if target_status == "completed" else target_status,
-                error_code=error_code,
-            )
+            await self.governance.audit(execution, audit_actor, f"workflow.execution.{target_status}",
+                                        "success" if target_status == "completed" else target_status,
+                                        error_code=error_code)
         await self.db.commit()
         await self.db.refresh(execution)
         return execution
@@ -120,57 +133,30 @@ class WorkflowExecutionService:
         if execution.status not in {"pending", "running"}:
             raise HTTPException(409, f"{execution.status} Execution 不允许取消")
         message = reason.strip() if reason and reason.strip() else "Workflow Execution cancelled by operator"
-        return await self.transition(
-            execution,
-            "cancelled",
-            error_code="EXECUTION_CANCELLED",
-            error_message=message,
-            actor_id=actor_id,
-        )
+        return await self.transition(execution, "cancelled", error_code="EXECUTION_CANCELLED",
+                                     error_message=message, actor_id=actor_id)
 
     async def retry(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
         if execution.status != "failed":
             raise HTTPException(409, "只有 failed Execution 可以 Retry")
-        WorkflowRuntime.validate_definition(
-            (await self.db.execute(select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id))).scalar_one().definition
-        )
+        WorkflowRuntime.validate_definition((await self.db.execute(
+            select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id)
+        )).scalar_one().definition)
         retry_execution = WorkflowExecution(
-            tenant_id=execution.tenant_id,
-            workflow_id=execution.workflow_id,
-            workflow_version_id=execution.workflow_version_id,
-            created_by=actor_id,
-            retry_of_execution_id=execution.id,
-            status="pending",
-            input_data=dict(execution.input_data or {}),
+            tenant_id=execution.tenant_id, workflow_id=execution.workflow_id,
+            workflow_version_id=execution.workflow_version_id, created_by=actor_id,
+            retry_of_execution_id=execution.id, status="pending", input_data=dict(execution.input_data or {}),
         )
         self.db.add(retry_execution)
         await self.db.flush()
-        await self.governance.audit(
-            execution,
-            actor_id,
-            "workflow.execution.retry_requested",
-            "success",
-        )
-        await self.governance.trace(
-            execution,
-            actor_id,
-            "execution.retry_requested",
-            execution.status,
-            data={"retry_execution_id": str(retry_execution.id)},
-        )
-        await self.governance.audit(
-            retry_execution,
-            actor_id,
-            "workflow.execution.created",
-            "success",
-        )
-        await self.governance.trace(
-            retry_execution,
-            actor_id,
-            "execution.created",
-            "pending",
-            data={"retry_of_execution_id": str(execution.id), "input_keys": sorted((execution.input_data or {}).keys())},
-        )
+        await self.governance.audit(execution, actor_id, "workflow.execution.retry_requested", "success")
+        await self.governance.trace(execution, actor_id, "execution.retry_requested", execution.status,
+                                     data={"retry_execution_id": str(retry_execution.id)})
+        await self.governance.audit(retry_execution, actor_id, "workflow.execution.created", "success")
+        await self.governance.trace(retry_execution, actor_id, "execution.created", "pending", data={
+            "retry_of_execution_id": str(execution.id),
+            "input_keys": sorted((execution.input_data or {}).keys()),
+        })
         await self.db.commit()
         await self.db.refresh(retry_execution)
         return retry_execution
@@ -208,16 +194,9 @@ class WorkflowExecutionService:
             execution.current_node_id = node_id
         if target_status in {"completed", "failed", "skipped"}:
             node.ended_at = now
-        await self.governance.trace(
-            execution,
-            execution.created_by,
-            "node.state_changed",
-            target_status,
-            node_id=node_id,
-            error_code=error_code,
-            error_message=error_message,
-            data={"input_present": input_data is not None, "output_present": output_data is not None},
-        )
+        await self.governance.trace(execution, execution.created_by, "node.state_changed", target_status,
+                                     node_id=node_id, error_code=error_code, error_message=error_message,
+                                     data={"input_present": input_data is not None, "output_present": output_data is not None})
         await self.db.commit()
         await self.db.refresh(node)
         return node
@@ -238,8 +217,7 @@ class WorkflowExecutionService:
                 try:
                     data = await runtime.execute_node(node, data, actor_id, is_admin, execution.id, execution.tenant_id)
                 except Exception as exc:
-                    await self.transition_node(execution, node_id, "failed", error_code=type(exc).__name__,
-                                               error_message=str(exc))
+                    await self.transition_node(execution, node_id, "failed", error_code=type(exc).__name__, error_message=str(exc))
                     await self.transition(execution, "failed", error_code=type(exc).__name__,
                                            error_message="Workflow node execution failed", actor_id=actor_id)
                     raise
