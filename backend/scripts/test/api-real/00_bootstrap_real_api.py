@@ -92,10 +92,11 @@ def create_retry_fixture(client):
         f"/workflows/{workflow['id']}/executions",
         json={"input_data": {"source": "real_api_node_retry_validation"}},
     ).json()
-    response = client.post(f"/executions/{execution['id']}/run")
-    if response.status_code != 404:
+    response = request(client, "POST", f"/workflows/executions/{execution['id']}/run")
+    payload = response.json()
+    if payload.get("status") != "failed":
         raise RuntimeError(
-            f"POST /executions/{execution['id']}/run -> expected 404 after retry fixture failure, "
+            f"POST /workflows/executions/{execution['id']}/run -> expected failed execution, "
             f"got {response.status_code}: {response.text}"
         )
     return workflow["id"], execution["id"]
