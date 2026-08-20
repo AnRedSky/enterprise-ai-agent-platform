@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { get, post, patch } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }));
-vi.mock("../../src/api/request", () => ({ request: { get, post, patch } }));
+const { get, post, patch, del } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), del: vi.fn() }));
+vi.mock("../../src/api/request", () => ({ request: { get, post, patch, delete: del } }));
 
 import { workflowApi } from "../../src/api/workflows";
 
@@ -10,6 +10,7 @@ describe("workflowApi", () => {
     get.mockReset();
     post.mockReset();
     patch.mockReset();
+    del.mockReset();
   });
 
   it("lists and creates workflows", async () => {
@@ -30,6 +31,33 @@ describe("workflowApi", () => {
     expect(get).toHaveBeenCalledWith("/workflows/w1/versions");
     expect(post).toHaveBeenNthCalledWith(1, "/workflows/w1/versions", { definition: { nodes: [], edges: [] } });
     expect(post).toHaveBeenNthCalledWith(2, "/workflows/w1/versions/v1/publish");
+  });
+
+  it("manages workflow triggers", async () => {
+    get.mockResolvedValue({ data: [] });
+    post.mockResolvedValue({ data: {} });
+    patch.mockResolvedValue({ data: {} });
+    del.mockResolvedValue({ data: undefined });
+
+    await workflowApi.triggers("w1");
+    await workflowApi.createTrigger("w1", { name: "Manual trigger", trigger_type: "manual", config: {} });
+    await workflowApi.updateTrigger("w1", "t1", { status: "disabled" });
+    await workflowApi.deleteTrigger("w1", "t1");
+
+    expect(get).toHaveBeenCalledWith("/workflows/w1/triggers");
+    expect(post).toHaveBeenCalledWith("/workflows/w1/triggers", { name: "Manual trigger", trigger_type: "manual", config: {} });
+    expect(patch).toHaveBeenCalledWith("/workflows/w1/triggers/t1", { status: "disabled" });
+    expect(del).toHaveBeenCalledWith("/workflows/w1/triggers/t1");
+  });
+
+  it("invokes a trigger with an optional idempotency key", async () => {
+    post.mockResolvedValue({ data: {} });
+    await workflowApi.invokeTrigger("w1", "t1", { order_id: "o1" }, "trigger-request-1");
+    expect(post).toHaveBeenCalledWith(
+      "/workflows/w1/triggers/t1/invoke",
+      { input_data: { order_id: "o1" } },
+      { headers: { "Idempotency-Key": "trigger-request-1" } },
+    );
   });
 
   it("creates and runs an execution", async () => {
