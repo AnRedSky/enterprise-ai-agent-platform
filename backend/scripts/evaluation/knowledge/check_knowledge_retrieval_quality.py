@@ -4,11 +4,11 @@ import json
 import sys
 from pathlib import Path
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from scripts.evaluate_knowledge_retrieval_baseline import evaluate
+from scripts.evaluation.knowledge.evaluate_knowledge_retrieval_baseline import evaluate
 
 BASELINE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_baseline.json"
 METRICS = ("recall_at_k", "precision_at_k", "mrr")
