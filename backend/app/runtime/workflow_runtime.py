@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.core import Agent, AgentVersion
+from app.models.core import Agent, AgentVersion, User
 from app.runtime.model_gateway import ModelGateway
 
 
@@ -54,6 +54,7 @@ class WorkflowRuntime:
         actor_id: UUID,
         is_admin: bool,
         session_id: UUID,
+        tenant_id: UUID | None = None,
     ) -> dict:
         node_type = node["type"]
         config = node["config"]
@@ -66,7 +67,10 @@ class WorkflowRuntime:
         except (ValueError, TypeError) as exc:
             raise HTTPException(422, "agent node 必须提供有效 agent_id") from exc
 
-        agent = (await self.db.execute(select(Agent).where(Agent.id == agent_uuid))).scalar_one_or_none()
+        agent_query = select(Agent).join(User, User.id == Agent.owner_id).where(Agent.id == agent_uuid)
+        if tenant_id is not None:
+            agent_query = agent_query.where(User.tenant_id == tenant_id)
+        agent = (await self.db.execute(agent_query)).scalar_one_or_none()
         if agent is None:
             raise HTTPException(404, "Workflow Agent 不存在")
         if not is_admin and agent.owner_id != actor_id:
