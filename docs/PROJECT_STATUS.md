@@ -6,6 +6,7 @@
 ## 1. 当前主线
 
 - 主分支：`main`
+- 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - 当前阶段：Phase 1.5 Workflow / Governance
 - 当前任务：Phase 1.5-F Vue Workflow / Governance 管理端验收及测试基础设施治理
@@ -25,7 +26,7 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 / Backend 回归与 Frontend build 已通过 | Vue Workflow / Governance 管理端；已补齐 Execution 状态 / Node 状态展示与对应 API/View 测试，仍待 Frontend test、Real API Gate 和浏览器联调最终关闭 |
+| Phase 1.5-F | 开发中 / Backend 回归与 Frontend build 已通过 | Vue Workflow / Governance 管理端；Execution 状态 / Node 状态、API/View tests 已补齐；Real API Gate 当前发现 bootstrap fixture 与 Workflow Runtime definition contract 不一致，已修复，待本地复测后关闭 |
 | 测试基础设施治理 | 整改中 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；历史遗留测试/评估脚本继续按职责迁移，不允许新增根目录文件 |
 
 ## 3. 本轮测试体系整改
@@ -69,7 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 开发者已反馈通过：
 
 ```text
-170 passed, 5 deselected
+171 passed, 5 deselected
 ```
 
 ### Migration
@@ -82,14 +83,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 
 ### Frontend production build
 
-开发者已反馈 `npm run build` 成功：
-
-```text
-✓ 1704 modules transformed.
-✓ built in 10.34s
-```
-
-存在第三方 `@vueuse/core` PURE annotation 与 bundle chunk size warning，已记录为非阻断项。
+开发者已反馈 `npm run build` 成功，当前构建无之前的 vendor 循环 warning / chunk > 500KB warning。
 
 ### Phase 1.5-F 本轮实现
 
@@ -104,7 +98,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 7. 新增 Workflow API contract tests。
 8. 新增 Workflow Governance view tests。
 
-### Phase 1.5-F 最终关闭条件
+### Real API Gate 当前问题与修复
+
+开发者本地 Real API Gate 曾在执行 bootstrap fixture 时失败：
+
+```text
+POST /workflows/{workflow_id}/executions -> 422
+Workflow definition 必须包含非空 nodes
+```
+
+根因是 bootstrap 创建的 fallback Workflow 使用了空 `nodes`，并且会复用 definition 不可执行的已发布 Workflow。已在 `backend/scripts/test/api-real/00_bootstrap_real_api.py` 修复：
+
+1. 新建 fixture 使用 `input` + `output` 最小可执行节点定义。
+2. 复用已有 Workflow 前检查其已发布 Version definition 是否包含非空 `nodes`。
+3. 没有可执行已发布 Workflow 时自动创建有效 fixture。
+4. 保持 Token / Workflow ID / Execution ID 全自动生成。
+
+错误记录：`docs/error-tracking/007-real-api-bootstrap-empty-workflow-definition.md`。
+
+修复提交：`2aab1dc8f619e604d76a7d97845e7669857f147c`。
+
+## 6. Phase 1.5-F 最终关闭条件
 
 仍待开发者本地执行并反馈：
 
@@ -112,15 +126,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 2. `cd frontend && npm run build`
 3. `cd backend && uv run pytest -q`
 4. `cd backend && uv run alembic upgrade head && uv run alembic current`
-5. Real API Gate
-6. Frontend / Backend 浏览器级联调
+5. 修复后的 Real API Gate
+6. Workflow Registry → Version → Publish → Execution Status / Node Status → Audit → Trace 浏览器级联调
 
-## 6. 下一步
+## 7. 下一步
 
-1. 开发者拉取最新 `main`，首先执行 Frontend Vitest，确认新增 Workflow API / View tests。
-2. 继续执行 Backend full regression 与 migration head，确认 Frontend 改动没有影响后端主线。
-3. 通过后执行 Real API Gate；Real API 仍不得依赖手工填写 Token / Workflow ID / Execution ID。
-4. 完成 Workflow Registry → Version → Publish → Execution Status / Node Status → Audit → Trace 浏览器级验收。
+1. 开发者同步最新 `main`。
+2. 重新执行 Backend regression 与 migration，确认 bootstrap 修复没有引入回归。
+3. 执行 Real API Gate，重点验证自动创建/发现可执行 Workflow、Execution、Audit、Trace 全链路。
+4. Real API 全部通过后，再进行 Frontend Test/Build 与浏览器级 Workflow 联调。
 5. 记录真实执行结果后关闭 Phase 1.5-F。
-6. 测试基础设施治理的剩余历史文件继续按实际职责迁移，迁移后必须通过完整回归才能删除旧入口。
-7. Phase 1.5-F 关闭后，再根据实际完成情况规划下一阶段，不提前虚构 Phase 任务。
+6. Phase 1.5-F 关闭后，再进入 Workflow Execution Reliability Hardening，不提前虚构下一阶段任务。
