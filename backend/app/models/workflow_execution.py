@@ -21,6 +21,9 @@ class WorkflowExecution(Base):
     workflow_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflows.id", ondelete="RESTRICT"), index=True)
     workflow_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflow_versions.id", ondelete="RESTRICT"), index=True)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    retry_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True
+    )
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     current_node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     input_data: Mapped[dict] = mapped_column(JSON, default=dict)
