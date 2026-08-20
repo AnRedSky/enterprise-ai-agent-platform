@@ -111,6 +111,7 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 16. Execution Idempotency-Key contract：通过 HTTP `Idempotency-Key` 请求头关联同 Tenant 的 Execution 创建请求。
 17. Idempotency-Key 唯一约束：同 Tenant 下重复 Key 返回原 Execution；跨 Workflow / Version 重用返回 409；并处理并发插入竞争。
 18. Idempotency 创建链路写入 Audit / Trace 时只记录 key 是否存在，不记录具体 key 值。
+19. Frontend Workflow API 已支持可选 `Idempotency-Key`，并补充 API contract test。
 
 ## 6. 本轮数据库变更
 
@@ -166,7 +167,7 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 
 优先顺序：
 
-1. **Execution 并发/幂等控制**：本轮先完成 Idempotency-Key；下一轮补齐运行状态并发锁与状态竞争边界。
+1. **Execution 并发/幂等控制**：本轮已完成 Idempotency-Key；下一轮补齐运行状态并发锁与状态竞争边界。
 2. Runtime 超时与失败恢复边界。
 3. Node-level retry / attempt 治理。
 4. Execution 查询列表与历史执行治理。
