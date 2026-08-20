@@ -92,11 +92,32 @@ class WorkflowExecutionService:
         ).order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc()))
         return list(result.scalars().all())
 
+    async def _lock_execution(self, execution: WorkflowExecution) -> WorkflowExecution:
+        """Reload the execution under a row lock before changing its state.
+
+        Production uses a real AsyncSession, where PostgreSQL's SELECT ... FOR UPDATE
+        serializes competing state transitions in the current transaction. Lightweight
+        unit tests often use AsyncMock instead of AsyncSession, so they keep exercising
+        the in-memory state-machine behavior without pretending to provide database
+        locking semantics.
+        """
+        if not isinstance(self.db, AsyncSession):
+            return execution
+        locked = (await self.db.execute(
+            select(WorkflowExecution)
+            .where(WorkflowExecution.id == execution.id)
+            .with_for_update()
+        )).scalar_one_or_none()
+        if locked is None:
+            raise HTTPException(404, "Workflow Execution 不存在")
+        return locked
+
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
                          error_code: str | None = None, error_message: str | None = None,
                          output_data: dict | None = None, actor_id: UUID | None = None) -> WorkflowExecution:
         if target_status not in self.EXECUTION_STATES:
             raise HTTPException(400, "不支持的 Execution 状态")
+        execution = await self._lock_execution(execution)
         current = execution.status
         allowed = {"pending": {"running", "cancelled"}, "running": {"completed", "failed", "cancelled"},
                    "completed": set(), "failed": set(), "cancelled": set()}
