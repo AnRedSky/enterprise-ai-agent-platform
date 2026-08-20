@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { workflowApi, type Workflow, type WorkflowVersion, type WorkflowTrace } from "@/api/workflows";
+import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowExecutionNode, type WorkflowVersion, type WorkflowTrace } from "@/api/workflows";
 
 const workflows = ref<Workflow[]>([]);
 const versions = ref<WorkflowVersion[]>([]);
 const selected = ref<Workflow>();
 const selectedVersion = ref<WorkflowVersion>();
+const execution = ref<WorkflowExecution>();
+const executionNodes = ref<WorkflowExecutionNode[]>([]);
 const traces = ref<WorkflowTrace[]>([]);
 const audits = ref<Array<Record<string, unknown>>>([]);
 const loading = ref(false);
 const auditLoading = ref(false);
+const executionLoading = ref(false);
 const form = ref({ name: "", description: "" });
 const definitionText = ref('{\n  "nodes": [],\n  "edges": []\n}');
+const executionId = ref("");
 const traceExecutionId = ref("");
 
 async function load() {
@@ -25,6 +29,8 @@ async function load() {
 async function selectWorkflow(row: Workflow) {
   selected.value = row;
   selectedVersion.value = undefined;
+  execution.value = undefined;
+  executionNodes.value = [];
   traces.value = [];
   try { versions.value = (await workflowApi.versions(row.id)).data; }
   catch { ElMessage.error("Workflow Version 查询失败"); }
@@ -65,6 +71,21 @@ async function publishVersion(version: WorkflowVersion) {
   } catch (error) {
     if (error !== "cancel") ElMessage.error("Workflow Version 发布失败");
   }
+}
+
+async function loadExecution() {
+  const id = executionId.value.trim();
+  if (!id) return ElMessage.warning("请输入 Workflow Execution ID");
+  executionLoading.value = true;
+  try {
+    const [executionResponse, nodesResponse] = await Promise.all([
+      workflowApi.execution(id),
+      workflowApi.executionNodes(id),
+    ]);
+    execution.value = executionResponse.data;
+    executionNodes.value = nodesResponse.data;
+  } catch { ElMessage.error("Workflow Execution 查询失败"); }
+  finally { executionLoading.value = false; }
 }
 
 async function loadAudit() {
@@ -135,6 +156,29 @@ onMounted(load);
               <el-input v-model="definitionText" type="textarea" :rows="18" class="definition" />
               <el-button type="primary" @click="saveVersion">创建新 Version</el-button>
             </el-tab-pane>
+            <el-tab-pane label="Execution" name="execution">
+              <el-alert title="输入 Workflow Execution ID 查看执行状态与节点状态。" type="info" :closable="false" />
+              <div class="trace-query"><el-input v-model="executionId" placeholder="execution UUID" @keyup.enter="loadExecution" /><el-button type="primary" :loading="executionLoading" @click="loadExecution">查询执行</el-button></div>
+              <template v-if="execution">
+                <el-descriptions :column="2" border class="execution-summary">
+                  <el-descriptions-item label="Execution ID">{{ execution.id }}</el-descriptions-item>
+                  <el-descriptions-item label="Status"><el-tag>{{ execution.status }}</el-tag></el-descriptions-item>
+                  <el-descriptions-item label="Workflow Version">{{ execution.workflow_version_id }}</el-descriptions-item>
+                  <el-descriptions-item label="Current Node">{{ execution.current_node_id || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="Started">{{ execution.started_at || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="Ended">{{ execution.ended_at || '-' }}</el-descriptions-item>
+                  <el-descriptions-item v-if="execution.error_code" label="Error">{{ execution.error_code }}: {{ execution.error_message || '-' }}</el-descriptions-item>
+                </el-descriptions>
+                <el-table :data="executionNodes" class="execution-nodes">
+                  <el-table-column prop="node_id" label="Node" min-width="140" />
+                  <el-table-column prop="status" label="Status" width="110" />
+                  <el-table-column prop="attempt" label="Attempt" width="90" />
+                  <el-table-column prop="started_at" label="Started" min-width="170" />
+                  <el-table-column prop="error_code" label="Error" width="140" />
+                </el-table>
+              </template>
+              <el-empty v-else description="暂无 Execution" />
+            </el-tab-pane>
             <el-tab-pane label="Audit" name="audit">
               <el-table v-loading="auditLoading" :data="audits">
                 <el-table-column prop="action" label="Action" min-width="180" />
@@ -168,6 +212,8 @@ onMounted(load);
 .definition { margin: 12px 0; font-family: monospace; }
 .trace-query { display: flex; gap: 8px; margin-top: 12px; }
 .trace-query .el-input { flex: 1; }
+.execution-summary { margin-top: 16px; }
+.execution-nodes { margin-top: 16px; }
 .trace-list { margin-top: 20px; }
 .error { margin-top: 4px; }
 </style>
