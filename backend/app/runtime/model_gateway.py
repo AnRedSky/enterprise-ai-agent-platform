@@ -1,6 +1,8 @@
 from typing import AsyncIterator
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from app.core.config import settings
 from app.runtime.openai_provider import OpenAICompatibleProvider
 from app.runtime.provider import ModelResult
@@ -8,6 +10,8 @@ from app.runtime.provider import ModelResult
 
 class MockProvider:
     async def complete(self, model: str, messages: list[dict]) -> ModelResult:
+        if model == "mock-http-404":
+            raise HTTPException(404, "Mock provider HTTP 404")
         return ModelResult(content=f"【Mock】模型={model}\n{messages[-1]['content']}", model=model)
 
     async def stream(self, model: str, messages: list[dict]) -> AsyncIterator[str]:
