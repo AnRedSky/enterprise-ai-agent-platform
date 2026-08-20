@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import Agent, AgentVersion, User
 from app.runtime.model_gateway import ModelGateway
+from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 
 
 class WorkflowRuntime:
@@ -23,6 +24,10 @@ class WorkflowRuntime:
     Node retry is opt-in. By default every node has exactly one attempt. When a
     retry policy is configured, only explicitly classified transient failures are
     retried, with bounded exponential backoff and jitter.
+
+    Circuit breaking is opt-in and database-backed. It protects an agent/model
+    capability from repeated transient failures while keeping Runtime workers
+    stateless across replicas.
     """
 
     NODE_TYPES = {"input", "agent", "output"}
@@ -46,6 +51,7 @@ class WorkflowRuntime:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.gateway = ModelGateway()
+        self.circuit_breaker = CircuitBreakerService(db)
 
     @classmethod
     def validate_timeout_ms(cls, value: object, *, field: str = "timeout_ms") -> int:
@@ -91,9 +97,15 @@ class WorkflowRuntime:
         }
 
     @classmethod
+    def resolve_circuit_breaker(cls, config: dict | None) -> dict:
+        return CircuitBreakerService.validate_config(config)
+
+    @classmethod
     def classify_error(cls, exc: BaseException, *, workflow_timeout: bool = False) -> str:
         if workflow_timeout:
             return "WORKFLOW_TIMEOUT"
+        if isinstance(exc, CircuitOpenError):
+            return "CIRCUIT_OPEN"
         if isinstance(exc, asyncio.TimeoutError):
             return "NODE_TIMEOUT"
         if isinstance(exc, HTTPException):
@@ -119,6 +131,7 @@ class WorkflowRuntime:
         if not isinstance(runtime_config, dict):
             raise HTTPException(422, "Workflow config 必须为对象")
         cls.resolve_timeout_ms(runtime_config)
+        cls.resolve_circuit_breaker(runtime_config)
         seen: set[str] = set()
         normalized: list[dict] = []
         for raw in nodes:
@@ -137,6 +150,7 @@ class WorkflowRuntime:
                 raise HTTPException(422, f"Workflow node config 必须为对象: {node_id}")
             cls.resolve_timeout_ms(config)
             cls.resolve_retry_policy(config)
+            cls.resolve_circuit_breaker(config)
             seen.add(node_id)
             normalized.append({"id": node_id, "type": node_type, "config": config})
         return normalized
@@ -187,8 +201,19 @@ class WorkflowRuntime:
             prompt = input_data.get("input", input_data.get("content", ""))
         if not isinstance(prompt, str) or not prompt:
             raise HTTPException(422, "agent node 输入必须提供 prompt 或 input/content")
+
+        circuit_config = self.resolve_circuit_breaker(config)
+        circuit_key = circuit_config.get("key") or f"agent:{agent.id}:model:{version.model_id}"
+        if not isinstance(circuit_key, str) or not circuit_key or len(circuit_key) > 200:
+            raise HTTPException(422, "circuit_breaker.key 必须为 1-200 字符字符串")
+        await self.circuit_breaker.before_call(tenant_id or agent.owner_id, circuit_key, config)
         messages = [{"role": "system", "content": version.system_prompt}, {"role": "user", "content": prompt}]
-        result = await self.gateway.generate(version.model_id, messages, session_id)
+        try:
+            result = await self.gateway.generate(version.model_id, messages, session_id)
+        except Exception:
+            await self.circuit_breaker.record_failure(tenant_id or agent.owner_id, circuit_key, config)
+            raise
+        await self.circuit_breaker.record_success(tenant_id or agent.owner_id, circuit_key, config)
         usage = result.usage
         return {
             "content": result.content,
