@@ -26,7 +26,7 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；开发者反馈本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；开发者反馈全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端 |
+| Phase 1.5-F | 开发中 / Frontend build 已通过 | Vue Workflow / Governance 管理端；production build 成功，但存在第三方 Rollup PURE annotation 与 bundle size warning，已记录并不阻塞当前 build |
 
 ## 3. 1.5-E 最终验收
 
@@ -61,26 +61,54 @@ Phase 1.5-E 已关闭，允许进入 Phase 1.5-F。
 4. `docs/phase-1.5-f-vue-workflow-governance.md`
    - Phase 1.5-F 范围、Contract、验收门禁与手工场景
 
-## 5. 当前验收门禁
+## 5. 当前验收结果
 
-Phase 1.5-F 当前尚未由开发者本地验收，不预填通过结果。
+### Frontend production build
 
-待执行：
+开发者已反馈：
+
+```text
+vite v6.4.3 building for production...
+✓ 1704 modules transformed.
+✓ built in 10.34s
+```
+
+结论：`npm run build` **通过**。
+
+同时发现并记录以下非阻断 warning：
+
+1. `@vueuse/core` 构建产物中的 `/* #__PURE__ */` annotation 位置无法被当前 Rollup 完整解析，Rollup 自动移除该 annotation。
+2. production bundle 中存在超过 500 kB 的 chunk。
+
+详细记录：
+
+```text
+docs/error-tracking/006-frontend-vite-rollup-third-party-pure-annotation-warning.md
+```
+
+当前不直接修改 `node_modules`，也不简单通过提高 `chunkSizeWarningLimit` 掩盖问题；后续性能优化阶段评估依赖升级、route-level dynamic import 与 manualChunks。
+
+### 尚未完成的验收门禁
+
+Phase 1.5-F 尚不能标记完成，仍待开发者实际反馈：
 
 ```powershell
 cd frontend
 npm test
-npm run build
 ```
 
-前后端回归：
+Backend full regression + migration head：
 
 ```powershell
 cd backend
 uv run pytest -q
 uv run alembic upgrade head
 uv run alembic current
+```
 
+随后执行前后端联调：
+
+```powershell
 cd ..\frontend
 npm test
 npm run build
@@ -100,9 +128,9 @@ npm run build
 
 ## 6. 下一步
 
-1. 开发者同步最新 `main`。
-2. 执行 Frontend Vitest + production build。
-3. 执行 Backend full regression + migration head verification。
-4. 执行 Phase 1.5-F Workflow / Governance 本地手工联调。
-5. 若出现错误，先记录到 `docs/error-tracking/`，再修复。
-6. 验收全部通过后关闭 Phase 1.5-F，并重新规划下一阶段。
+1. 开发者在最新 `main` 基线执行 `frontend/npm test`。
+2. 执行 Backend full regression + migration head verification。
+3. 执行 Phase 1.5-F Workflow / Governance 本地手工联调。
+4. 若出现错误，先记录到 `docs/error-tracking/`，再修复。
+5. 只有 Frontend、Backend、Migration、手工联调全部通过后，才能关闭 Phase 1.5-F。
+6. Phase 1.5-F 关闭后重新规划下一阶段，不提前虚构新的 Phase 任务。
