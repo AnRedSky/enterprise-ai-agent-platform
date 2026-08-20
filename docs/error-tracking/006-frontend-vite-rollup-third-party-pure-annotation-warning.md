@@ -50,91 +50,70 @@ Consider using dynamic import() to code-split the application.
 - Vite `rollupOptions.onwarn` 仅过滤 `INVALID_ANNOTATION` 且消息明确指向 `@vueuse/core` 的已知 warning。
 - 其他 Rollup warning 继续交给默认处理器，不进行全局静默。
 
-### Bundle / chunk 第一轮优化
+### Bundle / chunk 优化
 
 - 保留 route-level lazy loading。
-- 保留必要的 vendor 拆分策略。
 - 移除 `main.ts` 的 `app.use(ElementPlus)` 全量注册。
 - 按当前页面实际使用情况手工注册 Element Plus 组件，利用 Element Plus ES Module Tree Shaking 降低 JS bundle。
 - 移除 Vite `manualChunks` 中对 `element-plus` 的强制集中拆分，避免把按组件导入的 Element Plus 模块重新聚合成单一约 900 kB vendor chunk。
+- 移除 `@vueuse` 与 `@element-plus/icons-vue` 的人工 `manualChunks` 边界，避免形成 circular chunk。
+- 保留 Vue Router、Pinia、Axios、Vue 等相对稳定的 vendor 边界。
+- 业务路由继续使用 lazy loading。
+- VueUse、Element Plus icons 等依赖交由 Rollup 根据实际依赖图自然分配。
 - 不通过提高 `chunkSizeWarningLimit` 掩盖 bundle 体积问题。
 - Element Plus 全局 CSS 暂时保持不变，避免本轮构建优化引入样式行为变化。
-
-### Bundle / chunk 第二轮整改
-
-开发者第二轮构建确认 Element Plus 单一大 chunk 已消失：
-
-```text
-index-IMUbwzmR.js  340.54 kB
-```
-
-同时暴露出两条新的 Rollup circular chunk warning：
-
-```text
-Circular chunk: vueuse-vendor -> vue-vendor -> vueuse-vendor.
-Circular chunk: vue-vendor -> element-plus-icons -> vue-vendor.
-```
-
-根因是 `manualChunks` 对 VueUse 与 Element Plus icons 进行人工拆分，而两者又依赖 Vue。继续保留这些边界没有实际收益，反而强制 Rollup 形成循环 chunk 图。
-
-因此当前整改：
-
-- 移除 `@vueuse` 的 `manualChunks`。
-- 移除 `@element-plus/icons-vue` 的 `manualChunks`。
-- 保留 Vue Router、Pinia、Axios 等相对独立的 vendor 边界。
-- 保留 Vue vendor 拆分。
-- 继续由 Rollup 根据真实依赖图处理 VueUse 与 Element Plus icons。
-- 不新增测试入口，不改变 `tests / scripts` 职责隔离。
 
 ### localStorage
 
 - `frontend/tests/setup.ts` 在测试初始化阶段提供确定性的 `Storage` 实现。
 - 测试前清理 storage，避免依赖 Node 进程参数。
 
-## 当前验收结果
+## 最终验收结果
 
-第二轮开发者反馈已经确认：
+开发者第三轮反馈已经确认：
 
 ```text
 npm test
 12 test files passed
 37 tests passed
+
+npm run build
+✓ 1705 modules transformed.
+✓ built in 3.65s
 ```
 
-且：
+production build 最终最大 JS chunk：
 
+```text
+index-DWNgX2PP.js  340.37 kB
+gzip               114.62 kB
+```
+
+最终确认：
+
+- Vitest 12 个测试文件全部通过。
+- 37 个测试全部通过。
 - Node `localStorage` ExperimentalWarning 已消失。
 - `@vueuse/core` PURE annotation warning 已消失。
+- Circular chunk warning 已消失。
+- `>500 kB` chunk warning 已消失。
 - Element Plus 不再生成约 900 kB 的单一 vendor chunk。
-- 最大报告 JS chunk 已下降到约 340.54 kB。
-- 但出现了两条 circular chunk warning，需要继续整改 manual chunk 边界。
-
-当前第三轮整改目标：
-
-- 消除上述 circular chunk warning。
-- 保持生产 JS chunk 不重新膨胀到原来的约 900 kB。
-- 不通过提高 `chunkSizeWarningLimit` 隐藏问题。
-- 其他 Rollup warning 必须逐项解释。
-
-开发者本地应再次执行：
-
-```powershell
-cd frontend
-npm test
-npm run build
-```
-
-重点确认：
-
-- Vitest 37 tests 全部通过。
-- production build 通过。
-- 不再出现 Node `localStorage` ExperimentalWarning。
-- 不再出现 `@vueuse/core` PURE annotation warning。
-- 不再出现 circular chunk warning。
-- 不再生成约 900 kB 的 `element-plus-vendor` 单一 JS chunk。
-- 不再出现无法解释的 `>500 kB` chunk warning。
-- 若仍有 >500 kB chunk，应根据新的产物继续分析实际依赖来源，而不是提高 warning 阈值。
+- 最大 JS chunk 为 340.37 kB，低于 Vite 默认 500 kB warning 阈值。
+- production build 成功。
+- 未通过提高 `chunkSizeWarningLimit` 隐藏问题。
+- `tests / scripts` 职责隔离保持不变。
 
 ## 当前状态
 
-前两轮已经完成 Element Plus 按需注册以及大 vendor chunk 拆分整改，但第二轮构建暴露了 manual chunk 循环依赖。本次提交移除 VueUse 与 Element Plus icons 的人工 chunk 边界，等待开发者本地构建结果进行第三轮验收；在验收反馈前，不将 Phase 1.5-F 标记为正式完成。
+**Phase 1.5-F 前端构建优化：验收通过。**
+
+当前 vendor/chunk 策略正式收口：
+
+- 不再继续人为拆分 VueUse、Element Plus icons 等依赖。
+- 不再为了消除 warning 继续增加 vendor chunk 边界。
+- 保留业务路由 lazy loading。
+- 保留 Element Plus 按需注册。
+- 仅保留稳定、无循环依赖风险的 vendor 边界。
+- 后续如需进一步优化 bundle，应基于真实产物分析具体业务模块，而不是继续泛化 `manualChunks`。
+
+本项整改完成后，继续推进 Phase 1.5-F 下一项工作，不重复创建测试入口，也不混用开发脚本与测试脚本。
