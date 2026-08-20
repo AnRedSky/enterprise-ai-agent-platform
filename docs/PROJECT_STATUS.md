@@ -11,7 +11,7 @@
 - 当前阶段：Phase 1.5 Workflow / Governance
 - 当前任务：Phase 1.5-F Workflow Runtime 执行治理闭环
 - 当前角色：开发执行
-- 基线：2026-08-20 远端 `main` 已完成 Workflow Registry / Version / Publish / Execution / Audit / Trace 基础闭环及 tests / scripts 职责整改
+- 基线：2026-08-20 远端 `main` 已完成 Workflow Registry / Version / Publish / Execution / Audit / Trace、Idempotency-Key 与 Execution 状态并发锁闭环
 
 ## 2. 阶段状态
 
@@ -26,7 +26,7 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage / Idempotency-Key 已完成，当前进入 Execution Concurrency Hardening |
+| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency Hardening 已完成，当前进入 Runtime Timeout / Failure Recovery Hardening |
 | 测试基础设施治理 | 持续治理 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；不新增重复测试入口或混用开发/测试脚本 |
 
 ## 3. 强制测试链
@@ -114,10 +114,15 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 20. Execution 状态转换新增数据库行锁：真实 `AsyncSession` 下使用 `SELECT ... FOR UPDATE` 重新读取 Execution，再进行状态校验和更新。
 21. Cancel / Run / Retry / Node transition 不再依赖调用方持有的旧状态完成最终状态判定，降低并发操作下的 stale-state race window。
 22. 新增 Execution row-locking unit coverage，验证 `FOR UPDATE` 与锁后状态重新校验。
+23. Workflow Runtime 新增统一 timeout policy：Workflow / Node 均支持 `config.timeout_ms`，默认 30 秒，最大 300 秒。
+24. Runtime 使用 `asyncio.wait_for` 对 Node 执行建立硬超时边界，Workflow 总 deadline 对多个 Node 的累计执行时间进行约束。
+25. Node 超时统一落为 `NODE_TIMEOUT`，Workflow 总 deadline 超时统一落为 `WORKFLOW_TIMEOUT`，并将对应 Node / Execution 标记为 `failed`、写入 Audit / Trace。
+26. Timeout 以 HTTP 504 向调用方暴露，不再将超时包装成普通 500；failed Execution 保持现有 Retry recovery 边界。
+27. 新增 Workflow Runtime timeout policy、Node timeout、Workflow deadline timeout unit coverage。
 
 ## 6. 本轮数据库变更
 
-本轮无数据库结构变更，不新增 migration。
+本轮 Runtime Timeout / Failure Recovery Hardening 无数据库结构变更，不新增 migration。
 
 既有数据库变更：
 
@@ -131,36 +136,26 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 - `workflow_executions.idempotency_key`
 - `(tenant_id, idempotency_key)` 唯一约束
 
-幂等原则：
-
-```text
-同 Tenant + 同 Idempotency-Key
-          ↓
-返回原 Execution
-          ↓
-避免重复创建业务执行
-```
-
-如果同一 Key 被用于不同 Workflow / Version，则返回 `409 Conflict`，避免请求语义漂移。
-
 ## 7. 当前待验收
 
-本轮 Execution Concurrency Hardening 代码已提交到 `main`，尚未宣称本轮本地验收通过。开发者需要按强制测试链执行：
+本轮 Runtime Timeout / Failure Recovery Hardening 代码已提交到 `main`，尚未宣称本轮本地验收通过。开发者需要按强制测试链执行：
 
 1. `cd backend && uv run pytest -q`
 2. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1`
 3. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1`
 4. `cd frontend && npm test`
 5. `cd frontend && npm run build`
-6. 浏览器级验证 Workflow → Execution → Run / Cancel 并发边界 → Retry → Audit / Trace
+6. 浏览器级验证 Workflow → Execution → Timeout → failed → Retry → Audit / Trace
 
 特别验证：
 
-- 两个并发启动请求只能有一个成功进入 `running`。
-- `running` 与 `cancelled` 的竞争最终只能落在一个合法状态，不能出现终态之后再次推进。
-- 已取消 Execution 不能继续推进 Node。
-- 已完成 / 失败 / 取消的 Execution 不能再次启动 Runtime。
-- Retry 的既有 lineage 与幂等语义保持不变。
+- Workflow `config.timeout_ms` 缺省时使用 30 秒。
+- Workflow / Node timeout 必须为 `1..300000` 毫秒，否则 Version 创建/执行前校验返回 422。
+- Node 执行超过自身 timeout 后，Node 为 `failed`，错误码为 `NODE_TIMEOUT`，Execution 为 `failed`。
+- Workflow 总 deadline 被耗尽后，Node / Execution 错误码为 `WORKFLOW_TIMEOUT`。
+- Timeout HTTP 响应为 `504`。
+- Timeout 后可以沿用现有 `failed → Retry` 机制创建新的 pending Execution，原 Execution 保持失败状态和 lineage。
+- Audit / Trace 不记录敏感 timeout 配置以外的数据，不新增敏感信息日志。
 - 全量测试无新增 warning。
 - Migration head 保持 `0019_workflow_execution_idempotency`。
 
@@ -172,8 +167,7 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 
 优先顺序：
 
-1. **Execution 并发/幂等控制**：Idempotency-Key 与状态转换行锁已完成，待本轮强制测试链验收。
-2. Runtime 超时与失败恢复边界。
-3. Node-level retry / attempt 治理。
-4. Execution 查询列表与历史执行治理。
-5. 再进入更高阶段的 Workflow 调度与异步 Worker 能力。
+1. **Runtime 超时与失败恢复边界**：本轮已实现，待强制测试链验收。
+2. Node-level retry / attempt 治理：区分 retryable / non-retryable failure，并治理 attempt 次数与退避。
+3. Execution 查询列表与历史执行治理。
+4. 再进入更高阶段的 Workflow 调度与异步 Worker 能力。
