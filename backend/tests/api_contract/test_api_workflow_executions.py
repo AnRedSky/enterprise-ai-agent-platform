@@ -9,4 +9,6 @@ def test_workflow_execution_routes_are_registered():
     assert "/api/v1/workflows/executions/{execution_id}/nodes" in paths
     assert "/api/v1/workflows/executions/{execution_id}/trace" in paths
     assert "/api/v1/workflows/executions/{execution_id}/transition" in paths
+    assert "/api/v1/workflows/executions/{execution_id}/cancel" in paths
+    assert "/api/v1/workflows/executions/{execution_id}/retry" in paths
     assert "/api/v1/workflows/executions/{execution_id}/nodes/transition" in paths
