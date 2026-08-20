@@ -15,6 +15,10 @@ try{
   $env:WORKFLOW_EXECUTION_ID=[string]$context.WORKFLOW_EXECUTION_ID
   $env:RETRY_WORKFLOW_ID=[string]$context.RETRY_WORKFLOW_ID
   $env:RETRY_EXECUTION_ID=[string]$context.RETRY_EXECUTION_ID
+  $env:RETRY_BUDGET_WORKFLOW_ID=[string]$context.RETRY_BUDGET_WORKFLOW_ID
+  $env:RETRY_BUDGET_EXECUTION_ID=[string]$context.RETRY_BUDGET_EXECUTION_ID
+  $env:RETRY_DEADLINE_WORKFLOW_ID=[string]$context.RETRY_DEADLINE_WORKFLOW_ID
+  $env:RETRY_DEADLINE_EXECUTION_ID=[string]$context.RETRY_DEADLINE_EXECUTION_ID
   Write-Host "[2/2] Execute all real HTTP API tests"
   uv run pytest -q tests/api_real -m real_api
   if($LASTEXITCODE -ne 0){throw "Real API test suite failed."}
@@ -26,4 +30,8 @@ try{
   Remove-Item Env:WORKFLOW_EXECUTION_ID -ErrorAction SilentlyContinue
   Remove-Item Env:RETRY_WORKFLOW_ID -ErrorAction SilentlyContinue
   Remove-Item Env:RETRY_EXECUTION_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:RETRY_BUDGET_WORKFLOW_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:RETRY_BUDGET_EXECUTION_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:RETRY_DEADLINE_WORKFLOW_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:RETRY_DEADLINE_EXECUTION_ID -ErrorAction SilentlyContinue
 }
