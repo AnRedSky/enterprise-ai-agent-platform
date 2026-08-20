@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -35,9 +35,16 @@ def _mock_execution():
     )
 
 
+def _service():
+    db = AsyncMock()
+    # AsyncSession.add() is synchronous; keep the test double aligned with SQLAlchemy's contract.
+    db.add = Mock()
+    return WorkflowExecutionService(db)
+
+
 @pytest.mark.asyncio
 async def test_run_marks_workflow_timeout_as_failed(monkeypatch):
-    service = WorkflowExecutionService(AsyncMock())
+    service = _service()
     service.governance.audit = AsyncMock()
     execution = _mock_execution()
     version = SimpleNamespace(
@@ -73,7 +80,7 @@ async def test_run_marks_workflow_timeout_as_failed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_run_marks_workflow_deadline_timeout_as_failed(monkeypatch):
-    service = WorkflowExecutionService(AsyncMock())
+    service = _service()
     service.governance.audit = AsyncMock()
     execution = _mock_execution()
     version = SimpleNamespace(
