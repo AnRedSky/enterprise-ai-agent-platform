@@ -152,12 +152,18 @@ def main():
         agent_id = create_retry_agent(client)
         boundary = create_retry_boundary_fixtures(client, agent_id)
 
-    ENV_FILE.write_text(json.dumps({
+    context = {
         "ACCESS_TOKEN": token,
         "WORKFLOW_ID": str(workflow_id),
         "WORKFLOW_EXECUTION_ID": str(execution["id"]),
-        **{key.upper(): str(value) for key, value in boundary.items()},
-    }), encoding="utf-8")
+        "RETRY_WORKFLOW_ID": str(boundary["retry_workflow_id"]),
+        "RETRY_EXECUTION_ID": str(boundary["retry_execution_id"]),
+        "RETRY_BUDGET_WORKFLOW_ID": str(boundary["budget_workflow_id"]),
+        "RETRY_BUDGET_EXECUTION_ID": str(boundary["budget_execution_id"]),
+        "RETRY_DEADLINE_WORKFLOW_ID": str(boundary["deadline_workflow_id"]),
+        "RETRY_DEADLINE_EXECUTION_ID": str(boundary["deadline_execution_id"]),
+    }
+    ENV_FILE.write_text(json.dumps(context), encoding="utf-8")
     print(f"Real API context prepared: {username}")
     return 0
 
