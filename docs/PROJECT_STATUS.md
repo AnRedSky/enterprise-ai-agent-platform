@@ -11,7 +11,7 @@
 - 当前阶段：Phase 1.5 Workflow / Governance
 - 当前任务：Phase 1.5-F Workflow Runtime 执行治理闭环
 - 当前角色：开发执行
-- 基线：2026-08-20 远端 `main` 已完成 Workflow Registry / Version / Publish / Execution / Audit / Trace、Idempotency-Key 与 Execution 状态并发锁闭环
+- 基线：2026-08-20 远端 `main` 已完成 Workflow Registry / Version / Publish / Execution / Audit / Trace、Idempotency-Key、Execution 状态并发锁、Runtime Timeout / Failure Recovery Hardening 闭环
 
 ## 2. 阶段状态
 
@@ -26,7 +26,7 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency Hardening 已完成，当前进入 Runtime Timeout / Failure Recovery Hardening |
+| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery 已完成，当前进入 Node-level Retry / Attempt 治理 |
 | 测试基础设施治理 | 持续治理 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；不新增重复测试入口或混用开发/测试脚本 |
 
 ## 3. 强制测试链
@@ -119,10 +119,17 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 25. Node 超时统一落为 `NODE_TIMEOUT`，Workflow 总 deadline 超时统一落为 `WORKFLOW_TIMEOUT`，并将对应 Node / Execution 标记为 `failed`、写入 Audit / Trace。
 26. Timeout 以 HTTP 504 向调用方暴露，不再将超时包装成普通 500；failed Execution 保持现有 Retry recovery 边界。
 27. 新增 Workflow Runtime timeout policy、Node timeout、Workflow deadline timeout unit coverage。
+28. Node retry policy 默认单次执行，只有显式配置 `retry.max_attempts > 1` 才启用自动重试，避免改变既有 Workflow 行为。
+29. Retry policy 校验 `max_attempts`、指数退避、最大退避、jitter 与 retryable error code 白名单，并限制最大 attempt / delay，避免无限重试。
+30. Retryable / non-retryable failure 分类：仅明确的超时、连接错误、429、502、503、504 等 transient error code 默认允许进入 retry policy；422、403、404 等业务/权限错误不会自动重试。
+31. WorkflowNodeExecution 复用既有 `attempt` 字段记录当前 attempt；`failed → running` 仅作为内部 retry transition，并在重新运行时递增 attempt。
+32. 每次 retry schedule 写入 Audit / Trace，记录 attempt、next attempt、delay、max attempts 与 error code，不记录敏感请求内容。
+33. Retry delay 使用有上限的 exponential backoff + jitter，并受 Workflow 总 deadline 约束；若等待时间会越过 deadline，则终止为 `WORKFLOW_TIMEOUT`。
+34. 新增 Node retry policy、error classification、bounded backoff 与 failed-node next-attempt unit coverage。
 
 ## 6. 本轮数据库变更
 
-本轮 Runtime Timeout / Failure Recovery Hardening 无数据库结构变更，不新增 migration。
+本轮 Node-level Retry / Attempt 治理**无数据库结构变更**，直接复用既有 `workflow_node_executions.attempt` 与 Workflow Trace / Audit 作为 attempt 治理与历史记录载体，不新增 migration。
 
 既有数据库变更：
 
@@ -138,24 +145,27 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 
 ## 7. 当前待验收
 
-本轮 Runtime Timeout / Failure Recovery Hardening 代码已提交到 `main`，尚未宣称本轮本地验收通过。开发者需要按强制测试链执行：
+本轮 Node-level Retry / Attempt 治理代码已提交到 `phase-1-5-f-node-retry` 开发分支，尚未宣称本轮本地验收通过。开发者需要按强制测试链执行：
 
 1. `cd backend && uv run pytest -q`
 2. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1`
 3. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1`
 4. `cd frontend && npm test`
 5. `cd frontend && npm run build`
-6. 浏览器级验证 Workflow → Execution → Timeout → failed → Retry → Audit / Trace
+6. 浏览器级验证 Workflow → Node transient failure → retry schedule → attempt 递增 → success / exhausted → Audit / Trace
 
 特别验证：
 
-- Workflow `config.timeout_ms` 缺省时使用 30 秒。
-- Workflow / Node timeout 必须为 `1..300000` 毫秒，否则 Version 创建/执行前校验返回 422。
-- Node 执行超过自身 timeout 后，Node 为 `failed`，错误码为 `NODE_TIMEOUT`，Execution 为 `failed`。
-- Workflow 总 deadline 被耗尽后，Node / Execution 错误码为 `WORKFLOW_TIMEOUT`。
-- Timeout HTTP 响应为 `504`。
-- Timeout 后可以沿用现有 `failed → Retry` 机制创建新的 pending Execution，原 Execution 保持失败状态和 lineage。
-- Audit / Trace 不记录敏感 timeout 配置以外的数据，不新增敏感信息日志。
+- 未配置 `retry` 时仍只执行一次，不改变既有行为。
+- `retry.max_attempts` 必须为 `1..5`。
+- `retry.backoff_ms`、`retry.max_backoff_ms`、`retry.jitter_ms` 必须在受控范围内。
+- `retry.max_backoff_ms >= retry.backoff_ms`。
+- retryable error code 必须通过显式白名单判定，非 retryable 错误不得自动重试。
+- Node 第一次失败后进入 retry schedule，下一次 `running` 时 `attempt` 从 1 增加到 2。
+- 达到 `max_attempts` 后 Execution 保持 `failed`，不得继续重试。
+- Retry delay 采用 exponential backoff + jitter，并且不得越过 Workflow deadline。
+- Workflow deadline 被 retry delay 消耗时统一以 `WORKFLOW_TIMEOUT` 终止。
+- 每个 retry schedule 必须存在对应 Audit / Trace，包含 attempt / delay / error code。
 - 全量测试无新增 warning。
 - Migration head 保持 `0019_workflow_execution_idempotency`。
 
@@ -167,7 +177,7 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 
 优先顺序：
 
-1. **Runtime 超时与失败恢复边界**：本轮已实现，待强制测试链验收。
-2. Node-level retry / attempt 治理：区分 retryable / non-retryable failure，并治理 attempt 次数与退避。
+1. Runtime 超时与失败恢复边界：已实现并已通过开发者验收。
+2. **Node-level retry / attempt 治理：本轮已实现，待强制测试链验收。**
 3. Execution 查询列表与历史执行治理。
 4. 再进入更高阶段的 Workflow 调度与异步 Worker 能力。
