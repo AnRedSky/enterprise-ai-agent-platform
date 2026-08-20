@@ -35,6 +35,15 @@ def create_executable_fixture(client):
     return workflow["id"]
 
 
+def create_trigger_fixture(client, workflow_id):
+    trigger = request(client, "POST", f"/workflows/{workflow_id}/triggers", json={
+        "name": f"api-real-manual-{uuid.uuid4().hex[:8]}",
+        "trigger_type": "manual",
+        "config": {"source": "real_api_trigger_validation"},
+    }).json()
+    return trigger["id"]
+
+
 def create_retry_agent(client, *, model_id="mock-http-404", name_prefix="API Retry Agent"):
     agent = request(client, "POST", "/agents", json={
         "name": f"{name_prefix} {uuid.uuid4().hex[:8]}",
@@ -262,6 +271,7 @@ def main():
 
         workflows = request(client, "GET", "/workflows").json()
         workflow_id = find_executable_published_workflow(client, workflows) or create_executable_fixture(client)
+        trigger_id = create_trigger_fixture(client, workflow_id)
         execution = request(client, "POST", f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "real_api_validation"}}).json()
         retry_agent_id = create_retry_agent(client)
         boundary = create_retry_boundary_fixtures(client, retry_agent_id)
@@ -271,6 +281,8 @@ def main():
         "ACCESS_TOKEN": token,
         "WORKFLOW_ID": str(workflow_id),
         "WORKFLOW_EXECUTION_ID": str(execution["id"]),
+        "TRIGGER_WORKFLOW_ID": str(workflow_id),
+        "TRIGGER_ID": str(trigger_id),
         "RETRY_WORKFLOW_ID": str(boundary["retry_workflow_id"]),
         "RETRY_EXECUTION_ID": str(boundary["retry_execution_id"]),
         "RETRY_BUDGET_WORKFLOW_ID": str(boundary["budget_workflow_id"]),
