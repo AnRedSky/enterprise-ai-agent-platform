@@ -132,9 +132,9 @@ onMounted(loadWorkflows);
         <el-table-column prop="created_at" label="创建时间" min-width="180" />
         <el-table-column label="操作" width="250">
           <template #default="scope">
-            <el-button size="small" :disabled="scope.row.status === 'disabled'" @click="invokeTrigger(scope.row)">Invoke</el-button>
-            <el-button size="small" :loading="actionLoading" @click="toggleTrigger(scope.row)">{{ scope.row.status === 'enabled' ? '禁用' : '启用' }}</el-button>
-            <el-button size="small" type="danger" :loading="actionLoading" @click="deleteTrigger(scope.row)">删除</el-button>
+            <el-button size="small" :disabled="scope.row.status === 'disabled'" @click="invokeTrigger(scope.row as WorkflowTrigger)">Invoke</el-button>
+            <el-button size="small" :loading="actionLoading" @click="toggleTrigger(scope.row as WorkflowTrigger)">{{ scope.row.status === 'enabled' ? '禁用' : '启用' }}</el-button>
+            <el-button size="small" type="danger" :loading="actionLoading" @click="deleteTrigger(scope.row as WorkflowTrigger)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
