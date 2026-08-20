@@ -1,7 +1,7 @@
 import { beforeEach } from "vitest";
 
 function createStorage(): Storage {
-  let values = new Map<string, string>();
+  const values = new Map<string, string>();
 
   return {
     get length() {
@@ -25,11 +25,16 @@ function createStorage(): Storage {
   } as Storage;
 }
 
+// Node 25+ exposes a guarded global localStorage accessor which emits an
+// ExperimentalWarning when no --localstorage-file is supplied. Define the
+// test storage before anything reads that accessor so Vitest/jsdom tests stay
+// deterministic without requiring a Node process flag.
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  writable: true,
+  value: createStorage(),
+});
+
 beforeEach(() => {
-  if (!globalThis.localStorage) {
-    Object.defineProperty(globalThis, "localStorage", {
-      configurable: true,
-      value: createStorage(),
-    });
-  }
+  globalThis.localStorage.clear();
 });
