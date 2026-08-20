@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_token, hash_password, verify_password
 from app.dependencies.db import get_db
-from app.models.core import Role, User, UserRole
+from app.models.core import DEFAULT_TENANT_ID, Role, Tenant, User, UserRole
 
 router = APIRouter()
 
@@ -30,7 +30,18 @@ async def register(p: RegisterRequest, db: AsyncSession = Depends(get_db)):
     exists = (await db.execute(select(User).where(User.username == p.username))).scalar_one_or_none()
     if exists:
         raise HTTPException(409, "用户名已存在")
-    user = User(username=p.username, password_hash=hash_password(p.password))
+
+    # The tenant contract migration creates this tenant, but registration must remain
+    # resilient when an existing local environment is missing the seed row. Recreate
+    # the canonical default tenant before inserting a user so the FK cannot surface
+    # as an opaque 500 from PostgreSQL.
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == DEFAULT_TENANT_ID))).scalar_one_or_none()
+    if tenant is None:
+        tenant = Tenant(id=DEFAULT_TENANT_ID, name="Default Tenant", status="active")
+        db.add(tenant)
+        await db.flush()
+
+    user = User(username=p.username, password_hash=hash_password(p.password), tenant_id=DEFAULT_TENANT_ID)
     db.add(user)
     await db.flush()
     role = (await db.execute(select(Role).where(Role.name == "user"))).scalar_one_or_none()
