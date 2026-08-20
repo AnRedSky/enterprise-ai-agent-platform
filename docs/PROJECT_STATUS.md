@@ -25,7 +25,7 @@
 | Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；开发者反馈本地验收无异常 |
-| Phase 1.5-E | 开发中 / 修复后待验收 | Governance / Audit / Trace；Migration 已升级至 0017，Governance contract 2 passed；full regression 当前因状态机测试夹具缺少 tenant/workflow/version 上下文失败，已修复，等待开发者重新执行全量验收 |
+| Phase 1.5-E | 开发中 / warning 修复后待验收 | Governance / Audit / Trace；Migration 已升级至 0017，contract 2 passed；全量 regression 180 passed，但存在 4 个 AsyncMock RuntimeWarning，已修复测试 double，等待开发者重新执行并确认 0 warning |
 | Phase 1.5-F | 待开始 | Vue Workflow / Governance 管理端 |
 
 ## 3. 1.5-D 验收结论
@@ -87,6 +87,7 @@
 
 12. `backend/tests/test_workflow_execution_state_machine.py`
    - 状态机测试统一使用包含 tenant / workflow / workflow version / actor 上下文的 Execution 夹具
+   - AsyncSession test double 明确区分同步 `add()` 与异步方法，消除 RuntimeWarning
 
 13. `docs/error-tracking/003-workflow-execution-governance-test-fixture-created-by.md`
    - 记录 Governance 接入后测试夹具缺少 `created_by` 的错误
@@ -94,47 +95,62 @@
 14. `docs/error-tracking/004-workflow-execution-governance-test-fixture-tenant-context.md`
    - 记录补齐 actor 后继续暴露的 tenant / workflow / workflow version 上下文缺失错误
 
+15. `docs/error-tracking/005-workflow-governance-asyncmock-add-warning.md`
+   - 记录 AsyncMock 错误模拟同步 `AsyncSession.add()` 导致 RuntimeWarning 的问题
+
 ## 5. 已记录问题与修复
 
 ### 003：Workflow Execution Governance 接入后测试夹具缺少 `created_by`
-
-开发者本地曾得到：
-
-```text
-178 passed, 2 failed
-AttributeError: 'types.SimpleNamespace' object has no attribute 'created_by'
-```
 
 已补齐 `created_by=uuid4()`。
 
 ### 004：Workflow Execution Governance Trace 接入后测试夹具缺少租户与工作流上下文
 
-补齐 `created_by` 后，开发者再次执行：
+补齐完整 Governance Domain Contract，并统一 `_execution()` 测试夹具。
+
+### 005：AsyncMock 错误模拟同步 `db.add()` 导致 RuntimeWarning
+
+开发者本地执行结果：
 
 ```text
-178 passed, 2 failed
-AttributeError: 'types.SimpleNamespace' object has no attribute 'tenant_id'
+180 passed, 4 warnings
+RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
 ```
 
-根因是 Governance Trace / Audit 需要完整的 WorkflowExecution 关联上下文，而旧状态机测试夹具仍缺少：
+根因是测试把整个 Session 设置为 `AsyncMock()`，导致生产代码中的同步 `db.add(event)` 被模拟为 coroutine。
 
-- `tenant_id`
-- `workflow_id`
-- `workflow_version_id`
+修复方式：测试中保留 `AsyncMock`，但显式设置：
 
-修复方式是统一 `_execution()` 测试夹具，补齐完整 Governance Domain Contract，不修改生产代码进行降级兼容。
+```python
+db.add = Mock()
+```
+
+不修改生产 Governance Service。
 
 详细记录见：
 
 ```text
-docs/error-tracking/004-workflow-execution-governance-test-fixture-tenant-context.md
+docs/error-tracking/005-workflow-governance-asyncmock-add-warning.md
 ```
 
 ## 6. 当前验收门禁
 
-开发者尚未反馈本次修复后的 1.5-E 全量验收结果，因此当前不得标记为已完成。
+当前数据库状态已验证：
 
-待执行：
+```text
+0017_workflow_governance_audit_trace (head)
+```
+
+当前开发者反馈：
+
+```text
+180 passed, 4 warnings
+Phase 1.5-E Backend validation completed
+```
+
+虽然测试数量全部通过，但项目验收准则要求 Backend 全量 pytest **无未解释 warning**，因此 1.5-E 暂不关闭。
+
+已修复 warning，待开发者重新执行：
 
 ```powershell
 cd backend
@@ -144,20 +160,21 @@ uv run alembic current
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_e_workflow_governance_validation.ps1
 ```
 
-预期 head：
+预期：
 
 ```text
-0017_workflow_governance_audit_trace
+180 passed, 0 warnings
+0017_workflow_governance_audit_trace (head)
+Phase 1.5-E Backend validation completed.
 ```
-
-Backend 验证脚本只能执行 Backend migration / pytest，不得调用 Frontend 测试。Frontend 测试必须独立执行。
 
 只有开发者实际反馈上述门禁全部通过后，才能进入 1.5-F。
 
 ## 7. 下一步
 
 1. 开发者同步最新 `main`。
-2. 执行 1.5-E Backend migration / contract / full regression。
-3. 若继续失败，先记录到 `docs/error-tracking/`，再修复。
-4. 验收全部通过后更新本文件为 1.5-E 已完成。
-5. 然后进入 Phase 1.5-F Vue Workflow / Governance 管理端。
+2. 执行 Backend full regression，确认 `0 warnings`。
+3. 执行 1.5-E migration / contract / full regression validation。
+4. 若继续失败，先记录到 `docs/error-tracking/`，再修复。
+5. 验收全部通过后更新本文件为 1.5-E 已完成。
+6. 然后进入 Phase 1.5-F Vue Workflow / Governance 管理端。
