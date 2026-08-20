@@ -206,14 +206,18 @@ class WorkflowRuntime:
         circuit_key = circuit_config.get("key") or f"agent:{agent.id}:model:{version.model_id}"
         if not isinstance(circuit_key, str) or not circuit_key or len(circuit_key) > 200:
             raise HTTPException(422, "circuit_breaker.key 必须为 1-200 字符字符串")
-        await self.circuit_breaker.before_call(tenant_id or agent.owner_id, circuit_key, config)
+        circuit_tenant_id = tenant_id
+        if circuit_tenant_id is not None:
+            await self.circuit_breaker.before_call(circuit_tenant_id, circuit_key, config)
         messages = [{"role": "system", "content": version.system_prompt}, {"role": "user", "content": prompt}]
         try:
             result = await self.gateway.generate(version.model_id, messages, session_id)
         except Exception:
-            await self.circuit_breaker.record_failure(tenant_id or agent.owner_id, circuit_key, config)
+            if circuit_tenant_id is not None:
+                await self.circuit_breaker.record_failure(circuit_tenant_id, circuit_key, config)
             raise
-        await self.circuit_breaker.record_success(tenant_id or agent.owner_id, circuit_key, config)
+        if circuit_tenant_id is not None:
+            await self.circuit_breaker.record_success(circuit_tenant_id, circuit_key, config)
         usage = result.usage
         return {
             "content": result.content,
