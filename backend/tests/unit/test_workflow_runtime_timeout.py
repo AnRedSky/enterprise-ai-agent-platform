@@ -23,13 +23,23 @@ def test_timeout_policy_defaults_and_bounds():
     assert exc.value.status_code == 422
 
 
+def _mock_execution():
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        workflow_id=uuid4(),
+        workflow_version_id=uuid4(),
+        created_by=uuid4(),
+        status="pending",
+        input_data={"input": "slow"},
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_marks_workflow_timeout_as_failed(monkeypatch):
     service = WorkflowExecutionService(AsyncMock())
     service.governance.audit = AsyncMock()
-    execution = SimpleNamespace(
-        id=uuid4(), tenant_id=uuid4(), status="pending", input_data={"input": "slow"}
-    )
+    execution = _mock_execution()
     version = SimpleNamespace(
         definition={
             "config": {"timeout_ms": 10},
@@ -65,9 +75,7 @@ async def test_run_marks_workflow_timeout_as_failed(monkeypatch):
 async def test_run_marks_workflow_deadline_timeout_as_failed(monkeypatch):
     service = WorkflowExecutionService(AsyncMock())
     service.governance.audit = AsyncMock()
-    execution = SimpleNamespace(
-        id=uuid4(), tenant_id=uuid4(), status="pending", input_data={"input": "slow"}
-    )
+    execution = _mock_execution()
     version = SimpleNamespace(
         definition={
             "config": {"timeout_ms": 10},
