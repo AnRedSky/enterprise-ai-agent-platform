@@ -12,7 +12,13 @@ from app.services.workflow_execution import WorkflowExecutionService
 async def test_cancel_allows_pending_and_running_only():
     service = WorkflowExecutionService(AsyncMock())
     actor_id = uuid4()
-    execution = SimpleNamespace(status="pending")
+    execution = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        workflow_id=uuid4(),
+        workflow_version_id=uuid4(),
+        status="pending",
+    )
 
     result = await service.cancel(execution, actor_id)
 
