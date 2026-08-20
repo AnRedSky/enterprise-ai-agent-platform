@@ -101,11 +101,14 @@ def create_retry_boundary_fixtures(client, agent_id):
     deadline_workflow_id, deadline_execution_id = create_retry_fixture(
         client, agent_id,
         name="API Retry Deadline Validation",
-        runtime_config={"timeout_ms": 10},
+        # Leave enough workflow time for the deterministic HTTP_404 response,
+        # but less than the configured retry backoff so the retry is rejected
+        # by the workflow deadline rather than being misclassified as a timeout.
+        runtime_config={"timeout_ms": 100},
         retry_config={
             "max_attempts": 3,
-            "backoff_ms": 100,
-            "max_backoff_ms": 100,
+            "backoff_ms": 200,
+            "max_backoff_ms": 200,
             "jitter_ms": 0,
             "retryable_error_codes": ["HTTP_404"],
         },
