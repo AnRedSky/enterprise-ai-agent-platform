@@ -253,6 +253,7 @@ class WorkflowExecutionService:
                         raise HTTPException(504, "Workflow Execution timeout")
                     effective_timeout = min(node_timeout_ms / 1000, remaining)
                     exc: BaseException | None = None
+                    workflow_timeout = effective_timeout >= remaining
                     try:
                         data = await asyncio.wait_for(
                             runtime.execute_node(node, data, actor_id, is_admin, execution.id, execution.tenant_id),
@@ -260,7 +261,6 @@ class WorkflowExecutionService:
                         )
                     except asyncio.TimeoutError as caught:
                         exc = caught
-                        workflow_timeout = remaining <= node_timeout_ms / 1000
                         error_code = WorkflowRuntime.classify_error(caught, workflow_timeout=workflow_timeout)
                         error_message = "Workflow Execution timeout" if workflow_timeout else f"Workflow node timeout: {node_id}"
                     except Exception as caught:
@@ -271,9 +271,12 @@ class WorkflowExecutionService:
                         await self.transition_node(execution, node_id, "completed", output_data=data)
                         break
 
-                    await self.transition_node(execution, node_id, "failed", error_code=error_code,
-                                               error_message=error_message)
-                    attempt = node_execution.attempt
+                    failed_node_execution = await self.transition_node(execution, node_id, "failed", error_code=error_code,
+                                                                       error_message=error_message)
+                    raw_attempt = getattr(failed_node_execution, "attempt", None)
+                    if not isinstance(raw_attempt, int) or isinstance(raw_attempt, bool):
+                        raw_attempt = getattr(node_execution, "attempt", 1)
+                    attempt = raw_attempt if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool) else 1
                     can_retry = (
                         error_code in retry_policy["retryable_error_codes"]
                         and error_code != "WORKFLOW_TIMEOUT"
@@ -285,6 +288,8 @@ class WorkflowExecutionService:
                         if error_code.startswith("HTTP_") and error_code in {"HTTP_429", "HTTP_502", "HTTP_503", "HTTP_504"}:
                             raise HTTPException(int(error_code.split("_", 1)[1]), error_message) from exc
                         if error_code == "NODE_TIMEOUT":
+                            raise HTTPException(504, error_message) from exc
+                        if error_code == "WORKFLOW_TIMEOUT":
                             raise HTTPException(504, error_message) from exc
                         if isinstance(exc, HTTPException):
                             raise exc
