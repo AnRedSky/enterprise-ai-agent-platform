@@ -30,6 +30,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not real_api'"
 markers = [
     "real_api: tests that make HTTP calls to a separately running backend service",
 ]
