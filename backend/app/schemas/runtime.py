@@ -66,7 +66,12 @@ class AuditLogItem(BaseModel):
     action: str
     status: str
     error_code: str | None = None
-    metadata: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("metadata_json", "metadata"))
+    # Keep the persistence/API contract name explicit for governance consumers.
+    # Accept the historical "metadata" attribute as an input alias for compatibility.
+    metadata_json: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("metadata_json", "metadata"),
+    )
     created_at: datetime
 
 
