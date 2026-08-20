@@ -58,3 +58,31 @@ async def test_agent_node_uses_published_agent_version_and_gateway():
     )
     assert result["content"] == "ok"
     runtime.gateway.generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_node_query_is_scoped_to_workflow_tenant():
+    db = AsyncMock()
+    agent_id = uuid4()
+    owner_id = uuid4()
+    tenant_id = uuid4()
+    version_id = uuid4()
+    agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
+    version = SimpleNamespace(id=version_id, agent_id=agent_id, system_prompt="system", model_id="mock", version="1.0.0")
+    db.execute = AsyncMock(side_effect=[
+        SimpleNamespace(scalar_one_or_none=lambda: agent),
+        SimpleNamespace(scalar_one_or_none=lambda: version),
+    ])
+    runtime = WorkflowRuntime(db)
+    runtime.gateway.generate = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None))
+
+    result = await runtime.execute_node(
+        {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
+        {"input": "hello"}, owner_id, True, uuid4(), tenant_id,
+    )
+
+    assert result["content"] == "ok"
+    agent_query = db.execute.call_args_list[0].args[0]
+    query_text = str(agent_query)
+    assert "users" in query_text
+    assert "tenant_id" in query_text
