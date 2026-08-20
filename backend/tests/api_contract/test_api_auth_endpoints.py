@@ -1,5 +1,6 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.exc import IntegrityError
 from app.main import app
 from app.dependencies.db import get_db
 from app.models.core import Role, Tenant, User
@@ -18,6 +19,8 @@ class FakeDB:
         self.role = role
         self.tenant = tenant
         self.added = []
+        self.raise_integrity_error = False
+        self.rolled_back = False
 
     async def execute(self, statement):
         text = str(statement)
@@ -29,11 +32,14 @@ class FakeDB:
     def add(self, value): self.added.append(value)
 
     async def flush(self):
+        if self.raise_integrity_error:
+            raise IntegrityError("flush", {}, Exception("duplicate key"))
         from uuid import uuid4
         for value in self.added:
             if isinstance(value, (User, Role)) and value.id is None: value.id = uuid4()
 
     async def commit(self): pass
+    async def rollback(self): self.rolled_back = True
     async def refresh(self, value): pass
 
 
@@ -54,6 +60,15 @@ async def test_register_returns_user_payload(db_override):
     assert response.json()["username"] == "tester"
     assert response.json()["roles"] == ["user"]
     assert any(isinstance(value, Tenant) for value in db_override.added)
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_integrity_conflict(db_override):
+    db_override.raise_integrity_error = True
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/v1/auth/register", json={"username":"tester","password":"password123"})
+    assert response.status_code == 409
+    assert db_override.rolled_back is True
 
 
 @pytest.mark.asyncio
