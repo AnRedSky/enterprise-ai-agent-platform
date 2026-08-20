@@ -28,6 +28,7 @@ export type WorkflowExecution = {
   workflow_id: string;
   workflow_version_id: string;
   created_by: string;
+  retry_of_execution_id?: string;
   status: string;
   current_node_id?: string;
   input_data: Record<string, unknown>;
@@ -81,6 +82,12 @@ export const workflowApi = {
     return request.post<WorkflowExecution>(`/workflows/${workflowId}/executions`, { input_data: inputData });
   },
   runExecution(executionId: string) { return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/run`); },
+  cancelExecution(executionId: string, reason?: string) {
+    return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/cancel`, { reason });
+  },
+  retryExecution(executionId: string) {
+    return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/retry`);
+  },
   execution(executionId: string) { return request.get<WorkflowExecution>(`/workflows/executions/${executionId}`); },
   executionNodes(executionId: string) { return request.get<WorkflowExecutionNode[]>(`/workflows/executions/${executionId}/nodes`); },
   trace(executionId: string) { return request.get<{ execution_id: string; items: WorkflowTrace[] }>(`/runtime/executions/${executionId}/trace`); },
