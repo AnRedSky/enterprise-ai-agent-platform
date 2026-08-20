@@ -1,7 +1,7 @@
 # 项目开发进度
 
 > 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。
-> 工程开发规则统一维护在 `docs/DEVELOPMENT_GUIDELINES.md`，不得在本文件复制或替代开发准则。
+> 工程开发规则统一维护在 `docs/DEVELOPMENT.md`，不得在本文件复制或替代开发准则。
 
 ## 1. 当前主线
 
@@ -9,9 +9,10 @@
 - 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - 当前阶段：Phase 1.5 Workflow / Governance
-- 当前任务：Phase 1.5-F Workflow Runtime 执行治理闭环
+- 当前任务：Phase 1.5-G Circuit Breaker Real API 边界验收
 - 当前角色：开发执行
-- 基线：2026-08-20 远端 `main` 已完成 Workflow Registry / Version / Publish / Execution / Audit / Trace、Idempotency-Key、Execution 状态并发锁、Runtime Timeout / Failure Recovery Hardening 闭环
+- 当前 main 基线：`172728f916029cb589ee2519e83ba9fc85617b3f`
+- 最新 main 提交：`fix: count only transient failures toward circuit threshold`
 
 ## 2. 阶段状态
 
@@ -26,8 +27,9 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery 已完成，当前进入 Node-level Retry / Attempt 治理 |
-| 测试基础设施治理 | 持续治理 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；不新增重复测试入口或混用开发/测试脚本 |
+| Phase 1.5-F | 已完成 | Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery / Node Retry / Attempt 治理已完成并进入后续可靠性收口 |
+| Phase 1.5-G | 开发中 | Circuit Breaker 已落地 main，当前执行 Real API 边界验收 |
+| 测试基础设施治理 | 持续治理 | Unit / Integration / API Contract / Real API 四层规范持续执行，不新增重复测试入口或混用开发/测试脚本 |
 
 ## 3. 强制测试链
 
@@ -35,14 +37,14 @@
 Unit → Integration → API Contract → Real API → Frontend Test/Build → Browser 联调
 ```
 
-Real API Gate：
+Real API 唯一入口：
 
 ```powershell
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-统一联调 Gate：
+联调唯一入口：
 
 ```powershell
 cd backend
@@ -53,131 +55,95 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 
 ## 4. 已验收基线
 
-### Backend regression
+### Backend / Retry Reliability
 
-最近一次开发者反馈：
-
-```text
-全部通过
-```
+开发者此前已反馈 Workflow Runtime Timeout / Failure Recovery、Node Retry / Attempt、Retry Budget、Retry Deadline 等链路测试全部通过。
 
 ### Migration
 
-最近一次开发者反馈：
+此前稳定 head：
 
 ```text
-0019_workflow_execution_idempotency (head)
-```
-
-### Real API Gate
-
-最近一次开发者反馈：
-
-```text
-5 passed
-[PASS] Real API gate completed.
-```
-
-真实 HTTP 链路已覆盖：
-
-```text
-Register → Login → Workflow → Version → Publish → Execution → Audit → Trace
-```
-
-### Frontend
-
-最近一次开发者反馈：Frontend tests 全部通过；production build 无 vendor circular chunk warning，也无 >500KB chunk warning。
-
-## 5. Phase 1.5-F 当前实现
-
-已完成：
-
-1. Workflow Registry / Version / Publish 管理界面。
-2. Workflow Definition JSON 编辑与新 Version 创建。
-3. Workflow Audit 查询展示。
-4. Workflow Trace 查询展示。
-5. Workflow Execution / Node API types 与查询封装。
-6. Governance 页面新增 Execution 状态、当前节点、时间、错误及 Node 状态展示。
-7. Workflow API contract tests 与 Governance view tests。
-8. Real API bootstrap 已改为自动发现/创建最小可执行 Workflow fixture，避免空 `nodes` definition 导致 422。
-9. Execution Cancel：`pending/running → cancelled`，支持取消原因并写入 Audit / Trace。
-10. Execution Retry：仅允许 `failed → new pending Execution`，不修改原 Execution。
-11. Retry lineage：新增 `retry_of_execution_id`，新旧 Execution 可追溯关联。
-12. Governance 页面新增 Cancel / Retry 操作及 Retry 来源展示。
-13. Frontend Workflow API tests 增加 Cancel / Retry contract coverage。
-14. Backend API contract tests 增加 Cancel / Retry route coverage。
-15. Backend unit tests 增加 Cancel / Retry 状态治理测试。
-16. Execution Idempotency-Key contract：通过 HTTP `Idempotency-Key` 请求头关联同 Tenant 的 Execution 创建请求。
-17. Idempotency-Key 唯一约束：同 Tenant 下重复 Key 返回原 Execution；跨 Workflow / Version 重用返回 409；并处理并发插入竞争。
-18. Idempotency 创建链路写入 Audit / Trace 时只记录 key 是否存在，不记录具体 key 值。
-19. Frontend Workflow API 已支持可选 `Idempotency-Key`，并补充 API contract test。
-20. Execution 状态转换新增数据库行锁：真实 `AsyncSession` 下使用 `SELECT ... FOR UPDATE` 重新读取 Execution，再进行状态校验和更新。
-21. Cancel / Run / Retry / Node transition 不再依赖调用方持有的旧状态完成最终状态判定，降低并发操作下的 stale-state race window。
-22. 新增 Execution row-locking unit coverage，验证 `FOR UPDATE` 与锁后状态重新校验。
-23. Workflow Runtime 新增统一 timeout policy：Workflow / Node 均支持 `config.timeout_ms`，默认 30 秒，最大 300 秒。
-24. Runtime 使用 `asyncio.wait_for` 对 Node 执行建立硬超时边界，Workflow 总 deadline 对多个 Node 的累计执行时间进行约束。
-25. Node 超时统一落为 `NODE_TIMEOUT`，Workflow 总 deadline 超时统一落为 `WORKFLOW_TIMEOUT`，并将对应 Node / Execution 标记为 `failed`、写入 Audit / Trace。
-26. Timeout 以 HTTP 504 向调用方暴露，不再将超时包装成普通 500；failed Execution 保持现有 Retry recovery 边界。
-27. 新增 Workflow Runtime timeout policy、Node timeout、Workflow deadline timeout unit coverage。
-28. Node retry policy 默认单次执行，只有显式配置 `retry.max_attempts > 1` 才启用自动重试，避免改变既有 Workflow 行为。
-29. Retry policy 校验 `max_attempts`、指数退避、最大退避、jitter 与 retryable error code 白名单，并限制最大 attempt / delay，避免无限重试。
-30. Retryable / non-retryable failure 分类：仅明确的超时、连接错误、429、502、503、504 等 transient error code 默认允许进入 retry policy；422、403、404 等业务/权限错误不会自动重试。
-31. WorkflowNodeExecution 复用既有 `attempt` 字段记录当前 attempt；`failed → running` 仅作为内部 retry transition，并在重新运行时递增 attempt。
-32. 每次 retry schedule 写入 Audit / Trace，记录 attempt、next attempt、delay、max attempts 与 error code，不记录敏感请求内容。
-33. Retry delay 使用有上限的 exponential backoff + jitter，并受 Workflow 总 deadline 约束；若等待时间会越过 deadline，则终止为 `WORKFLOW_TIMEOUT`。
-34. 新增 Node retry policy、error classification、bounded backoff 与 failed-node next-attempt unit coverage。
-
-## 6. 本轮数据库变更
-
-本轮 Node-level Retry / Attempt 治理**无数据库结构变更**，直接复用既有 `workflow_node_executions.attempt` 与 Workflow Trace / Audit 作为 attempt 治理与历史记录载体，不新增 migration。
-
-既有数据库变更：
-
-```text
-0018_workflow_execution_retry_lineage
 0019_workflow_execution_idempotency
 ```
 
-0019 内容：
+Phase 1.5-G 新增：
 
-- `workflow_executions.idempotency_key`
-- `(tenant_id, idempotency_key)` 唯一约束
+```text
+0020_workflow_circuit_breaker
+```
 
-## 7. 当前待验收
+该 migration 已提交到 main，必须由开发者本地实际执行 `uv run alembic upgrade head` 后才可标记验收通过。
 
-本轮 Node-level Retry / Attempt 治理代码已提交到 `phase-1-5-f-node-retry` 开发分支，尚未宣称本轮本地验收通过。开发者需要按强制测试链执行：
+### Real API
 
-1. `cd backend && uv run pytest -q`
-2. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1`
-3. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1`
-4. `cd frontend && npm test`
-5. `cd frontend && npm run build`
-6. 浏览器级验证 Workflow → Node transient failure → retry schedule → attempt 递增 → success / exhausted → Audit / Trace
+此前 Retry Governance Real API 边界已通过开发者反馈。
 
-特别验证：
+Phase 1.5-G Circuit Breaker Real API 尚未宣称通过，必须重新执行当前强制 Real API Gate。
 
-- 未配置 `retry` 时仍只执行一次，不改变既有行为。
-- `retry.max_attempts` 必须为 `1..5`。
-- `retry.backoff_ms`、`retry.max_backoff_ms`、`retry.jitter_ms` 必须在受控范围内。
-- `retry.max_backoff_ms >= retry.backoff_ms`。
-- retryable error code 必须通过显式白名单判定，非 retryable 错误不得自动重试。
-- Node 第一次失败后进入 retry schedule，下一次 `running` 时 `attempt` 从 1 增加到 2。
-- 达到 `max_attempts` 后 Execution 保持 `failed`，不得继续重试。
-- Retry delay 采用 exponential backoff + jitter，并且不得越过 Workflow deadline。
-- Workflow deadline 被 retry delay 消耗时统一以 `WORKFLOW_TIMEOUT` 终止。
-- 每个 retry schedule 必须存在对应 Audit / Trace，包含 attempt / delay / error code。
-- 全量测试无新增 warning。
-- Migration head 保持 `0019_workflow_execution_idempotency`。
+### Frontend
+
+此前 Frontend tests 与 production build 均通过；Phase 1.5-G 无独立 Circuit Breaker UI，但仍需执行前端测试与 production build 作为阶段门禁。
+
+## 5. Phase 1.5-G Circuit Breaker 当前实现
+
+已提交 main：
+
+1. `WorkflowCircuitState` 持久化模型。
+2. `0020_workflow_circuit_breaker` Alembic migration。
+3. Database-backed `CircuitBreakerService`。
+4. CLOSED / OPEN / HALF_OPEN 状态机。
+5. `tenant_id + circuit_key` 隔离。
+6. Circuit 状态读取与更新使用数据库行锁。
+7. `failure_threshold`、`recovery_timeout_ms`、`half_open_max_calls` 配置校验。
+8. OPEN 状态 Fast-Fail。
+9. HALF_OPEN 探活槽位限制。
+10. Workflow Runtime 集成 Circuit Breaker。
+11. 仅 transient failure 计入熔断阈值；404 / 403 / 422 等业务/权限类错误不应触发熔断。
+12. Circuit Breaker Unit Test 与 Runtime Contract Test。
+
+设计原则与项目架构中的 `Timeout + Retry + Circuit Breaker` 容错要求一致；熔断状态外置到 PostgreSQL，保持 Runtime worker 无状态并支持多副本共享状态。
+
+## 6. Phase 1.5-G 验收要求
+
+Real API 必须覆盖：
+
+1. Circuit disabled 保持既有 Runtime 行为。
+2. transient failure 达到 threshold 后 CLOSED → OPEN。
+3. OPEN 请求立即 Fast-Fail，不再次调用 Provider。
+4. non-transient failure 不计入 failure count。
+5. recovery timeout 后 OPEN → HALF_OPEN。
+6. HALF_OPEN probe 数量受 `half_open_max_calls` 限制。
+7. probe success 后 HALF_OPEN → CLOSED。
+8. probe failure 后重新 OPEN。
+9. Tenant isolation：不同 Tenant 的同名 circuit key 相互隔离。
+10. Circuit OPEN 不错误消耗 Retry budget。
+11. Circuit 与 Workflow Deadline / Retry 边界不互相绕过。
+12. Execution / Node / Trace / Audit 最终状态一致。
+
+## 7. 本轮必须执行
+
+```powershell
+cd backend
+uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+cd ..\frontend
+npm test
+npm run build
+cd ..\backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_frontend_backend_gate.ps1
+```
+
+实际测试结果必须以开发者反馈为准；当前不预填 Phase 1.5-G 的“通过”。
 
 ## 8. 下一步
 
-当前不继续人为拆分 vendor chunk，也不新增重复测试入口。
+**当前唯一优先工作项：Phase 1.5-G Circuit Breaker Real API 边界验收。**
 
-**当前工作项：Workflow Execution Reliability Hardening**
+完成并通过全部门禁后：
 
-优先顺序：
-
-1. Runtime 超时与失败恢复边界：已实现并已通过开发者验收。
-2. **Node-level retry / attempt 治理：本轮已实现，待强制测试链验收。**
-3. Execution 查询列表与历史执行治理。
-4. 再进入更高阶段的 Workflow 调度与异步 Worker 能力。
+1. 更新本文件收口 Phase 1.5-G。
+2. 更新 `docs/14-phase-1.5-g-circuit-breaker.md` 的实际验收结果。
+3. 进入 Workflow Execution 查询列表与历史执行治理。
+4. 再进入异步 Worker / 调度能力。
