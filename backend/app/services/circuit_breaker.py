@@ -33,6 +33,9 @@ class CircuitBreakerService:
         enabled = raw.get("enabled", False)
         if not isinstance(enabled, bool):
             raise HTTPException(422, "circuit_breaker.enabled 必须为布尔值")
+        key = raw.get("key")
+        if key is not None and (not isinstance(key, str) or not 1 <= len(key) <= 200):
+            raise HTTPException(422, "circuit_breaker.key 必须为 1-200 字符字符串")
         threshold = raw.get("failure_threshold", 3)
         recovery_ms = raw.get("recovery_timeout_ms", 10_000)
         half_open_calls = raw.get("half_open_max_calls", 1)
@@ -44,6 +47,7 @@ class CircuitBreakerService:
             raise HTTPException(422, "circuit_breaker.half_open_max_calls 必须在 1-10 范围内")
         return {
             "enabled": enabled,
+            "key": key,
             "failure_threshold": threshold,
             "recovery_timeout_ms": recovery_ms,
             "half_open_max_calls": half_open_calls,
@@ -73,13 +77,17 @@ class CircuitBreakerService:
             if now - opened_at >= timedelta(milliseconds=policy["recovery_timeout_ms"]):
                 state.state = "half_open"
                 state.half_opened_at = now
-                state.success_count = 0
+                state.success_count = 1
                 await self.db.flush()
                 return "half_open"
             raise CircuitOpenError(circuit_key)
-        if state.state == "half_open" and state.success_count >= policy["half_open_max_calls"]:
-            raise CircuitOpenError(circuit_key)
-        return state.state
+        if state.state == "half_open":
+            if state.success_count >= policy["half_open_max_calls"]:
+                raise CircuitOpenError(circuit_key)
+            state.success_count += 1
+            await self.db.flush()
+            return "half_open"
+        return "closed"
 
     async def record_success(self, tenant_id: UUID, circuit_key: str, config: dict | None = None) -> None:
         policy = self.validate_config(config)
