@@ -48,6 +48,59 @@ def create_executable_fixture(client):
     return workflow["id"]
 
 
+def create_retry_fixture(client):
+    workflow = request(
+        client,
+        "POST",
+        "/workflows",
+        json={
+            "name": f"API Retry Governance Validation {uuid.uuid4().hex[:8]}",
+            "description": "Automated real API node retry governance fixture",
+        },
+    ).json()
+    version = request(
+        client,
+        "POST",
+        f"/workflows/{workflow['id']}/versions",
+        json={
+            "definition": {
+                "config": {"timeout_ms": 30_000},
+                "nodes": [
+                    {
+                        "id": "retry-agent",
+                        "type": "agent",
+                        "config": {
+                            "agent_id": str(uuid.uuid4()),
+                            "retry": {
+                                "max_attempts": 2,
+                                "backoff_ms": 0,
+                                "max_backoff_ms": 0,
+                                "jitter_ms": 0,
+                                "retryable_error_codes": ["HTTP_404"],
+                            },
+                        },
+                    }
+                ],
+                "edges": [],
+            }
+        },
+    ).json()
+    request(client, "POST", f"/workflows/{workflow['id']}/versions/{version['id']}/publish")
+    execution = request(
+        client,
+        "POST",
+        f"/workflows/{workflow['id']}/executions",
+        json={"input_data": {"source": "real_api_node_retry_validation"}},
+    ).json()
+    response = client.post(f"/executions/{execution['id']}/run")
+    if response.status_code != 404:
+        raise RuntimeError(
+            f"POST /executions/{execution['id']}/run -> expected 404 after retry fixture failure, "
+            f"got {response.status_code}: {response.text}"
+        )
+    return workflow["id"], execution["id"]
+
+
 def find_executable_published_workflow(client, workflows):
     for workflow in workflows:
         published_version_id = workflow.get("published_version_id")
@@ -87,6 +140,7 @@ def main():
             f"/workflows/{workflow_id}/executions",
             json={"input_data": {"source": "real_api_validation"}},
         ).json()
+        retry_workflow_id, retry_execution_id = create_retry_fixture(client)
 
     ENV_FILE.write_text(
         json.dumps(
@@ -94,6 +148,8 @@ def main():
                 "ACCESS_TOKEN": token,
                 "WORKFLOW_ID": str(workflow_id),
                 "WORKFLOW_EXECUTION_ID": str(execution["id"]),
+                "RETRY_WORKFLOW_ID": str(retry_workflow_id),
+                "RETRY_EXECUTION_ID": str(retry_execution_id),
             }
         ),
         encoding="utf-8",
