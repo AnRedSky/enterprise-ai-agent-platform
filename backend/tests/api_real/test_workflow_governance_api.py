@@ -100,16 +100,45 @@ def test_node_retry_real_business_loop():
 
     assert trace.status_code == 200, trace.text
     trace_items = trace.json()
-    assert any(item["event_type"] == "node.retry.scheduled" and item["status"] == "retrying" for item in trace_items)
+    trace_types = [item["event_type"] for item in trace_items]
+    scheduled_index = trace_types.index("node.retry.scheduled")
+    failed_indexes = [
+        index for index, item in enumerate(trace_items)
+        if item["event_type"] == "node.state_changed"
+        and item["node_id"] == "retry-agent"
+        and item["status"] == "failed"
+    ]
+    assert len(failed_indexes) == 2
+    assert failed_indexes[0] < scheduled_index < failed_indexes[1]
+
     retry_state_events = [
         item for item in trace_items
         if item["event_type"] == "node.state_changed" and item["node_id"] == "retry-agent"
     ]
     assert any((item.get("data") or {}).get("attempt") == 1 for item in retry_state_events)
     assert any((item.get("data") or {}).get("attempt") == 2 for item in retry_state_events)
-    assert any(item["event_type"] == "execution.state_changed" and item["status"] == "failed" for item in trace_items)
+    final_execution_index = max(
+        index for index, item in enumerate(trace_items)
+        if item["event_type"] == "execution.state_changed"
+        and item["status"] == "failed"
+    )
+    assert failed_indexes[-1] < final_execution_index
 
     assert audit.status_code == 200, audit.text
     audit_items = audit.json()["items"]
-    assert any(item["action"] == "workflow.node.retry" and item["status"] == "retrying" for item in audit_items)
-    assert any(item["action"] == "workflow.execution.failed" and item["status"] == "failed" for item in audit_items)
+    audit_actions = [item["action"] for item in audit_items]
+    assert "workflow.node.retry" in audit_actions
+    assert "workflow.node.retry_exhausted" in audit_actions
+    assert "workflow.execution.failed" in audit_actions
+    # Audit API is newest-first; terminal governance facts must be visible in
+    # the expected lifecycle order when read from oldest to newest.
+    audit_actions_oldest_first = list(reversed(audit_actions))
+    retry_index = audit_actions_oldest_first.index("workflow.node.retry")
+    exhausted_index = audit_actions_oldest_first.index("workflow.node.retry_exhausted")
+    execution_failed_index = audit_actions_oldest_first.index("workflow.execution.failed")
+    assert retry_index < exhausted_index < execution_failed_index
+    retry_audit = audit_items[audit_actions.index("workflow.node.retry")]
+    assert retry_audit["status"] == "retrying"
+    exhausted_audit = audit_items[audit_actions.index("workflow.node.retry_exhausted")]
+    assert exhausted_audit["status"] == "failed"
+    assert exhausted_audit["error_code"] == "HTTP_404"
