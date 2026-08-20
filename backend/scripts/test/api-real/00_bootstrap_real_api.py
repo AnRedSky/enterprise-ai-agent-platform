@@ -205,7 +205,7 @@ def create_circuit_breaker_fixtures(client):
         client, model_id="mock-http-503", name_prefix="API Circuit Failure Agent"
     )
     recovery_agent_id = create_retry_agent(
-        client, model_id="mock-success", name_prefix="API Circuit Recovery Agent"
+        client, model_id="mock-slow-success", name_prefix="API Circuit Recovery Agent"
     )
     open_workflow_id, open_execution_id = create_circuit_fixture(
         client,
