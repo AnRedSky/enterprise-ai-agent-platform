@@ -72,6 +72,19 @@ export type WorkflowTrace = {
   created_at: string;
 };
 
+export type WorkflowTrigger = {
+  id: string;
+  tenant_id: string;
+  workflow_id: string;
+  name: string;
+  trigger_type: "manual";
+  status: "enabled" | "disabled";
+  config: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export const workflowApi = {
   list() { return request.get<Workflow[]>("/workflows"); },
   create(payload: { name: string; description: string }) { return request.post<Workflow>("/workflows", payload); },
@@ -79,6 +92,21 @@ export const workflowApi = {
   versions(id: string) { return request.get<WorkflowVersion[]>(`/workflows/${id}/versions`); },
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
+  triggers(id: string) { return request.get<WorkflowTrigger[]>(`/workflows/${id}/triggers`); },
+  createTrigger(id: string, payload: { name: string; trigger_type: "manual"; config: Record<string, unknown> }) {
+    return request.post<WorkflowTrigger>(`/workflows/${id}/triggers`, payload);
+  },
+  updateTrigger(id: string, triggerId: string, payload: { name?: string; status?: WorkflowTrigger["status"]; config?: Record<string, unknown> }) {
+    return request.patch<WorkflowTrigger>(`/workflows/${id}/triggers/${triggerId}`, payload);
+  },
+  deleteTrigger(id: string, triggerId: string) { return request.delete<void>(`/workflows/${id}/triggers/${triggerId}`); },
+  invokeTrigger(id: string, triggerId: string, inputData: Record<string, unknown> = {}, idempotencyKey?: string) {
+    return request.post<WorkflowExecution>(
+      `/workflows/${id}/triggers/${triggerId}/invoke`,
+      { input_data: inputData },
+      idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+    );
+  },
   createExecution(workflowId: string, inputData: Record<string, unknown> = {}, idempotencyKey?: string) {
     return request.post<WorkflowExecution>(
       `/workflows/${workflowId}/executions`,
