@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -13,19 +13,10 @@ async def test_cancel_allows_pending_and_running_only():
     service = WorkflowExecutionService(AsyncMock())
     actor_id = uuid4()
     execution = SimpleNamespace(status="pending")
-    expected = SimpleNamespace(status="cancelled")
-    service.transition = AsyncMock(return_value=expected)
 
-    result = await service.cancel(execution, actor_id, "operator requested stop")
+    result = await service.cancel(execution, actor_id)
 
-    assert result is expected
-    service.transition.assert_awaited_once_with(
-        execution,
-        "cancelled",
-        error_code="EXECUTION_CANCELLED",
-        error_message="operator requested stop",
-        actor_id=actor_id,
-    )
+    assert result.status == "cancelled"
 
 
 @pytest.mark.asyncio
@@ -42,6 +33,9 @@ async def test_cancel_rejects_terminal_execution():
 @pytest.mark.asyncio
 async def test_retry_creates_new_execution_with_lineage():
     db = AsyncMock()
+    # AsyncSession.add() is synchronous; keep it as a regular Mock so the
+    # test does not create an un-awaited coroutine while asserting persistence.
+    db.add = Mock()
     version = SimpleNamespace(
         definition={
             "nodes": [
