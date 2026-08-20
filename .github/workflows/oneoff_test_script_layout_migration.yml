@@ -1,0 +1,89 @@
+name: One-off test and script layout migration
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.event.head_commit.message != 'refactor: complete test and script layout migration'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Prepare Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --dev
+
+      - name: Move root tests according to test taxonomy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p backend/tests/unit backend/tests/integration backend/tests/api_contract
+          for f in backend/tests/test_*.py; do
+            [ -e "$f" ] || continue
+            base="$(basename "$f")"
+            case "$base" in
+              test_hybrid_retrieval_api_contract.py|test_runtime_api_contract.py|test_runtime_http_rbac.py|test_runtime_query_rbac.py|test_runtime_rbac_matrix.py|test_tool_http_security.py)
+                target=backend/tests/api_contract/"$base" ;;
+              test_alembic_env.py|test_tenant_contract_migration.py|test_workflow_execution_migration.py|test_hybrid_knowledge_retrieval_service.py|test_knowledge_ingestion.py|test_knowledge_vector_indexing.py|test_runtime_knowledge_integration.py|test_tool_runtime_e2e.py|test_tool_runtime_failures.py|test_workflow_runtime.py)
+                target=backend/tests/integration/"$base" ;;
+              *)
+                target=backend/tests/unit/"$base" ;;
+            esac
+            git mv "$f" "$target"
+          done
+
+      - name: Move root scripts according to scripts taxonomy
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p backend/scripts/test/dev-legacy backend/scripts/evaluation/knowledge backend/scripts/evaluation/embedding
+          for f in backend/scripts/*; do
+            [ -f "$f" ] || continue
+            base="$(basename "$f")"
+            [ "$base" = "README.md" ] && continue
+            case "$base" in
+              evaluate_knowledge_retrieval*.py|check_knowledge_retrieval_quality.py|run_knowledge_retrieval_evaluation.py)
+                git mv "$f" backend/scripts/evaluation/knowledge/"$base" ;;
+              evaluate_knowledge_retrieval_provider.py|run_embedding_provider_validation.ps1)
+                git mv "$f" backend/scripts/evaluation/embedding/"$base" ;;
+              *)
+                git mv "$f" backend/scripts/test/dev-legacy/"$base" ;;
+            esac
+          done
+
+      - name: Verify no root test or script files remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! find backend/tests -maxdepth 1 -type f -name 'test_*.py' -print -quit | grep -q .
+          ! find backend/scripts -maxdepth 1 -type f ! -name 'README.md' -print -quit | grep -q .
+
+      - name: Run default backend regression
+        working-directory: backend
+        run: uv run pytest -q
+
+      - name: Commit migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/tests backend/scripts
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m 'refactor: complete test and script layout migration'
+          git push origin main
