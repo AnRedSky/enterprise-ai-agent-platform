@@ -49,7 +49,7 @@ def create_executable_fixture(client):
 
 
 def create_retry_agent(client):
-    """Create and publish a real Agent so the retry fixture fails inside Runtime as HTTP_404."""
+    """Create and publish a real Agent for the retry fixture's Runtime ownership context."""
     agent = request(
         client,
         "POST",
@@ -75,7 +75,11 @@ def create_retry_agent(client):
 
 
 def create_retry_fixture(client):
-    agent_id = create_retry_agent(client)
+    # The real Agent establishes the normal tenant/ownership context. The node then
+    # deliberately points at a non-existent Agent UUID so Runtime deterministically
+    # classifies the failure as HTTP_404 and exercises the retry/attempt governance path.
+    create_retry_agent(client)
+    invalid_agent_id = str(uuid.uuid4())
     workflow = request(
         client,
         "POST",
@@ -97,7 +101,8 @@ def create_retry_fixture(client):
                         "id": "retry-agent",
                         "type": "agent",
                         "config": {
-                            "agent_id": str(agent_id),
+                            "agent_id": invalid_agent_id,
+                            "prompt": "Trigger deterministic node retry validation.",
                             "retry": {
                                 "max_attempts": 2,
                                 "backoff_ms": 0,
@@ -120,7 +125,6 @@ def create_retry_fixture(client):
         json={
             "input_data": {
                 "source": "real_api_node_retry_validation",
-                "prompt": "Trigger deterministic node retry validation.",
             }
         },
     ).json()
