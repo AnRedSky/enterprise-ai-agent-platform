@@ -8,6 +8,8 @@ const api = vi.hoisted(() => ({
   versions: vi.fn(),
   createVersion: vi.fn(),
   publish: vi.fn(),
+  createExecution: vi.fn(),
+  runExecution: vi.fn(),
   execution: vi.fn(),
   executionNodes: vi.fn(),
   trace: vi.fn(),
@@ -81,6 +83,22 @@ describe("Workflow Governance view", () => {
     await (wrapper.vm as any).selectWorkflow(workflow);
     expect(api.versions).toHaveBeenCalledWith("w1");
     expect(wrapper.text()).toContain("Order Workflow");
+  });
+
+  it("creates and runs an execution for the selected published workflow", async () => {
+    api.list.mockResolvedValue({ data: [workflow] });
+    api.createExecution.mockResolvedValue({ data: { id: "e1", status: "pending", workflow_id: "w1", workflow_version_id: "v1", input_data: {}, created_at: "2026-08-20" } });
+    api.runExecution.mockResolvedValue({ data: { id: "e1", status: "completed", workflow_id: "w1", workflow_version_id: "v1", input_data: {}, output_data: { ok: true }, created_at: "2026-08-20" } });
+    api.executionNodes.mockResolvedValue({ data: [] });
+    const wrapper = mount(Workflows, { global });
+    await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
+    await (wrapper.vm as any).selectWorkflow(workflow);
+    await (wrapper.vm as any).createExecution();
+    expect(api.createExecution).toHaveBeenCalledWith("w1", {});
+    await (wrapper.vm as any).runExecution();
+    expect(api.runExecution).toHaveBeenCalledWith("e1");
+    expect(api.executionNodes).toHaveBeenCalledWith("e1");
+    expect((wrapper.vm as any).execution.status).toBe("completed");
   });
 
   it("loads execution status and node states from a real execution id", async () => {
