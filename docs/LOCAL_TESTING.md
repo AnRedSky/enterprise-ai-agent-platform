@@ -75,6 +75,32 @@ npm run build
 
 前后端测试脚本保持独立。
 
+### Release / Full Regression Gate
+
+完整质量门统一入口，不再使用重复的 Frontend/Backend 全套 Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
+```
+
+固定顺序：Backend regression → migration/head verification → Real API → Frontend test/build。
+
+### Real API Gate
+
+Real API 唯一入口：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```
+
+Real API fixture 的 Token、Workflow、Execution、Retry、Circuit Breaker 上下文由 `00_bootstrap_real_api.py` 自动生成并在 Gate 结束时清理。
+
+### Frontend / Backend E2E
+
+`backend/scripts/test/integration/` 当前只保留未来真正 Browser / Frontend-Backend E2E 的职责说明；当前没有浏览器级 E2E 自动化入口。
+
 ## 4. API 手工测试
 
 既有 Identity、Agent、Runtime、Tool 等验收步骤保持不变。
@@ -217,3 +243,23 @@ Docker：
 - **通过**：自动化测试通过 + 当前阶段核心手工场景全部通过。
 - **条件通过**：核心功能通过，但存在已知 warning/生产化缺口。
 - **不通过**：认证、RBAC、数据隔离、Runtime 链路、Tool 安全边界或当前阶段核心 Knowledge 场景失败。
+
+## 17. Phase 1.5-G Circuit Breaker Real API
+
+当前 Real API Gate 已增加确定性 Circuit Breaker fixture，覆盖：
+
+1. transient HTTP 503 触发 CLOSED → OPEN。
+2. Retry 与 Circuit OPEN 联动，第二次尝试 Fast-Fail 为 `CIRCUIT_OPEN`。
+3. 已 OPEN 的 Circuit 对新的 Execution 立即 Fast-Fail。
+4. recovery timeout 后进入 HALF_OPEN。
+5. 使用同一 `tenant_id + circuit_key` 的成功 Agent 完成探活并关闭 Circuit。
+6. Circuit 关闭后后续 Execution 恢复正常。
+
+执行：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```
+
+以上仅表示测试实现范围，**不得在开发者实际执行前标记通过**。
