@@ -10,7 +10,7 @@
 - 开发方式：所有功能直接在 `main` 开发与提交
 - Phase 1.5：**已完成**
 - 当前阶段：**Phase 1.6 Workflow Production Hardening**
-- 当前任务：**Phase 1.6-A Workflow Trigger Contract，待开始 Backend Contract 实现**
+- 当前任务：**Phase 1.6-A Workflow Trigger Contract，Backend Contract 实现中**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend 与 Frontend Gate 已拆分，禁止单脚本跨前后端执行测试
 - 规范核查：已完成，详见 `docs/14-project-compliance-audit-and-correction-plan.md`
@@ -32,7 +32,7 @@
 | Phase 1.5-G | **已完成** | CLOSED / OPEN / HALF_OPEN、持久化 Circuit Policy、OPEN Fast-Fail、并发 HALF_OPEN probe quota、成功恢复、失败重新 OPEN、Retry / Timeout / Governance 边界已完成；Backend pytest、migration/head、Real API Gate 全部通过 |
 | Phase 1.5 | **已完成** | A～G 全部完成；不再重复开发 Circuit Breaker，进入后续生产化建设 |
 | 测试基础设施治理 | 已修复 | Backend / Frontend Gate 已拆分，Frontend 脚本位于 `frontend/`，Backend 脚本位于 `backend/` |
-| Phase 1.6-A | 待开始 | Workflow Trigger Contract；下一项执行任务 |
+| Phase 1.6-A | **进行中** | Workflow Trigger Contract；Backend Domain / API / Migration / Contract tests 已进入实现，尚未进行最终 Gate 验收 |
 
 ## 3. 测试 Gate 结构
 
@@ -121,21 +121,31 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 4. Phase 1.5-G 已完成，不再重复开发 Circuit Breaker。
 5. 总体架构中尚未完成的 MQ / Worker、Multi-Agent、Evaluation、复杂审批、可视化 Workflow 等能力不得提前标记完成。
 
-## 6. Phase 1.6-A 下一步执行
+## 6. Phase 1.6-A 当前实现进度
 
-下一项任务为 **Workflow Trigger Contract**，具体基线见 `docs/15-phase-1.6-workflow-production-hardening-plan.md`。
+已完成 Backend Contract 第一轮代码：
 
-第一步只允许进入 Backend：
+- `WorkflowTrigger` domain model：Tenant / Workflow scope、manual trigger、enabled/disabled、config、owner/audit actor。
+- Migration `0022_workflow_trigger`：创建 `workflow_triggers` 表及 Tenant / Workflow / status / created 索引。
+- `WorkflowTriggerService`：创建、查询、更新、删除、manual invoke、Published Workflow 校验、Disabled Fast-Fail、Idempotency 复用现有 `WorkflowExecution` 唯一约束。
+- Workflow Trigger API：
+  - `GET/POST /api/v1/workflows/{workflow_id}/triggers`
+  - `GET/PATCH/DELETE /api/v1/workflows/{workflow_id}/triggers/{trigger_id}`
+  - `POST /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke`
+- Trigger invoke 不复制 Runtime；复用现有 `WorkflowExecutionService.create/run`。
+- Trigger identity 写入 Audit metadata / Trace data，可关联 Workflow、Trigger、Execution。
+- Backend unit / API contract tests 已加入，但**尚未记录为最终通过**。
+
+### 下一步
 
 ```text
-远端 main 最新基线
-→ Backend Trigger Domain + API Contract
-→ Migration（如需要）
-→ Backend pytest / API Contract
-→ Backend Real API scenario
+当前 Backend Contract
+→ 本地 uv run pytest -q
+→ alembic upgrade head
+→ Backend API Contract / Real API scenario
+→ 失败则先修 Backend
+→ Backend Gate 全部通过后
 → 再进入 Frontend API Type / Vitest / UI
 ```
 
 Phase 1.6-A 暂不实现 MQ / Worker / Cron / Event Bus / Temporal 等分布式能力，不复制 Workflow Runtime 逻辑，Trigger 必须复用现有 Execution State Machine、Idempotency、Concurrency、Reliability、Audit / Trace 治理。
-
-完成后必须分别执行 Backend Gate 与 Frontend Gate，并更新本文件、Phase 文档及 error-tracking，最后直接提交 `main`。
