@@ -14,6 +14,7 @@ from app.models.workflow import Workflow, WorkflowVersion  # noqa: F401
 from app.models.workflow_circuit import WorkflowCircuitState  # noqa: F401
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution  # noqa: F401
 from app.models.workflow_trace import WorkflowTraceEvent  # noqa: F401
+from app.models.workflow_trigger import WorkflowTrigger  # noqa: F401
 
 config = context.config
 if config.config_file_name:
