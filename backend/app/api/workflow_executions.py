@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,7 +51,7 @@ def _tenant_id(claims: dict) -> UUID:
 def _execution_response(item):
     return {"id": item.id, "tenant_id": item.tenant_id, "workflow_id": item.workflow_id,
             "workflow_version_id": item.workflow_version_id, "created_by": item.created_by,
-            "retry_of_execution_id": item.retry_of_execution_id,
+            "retry_of_execution_id": item.retry_of_execution_id, "idempotency_key": item.idempotency_key,
             "status": item.status, "current_node_id": item.current_node_id, "input_data": item.input_data,
             "output_data": item.output_data, "error_code": item.error_code, "error_message": item.error_message,
             "started_at": item.started_at, "ended_at": item.ended_at, "created_at": item.created_at}
@@ -74,13 +74,16 @@ def _trace_response(item):
 
 @router.post("/{workflow_id}/executions", status_code=201)
 async def create_execution(workflow_id: UUID, payload: WorkflowExecutionCreate,
+                           idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=100),
                            claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
     registry = WorkflowRegistry(db)
     workflow = await registry.get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     if workflow.published_version_id is None:
         raise HTTPException(409, "Workflow 没有已发布版本")
     version = await registry.get_version(workflow.id, workflow.published_version_id)
-    execution = await WorkflowExecutionService(db).create(workflow, version, UUID(claims["sub"]), payload.input_data)
+    execution = await WorkflowExecutionService(db).create(
+        workflow, version, UUID(claims["sub"]), payload.input_data, idempotency_key
+    )
     return _execution_response(execution)
 
 
