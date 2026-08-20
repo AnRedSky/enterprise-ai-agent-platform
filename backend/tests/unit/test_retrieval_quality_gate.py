@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from scripts.check_knowledge_retrieval_quality import compare_quality
+from scripts.evaluation.knowledge.check_knowledge_retrieval_quality import compare_quality
 
 
 def _result(**overrides: object) -> dict:
