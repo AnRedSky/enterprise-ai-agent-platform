@@ -7,9 +7,10 @@
 ```text
 scripts/
 ├── test/
-│   ├── regression/    # 默认项目回归入口
+│   ├── regression/    # Backend 默认回归入口
 │   ├── api-real/      # Real API 自动化测试唯一编排入口
-│   ├── integration/   # 前后端联调 Gate
+│   ├── release/       # Release / Full Regression 全套质量门编排入口
+│   ├── integration/   # 未来真正 Frontend/Backend E2E 或浏览器联调编排
 │   └── phase/         # 历史/阶段性验收编排，按 Phase 子目录归档
 ├── migration/         # Alembic 数据库迁移
 ├── evaluation/
@@ -20,13 +21,14 @@ scripts/
 
 数字前缀只表示同一目录内的执行顺序，不代表 Phase 编号。
 
-## 三类测试严格隔离
+## 测试实现与 Gate 严格隔离
 
 ```text
 tests/                   = 测试实现与断言
-scripts/test/regression  = 默认项目回归编排
+scripts/test/regression  = Backend 默认回归编排
 scripts/test/api-real    = 独立真实 HTTP API Gate
-scripts/test/integration = 前后端联调 Gate
+scripts/test/release     = Release / Full Regression 全套质量门
+scripts/test/integration = 未来 Frontend/Backend E2E 编排
 scripts/test/phase       = 历史/阶段验收编排
 ```
 
@@ -48,13 +50,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\regression\01
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-该入口先运行 `00_bootstrap_real_api.py`，自动完成真实 HTTP 注册/登录、Workflow/Execution 准备，并临时注入 `ACCESS_TOKEN`、`WORKFLOW_ID`、`WORKFLOW_EXECUTION_ID`。开发人员禁止手工填写这些变量。
+该入口先运行 `00_bootstrap_real_api.py`，自动完成真实 HTTP 注册/登录、Workflow/Execution/Retry/Circuit Breaker fixture 准备，并临时注入相关环境变量。开发人员禁止手工填写这些变量。
 
 Real API Gate 未通过时，不允许进入前后端联调。
 
-### 3. 前后端联调
+### 3. Release / Full Regression
 
-唯一顺序编排入口：
+完整质量门统一入口：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
+```
+
+固定顺序：
 
 ```text
 ① Backend default regression
@@ -64,21 +72,19 @@ Real API Gate 未通过时，不允许进入前后端联调。
 ③ Real API Gate
         ↓
 ④ Frontend test + production build
-        ↓
-⑤ 浏览器/人工业务场景联调
 ```
 
-执行：
+该入口只负责编排既有 Gate，不复制 Token、登录、Workflow Fixture、API 断言或前端测试逻辑。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_frontend_backend_gate.ps1
-```
+### 4. Frontend / Backend Integration
 
-该脚本只调用既有 Gate，不复制 Token、登录、Workflow Fixture、API 断言或前端测试逻辑。任一前置 Gate 失败立即停止。
+`test/integration/` 不再提供重复的 `01_frontend_backend_gate.ps1`。当前只保留目录职责说明，未来真正的 Browser / Frontend-Backend E2E 应在这里增加独立入口。
 
-### 4. Phase 阶段验收
+当前不能把 Full Regression Gate 误称为 Browser E2E；Full Regression 只证明既有 Backend、Migration、Real API、Frontend Test/Build 质量门依次通过。
 
-`test/phase/<phase>/` 仅用于历史阶段验收和开发阶段检查的归档。它不是默认回归入口，也不是 Real API 或联调入口。新阶段完成后，应优先把稳定断言沉淀到 `tests/` 四层体系，阶段脚本只保留必要的编排。
+### 5. Phase 阶段验收
+
+`test/phase/<phase>/` 仅用于历史阶段验收和开发阶段检查的归档。它不是默认回归入口，也不是 Real API 或 Release Gate 入口。新阶段完成后，应优先把稳定断言沉淀到 `tests/` 四层体系，阶段脚本只保留必要的编排。
 
 ## 唯一测试编排原则
 
@@ -86,7 +92,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 
 ## Migration / Evaluation / Dev
 
-Migration 只负责数据库迁移；Evaluation 是质量评估程序；Dev 是本地开发辅助。三者均不得混入默认 pytest 回归，也不得伪装成 Real API 或前后端联调 Gate。
+Migration 只负责数据库迁移；Evaluation 是质量评估程序；Dev 是本地开发辅助。三者均不得混入默认 pytest 回归，也不得伪装成 Real API 或 Release Gate。
 
 ## 迁移规则
 
