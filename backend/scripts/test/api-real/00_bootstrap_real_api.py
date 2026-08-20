@@ -131,7 +131,7 @@ def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_confi
     return workflow["id"], execution["id"]
 
 
-def create_circuit_recovery_fixture(client, agent_id, *, name, circuit_key):
+def create_circuit_recovery_fixture(client, agent_id, *, name, circuit_key, recovery_timeout_ms):
     workflow = request(client, "POST", "/workflows", json={
         "name": f"{name} {uuid.uuid4().hex[:8]}",
         "description": "Automated real API Circuit Breaker recovery fixture",
@@ -150,7 +150,7 @@ def create_circuit_recovery_fixture(client, agent_id, *, name, circuit_key):
             "enabled": True,
             "key": circuit_key,
             "failure_threshold": 1,
-            "recovery_timeout_ms": 200,
+            "recovery_timeout_ms": recovery_timeout_ms,
             "half_open_max_calls": 1,
         },
     }
@@ -194,12 +194,13 @@ def create_retry_boundary_fixtures(client, agent_id):
         "budget_workflow_id": budget_workflow_id,
         "budget_execution_id": budget_execution_id,
         "deadline_workflow_id": deadline_workflow_id,
-        "deadline_execution_id": deadline_execution_id,
+        "deadline_execution_id": deadline_workflow_id,
     }
 
 
 def create_circuit_breaker_fixtures(client):
     circuit_key = f"real-api-circuit-{uuid.uuid4().hex[:8]}"
+    circuit_recovery_timeout_ms = 10_000
     failing_agent_id = create_retry_agent(
         client, model_id="mock-http-503", name_prefix="API Circuit Failure Agent"
     )
@@ -219,17 +220,14 @@ def create_circuit_breaker_fixtures(client):
             "jitter_ms": 0,
             "retryable_error_codes": ["HTTP_503"],
         },
-        # Keep the shared circuit deterministically OPEN while the fast-fail
-        # test creates and runs its second independent Execution. The recovery
-        # fixture intentionally supplies its own 200ms policy later, allowing
-        # the same persisted circuit key to transition to HALF_OPEN.
-        recovery_timeout_ms=300_000,
+        recovery_timeout_ms=circuit_recovery_timeout_ms,
     )
     recovery_workflow_id = create_circuit_recovery_fixture(
         client,
         recovery_agent_id,
         name="API Circuit Breaker Recovery Validation",
         circuit_key=circuit_key,
+        recovery_timeout_ms=circuit_recovery_timeout_ms,
     )
     return {
         "circuit_open_workflow_id": open_workflow_id,
@@ -283,10 +281,13 @@ def main():
         "CIRCUIT_OPEN_EXECUTION_ID": str(circuit["circuit_open_execution_id"]),
         "CIRCUIT_RECOVERY_WORKFLOW_ID": str(circuit["circuit_recovery_workflow_id"]),
     }
-    ENV_FILE.write_text(json.dumps(context), encoding="utf-8")
-    print(f"Real API context prepared: {username}")
-    return 0
+    ENV_FILE.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Real API context prepared: {ENV_FILE.stem}_{uuid.uuid4().hex[:12]}")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        main()
+    except Exception as exc:
+        print(f"Real API bootstrap failed: {exc}", file=sys.stderr)
+        raise
