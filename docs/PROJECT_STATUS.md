@@ -26,7 +26,7 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage 已完成，当前进入 Reliability Hardening |
+| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；Cancel / Retry / Retry lineage / Idempotency-Key 已完成，当前进入 Execution Concurrency Hardening |
 | 测试基础设施治理 | 持续治理 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；不新增重复测试入口或混用开发/测试脚本 |
 
 ## 3. 强制测试链
@@ -58,7 +58,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 最近一次开发者反馈：
 
 ```text
-176 passed, 5 deselected
+全部通过
 ```
 
 ### Migration
@@ -66,7 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 最近一次开发者反馈：
 
 ```text
-0018_workflow_execution_retry_lineage (head)
+0019_workflow_execution_idempotency (head)
 ```
 
 ### Real API Gate
@@ -74,7 +74,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 最近一次开发者反馈：
 
 ```text
-Real API context prepared: api_real_test_c22eb9342ecd
 5 passed
 [PASS] Real API gate completed.
 ```
@@ -112,10 +111,15 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 17. Idempotency-Key 唯一约束：同 Tenant 下重复 Key 返回原 Execution；跨 Workflow / Version 重用返回 409；并处理并发插入竞争。
 18. Idempotency 创建链路写入 Audit / Trace 时只记录 key 是否存在，不记录具体 key 值。
 19. Frontend Workflow API 已支持可选 `Idempotency-Key`，并补充 API contract test。
+20. Execution 状态转换新增数据库行锁：真实 `AsyncSession` 下使用 `SELECT ... FOR UPDATE` 重新读取 Execution，再进行状态校验和更新。
+21. Cancel / Run / Retry / Node transition 不再依赖调用方持有的旧状态完成最终状态判定，降低并发操作下的 stale-state race window。
+22. 新增 Execution row-locking unit coverage，验证 `FOR UPDATE` 与锁后状态重新校验。
 
 ## 6. 本轮数据库变更
 
-已完成并提交：
+本轮无数据库结构变更，不新增 migration。
+
+既有数据库变更：
 
 ```text
 0018_workflow_execution_retry_lineage
@@ -141,23 +145,24 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 
 ## 7. 当前待验收
 
-本轮 Reliability Hardening 代码已提交到 `main`，尚未宣称本地验收通过。开发者需要按强制测试链执行：
+本轮 Execution Concurrency Hardening 代码已提交到 `main`，尚未宣称本轮本地验收通过。开发者需要按强制测试链执行：
 
 1. `cd backend && uv run pytest -q`
 2. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1`
 3. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1`
 4. `cd frontend && npm test`
 5. `cd frontend && npm run build`
-6. 浏览器级验证 Workflow → Execution → Idempotent Create → Cancel / Retry → Audit / Trace
+6. 浏览器级验证 Workflow → Execution → Run / Cancel 并发边界 → Retry → Audit / Trace
 
 特别验证：
 
-- 相同 Tenant + 相同 `Idempotency-Key` 不创建第二条 Execution。
-- 相同 Key 跨 Workflow / Version 使用返回 `409`。
-- 并发重复创建最终只保留一条 Execution。
-- 无 `Idempotency-Key` 的历史调用保持原有行为。
-- Cancel / Retry 既有治理语义保持不变。
+- 两个并发启动请求只能有一个成功进入 `running`。
+- `running` 与 `cancelled` 的竞争最终只能落在一个合法状态，不能出现终态之后再次推进。
+- 已取消 Execution 不能继续推进 Node。
+- 已完成 / 失败 / 取消的 Execution 不能再次启动 Runtime。
+- Retry 的既有 lineage 与幂等语义保持不变。
 - 全量测试无新增 warning。
+- Migration head 保持 `0019_workflow_execution_idempotency`。
 
 ## 8. 下一步
 
@@ -167,7 +172,7 @@ Register → Login → Workflow → Version → Publish → Execution → Audit 
 
 优先顺序：
 
-1. **Execution 并发/幂等控制**：本轮已完成 Idempotency-Key；下一轮补齐运行状态并发锁与状态竞争边界。
+1. **Execution 并发/幂等控制**：Idempotency-Key 与状态转换行锁已完成，待本轮强制测试链验收。
 2. Runtime 超时与失败恢复边界。
 3. Node-level retry / attempt 治理。
 4. Execution 查询列表与历史执行治理。
