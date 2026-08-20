@@ -28,6 +28,10 @@ class ExecutionTransition(BaseModel):
     output_data: dict | None = None
 
 
+class ExecutionCancel(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class NodeTransition(BaseModel):
     node_id: str = Field(min_length=1, max_length=100)
     status: str
@@ -47,6 +51,7 @@ def _tenant_id(claims: dict) -> UUID:
 def _execution_response(item):
     return {"id": item.id, "tenant_id": item.tenant_id, "workflow_id": item.workflow_id,
             "workflow_version_id": item.workflow_version_id, "created_by": item.created_by,
+            "retry_of_execution_id": item.retry_of_execution_id,
             "status": item.status, "current_node_id": item.current_node_id, "input_data": item.input_data,
             "output_data": item.output_data, "error_code": item.error_code, "error_message": item.error_message,
             "started_at": item.started_at, "ended_at": item.ended_at, "created_at": item.created_at}
@@ -91,6 +96,24 @@ async def run_execution(execution_id: UUID, claims=Depends(require_roles("user",
     return _execution_response(await service.run(execution, version, UUID(claims["sub"]), is_admin))
 
 
+@router.post("/executions/{execution_id}/cancel")
+async def cancel_execution(execution_id: UUID, payload: ExecutionCancel,
+                           claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
+    service = WorkflowExecutionService(db)
+    actor_id = UUID(claims["sub"])
+    execution = await service.get(execution_id, _tenant_id(claims), actor_id, "admin" in claims.get("roles", []))
+    return _execution_response(await service.cancel(execution, actor_id, payload.reason))
+
+
+@router.post("/executions/{execution_id}/retry", status_code=201)
+async def retry_execution(execution_id: UUID, claims=Depends(require_roles("user", "admin")),
+                          db: AsyncSession = Depends(get_db)):
+    service = WorkflowExecutionService(db)
+    actor_id = UUID(claims["sub"])
+    execution = await service.get(execution_id, _tenant_id(claims), actor_id, "admin" in claims.get("roles", []))
+    return _execution_response(await service.retry(execution, actor_id))
+
+
 @router.get("/executions/{execution_id}")
 async def get_execution(execution_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     execution = await WorkflowExecutionService(db).get(execution_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
@@ -115,9 +138,11 @@ async def list_execution_trace(execution_id: UUID, claims=Depends(current_claims
 async def transition_execution(execution_id: UUID, payload: ExecutionTransition,
                                claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
     service = WorkflowExecutionService(db)
-    execution = await service.get(execution_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    actor_id = UUID(claims["sub"])
+    execution = await service.get(execution_id, _tenant_id(claims), actor_id, "admin" in claims.get("roles", []))
     return _execution_response(await service.transition(execution, payload.status, payload.node_id,
-                                                        payload.error_code, payload.error_message, payload.output_data))
+                                                        payload.error_code, payload.error_message, payload.output_data,
+                                                        actor_id=actor_id))
 
 
 @router.post("/executions/{execution_id}/nodes/transition")
