@@ -8,6 +8,8 @@ BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
 WORKFLOW_ID = os.getenv("WORKFLOW_ID")
 EXECUTION_ID = os.getenv("WORKFLOW_EXECUTION_ID")
+RETRY_WORKFLOW_ID = os.getenv("RETRY_WORKFLOW_ID")
+RETRY_EXECUTION_ID = os.getenv("RETRY_EXECUTION_ID")
 
 
 pytestmark = pytest.mark.real_api
@@ -67,3 +69,47 @@ def test_trace_real_http_call():
     payload = response.json()
     assert payload.get("execution_id") == EXECUTION_ID
     assert isinstance(payload.get("items"), list)
+
+
+def test_node_retry_real_business_loop():
+    if not RETRY_WORKFLOW_ID or not RETRY_EXECUTION_ID:
+        pytest.fail("Retry fixture context is required for node retry governance validation")
+
+    with _client() as client:
+        execution = client.get(f"/executions/{RETRY_EXECUTION_ID}")
+        nodes = client.get(f"/executions/{RETRY_EXECUTION_ID}/nodes")
+        trace = client.get(f"/executions/{RETRY_EXECUTION_ID}/trace")
+        audit = client.get(
+            "/runtime/audit-logs",
+            params={"workflow_execution_id": RETRY_EXECUTION_ID, "workflow_id": RETRY_WORKFLOW_ID},
+        )
+
+    assert execution.status_code == 200, execution.text
+    execution_payload = execution.json()
+    assert execution_payload["status"] == "failed"
+    assert execution_payload["error_code"] == "HTTP_404"
+
+    assert nodes.status_code == 200, nodes.text
+    node_items = nodes.json()
+    assert len(node_items) == 1
+    node = node_items[0]
+    assert node["node_id"] == "retry-agent"
+    assert node["status"] == "failed"
+    assert node["attempt"] == 2
+    assert node["error_code"] == "HTTP_404"
+
+    assert trace.status_code == 200, trace.text
+    trace_items = trace.json()["items"]
+    assert any(item["event_type"] == "node.retry.scheduled" and item["status"] == "retrying" for item in trace_items)
+    retry_state_events = [
+        item for item in trace_items
+        if item["event_type"] == "node.state_changed" and item["node_id"] == "retry-agent"
+    ]
+    assert any((item.get("data") or {}).get("attempt") == 1 for item in retry_state_events)
+    assert any((item.get("data") or {}).get("attempt") == 2 for item in retry_state_events)
+    assert any(item["event_type"] == "execution.state_changed" and item["status"] == "failed" for item in trace_items)
+
+    assert audit.status_code == 200, audit.text
+    audit_items = audit.json()["items"]
+    assert any(item["action"] == "workflow.node.retry" and item["status"] == "retrying" for item in audit_items)
+    assert any(item["action"] == "workflow.execution.failed" and item["status"] == "failed" for item in audit_items)
