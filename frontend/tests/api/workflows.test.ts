@@ -40,6 +40,14 @@ describe("workflowApi", () => {
     expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e1/run");
   });
 
+  it("controls failed and active executions", async () => {
+    post.mockResolvedValue({ data: {} });
+    await workflowApi.cancelExecution("e1", "operator requested stop");
+    await workflowApi.retryExecution("e2");
+    expect(post).toHaveBeenNthCalledWith(1, "/workflows/executions/e1/cancel", { reason: "operator requested stop" });
+    expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e2/retry");
+  });
+
   it("queries execution status, nodes, trace and audit", async () => {
     get.mockResolvedValue({ data: { items: [] } });
     await workflowApi.execution("e1");
