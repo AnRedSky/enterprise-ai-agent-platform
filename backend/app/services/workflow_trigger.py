@@ -139,7 +139,13 @@ class WorkflowTriggerService:
 
         execution_service = WorkflowExecutionService(self.db)
         execution = await execution_service.create(workflow, version, actor_id, input_data, idempotency_key=idempotency_key)
-        await self.governance.audit(execution, actor_id, "workflow.trigger.invoked", "success")
+        await self.governance.audit(
+            execution,
+            actor_id,
+            "workflow.trigger.invoked",
+            "success",
+            metadata={"trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type},
+        )
         await self.governance.trace(execution, actor_id, "trigger.invoked", "pending", data={
             "trigger_id": str(trigger.id),
             "trigger_type": trigger.trigger_type,
