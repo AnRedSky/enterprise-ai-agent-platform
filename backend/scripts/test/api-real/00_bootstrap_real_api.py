@@ -49,7 +49,8 @@ def create_retry_agent(client):
     return agent["id"]
 
 
-def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_config=None, expected_status="failed", expected_error="HTTP_404"):
+def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_config=None,
+                         expected_status="failed", expected_error="HTTP_404", expected_http_status=404):
     workflow = request(client, "POST", "/workflows", json={
         "name": f"{name} {uuid.uuid4().hex[:8]}",
         "description": "Automated real API retry boundary fixture",
@@ -77,8 +78,11 @@ def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_c
         "input_data": {"source": "real_api_retry_boundary_validation"}
     }).json()
     response = client.post(f"/workflows/executions/{execution['id']}/run")
-    if response.status_code != 404:
-        raise RuntimeError(f"POST /workflows/executions/{execution['id']}/run -> expected HTTP 404 from deterministic mock provider, got {response.status_code}: {response.text}")
+    if response.status_code != expected_http_status:
+        raise RuntimeError(
+            f"POST /workflows/executions/{execution['id']}/run -> expected HTTP "
+            f"{expected_http_status}, got {response.status_code}: {response.text}"
+        )
     persisted = request(client, "GET", f"/workflows/executions/{execution['id']}").json()
     if persisted.get("status") != expected_status or persisted.get("error_code") != expected_error:
         raise RuntimeError(f"Retry boundary fixture persisted unexpected state: {json.dumps(persisted, ensure_ascii=False)}")
@@ -106,6 +110,7 @@ def create_retry_boundary_fixtures(client, agent_id):
             "retryable_error_codes": ["HTTP_404"],
         },
         expected_error="WORKFLOW_TIMEOUT",
+        expected_http_status=504,
     )
     return {
         "retry_workflow_id": retry_workflow_id,
