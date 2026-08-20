@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.workflow import Workflow
+from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.workflow_execution import WorkflowExecutionService
@@ -112,7 +112,6 @@ class WorkflowTriggerService:
         if workflow.status != "published" or workflow.published_version_id is None:
             raise HTTPException(409, "Trigger 只能调用已发布 Workflow")
 
-        existing = None
         if idempotency_key:
             existing = (
                 await self.db.execute(
@@ -129,9 +128,9 @@ class WorkflowTriggerService:
 
         version = (
             await self.db.execute(
-                select(__import__("app.models.workflow", fromlist=["WorkflowVersion"]).WorkflowVersion).where(
-                    __import__("app.models.workflow", fromlist=["WorkflowVersion"]).WorkflowVersion.id == workflow.published_version_id,
-                    __import__("app.models.workflow", fromlist=["WorkflowVersion"]).WorkflowVersion.workflow_id == workflow.id,
+                select(WorkflowVersion).where(
+                    WorkflowVersion.id == workflow.published_version_id,
+                    WorkflowVersion.workflow_id == workflow.id,
                 )
             )
         ).scalar_one_or_none()
