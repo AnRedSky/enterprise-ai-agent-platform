@@ -19,7 +19,8 @@ class _MigrationOpSpy:
 
 
 def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / "0015_tenant_contract.py"
+    # tests/integration -> backend -> alembic/versions
+    migration_path = Path(__file__).parents[2] / "alembic" / "versions" / "0015_tenant_contract.py"
     spec = importlib.util.spec_from_file_location("tenant_contract_migration", migration_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
