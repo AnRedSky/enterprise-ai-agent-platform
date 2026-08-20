@@ -19,8 +19,9 @@ class CircuitOpenError(HTTPException):
 class CircuitBreakerService:
     """Database-backed CLOSED/OPEN/HALF_OPEN state machine.
 
-    State is persisted in PostgreSQL so Runtime workers remain stateless and
-    circuit state is shared across replicas.
+    State and the policy that governs that state are persisted in PostgreSQL so
+    Runtime workers remain stateless and every caller sharing a circuit key
+    observes the same recovery and probe-quota contract.
     """
 
     STATES = {"closed", "open", "half_open"}
@@ -53,6 +54,28 @@ class CircuitBreakerService:
             "half_open_max_calls": half_open_calls,
         }
 
+    @staticmethod
+    def _policy_values(policy: dict) -> tuple[int, int, int]:
+        return (
+            policy["failure_threshold"],
+            policy["recovery_timeout_ms"],
+            policy["half_open_max_calls"],
+        )
+
+    @classmethod
+    def _assert_policy_matches(cls, state: WorkflowCircuitState, policy: dict) -> None:
+        persisted = (
+            state.failure_threshold,
+            state.recovery_timeout_ms,
+            state.half_open_max_calls,
+        )
+        requested = cls._policy_values(policy)
+        if persisted != requested:
+            raise HTTPException(
+                409,
+                "Circuit breaker policy mismatch for existing circuit key",
+            )
+
     async def before_call(self, tenant_id: UUID, circuit_key: str, config: dict | None = None) -> str:
         policy = self.validate_config(config)
         if not policy["enabled"]:
@@ -68,13 +91,21 @@ class CircuitBreakerService:
         )
         state = result.scalar_one_or_none()
         if state is None:
-            state = WorkflowCircuitState(tenant_id=tenant_id, circuit_key=circuit_key)
+            state = WorkflowCircuitState(
+                tenant_id=tenant_id,
+                circuit_key=circuit_key,
+                failure_threshold=policy["failure_threshold"],
+                recovery_timeout_ms=policy["recovery_timeout_ms"],
+                half_open_max_calls=policy["half_open_max_calls"],
+            )
             self.db.add(state)
             await self.db.flush()
             return "closed"
+
+        self._assert_policy_matches(state, policy)
         if state.state == "open":
             opened_at = state.opened_at or now
-            if now - opened_at >= timedelta(milliseconds=policy["recovery_timeout_ms"]):
+            if now - opened_at >= timedelta(milliseconds=state.recovery_timeout_ms):
                 state.state = "half_open"
                 state.half_opened_at = now
                 state.success_count = 1
@@ -82,7 +113,7 @@ class CircuitBreakerService:
                 return "half_open"
             raise CircuitOpenError(circuit_key)
         if state.state == "half_open":
-            if state.success_count >= policy["half_open_max_calls"]:
+            if state.success_count >= state.half_open_max_calls:
                 raise CircuitOpenError(circuit_key)
             state.success_count += 1
             await self.db.flush()
@@ -104,6 +135,7 @@ class CircuitBreakerService:
         state = result.scalar_one_or_none()
         if state is None:
             return
+        self._assert_policy_matches(state, policy)
         if state.state == "half_open":
             state.state = "closed"
             state.failure_count = 0
@@ -129,14 +161,22 @@ class CircuitBreakerService:
         )
         state = result.scalar_one_or_none()
         if state is None:
-            state = WorkflowCircuitState(tenant_id=tenant_id, circuit_key=circuit_key)
+            state = WorkflowCircuitState(
+                tenant_id=tenant_id,
+                circuit_key=circuit_key,
+                failure_threshold=policy["failure_threshold"],
+                recovery_timeout_ms=policy["recovery_timeout_ms"],
+                half_open_max_calls=policy["half_open_max_calls"],
+            )
             self.db.add(state)
             await self.db.flush()
+        else:
+            self._assert_policy_matches(state, policy)
         state.last_failure_at = now
         state.success_count = 0
-        if state.state == "half_open" or state.failure_count + 1 >= policy["failure_threshold"]:
+        if state.state == "half_open" or state.failure_count + 1 >= state.failure_threshold:
             state.state = "open"
-            state.failure_count = policy["failure_threshold"]
+            state.failure_count = state.failure_threshold
             state.opened_at = now
             state.half_opened_at = None
         else:
