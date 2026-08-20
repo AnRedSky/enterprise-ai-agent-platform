@@ -70,7 +70,7 @@ class WorkflowExecutionService:
 
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
                          error_code: str | None = None, error_message: str | None = None,
-                         output_data: dict | None = None) -> WorkflowExecution:
+                         output_data: dict | None = None, actor_id: UUID | None = None) -> WorkflowExecution:
         if target_status not in self.EXECUTION_STATES:
             raise HTTPException(400, "不支持的 Execution 状态")
         current = execution.status
@@ -93,9 +93,10 @@ class WorkflowExecutionService:
         if target_status in self.TERMINAL_EXECUTION_STATES:
             execution.ended_at = now
             execution.current_node_id = None
+        audit_actor = actor_id or execution.created_by
         await self.governance.trace(
             execution,
-            execution.created_by,
+            audit_actor,
             "execution.state_changed",
             target_status,
             node_id=node_id,
@@ -106,7 +107,7 @@ class WorkflowExecutionService:
         if target_status in self.TERMINAL_EXECUTION_STATES:
             await self.governance.audit(
                 execution,
-                execution.created_by,
+                audit_actor,
                 f"workflow.execution.{target_status}",
                 "success" if target_status == "completed" else target_status,
                 error_code=error_code,
@@ -114,6 +115,65 @@ class WorkflowExecutionService:
         await self.db.commit()
         await self.db.refresh(execution)
         return execution
+
+    async def cancel(self, execution: WorkflowExecution, actor_id: UUID, reason: str | None = None) -> WorkflowExecution:
+        if execution.status not in {"pending", "running"}:
+            raise HTTPException(409, f"{execution.status} Execution 不允许取消")
+        message = reason.strip() if reason and reason.strip() else "Workflow Execution cancelled by operator"
+        return await self.transition(
+            execution,
+            "cancelled",
+            error_code="EXECUTION_CANCELLED",
+            error_message=message,
+            actor_id=actor_id,
+        )
+
+    async def retry(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
+        if execution.status != "failed":
+            raise HTTPException(409, "只有 failed Execution 可以 Retry")
+        WorkflowRuntime.validate_definition(
+            (await self.db.execute(select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id))).scalar_one().definition
+        )
+        retry_execution = WorkflowExecution(
+            tenant_id=execution.tenant_id,
+            workflow_id=execution.workflow_id,
+            workflow_version_id=execution.workflow_version_id,
+            created_by=actor_id,
+            retry_of_execution_id=execution.id,
+            status="pending",
+            input_data=dict(execution.input_data or {}),
+        )
+        self.db.add(retry_execution)
+        await self.db.flush()
+        await self.governance.audit(
+            execution,
+            actor_id,
+            "workflow.execution.retry_requested",
+            "success",
+        )
+        await self.governance.trace(
+            execution,
+            actor_id,
+            "execution.retry_requested",
+            execution.status,
+            data={"retry_execution_id": str(retry_execution.id)},
+        )
+        await self.governance.audit(
+            retry_execution,
+            actor_id,
+            "workflow.execution.created",
+            "success",
+        )
+        await self.governance.trace(
+            retry_execution,
+            actor_id,
+            "execution.created",
+            "pending",
+            data={"retry_of_execution_id": str(execution.id), "input_keys": sorted((execution.input_data or {}).keys())},
+        )
+        await self.db.commit()
+        await self.db.refresh(retry_execution)
+        return retry_execution
 
     async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,
                               input_data: dict | None = None, output_data: dict | None = None,
@@ -171,7 +231,7 @@ class WorkflowExecutionService:
         data = dict(execution.input_data or {})
         await self.governance.audit(execution, actor_id, "workflow.execution.run", "started")
         try:
-            await self.transition(execution, "running")
+            await self.transition(execution, "running", actor_id=actor_id)
             for node in nodes:
                 node_id = node["id"]
                 await self.transition_node(execution, node_id, "running", input_data=data)
@@ -181,15 +241,15 @@ class WorkflowExecutionService:
                     await self.transition_node(execution, node_id, "failed", error_code=type(exc).__name__,
                                                error_message=str(exc))
                     await self.transition(execution, "failed", error_code=type(exc).__name__,
-                                           error_message="Workflow node execution failed")
+                                           error_message="Workflow node execution failed", actor_id=actor_id)
                     raise
                 await self.transition_node(execution, node_id, "completed", output_data=data)
-            await self.transition(execution, "completed", output_data=data)
+            await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
             return execution
         except HTTPException:
             raise
         except Exception as exc:
             if execution.status == "running":
                 await self.transition(execution, "failed", error_code=type(exc).__name__,
-                                       error_message="Workflow execution failed")
+                                       error_message="Workflow execution failed", actor_id=actor_id)
             raise
