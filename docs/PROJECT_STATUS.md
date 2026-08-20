@@ -9,7 +9,7 @@
 - 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - 当前阶段：Phase 1.5 Workflow / Governance
-- 当前任务：Phase 1.5-G Circuit Breaker Real API 边界验收
+- 当前任务：Phase 1.5-G Circuit Breaker Real API 边界验收与失败修复复测
 - 当前角色：开发执行
 - 最新测试门职责调整：已移除重复的 Frontend/Backend 全套质量门脚本，统一由 Release / Full Regression Gate 编排
 
@@ -27,7 +27,7 @@
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
 | Phase 1.5-F | 已完成 | Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery / Node Retry / Attempt / Retry Budget / Workflow Deadline 治理已完成并通过 Real API 边界验收 |
-| Phase 1.5-G | 开发中 | Circuit Breaker 已落地 main，当前执行 Real API 边界验收 |
+| Phase 1.5-G | 阻塞复测中 | Circuit Breaker 已落地 main；本地 Real API 发现 Retry Audit、Runtime 异常包装及 Fast-Fail attempt 边界问题，已提交修复，等待开发者重新执行全部门禁 |
 | 测试基础设施治理 | 持续治理 | Unit / Integration / API Contract / Real API 四层规范持续执行；重复的 Frontend/Backend Gate 已移除，Full Regression 统一归入 Release Gate |
 
 ## 3. 测试 Gate 结构
@@ -73,13 +73,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 4. 更新 `docs/DEVELOPMENT.md`，移除已删除的联调唯一入口，建立 Release / Full Regression Gate 规则。
 5. 本次结构调整不删除 `backend/tests/integration`、`backend/tests/api_real` 或 `backend/scripts/test/api-real`。
 
-本次属于测试基础设施与职责边界治理；结构变更提交前必须执行静态目录/脚本结构检查，并在当前环境可用时执行新的 Full Regression Gate。
-
 ## 5. 已验收基线
 
 ### Backend / Retry Reliability
 
-开发者此前已反馈 Workflow Runtime Timeout / Failure Recovery、Node Retry / Attempt、Retry Budget、Retry Deadline 等链路测试全部通过。
+此前 Workflow Runtime Timeout / Failure Recovery、Node Retry / Attempt、Retry Budget、Retry Deadline 等链路曾通过；本轮开发者反馈重新执行时发现 `test_run_exhausts_retry_budget_before_scheduling_retry` 回归失败，原因与终态异常包装有关，已修复，尚待本地复测确认。
 
 ### Migration
 
@@ -89,17 +87,28 @@ Phase 1.5-G 新增：
 0020_workflow_circuit_breaker
 ```
 
-该 migration 已提交到 main，必须由开发者本地实际执行 `uv run alembic upgrade head` 后才可标记验收通过。
+该 migration 已提交到 main。按照开发准则，必须由开发者本地实际执行 `uv run alembic upgrade head` 后才可标记验收通过。
 
 ### Real API
 
-此前 Retry Governance Real API 边界已通过开发者反馈。
+本轮开发者实际反馈：
 
-Phase 1.5-G Circuit Breaker Real API 尚未宣称通过，必须重新执行当前强制 Real API Gate。
+- `test_node_retry_real_business_loop`：失败，缺少 `workflow.node.retry` Audit action。
+- `test_circuit_breaker_opens_and_fast_fails_real_business_boundary`：失败，第二个独立 Execution 的首个 `CIRCUIT_OPEN` Node 观测为 `attempt=2`，预期为 1。
+
+已提交 Runtime 修复：
+
+- 新建 Node Execution 显式 `attempt=1`。
+- Retry scheduling 同时保留 `workflow.node.retry` 与 `workflow.node.retry_scheduled`。
+- Execution 已进入 terminal state 后不再把原始 Runtime 异常二次包装成 HTTP 500。
+
+修复提交：`e0fff63ca6fdd56cb40bd7bb03f28b779b34d7a3`。
+
+以上修复尚未由当前环境重新执行本地 Real API 验证，因此不得标记 Phase 1.5-G 通过。
 
 ### Frontend
 
-此前 Frontend tests 与 production build 均通过；Phase 1.5-G 无独立 Circuit Breaker UI，但仍需执行前端测试与 production build 作为阶段门禁。
+此前 Frontend tests 与 production build 均通过；Phase 1.5-G 无独立 Circuit Breaker UI，但修复完成后仍需重新执行前端测试与 production build 作为阶段门禁。
 
 ## 6. Phase 1.5-G Circuit Breaker 当前实现
 
@@ -113,7 +122,7 @@ Phase 1.5-G Circuit Breaker Real API 尚未宣称通过，必须重新执行当�
 6. Circuit 状态读取与更新使用数据库行锁。
 7. `failure_threshold`、`recovery_timeout_ms`、`half_open_max_calls` 配置校验。
 8. OPEN 状态 Fast-Fail。
-9. HALF_OPEN 探活槽位限制。
+9. HALF_OPEN probe 槽位限制。
 10. Workflow Runtime 集成 Circuit Breaker。
 11. 仅 transient failure 计入熔断阈值；404 / 403 / 422 等业务/权限类错误不应触发熔断。
 12. Circuit Breaker Unit Test 与 Runtime Contract Test。
@@ -137,9 +146,37 @@ Real API 必须覆盖：
 11. Circuit 与 Workflow Deadline / Retry 边界不互相绕过。
 12. Execution / Node / Trace / Audit 最终状态一致。
 
-## 8. 本轮必须执行
+## 8. 本轮实际测试反馈
 
-测试基础设施职责调整完成后，Phase 1.5-G 继续执行：
+开发者本地实际反馈：
+
+```text
+uv run pytest -q
+204 passed, 1 failed, 10 deselected
+
+Real API Gate
+8 passed, 2 failed
+
+Full Regression Gate
+Backend regression failed，因此后续 Gate 被阻断
+```
+
+失败已记录至：
+
+```text
+docs/error-tracking/008-phase-1-5-g-real-api-retry-and-circuit-boundary.md
+```
+
+## 9. 当前修复提交与复测要求
+
+已直接提交 `main`：
+
+```text
+e0fff63ca6fdd56cb40bd7bb03f28b779b34d7a3
+fix: preserve runtime failures and retry governance audit
+```
+
+当前不能声称 Phase 1.5-G 已通过。开发者必须同步最新 `main` 后重新执行：
 
 ```powershell
 cd backend
@@ -153,13 +190,13 @@ cd ..\backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
 ```
 
-实际测试结果必须以开发者反馈为准；当前不预填 Phase 1.5-G 的“通过”。
+若复测仍出现 `second_nodes[0]["attempt"] == 2`，下一步必须直接检查本地真实数据库中该 `execution_id` 对应的 `workflow_node_executions` 行、创建时间、状态转换 Trace 与 API 请求关联，禁止仅修改断言掩盖问题。
 
-## 9. 下一步
+## 10. 下一步
 
-**当前唯一优先工作项：Phase 1.5-G Circuit Breaker Real API 边界验收。**
+**当前唯一优先工作项：完成 Phase 1.5-G 修复后的本地 Real API 边界复测，并定位/修复任何残留的 HALF_OPEN / attempt / 并发探针配额问题。**
 
-完成并通过全部门禁后：
+只有全部门禁实际通过后：
 
 1. 更新本文件收口 Phase 1.5-G。
 2. 更新 `docs/14-phase-1.5-g-circuit-breaker.md` 的实际验收结果。
