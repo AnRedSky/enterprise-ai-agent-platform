@@ -35,12 +35,12 @@ def create_executable_fixture(client):
     return workflow["id"]
 
 
-def create_retry_agent(client):
+def create_retry_agent(client, *, model_id="mock-http-404", name_prefix="API Retry Agent"):
     agent = request(client, "POST", "/agents", json={
-        "name": f"API Retry Agent {uuid.uuid4().hex[:8]}",
+        "name": f"{name_prefix} {uuid.uuid4().hex[:8]}",
         "description": "Automated real API node retry governance fixture agent",
         "system_prompt": "You are a deterministic validation agent.",
-        "model_id": "mock-http-404",
+        "model_id": model_id,
     }).json()
     versions = request(client, "GET", f"/agents/{agent['id']}/versions").json()
     if not versions:
@@ -89,6 +89,81 @@ def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_c
     return workflow["id"], execution["id"]
 
 
+def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_config, retry_config,
+                           expected_error="CIRCUIT_OPEN", expected_http_status=503):
+    workflow = request(client, "POST", "/workflows", json={
+        "name": f"{name} {uuid.uuid4().hex[:8]}",
+        "description": "Automated real API Circuit Breaker boundary fixture",
+    }).json()
+    node_config = {
+        "agent_id": agent_id,
+        "prompt": "Trigger deterministic Circuit Breaker boundary validation.",
+        "retry": retry_config,
+        "circuit_breaker": {
+            "enabled": True,
+            "key": circuit_key,
+            "failure_threshold": 1,
+            "recovery_timeout_ms": 200,
+            "half_open_max_calls": 1,
+        },
+    }
+    version = request(client, "POST", f"/workflows/{workflow['id']}/versions", json={
+        "definition": {
+            "config": runtime_config,
+            "nodes": [{"id": "circuit-agent", "type": "agent", "config": node_config}],
+            "edges": [],
+        }
+    }).json()
+    request(client, "POST", f"/workflows/{workflow['id']}/versions/{version['id']}/publish")
+    execution = request(client, "POST", f"/workflows/{workflow['id']}/executions", json={
+        "input_data": {"source": "real_api_circuit_breaker_validation"}
+    }).json()
+    response = client.post(f"/workflows/executions/{execution['id']}/run")
+    if response.status_code != expected_http_status:
+        raise RuntimeError(
+            f"POST /workflows/executions/{execution['id']}/run -> expected HTTP "
+            f"{expected_http_status}, got {response.status_code}: {response.text}"
+        )
+    persisted = request(client, "GET", f"/workflows/executions/{execution['id']}").json()
+    if persisted.get("status") != "failed" or persisted.get("error_code") != expected_error:
+        raise RuntimeError(f"Circuit boundary fixture persisted unexpected state: {json.dumps(persisted, ensure_ascii=False)}")
+    return workflow["id"], execution["id"]
+
+
+def create_circuit_recovery_fixture(client, agent_id, *, name, circuit_key):
+    workflow = request(client, "POST", "/workflows", json={
+        "name": f"{name} {uuid.uuid4().hex[:8]}",
+        "description": "Automated real API Circuit Breaker recovery fixture",
+    }).json()
+    node_config = {
+        "agent_id": agent_id,
+        "prompt": "Verify Circuit Breaker HALF_OPEN recovery success.",
+        "retry": {
+            "max_attempts": 1,
+            "backoff_ms": 0,
+            "max_backoff_ms": 0,
+            "jitter_ms": 0,
+            "retryable_error_codes": ["HTTP_503"],
+        },
+        "circuit_breaker": {
+            "enabled": True,
+            "key": circuit_key,
+            "failure_threshold": 1,
+            "recovery_timeout_ms": 200,
+            "half_open_max_calls": 1,
+        },
+    }
+    version = request(client, "POST", f"/workflows/{workflow['id']}/versions", json={
+        "definition": {
+            "config": {"timeout_ms": 30_000},
+            "nodes": [{"id": "circuit-recovery-agent", "type": "agent", "config": node_config}],
+            "edges": [],
+        }
+    }).json()
+    request(client, "POST", f"/workflows/{workflow['id']}/versions/{version['id']}/publish")
+    return workflow["id"]
+
+
 def create_retry_boundary_fixtures(client, agent_id):
     retry_workflow_id, retry_execution_id = create_retry_fixture(
         client, agent_id, name="API Retry Governance Validation"
@@ -101,9 +176,6 @@ def create_retry_boundary_fixtures(client, agent_id):
     deadline_workflow_id, deadline_execution_id = create_retry_fixture(
         client, agent_id,
         name="API Retry Deadline Validation",
-        # Keep ample time for the deterministic HTTP_404 response while making
-        # the retry backoff decisively exceed the workflow deadline. This avoids
-        # coupling the fixture to local HTTP/process scheduling latency.
         runtime_config={"timeout_ms": 1000},
         retry_config={
             "max_attempts": 3,
@@ -122,6 +194,41 @@ def create_retry_boundary_fixtures(client, agent_id):
         "budget_execution_id": budget_execution_id,
         "deadline_workflow_id": deadline_workflow_id,
         "deadline_execution_id": deadline_execution_id,
+    }
+
+
+def create_circuit_breaker_fixtures(client):
+    circuit_key = f"real-api-circuit-{uuid.uuid4().hex[:8]}"
+    failing_agent_id = create_retry_agent(
+        client, model_id="mock-http-503", name_prefix="API Circuit Failure Agent"
+    )
+    recovery_agent_id = create_retry_agent(
+        client, model_id="mock-success", name_prefix="API Circuit Recovery Agent"
+    )
+    open_workflow_id, open_execution_id = create_circuit_fixture(
+        client,
+        failing_agent_id,
+        name="API Circuit Breaker Open Validation",
+        circuit_key=circuit_key,
+        runtime_config={"timeout_ms": 30_000},
+        retry_config={
+            "max_attempts": 2,
+            "backoff_ms": 0,
+            "max_backoff_ms": 0,
+            "jitter_ms": 0,
+            "retryable_error_codes": ["HTTP_503"],
+        },
+    )
+    recovery_workflow_id = create_circuit_recovery_fixture(
+        client,
+        recovery_agent_id,
+        name="API Circuit Breaker Recovery Validation",
+        circuit_key=circuit_key,
+    )
+    return {
+        "circuit_open_workflow_id": open_workflow_id,
+        "circuit_open_execution_id": open_execution_id,
+        "circuit_recovery_workflow_id": recovery_workflow_id,
     }
 
 
@@ -152,8 +259,9 @@ def main():
         workflows = request(client, "GET", "/workflows").json()
         workflow_id = find_executable_published_workflow(client, workflows) or create_executable_fixture(client)
         execution = request(client, "POST", f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "real_api_validation"}}).json()
-        agent_id = create_retry_agent(client)
-        boundary = create_retry_boundary_fixtures(client, agent_id)
+        retry_agent_id = create_retry_agent(client)
+        boundary = create_retry_boundary_fixtures(client, retry_agent_id)
+        circuit = create_circuit_breaker_fixtures(client)
 
     context = {
         "ACCESS_TOKEN": token,
@@ -165,6 +273,9 @@ def main():
         "RETRY_BUDGET_EXECUTION_ID": str(boundary["budget_execution_id"]),
         "RETRY_DEADLINE_WORKFLOW_ID": str(boundary["deadline_workflow_id"]),
         "RETRY_DEADLINE_EXECUTION_ID": str(boundary["deadline_execution_id"]),
+        "CIRCUIT_OPEN_WORKFLOW_ID": str(circuit["circuit_open_workflow_id"]),
+        "CIRCUIT_OPEN_EXECUTION_ID": str(circuit["circuit_open_execution_id"]),
+        "CIRCUIT_RECOVERY_WORKFLOW_ID": str(circuit["circuit_recovery_workflow_id"]),
     }
     ENV_FILE.write_text(json.dumps(context), encoding="utf-8")
     print(f"Real API context prepared: {username}")
