@@ -38,7 +38,7 @@ unit → integration → api_contract → api_real
 
 `backend/tests` 根目录禁止新增 `test_*.py`；根目录仅保留测试基础设施文件。
 
-### 三类测试 Gate 严格隔离
+### 测试 Gate 严格隔离
 
 ```text
 ① Backend default regression
@@ -49,7 +49,7 @@ unit → integration → api_contract → api_real
         ↓
 ④ Frontend test + production build
         ↓
-⑤ Frontend/Backend 联调
+⑤ Browser / Frontend-Backend E2E（独立层，当前未实现）
 ```
 
 Real API Gate 是前后端联调的强制前置条件。未通过 Real API Gate，禁止进入浏览器或前后端业务联调。
@@ -61,23 +61,21 @@ cd backend
 uv run pytest -q
 ```
 
-正式编排入口：
+正式 Full Regression / Release Gate：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\regression\01_backend_regression.ps1
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_full_regression_gate.ps1
 ```
 
 Real API 唯一入口：
 
 ```powershell
+cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-联调唯一入口：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_frontend_backend_gate.ps1
-```
+`backend/scripts/test/integration/` 仅用于未来真正的 Frontend / Backend E2E 或联调编排，不得复制 Full Regression、Backend regression、Real API 或 Frontend regression 已有测试。当前不存在 `01_frontend_backend_gate.ps1`。
 
 Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api.py` 自动准备，禁止手工填写或在其他脚本复制 Bootstrap/Fixture 逻辑。
 
@@ -100,7 +98,7 @@ Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api
         ↓
 ⑧ Frontend / Backend 联调
         ↓
-⑨ 全量回归
+⑨ 全量回归 / Release Gate
         ↓
 ⑩ 更新开发 / 验收文档
         ↓
@@ -155,6 +153,7 @@ backend/tests/api_real/
 backend/scripts/test/regression/
 backend/scripts/test/api-real/
 backend/scripts/test/integration/
+backend/scripts/test/release/
 backend/scripts/test/phase/
 ```
 
