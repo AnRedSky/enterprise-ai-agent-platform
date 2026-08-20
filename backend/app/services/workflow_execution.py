@@ -188,7 +188,7 @@ class WorkflowExecutionService:
             WorkflowNodeExecution.execution_id == execution.id, WorkflowNodeExecution.node_id == node_id
         ))).scalar_one_or_none()
         if node is None:
-            node = WorkflowNodeExecution(execution_id=execution.id, node_id=node_id)
+            node = WorkflowNodeExecution(execution_id=execution.id, node_id=node_id, attempt=1)
             self.db.add(node)
             await self.db.flush()
         allowed = {"pending": {"running", "skipped"}, "running": {"completed", "failed", "skipped"},
@@ -341,6 +341,8 @@ class WorkflowExecutionService:
                         await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT",
                                               error_message="Workflow Execution timeout", actor_id=actor_id)
                         raise HTTPException(504, "Workflow Execution timeout")
+                    await self.governance.audit(execution, actor_id, "workflow.node.retry", "success",
+                                                error_code=error_code)
                     await self.governance.audit(execution, actor_id, "workflow.node.retry_scheduled", "success",
                                                 error_code=error_code)
                     await self.governance.trace(execution, actor_id, "node.retry.scheduled", "running",
@@ -356,6 +358,7 @@ class WorkflowExecutionService:
             if execution.status not in self.TERMINAL_EXECUTION_STATES:
                 await self.transition(execution, "failed", error_code=WorkflowRuntime.classify_error(exc),
                                       error_message=str(exc) or "Workflow execution failed", actor_id=actor_id)
-            raise HTTPException(500, str(exc) or "Workflow execution failed") from exc
+                raise HTTPException(500, str(exc) or "Workflow execution failed") from exc
+            raise
         await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
         return execution
