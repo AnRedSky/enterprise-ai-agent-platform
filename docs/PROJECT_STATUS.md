@@ -8,10 +8,12 @@
 - 主分支：`main`
 - 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
 - 开发方式：所有功能直接在 `main` 开发与提交
-- 当前阶段：Phase 1.5 Workflow / Governance
-- 当前任务：Phase 1.5-G Circuit Breaker 已完成开发、Backend 回归、migration/head 与 Real API Gate 验收
+- Phase 1.5：**已完成**
+- 当前阶段：**Phase 1.6 Workflow Production Hardening**
+- 当前任务：**Phase 1.6-A Workflow Trigger Contract，待开始 Backend Contract 实现**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend 与 Frontend Gate 已拆分，禁止单脚本跨前后端执行测试
+- 规范核查：已完成，详见 `docs/14-project-compliance-audit-and-correction-plan.md`
 
 ## 2. 阶段状态
 
@@ -28,7 +30,9 @@
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
 | Phase 1.5-F | 已完成 | Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery / Node Retry / Attempt / Retry Budget / Workflow Deadline 治理已完成并通过 Real API 边界验收 |
 | Phase 1.5-G | **已完成** | CLOSED / OPEN / HALF_OPEN、持久化 Circuit Policy、OPEN Fast-Fail、并发 HALF_OPEN probe quota、成功恢复、失败重新 OPEN、Retry / Timeout / Governance 边界已完成；Backend pytest、migration/head、Real API Gate 全部通过 |
+| Phase 1.5 | **已完成** | A～G 全部完成；不再重复开发 Circuit Breaker，进入后续生产化建设 |
 | 测试基础设施治理 | 已修复 | Backend / Frontend Gate 已拆分，Frontend 脚本位于 `frontend/`，Backend 脚本位于 `backend/` |
+| Phase 1.6-A | 待开始 | Workflow Trigger Contract；下一项执行任务 |
 
 ## 3. 测试 Gate 结构
 
@@ -72,26 +76,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 
 不得恢复一个同时调用 `uv run pytest` 与 `npm test` / `npm run build` 的 `Full Regression Gate`。
 
-## 4. Phase 1.5-G 完成开发内容
-
-1. `WorkflowCircuitState` 持久化模型。
-2. `0020_workflow_circuit_breaker` 基础表迁移。
-3. `0021_workflow_circuit_policy` 持久化 `failure_threshold` / `recovery_timeout_ms` / `half_open_max_calls`。
-4. Database-backed `CircuitBreakerService`。
-5. CLOSED / OPEN / HALF_OPEN 状态机。
-6. `tenant_id + circuit_key` 隔离。
-7. Circuit State 与 Policy 使用数据库持久化。
-8. OPEN 状态 Fast-Fail。
-9. HALF_OPEN probe 槽位使用行锁并在成功预约后提交，保证并发 probe quota 不超过配置。
-10. HALF_OPEN probe success → CLOSED。
-11. HALF_OPEN probe failure → OPEN。
-12. 既有 circuit key 的 policy drift 返回 409，不允许不同 Workflow 静默改变既有 Circuit 治理参数。
-13. Workflow Runtime 集成 Circuit Breaker，`CIRCUIT_OPEN` 不进入 Node Retry。
-14. Real API fixture 增加并发 HALF_OPEN probe 验收，并使用独立 deterministic slow mock provider。
-15. Unit Test 覆盖 policy persistence / policy drift / HALF_OPEN recovery / failure reopen / probe quota。
-16. 修复 Circuit State 新建对象在 SQLAlchemy flush 前计数值可能为 `None` 的初始化缺陷，并补充首次 failure / before_call 回归覆盖。
-
-## 5. Phase 1.5-G Real API 验收结果
+## 4. Phase 1.5-G Real API 验收结果
 
 开发者本地真实 PostgreSQL + HTTP Real API Gate 已完成，结果如下：
 
@@ -117,14 +102,40 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-因此 Phase 1.5-G 的本地验收门禁全部通过。
+因此 Phase 1.5-G 的本地验收门禁全部通过，Phase 1.5 正式关闭。
 
-## 6. 下一步
+## 5. 规范核查与纠偏记录
 
-Phase 1.5-G 已完成并提交 `main`。下一步进入后续 Phase 1.5 Workflow / Governance 任务，严格继续遵循：
+本次远端 `main` 整体核查形成：
+
+- `docs/14-project-compliance-audit-and-correction-plan.md`：项目规范核查、完成度对照、偏差修正与后续规划。
+- `docs/error-tracking/002-backend-frontend-test-gate-coupling.md`：记录 Backend / Frontend Gate 跨栈耦合错误。
+- `docs/error-tracking/003-circuit-breaker-state-initialization.md`：记录 Circuit Breaker 新建状态计数初始化缺陷。
+- `docs/15-phase-1.6-workflow-production-hardening-plan.md`：建立 Phase 1.6 下一阶段执行基线。
+
+本次核查确认：
+
+1. Backend / Frontend 测试必须继续完全独立。
+2. 测试脚本必须位于所属技术栈目录内。
+3. Browser / Frontend-Backend E2E 未来作为第三独立测试层。
+4. Phase 1.5-G 已完成，不再重复开发 Circuit Breaker。
+5. 总体架构中尚未完成的 MQ / Worker、Multi-Agent、Evaluation、复杂审批、可视化 Workflow 等能力不得提前标记完成。
+
+## 6. Phase 1.6-A 下一步执行
+
+下一项任务为 **Workflow Trigger Contract**，具体基线见 `docs/15-phase-1.6-workflow-production-hardening-plan.md`。
+
+第一步只允许进入 Backend：
 
 ```text
-Backend Contract → Migration/pytest → Frontend API/Vitest → UI → 手工验收 → 联调 → 全量回归 → 文档 → main
+远端 main 最新基线
+→ Backend Trigger Domain + API Contract
+→ Migration（如需要）
+→ Backend pytest / API Contract
+→ Backend Real API scenario
+→ 再进入 Frontend API Type / Vitest / UI
 ```
 
-不得跳过对应测试 Gate，也不得恢复跨前后端的 Full Regression 脚本。
+Phase 1.6-A 暂不实现 MQ / Worker / Cron / Event Bus / Temporal 等分布式能力，不复制 Workflow Runtime 逻辑，Trigger 必须复用现有 Execution State Machine、Idempotency、Concurrency、Reliability、Audit / Trace 治理。
+
+完成后必须分别执行 Backend Gate 与 Frontend Gate，并更新本文件、Phase 文档及 error-tracking，最后直接提交 `main`。
