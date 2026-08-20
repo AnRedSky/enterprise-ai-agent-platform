@@ -22,6 +22,38 @@ export type WorkflowVersion = {
   created_at: string;
 };
 
+export type WorkflowExecution = {
+  id: string;
+  tenant_id: string;
+  workflow_id: string;
+  workflow_version_id: string;
+  created_by: string;
+  status: string;
+  current_node_id?: string;
+  input_data: Record<string, unknown>;
+  output_data?: Record<string, unknown>;
+  error_code?: string;
+  error_message?: string;
+  started_at?: string;
+  ended_at?: string;
+  created_at: string;
+};
+
+export type WorkflowExecutionNode = {
+  id: string;
+  execution_id: string;
+  node_id: string;
+  status: string;
+  attempt: number;
+  input_data?: Record<string, unknown>;
+  output_data?: Record<string, unknown>;
+  error_code?: string;
+  error_message?: string;
+  started_at?: string;
+  ended_at?: string;
+  created_at: string;
+};
+
 export type WorkflowTrace = {
   id: string;
   execution_id: string;
@@ -45,6 +77,8 @@ export const workflowApi = {
   versions(id: string) { return request.get<WorkflowVersion[]>(`/workflows/${id}/versions`); },
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
+  execution(executionId: string) { return request.get<WorkflowExecution>(`/workflows/executions/${executionId}`); },
+  executionNodes(executionId: string) { return request.get<WorkflowExecutionNode[]>(`/workflows/executions/${executionId}/nodes`); },
   trace(executionId: string) { return request.get<{ execution_id: string; items: WorkflowTrace[] }>(`/runtime/executions/${executionId}/trace`); },
   audit(params: Record<string, unknown>) { return request.get<{ items: Array<Record<string, unknown>>; page: number; page_size: number; total: number }>("/runtime/audit-logs", { params }); },
 };
