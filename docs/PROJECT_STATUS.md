@@ -9,9 +9,9 @@
 - 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - 当前阶段：Phase 1.5 Workflow / Governance
-- 当前任务：Phase 1.5-F Vue Workflow / Governance 管理端验收及测试基础设施治理
+- 当前任务：Phase 1.5-F Workflow Runtime 执行治理闭环
 - 当前角色：开发执行
-- 基线：2026-08-20 远端 `main` 已完成 tests / scripts 职责整改，并通过 Backend regression 与 migration 验收
+- 基线：2026-08-20 远端 `main` 已完成 Workflow Registry / Version / Publish / Execution / Audit / Trace 基础闭环及 tests / scripts 职责整改
 
 ## 2. 阶段状态
 
@@ -26,22 +26,10 @@
 | Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 开发中 / Backend 回归与 Frontend build 已通过 | Vue Workflow / Governance 管理端；Execution 状态 / Node 状态、API/View tests 已补齐；Real API Gate 当前发现 bootstrap fixture 与 Workflow Runtime definition contract 不一致，已修复，待本地复测后关闭 |
-| 测试基础设施治理 | 整改中 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；历史遗留测试/评估脚本继续按职责迁移，不允许新增根目录文件 |
+| Phase 1.5-F | 开发中 | Vue Workflow / Governance 管理端及 Runtime 执行治理；基础 Execution 可观测闭环已完成，新增 Cancel / Retry / Retry lineage，待开发者执行完整测试链和真实浏览器联调 |
+| 测试基础设施治理 | 持续治理 | 已建立 Unit / Integration / API Contract / Real API 四层规范，并迁移 API Contract、Real API 与联调入口；不新增重复测试入口或混用开发/测试脚本 |
 
-## 3. 本轮测试体系整改
-
-已完成：
-
-1. `backend/tests/` 明确划分 `unit/`、`integration/`、`api_contract/`、`api_real/`。
-2. 已将原根目录 API endpoint 测试迁移至 `tests/api_contract/`，并删除旧重复文件。
-3. 已将 Real API bootstrap / runner 迁移至 `scripts/test/api-real/`。
-4. 已将 Frontend / Backend Integration Gate 迁移至 `scripts/test/integration/`。
-5. 新增 `scripts/test/regression/`、`scripts/evaluation/knowledge/`、`scripts/evaluation/embedding/` 职责边界。
-6. 更新 `backend/tests/README.md`、`backend/scripts/README.md`、`docs/DEVELOPMENT_GUIDELINES.md`，明确测试实现与脚本编排分离。
-7. 已修复迁移后评估脚本导入、集成迁移测试路径与 Workflow migration test path 问题。
-
-## 4. 强制测试链
+## 3. 强制测试链
 
 ```text
 Unit → Integration → API Contract → Real API → Frontend Test/Build → Browser 联调
@@ -63,29 +51,45 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 
 禁止手工填写 `ACCESS_TOKEN`、`WORKFLOW_ID`、`WORKFLOW_EXECUTION_ID` 作为 Real API 测试前置条件。
 
-## 5. 当前验收结果
+## 4. 已验收基线
 
 ### Backend regression
 
-开发者已反馈通过：
+最近一次开发者反馈：
 
 ```text
-171 passed, 5 deselected
+172 passed, 5 deselected
 ```
 
 ### Migration
 
-开发者已反馈通过：
+最近一次开发者反馈：
 
 ```text
 0017_workflow_governance_audit_trace (head)
 ```
 
-### Frontend production build
+### Real API Gate
 
-开发者已反馈 `npm run build` 成功，当前构建无之前的 vendor 循环 warning / chunk > 500KB warning。
+最近一次开发者反馈：
 
-### Phase 1.5-F 本轮实现
+```text
+Real API context prepared: api_real_test_d4ada0d75a68
+5 passed
+[PASS] Real API gate completed.
+```
+
+真实 HTTP 链路已覆盖：
+
+```text
+Register → Login → Workflow → Version → Publish → Execution → Audit → Trace
+```
+
+### Frontend
+
+最近一次开发者反馈：Frontend tests 全部通过；production build 无 vendor circular chunk warning，也无 >500KB chunk warning。
+
+## 5. Phase 1.5-F 当前实现
 
 已完成：
 
@@ -93,47 +97,76 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 2. Workflow Definition JSON 编辑与新 Version 创建。
 3. Workflow Audit 查询展示。
 4. Workflow Trace 查询展示。
-5. 新增 Workflow Execution / Node API types 与查询封装。
+5. Workflow Execution / Node API types 与查询封装。
 6. Governance 页面新增 Execution 状态、当前节点、时间、错误及 Node 状态展示。
-7. 新增 Workflow API contract tests。
-8. 新增 Workflow Governance view tests。
+7. Workflow API contract tests 与 Governance view tests。
+8. Real API bootstrap 已改为自动发现/创建最小可执行 Workflow fixture，避免空 `nodes` definition 导致 422。
+9. Execution Cancel：`pending/running → cancelled`，支持取消原因并写入 Audit / Trace。
+10. Execution Retry：仅允许 `failed → new pending Execution`，不修改原 Execution。
+11. Retry lineage：新增 `retry_of_execution_id`，新旧 Execution 可追溯关联。
+12. Governance 页面新增 Cancel / Retry 操作及 Retry 来源展示。
+13. Frontend Workflow API tests 增加 Cancel / Retry contract coverage。
+14. Backend API contract tests 增加 Cancel / Retry route coverage。
+15. Backend unit tests 增加 Cancel / Retry 状态治理测试。
 
-### Real API Gate 当前问题与修复
+## 6. 本轮新增数据库变更
 
-开发者本地 Real API Gate 曾在执行 bootstrap fixture 时失败：
+新增 Alembic migration：
 
 ```text
-POST /workflows/{workflow_id}/executions -> 422
-Workflow definition 必须包含非空 nodes
+0018_workflow_execution_retry_lineage
 ```
 
-根因是 bootstrap 创建的 fallback Workflow 使用了空 `nodes`，并且会复用 definition 不可执行的已发布 Workflow。已在 `backend/scripts/test/api-real/00_bootstrap_real_api.py` 修复：
+内容：
 
-1. 新建 fixture 使用 `input` + `output` 最小可执行节点定义。
-2. 复用已有 Workflow 前检查其已发布 Version definition 是否包含非空 `nodes`。
-3. 没有可执行已发布 Workflow 时自动创建有效 fixture。
-4. 保持 Token / Workflow ID / Execution ID 全自动生成。
+- `workflow_executions.retry_of_execution_id`
+- self-referencing foreign key
+- retry lineage index
 
-错误记录：`docs/error-tracking/007-real-api-bootstrap-empty-workflow-definition.md`。
+Retry 原则：
 
-修复提交：`2aab1dc8f619e604d76a7d97845e7669857f147c`。
+```text
+Failed Execution A
+       ↓ Retry
+Pending Execution B
+       ↓
+B.retry_of_execution_id = A.id
+```
 
-## 6. Phase 1.5-F 最终关闭条件
+原 Execution A 保持不可变，不通过 Retry 直接修改其状态或结果。
 
-仍待开发者本地执行并反馈：
+## 7. 当前待验收
 
-1. `cd frontend && npm test`
-2. `cd frontend && npm run build`
-3. `cd backend && uv run pytest -q`
-4. `cd backend && uv run alembic upgrade head && uv run alembic current`
-5. 修复后的 Real API Gate
-6. Workflow Registry → Version → Publish → Execution Status / Node Status → Audit → Trace 浏览器级联调
+开发者需要按强制测试链执行：
 
-## 7. 下一步
+1. `cd backend && uv run pytest -q`
+2. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migration\01_migrate.ps1`
+3. `cd backend && powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1`
+4. `cd frontend && npm test`
+5. `cd frontend && npm run build`
+6. 浏览器级验证 Workflow → Execution → Cancel / Retry → Audit / Trace
 
-1. 开发者同步最新 `main`。
-2. 重新执行 Backend regression 与 migration，确认 bootstrap 修复没有引入回归。
-3. 执行 Real API Gate，重点验证自动创建/发现可执行 Workflow、Execution、Audit、Trace 全链路。
-4. Real API 全部通过后，再进行 Frontend Test/Build 与浏览器级 Workflow 联调。
-5. 记录真实执行结果后关闭 Phase 1.5-F。
-6. Phase 1.5-F 关闭后，再进入 Workflow Execution Reliability Hardening，不提前虚构下一阶段任务。
+特别验证：
+
+- `completed` / `cancelled` Execution 不允许再次 Cancel。
+- 非 `failed` Execution 不允许 Retry。
+- Retry 必须生成新的 `execution_id`。
+- 新 Execution 的 `retry_of_execution_id` 必须指向原 failed Execution。
+- 原 failed Execution 保持不变。
+- Cancel / Retry 均产生对应 Audit / Trace。
+
+## 8. 下一步
+
+当前不继续人为拆分 vendor chunk，也不新增重复测试入口。
+
+待本轮 Cancel / Retry 完整验收后，继续 Phase 1.5-F 的下一项：
+
+**Workflow Execution Reliability Hardening**
+
+优先顺序：
+
+1. Execution 并发/幂等控制。
+2. Runtime 超时与失败恢复边界。
+3. Node-level retry / attempt 治理。
+4. Execution 查询列表与历史执行治理。
+5. 再进入更高阶段的 Workflow 调度与异步 Worker 能力。
