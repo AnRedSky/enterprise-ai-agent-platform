@@ -56,7 +56,7 @@ Audit / Trace
 
 ### Backend Contract
 
-候选接口：
+已落地第一轮候选接口：
 
 ```text
 GET    /api/v1/workflows/{workflow_id}/triggers
@@ -67,25 +67,43 @@ DELETE /api/v1/workflows/{workflow_id}/triggers/{trigger_id}
 POST   /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke
 ```
 
-> 具体字段、状态码和数据库结构必须在 Backend Contract 实施时以当前代码模型和现有 API 约束为准，本表不提前固化未验证字段。
+当前第一轮实现字段：
+
+- `name`
+- `trigger_type`：当前仅 `manual`
+- `status`：`enabled` / `disabled`
+- `config`
+- Tenant / Workflow / creator 由认证上下文和服务层确定，不接受客户端 Tenant。
 
 ### 必须保证
 
 - Trigger 不允许客户端指定任意 Tenant。
 - Trigger 只能作用于当前 Tenant 可访问的 Workflow。
-- Trigger 默认只能指向 Published Version；若未来支持显式 version，必须经过 Governance 校验。
+- Trigger 默认只能指向 Published Version；当前通过 `Workflow.published_version_id` 在 invoke 时解析并校验 Published Version。
 - Disabled / 非 Published Workflow 不得通过 Trigger 创建正常 Execution。
 - Trigger invoke 必须进入现有 Execution State Machine，而不是复制 Runtime 执行逻辑。
 - Trigger 必须复用现有 Idempotency / Concurrency / Reliability Governance。
 - Trigger invoke 的 Audit / Trace 必须能关联 Workflow、Trigger、Execution。
 
+### 当前 Backend 实现
+
+- `backend/app/models/workflow_trigger.py`
+- `backend/app/services/workflow_trigger.py`
+- `backend/app/api/workflows.py`
+- `backend/alembic/versions/0022_workflow_trigger.py`
+- `backend/tests/unit/test_workflow_trigger.py`
+- `backend/tests/api_contract/test_api_workflows_endpoints.py`
+- `backend/alembic/env.py` 已注册 Trigger model。
+
+当前代码已提交 `main`，但**尚未宣称 Backend Gate / Real API 已通过**；验收结果必须以实际执行记录为准。
+
 ## 4. 固定实施顺序
 
 ```text
-① Backend Trigger Domain + API Contract
-② Database Migration（如需要）
-③ Backend unit / integration / api_contract tests
-④ Backend Real API fixture / scenario
+① Backend Trigger Domain + API Contract      ← 当前已实现第一轮
+② Database Migration（如需要）              ← 已创建 0022
+③ Backend unit / integration / api_contract tests ← 已补充，待实际 Gate
+④ Backend Real API fixture / scenario        ← 下一步
 ⑤ Frontend API Type + Vitest
 ⑥ Frontend UI
 ⑦ Frontend production build
@@ -129,8 +147,10 @@ npm run build
 
 ## 7. 当前状态
 
-- Phase 1.6：已建立执行基线，尚未开始代码实现。
-- Phase 1.6-A：Trigger Contract，**下一项执行任务**。
+- Phase 1.6：已建立执行基线。
+- Phase 1.6-A：**Backend Contract 实现中**。
+- Backend Trigger domain / API / migration / contract tests 第一轮已提交 `main`。
+- Backend pytest、migration/head、Real API 尚未完成本轮最终验收。
+- Frontend 尚未开始；必须等待 Backend Contract 稳定并通过 Backend Gate 后进入。
 - 责任角色：开发执行。
-- 开始条件：以远端 `main` 最新提交为基线。
 - 完成条件：Backend Contract → Backend 验收 → Frontend 独立验收 → Real API → 独立 Regression Gate → 文档 → main。
