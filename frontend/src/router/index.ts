@@ -1,26 +1,25 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { isAuthenticated } from "../api/auth";
-import Dashboard from "../views/dashboard/index.vue";
-import Agents from "../views/agents/index.vue";
-import Runtime from "../views/runtime/index.vue";
-import AuditLog from "../views/audit-log/index.vue";
-import Tools from "../views/tools/index.vue";
-import Knowledge from "../views/knowledge/index.vue";
-import Workflows from "../views/workflows/index.vue";
-import Login from "../views/login/index.vue";
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/login", component: Login, meta: { public: true } },
+    {
+      path: "/login",
+      component: () => import("../views/login/index.vue"),
+      meta: { public: true },
+    },
     { path: "/", redirect: "/dashboard" },
-    { path: "/dashboard", component: Dashboard },
-    { path: "/agents", component: Agents },
-    { path: "/tools", component: Tools },
-    { path: "/knowledge", component: Knowledge },
-    { path: "/workflows", component: Workflows },
-    { path: "/runtime", component: Runtime },
-    { path: "/runtime/audit", component: AuditLog },
+    { path: "/dashboard", component: () => import("../views/dashboard/index.vue") },
+    { path: "/agents", component: () => import("../views/agents/index.vue") },
+    { path: "/tools", component: () => import("../views/tools/index.vue") },
+    { path: "/knowledge", component: () => import("../views/knowledge/index.vue") },
+    { path: "/workflows", component: () => import("../views/workflows/index.vue") },
+    { path: "/runtime", component: () => import("../views/runtime/index.vue") },
+    {
+      path: "/runtime/audit",
+      component: () => import("../views/audit-log/index.vue"),
+    },
   ],
 });
 
