@@ -25,9 +25,11 @@
 
 ```text
 backend/tests/             = 测试实现与断言
-backend/scripts/test/      = 测试 Gate 与顺序编排
+backend/scripts/test/      = Backend 测试 Gate 与顺序编排
 backend/scripts/evaluation = 质量评估
-backend/scripts/dev/       = 开发辅助/场景复现
+backend/scripts/dev/       = Backend 开发辅助/场景复现
+frontend/tests/            = Frontend 测试实现与断言
+frontend/scripts/test/     = Frontend 测试 Gate 与顺序编排
 ```
 
 Backend 测试四层目录必须保持：
@@ -65,6 +67,23 @@ Backend Gate 与 Frontend Gate 必须保持脚本、工作目录、运行时、�
 - 不得再创建一个同时执行 Backend 与 Frontend 测试的 `Full Regression Gate`。
 - Browser / Frontend-Backend E2E 未来必须作为第三个独立层实现，不得复制 Backend 或 Frontend 现有 Gate。
 
+### 脚本目录归属
+
+测试 Gate 脚本必须放在所属技术栈的项目目录内，不得跨目录放置：
+
+```text
+Backend
+backend/scripts/test/release/01_backend_regression_gate.ps1
+backend/scripts/test/api-real/01_run_real_api_tests.ps1
+
+Frontend
+frontend/scripts/test/release/01_frontend_regression_gate.ps1
+```
+
+Frontend Gate 必须从 `frontend/` 项目目录启动，并只使用 Frontend 自身的 `package.json`、`node_modules`、Vitest 和 Vite；不得通过 `backend/scripts/` 间接编排 Frontend 测试。
+
+Backend Gate 必须从 `backend/` 项目目录启动，并只使用 Backend 自身的 `uv`、pytest、Alembic 和 Real API 测试入口；不得调用 Frontend Gate。
+
 Backend 默认回归：
 
 ```powershell
@@ -82,8 +101,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_ba
 Frontend Release / Regression Gate：
 
 ```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\02_frontend_regression_gate.ps1
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
 Real API 唯一入口：
@@ -163,6 +182,9 @@ backend/scripts/test/api-real/
 backend/scripts/test/integration/
 backend/scripts/test/release/
 backend/scripts/test/phase/
+
+frontend/tests/
+frontend/scripts/test/release/
 ```
 
 核心模块要求 Unit Test Coverage ≥ 80%，核心安全模块 ≥ 90%。测试重点包括 API Contract、Service/Domain、Database/Migration、Agent Runtime、Tool Runtime、Knowledge/RAG、Memory、RBAC/Security、Observability、Frontend API/UI。
