@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -217,24 +218,47 @@ class WorkflowExecutionService:
 
     async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID,
                   is_admin: bool = False) -> WorkflowExecution:
-        nodes = WorkflowRuntime.validate_definition(version.definition)
+        definition = version.definition
+        nodes = WorkflowRuntime.validate_definition(definition)
+        workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms((definition.get("config") or {}))
         execution = await self._lock_execution(execution)
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以启动 Runtime")
         runtime = WorkflowRuntime(self.db)
         data = dict(execution.input_data or {})
+        deadline = asyncio.get_running_loop().time() + workflow_timeout_ms / 1000
         await self.governance.audit(execution, actor_id, "workflow.execution.run", "started")
         try:
             await self.transition(execution, "running", actor_id=actor_id)
             for node in nodes:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT",
+                                          error_message="Workflow Execution timeout", actor_id=actor_id)
+                    raise HTTPException(504, "Workflow Execution timeout")
+
                 node_id = node["id"]
+                node_timeout_ms = WorkflowRuntime.resolve_timeout_ms(node["config"])
+                effective_timeout = min(node_timeout_ms / 1000, remaining)
                 await self.transition_node(execution, node_id, "running", input_data=data)
                 try:
-                    data = await runtime.execute_node(node, data, actor_id, is_admin, execution.id, execution.tenant_id)
+                    data = await asyncio.wait_for(
+                        runtime.execute_node(node, data, actor_id, is_admin, execution.id, execution.tenant_id),
+                        timeout=effective_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    workflow_timeout = remaining <= node_timeout_ms / 1000
+                    error_code = "WORKFLOW_TIMEOUT" if workflow_timeout else "NODE_TIMEOUT"
+                    error_message = "Workflow Execution timeout" if workflow_timeout else f"Workflow node timeout: {node_id}"
+                    await self.transition_node(execution, node_id, "failed", error_code=error_code,
+                                               error_message=error_message)
+                    await self.transition(execution, "failed", error_code=error_code,
+                                          error_message=error_message, actor_id=actor_id)
+                    raise HTTPException(504, error_message) from exc
                 except Exception as exc:
                     await self.transition_node(execution, node_id, "failed", error_code=type(exc).__name__, error_message=str(exc))
                     await self.transition(execution, "failed", error_code=type(exc).__name__,
-                                           error_message="Workflow node execution failed", actor_id=actor_id)
+                                          error_message="Workflow node execution failed", actor_id=actor_id)
                     raise
                 await self.transition_node(execution, node_id, "completed", output_data=data)
             await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
@@ -244,5 +268,5 @@ class WorkflowExecutionService:
         except Exception as exc:
             if execution.status == "running":
                 await self.transition(execution, "failed", error_code=type(exc).__name__,
-                                       error_message="Workflow execution failed", actor_id=actor_id)
+                                      error_message="Workflow execution failed", actor_id=actor_id)
             raise
