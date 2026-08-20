@@ -219,7 +219,11 @@ def create_circuit_breaker_fixtures(client):
             "jitter_ms": 0,
             "retryable_error_codes": ["HTTP_503"],
         },
-        recovery_timeout_ms=1000,
+        # Keep the shared circuit deterministically OPEN while the fast-fail
+        # test creates and runs its second independent Execution. The recovery
+        # fixture intentionally supplies its own 200ms policy later, allowing
+        # the same persisted circuit key to transition to HALF_OPEN.
+        recovery_timeout_ms=300_000,
     )
     recovery_workflow_id = create_circuit_recovery_fixture(
         client,
