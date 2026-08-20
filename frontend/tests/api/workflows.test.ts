@@ -36,8 +36,18 @@ describe("workflowApi", () => {
     post.mockResolvedValue({ data: {} });
     await workflowApi.createExecution("w1", { order_id: "o1" });
     await workflowApi.runExecution("e1");
-    expect(post).toHaveBeenNthCalledWith(1, "/workflows/w1/executions", { input_data: { order_id: "o1" } });
+    expect(post).toHaveBeenNthCalledWith(1, "/workflows/w1/executions", { input_data: { order_id: "o1" } }, undefined);
     expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e1/run");
+  });
+
+  it("sends an idempotency key when creating an execution", async () => {
+    post.mockResolvedValue({ data: {} });
+    await workflowApi.createExecution("w1", { order_id: "o1" }, "request-1");
+    expect(post).toHaveBeenCalledWith(
+      "/workflows/w1/executions",
+      { input_data: { order_id: "o1" } },
+      { headers: { "Idempotency-Key": "request-1" } },
+    );
   });
 
   it("controls failed and active executions", async () => {
