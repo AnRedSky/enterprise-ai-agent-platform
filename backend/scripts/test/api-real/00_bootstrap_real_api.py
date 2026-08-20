@@ -48,7 +48,34 @@ def create_executable_fixture(client):
     return workflow["id"]
 
 
+def create_retry_agent(client):
+    """Create and publish a real Agent so the retry fixture fails inside Runtime as HTTP_404."""
+    agent = request(
+        client,
+        "POST",
+        "/agents",
+        json={
+            "name": f"API Retry Agent {uuid.uuid4().hex[:8]}",
+            "description": "Automated real API node retry governance fixture agent",
+            "system_prompt": "You are a deterministic validation agent.",
+            "model_id": "mock-model",
+        },
+    ).json()
+    versions = request(client, "GET", f"/agents/{agent['id']}/versions").json()
+    if not versions:
+        raise RuntimeError(f"Agent {agent['id']} was created without a version")
+    version_id = versions[0]["id"]
+    request(
+        client,
+        "POST",
+        f"/agents/{agent['id']}/publish",
+        json={"version_id": version_id},
+    )
+    return agent["id"]
+
+
 def create_retry_fixture(client):
+    agent_id = create_retry_agent(client)
     workflow = request(
         client,
         "POST",
@@ -70,7 +97,7 @@ def create_retry_fixture(client):
                         "id": "retry-agent",
                         "type": "agent",
                         "config": {
-                            "agent_id": str(uuid.uuid4()),
+                            "agent_id": str(agent_id),
                             "retry": {
                                 "max_attempts": 2,
                                 "backoff_ms": 0,
