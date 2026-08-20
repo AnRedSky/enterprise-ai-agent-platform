@@ -47,6 +47,7 @@ class WorkflowRuntime:
             "CONNECTION_ERROR",
         ],
     }
+    CIRCUIT_FAILURE_CODES = {"NODE_TIMEOUT", "HTTP_429", "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR"}
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -212,8 +213,8 @@ class WorkflowRuntime:
         messages = [{"role": "system", "content": version.system_prompt}, {"role": "user", "content": prompt}]
         try:
             result = await self.gateway.generate(version.model_id, messages, session_id)
-        except Exception:
-            if circuit_tenant_id is not None:
+        except Exception as exc:
+            if circuit_tenant_id is not None and self.classify_error(exc) in self.CIRCUIT_FAILURE_CODES:
                 await self.circuit_breaker.record_failure(circuit_tenant_id, circuit_key, config)
             raise
         if circuit_tenant_id is not None:
