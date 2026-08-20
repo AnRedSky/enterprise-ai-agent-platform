@@ -12,6 +12,7 @@ from app.models.core import Base, utcnow_naive
 class WorkflowExecution(Base):
     __tablename__ = "workflow_executions"
     __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_workflow_execution_tenant_idempotency"),
         Index("ix_workflow_execution_tenant_created", "tenant_id", "created_at"),
         Index("ix_workflow_execution_workflow_created", "workflow_id", "created_at"),
     )
@@ -24,6 +25,7 @@ class WorkflowExecution(Base):
     retry_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    idempotency_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     current_node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     input_data: Mapped[dict] = mapped_column(JSON, default=dict)
