@@ -176,7 +176,7 @@ class WorkflowExecutionService:
                 node_id = node["id"]
                 await self.transition_node(execution, node_id, "running", input_data=data)
                 try:
-                    data = await runtime.execute_node(node, data, actor_id, is_admin, execution.id)
+                    data = await runtime.execute_node(node, data, actor_id, is_admin, execution.id, execution.tenant_id)
                 except Exception as exc:
                     await self.transition_node(execution, node_id, "failed", error_code=type(exc).__name__,
                                                error_message=str(exc))
