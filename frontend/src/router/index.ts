@@ -6,6 +6,7 @@ import Runtime from "../views/runtime/index.vue";
 import AuditLog from "../views/audit-log/index.vue";
 import Tools from "../views/tools/index.vue";
 import Knowledge from "../views/knowledge/index.vue";
+import Workflows from "../views/workflows/index.vue";
 import Login from "../views/login/index.vue";
 
 const router = createRouter({
@@ -17,6 +18,7 @@ const router = createRouter({
     { path: "/agents", component: Agents },
     { path: "/tools", component: Tools },
     { path: "/knowledge", component: Knowledge },
+    { path: "/workflows", component: Workflows },
     { path: "/runtime", component: Runtime },
     { path: "/runtime/audit", component: AuditLog },
   ],
