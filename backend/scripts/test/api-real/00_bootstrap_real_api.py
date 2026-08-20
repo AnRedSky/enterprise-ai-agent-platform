@@ -117,7 +117,12 @@ def create_retry_fixture(client):
         client,
         "POST",
         f"/workflows/{workflow['id']}/executions",
-        json={"input_data": {"source": "real_api_node_retry_validation"}},
+        json={
+            "input_data": {
+                "source": "real_api_node_retry_validation",
+                "prompt": "Trigger deterministic node retry validation.",
+            }
+        },
     ).json()
     response = request(client, "POST", f"/workflows/executions/{execution['id']}/run")
     payload = response.json()
