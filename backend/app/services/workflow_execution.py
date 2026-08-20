@@ -286,7 +286,7 @@ class WorkflowExecutionService:
                     attempt = raw_attempt if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool) else 1
                     can_retry = (
                         error_code in retry_policy["retryable_error_codes"]
-                        and error_code != "WORKFLOW_TIMEOUT"
+                        and error_code not in {"WORKFLOW_TIMEOUT", "CIRCUIT_OPEN"}
                         and attempt < retry_policy["max_attempts"]
                     )
                     if not can_retry:
@@ -329,40 +329,36 @@ class WorkflowExecutionService:
                             raise exc
                         raise exc
 
-                    delay = WorkflowRuntime.retry_delay_seconds(retry_policy, attempt, random.random())
+                    retry_budget_remaining -= 1
+                    retry_delay = WorkflowRuntime.retry_delay_seconds(retry_policy, attempt, random.random())
                     remaining = deadline - asyncio.get_running_loop().time()
-                    if delay >= remaining:
+                    if remaining <= 0 or retry_delay >= remaining:
                         await self.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
                                                     error_code="WORKFLOW_TIMEOUT")
                         await self.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
                                                     node_id=node_id, error_code="WORKFLOW_TIMEOUT",
-                                                    error_message="Retry delay exceeds Workflow deadline",
+                                                    error_message="Workflow retry budget consumed by deadline",
                                                     data={"reason": "workflow_deadline", "attempt": attempt,
-                                                          "next_attempt": attempt + 1,
-                                                          "delay_ms": round(delay * 1000),
-                                                          "remaining_ms": max(0, round(remaining * 1000))})
+                                                          "retry_delay_ms": int(retry_delay * 1000),
+                                                          "retry_budget_remaining": retry_budget_remaining})
                         await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT",
                                               error_message="Workflow Execution timeout", actor_id=actor_id)
                         raise HTTPException(504, "Workflow Execution timeout")
-
-                    retry_budget_remaining -= 1
-                    await self.governance.audit(execution, actor_id, "workflow.node.retry", "retrying",
+                    await self.governance.audit(execution, actor_id, "workflow.node.retry_scheduled", "success",
                                                 error_code=error_code)
-                    await self.governance.trace(execution, actor_id, "node.retry.scheduled", "retrying",
-                                                node_id=node_id, error_code=error_code,
-                                                data={"attempt": attempt, "next_attempt": attempt + 1,
-                                                      "delay_ms": round(delay * 1000),
-                                                      "max_attempts": retry_policy["max_attempts"],
-                                                      "retry_budget_remaining": retry_budget_remaining})
-                    await asyncio.sleep(delay)
+                    await self.governance.trace(execution, actor_id, "node.retry.scheduled", "running",
+                                                node_id=node_id, data={"attempt": attempt + 1,
+                                                                       "delay_ms": int(retry_delay * 1000),
+                                                                       "retry_budget_remaining": retry_budget_remaining})
+                    if retry_delay > 0:
+                        await asyncio.sleep(retry_delay)
                     node_execution = await self.transition_node(execution, node_id, "running", input_data=data)
-
-            await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
-            return execution
         except HTTPException:
             raise
         except Exception as exc:
-            if execution.status == "running":
-                await self.transition(execution, "failed", error_code=type(exc).__name__,
-                                      error_message="Workflow execution failed", actor_id=actor_id)
-            raise
+            if execution.status not in self.TERMINAL_EXECUTION_STATES:
+                await self.transition(execution, "failed", error_code=WorkflowRuntime.classify_error(exc),
+                                      error_message=str(exc) or "Workflow execution failed", actor_id=actor_id)
+            raise HTTPException(500, str(exc) or "Workflow execution failed") from exc
+        await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
+        return execution
