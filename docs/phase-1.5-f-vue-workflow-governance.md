@@ -57,6 +57,21 @@ Definition 编辑器暂使用 JSON contract，为后续可视化编排器保留�
 - `frontend/src/router/index.ts`
   - 新增 `/workflows`
 
+### 4.1 前端构建优化整改
+
+Phase 1.5-F 的构建优化继续保持 `tests / scripts` 职责隔离，不新增测试入口，也不把开发脚本改造成测试脚本。
+
+本轮整改：
+
+- 移除 `main.ts` 的 `app.use(ElementPlus)` 全量组件注册。
+- 根据当前 `src/views` 实际使用情况，在 `main.ts` 手工注册已使用的 Element Plus 组件。
+- 保留 Element Plus 全局 CSS；组件 JavaScript 通过 ES Module 按需引用，使 Rollup 可以执行 tree-shaking。
+- 保留既有 route-level lazy loading 与 `manualChunks` 拆包策略，不通过提高 `chunkSizeWarningLimit` 掩盖 bundle 体积问题。
+- 既有 `@vueuse/core` `INVALID_ANNOTATION` 精准 warning 过滤保持不变，不修改 `node_modules`。
+- Node `localStorage` ExperimentalWarning 的测试环境处理保持现状，由 `frontend/tests/setup.ts` 提供确定性的测试 storage。
+
+Element Plus 官方文档明确支持基于 ES Module 的手动 Tree Shaking；当前采用手工按需注册方案，避免为本轮优化额外引入自动导入插件依赖。
+
 ## 5. 验收门禁
 
 开发者本地执行：
@@ -91,11 +106,14 @@ npm run build
 7. Trace 页输入真实 Workflow Execution ID，确认 Trace 时间线可读取。
 8. 使用非管理员账号验证只能访问自身租户 / 权限范围内数据。
 9. 使用管理员账号验证治理查询范围符合 Backend RBAC Contract。
+10. 检查 `npm run build` 不再出现 `@vueuse/core` PURE annotation warning，且不依赖提高 `chunkSizeWarningLimit` 消除 chunk warning。
 
 ## 6. 完成标准
 
 - Frontend Vitest 通过且无未解释 warning。
 - Frontend production build 通过。
+- Element Plus 不再通过 `app.use(ElementPlus)` 全量注册。
+- Frontend bundle 拆分策略保持可解释，不能以调高 warning 阈值代替优化。
 - Backend regression 保持通过。
 - Backend migration 保持 head。
 - Workflow CRUD / Version / Publish / Audit / Trace 手工联调无异常。
@@ -104,4 +122,4 @@ npm run build
 
 ## 7. 下一步
 
-Phase 1.5-F 完成后，进入下一阶段前先更新 `docs/PROJECT_STATUS.md`，根据实际产品优先级决定继续增强 Workflow Designer，或进入更高阶 Runtime / Multi-Agent 能力。
+前端构建优化完成并通过本地验收后，更新 `docs/PROJECT_STATUS.md`，再根据实际产品优先级决定继续增强 Workflow Designer，或进入更高阶 Runtime / Multi-Agent 能力。
