@@ -22,11 +22,10 @@ export default defineConfig(({ mode }) => {
         output: {
           manualChunks(id) {
             if (!id.includes("node_modules")) return undefined;
-            if (id.includes("@vueuse")) return "vueuse-vendor";
-            // Do not force all Element Plus modules into one vendor chunk.
-            // Component-level imports can then follow Rollup's dependency graph
-            // and share only the modules actually required by the lazy routes.
-            if (id.includes("@element-plus/icons-vue")) return "element-plus-icons";
+            // Keep vendor boundaries for stable, genuinely independent runtime
+            // dependencies. Do not split VueUse or Element Plus icons manually:
+            // both depend on Vue, and forcing separate chunks creates circular
+            // chunk graphs (vueuse-vendor <-> vue-vendor, icons <-> vue-vendor).
             if (id.includes("vue-router")) return "vue-router-vendor";
             if (id.includes("pinia")) return "pinia-vendor";
             if (id.includes("axios")) return "axios-vendor";
