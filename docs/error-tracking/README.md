@@ -15,3 +15,5 @@
 ## 当前记录
 
 - `001-alembic-version-column-too-short.md`：Phase 1.5-C migration revision id 超过历史 `alembic_version.version_num VARCHAR(32)` 长度导致 PostgreSQL migration 在更新 head 时失败。
+- `002-backend-frontend-test-gate-coupling.md`：Phase 1.5 测试治理中 Backend / Frontend Gate 曾发生跨技术栈耦合，已拆分并固化独立 Gate 规则。
+- `003-circuit-breaker-state-initialization.md`：Phase 1.5-G Circuit Breaker 新建状态在 flush 前计数值可能为 `None`，导致首次 failure 与 Real API bootstrap 异常，已完成状态初始化治理并纳入回归检查。
