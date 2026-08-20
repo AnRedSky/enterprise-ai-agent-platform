@@ -76,6 +76,25 @@ class CircuitBreakerService:
                 "Circuit breaker policy mismatch for existing circuit key",
             )
 
+    @staticmethod
+    def _new_state(tenant_id: UUID, circuit_key: str, policy: dict) -> WorkflowCircuitState:
+        """Build a fully initialized state instead of relying on ORM defaults.
+
+        SQLAlchemy ``default=`` values are applied as INSERT defaults; a newly
+        constructed object can still expose ``None`` before the flush. Runtime
+        state transitions must never depend on that pre-flush value.
+        """
+        return WorkflowCircuitState(
+            tenant_id=tenant_id,
+            circuit_key=circuit_key,
+            state="closed",
+            failure_threshold=policy["failure_threshold"],
+            recovery_timeout_ms=policy["recovery_timeout_ms"],
+            half_open_max_calls=policy["half_open_max_calls"],
+            failure_count=0,
+            success_count=0,
+        )
+
     async def before_call(self, tenant_id: UUID, circuit_key: str, config: dict | None = None) -> str:
         policy = self.validate_config(config)
         if not policy["enabled"]:
@@ -91,13 +110,7 @@ class CircuitBreakerService:
         )
         state = result.scalar_one_or_none()
         if state is None:
-            state = WorkflowCircuitState(
-                tenant_id=tenant_id,
-                circuit_key=circuit_key,
-                failure_threshold=policy["failure_threshold"],
-                recovery_timeout_ms=policy["recovery_timeout_ms"],
-                half_open_max_calls=policy["half_open_max_calls"],
-            )
+            state = self._new_state(tenant_id, circuit_key, policy)
             self.db.add(state)
             await self.db.flush()
             return "closed"
@@ -165,13 +178,7 @@ class CircuitBreakerService:
         )
         state = result.scalar_one_or_none()
         if state is None:
-            state = WorkflowCircuitState(
-                tenant_id=tenant_id,
-                circuit_key=circuit_key,
-                failure_threshold=policy["failure_threshold"],
-                recovery_timeout_ms=policy["recovery_timeout_ms"],
-                half_open_max_calls=policy["half_open_max_calls"],
-            )
+            state = self._new_state(tenant_id, circuit_key, policy)
             self.db.add(state)
             await self.db.flush()
         else:
