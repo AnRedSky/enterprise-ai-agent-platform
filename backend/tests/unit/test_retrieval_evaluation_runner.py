@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from scripts.evaluate_knowledge_retrieval_baseline import evaluate, load_cases, load_corpus, rank_case
+from scripts.evaluation.knowledge.evaluate_knowledge_retrieval_baseline import (
+    evaluate,
+    load_cases,
+    load_corpus,
+    rank_case,
+)
 
 
 def test_real_lexical_v2_runner_uses_corpus_and_dataset() -> None:
