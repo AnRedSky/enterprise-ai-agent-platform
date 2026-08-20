@@ -17,7 +17,7 @@
 | Phase 1.4-D | Runtime Knowledge integration | Auth → Knowledge → Ingest → AgentVersion → Runtime Chat → Citation 联调通过 |
 | Phase 1.4-E | Knowledge / Retrieval 生产化深化 | pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；mock + PostgreSQL/pgvector deterministic quality validation 已通过；真实 Embedding 语义质量仍待真实 Provider |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug / Runtime Trace | **G-01 / G-02 已完成；Backend 152 passed、0 warnings；migration 0012 已到 head** |
-| Phase 1.5 | Workflow / Governance | **1.5-A 已验收；1.5-B Publish Governance / Tenant Contract 已通过本地手工验收；1.5-C Backend Contract 修复待本地验收** |
+| Phase 1.5 | Workflow / Governance | **1.5-A～1.5-F 已完成；1.5-G Circuit Breaker Real API 已完成最终验收** |
 
 详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`、`docs/12-phase-1.4-e-vector-retrieval-provider.md` 与 `docs/13-phase-1.5-workflow-governance-plan.md`。
 当前项目实时进度统一见 `docs/PROJECT_STATUS.md`；工程长期开发规则统一见 `docs/DEVELOPMENT.md`。
@@ -50,37 +50,41 @@ Frontend production build
 
 Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内 Python 命令必须通过 `uv run` 执行。Frontend 必须同时通过 `npm test` 与 `npm run build` 后才能进入下一模块。
 
-## 7. 当前任务
+## 7. Phase 1.5-G Circuit Breaker Real API 完成记录
 
-**Phase 1.5-C Workflow Execution State Machine** 已完成 Backend Contract 实现，但本地验收曾被 Alembic metadata 兼容问题阻塞；问题已完成根因分析与代码修复，当前等待开发者本地重新验证。
+Phase 1.5-G 已完成以下能力：
 
-当前实现范围：
+1. `WorkflowCircuitState` 持久化模型。
+2. `0020_workflow_circuit_breaker` 基础表迁移。
+3. `0021_workflow_circuit_policy` 持久化 `failure_threshold` / `recovery_timeout_ms` / `half_open_max_calls`。
+4. Database-backed `CircuitBreakerService`。
+5. CLOSED / OPEN / HALF_OPEN 状态机。
+6. `tenant_id + circuit_key` 隔离。
+7. OPEN Fast-Fail，`CIRCUIT_OPEN` 不进入 Node Retry。
+8. HALF_OPEN probe quota 并发治理。
+9. probe success → CLOSED；probe failure → OPEN。
+10. policy drift 返回 `409`，禁止静默改变既有治理参数。
+11. Retry / Timeout / Workflow Deadline / Governance 边界。
+12. Real API deterministic fixture 与并发 HALF_OPEN probe 场景。
+13. 修复 Circuit State 新建对象在 SQLAlchemy flush 前计数值可能为 `None` 的初始化缺陷。
 
-1. 新增 `WorkflowExecution` / `WorkflowNodeExecution` domain。
-2. 新增 Alembic `0016_workflow_execution_state_machine`。
-3. Execution 状态：`pending → running → completed / failed / cancelled`。
-4. Node 状态：`pending → running → completed / failed / skipped`。
-5. 终态禁止再次转换。
-6. Execution 与 Node Execution 均受 Tenant scope 约束。
-7. 只能从当前 Workflow 的已发布版本创建 Execution。
-8. 新增 Backend execution API contract 与独立 pytest。
-9. 新增 Backend-only validation script：`backend/scripts/run_phase_1_5_c_workflow_execution_validation.ps1`。
-10. 针对历史 `alembic_version.version_num VARCHAR(32)` 与新 revision id 长度不兼容的问题，增加 migration preflight 并新增单元测试。
-11. **只有开发者本地验证通过后，才标记 1.5-C Backend 完成。**
+开发者本地验收结果：
 
-开发者本地验证命令：
-
-```powershell
-cd backend
+```text
 uv run alembic upgrade head
-uv run alembic current
+→ 0020_workflow_circuit_breaker -> 0021_workflow_circuit_policy 成功
+
 uv run pytest -q
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_workflow_execution_validation.ps1
+→ 209 passed, 11 deselected in 3.44s
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+→ 11 passed in 17.62s
+→ [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-该脚本严格只执行 Backend migration / pytest，不调用 Frontend 测试；Frontend 必须独立执行 `npm test` 与 `npm run build`。
+Phase 1.5-G 最终验收通过，正式进入下一阶段任务。
 
-### 当前规则
+## 8. 当前规则
 
 - 本地开发 / 测试阶段，不执行 GitHub Actions CI。
 - Backend 所有测试、脚本、Alembic 使用 `uv run` 项目环境。
@@ -88,4 +92,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_phase_1_5_c_wo
 - pgvector 必须由 PostgreSQL 服务端提供，不能通过 Python 依赖替代。
 - Phase 1.5 必须严格遵循“Backend Contract → Migration/pytest → Frontend API/Vitest → UI → 手工验收 → 联调 → 全量回归 → 文档 → main”。
 - Backend 测试脚本禁止混入 Frontend 测试；Frontend 测试必须独立通过 `npm test` / `npm run build` 执行。
+- Backend Regression Gate 与 Frontend Regression Gate 必须分别位于 `backend/` 与 `frontend/` 目录。
+- Real API 唯一入口为 `backend/scripts/test/api-real/01_run_real_api_tests.ps1`。
+- 不得恢复同时调用 Backend 与 Frontend 测试的 Full Regression 脚本。
 - 工程错误统一记录到 `docs/error-tracking/`。
+
+## 9. 下一步任务
+
+Phase 1.5-G 已完成，下一步继续推进后续 Phase 1.5 Workflow / Governance 任务。必须先确认对应 Backend Contract，再按固定前后端顺序推进，不得跳过独立测试 Gate。
