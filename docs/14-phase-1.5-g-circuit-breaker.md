@@ -39,6 +39,7 @@ CLOSED
 7. Circuit 配置校验。
 8. transient failure 分类，避免 404 / 403 / 422 等业务错误错误触发熔断。
 9. Circuit Breaker Unit Test 与 Runtime Contract Test。
+10. Retry / Runtime 异常边界修复：Node 首次 attempt 显式初始化为 1、保留 `workflow.node.retry` Audit action、终态后保持原始 Runtime 异常。
 
 ## 3. 测试 Gate 结构调整
 
@@ -87,7 +88,49 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_fu
 
 不得以未实际执行的结果标记 Phase 1.5-G 通过。
 
-## 5. Real API 边界验收
+## 5. 已发生的本地验收失败
+
+开发者本地实际反馈：
+
+```text
+uv run pytest -q
+204 passed, 1 failed, 10 deselected
+
+Real API Gate
+8 passed, 2 failed
+
+Full Regression Gate
+Backend regression failed，后续 Gate 被阻断
+```
+
+具体失败：
+
+1. Retry budget unit test：Execution 已进入 failed 后，原始 `ConnectionError` 被外层包装成 `HTTPException(500)`。
+2. Retry governance Real API：缺少 `workflow.node.retry` Audit action。
+3. Circuit Breaker Real API：第二个独立 Execution 的首个 `CIRCUIT_OPEN` Node 观测为 `attempt=2`，预期为 1。
+
+详细错误记录：
+
+```text
+docs/error-tracking/008-phase-1-5-g-real-api-retry-and-circuit-boundary.md
+```
+
+## 6. 已提交修复
+
+修复提交：
+
+```text
+e0fff63ca6fdd56cb40bd7bb03f28b779b34d7a3
+fix: preserve runtime failures and retry governance audit
+```
+
+修复内容：
+
+- 新建 `WorkflowNodeExecution` 时显式设置 `attempt=1`。
+- Retry scheduling 同时记录 `workflow.node.retry` 与 `workflow.node.retry_scheduled`，保持既有治理兼容性。
+- Execution 已进入 terminal state 后，外层异常处理不再把原始 Runtime 异常二次包装为 HTTP 500。
+
+## 7. Real API 边界验收要求
 
 Real API 必须覆盖至少以下场景：
 
@@ -103,16 +146,19 @@ Real API 必须覆盖至少以下场景：
 10. Circuit OPEN 不应消耗 Retry budget。
 11. Retry delay 与 Workflow deadline 的既有治理规则不得被 Circuit Breaker 绕过。
 12. Execution / Node / Trace / Audit 最终状态保持一致。
+13. 独立 Execution 首次进入 `CIRCUIT_OPEN` 时 Node `attempt` 必须为 1，且不得产生 `node.retry.scheduled`。
 
-## 6. 当前状态
+## 8. 当前状态
 
 - 测试基础设施治理：已完成，重复 Frontend/Backend 全套 Gate 已删除并迁移到 Release / Full Regression Gate。
 - 实现：已提交到 `main`。
-- Migration：已创建 0020，待开发者本地执行 head 验证。
-- Unit / Contract：已存在，待开发者本地全量回归确认。
-- Real API：待完成 Circuit Breaker 真实边界验收。
-- Frontend：Circuit Breaker 当前无独立 UI 需求，仍需执行既有前端测试与生产构建作为阶段门禁。
+- Migration：已创建 0020；本轮必须由开发者本地实际执行 head 验证。
+- Unit / Contract：已存在；修复后必须重新由开发者本地全量回归确认。
+- Real API：**修复后待重新执行，当前不得标记通过**。
+- Frontend：Circuit Breaker 当前无独立 UI 需求，修复后仍需执行既有前端测试与生产构建作为阶段门禁。
 
-## 7. 下一步
+## 9. 下一步
 
-优先完成 Circuit Breaker Real API 边界验收；若全部通过，则更新 `docs/PROJECT_STATUS.md` 收口 Phase 1.5-G，再进入 Workflow Execution 查询/历史治理，并最终进入异步 Worker / 调度能力。
+优先完成修复后的本地 Real API 边界复测；若仍出现独立 Execution 的 `attempt=2`，必须检查真实 PostgreSQL 中对应 `workflow_node_executions` 行、状态转换 Trace、Execution ID 关联和 API 请求顺序，禁止通过放宽断言来规避问题。
+
+只有 Backend regression、Migration、Real API、Frontend test/build、Full Regression 全部由开发者本地实际执行并通过后，才更新 `docs/PROJECT_STATUS.md` 与本文收口 Phase 1.5-G，并进入 Workflow Execution 查询/历史治理，再进入异步 Worker / 调度能力。
