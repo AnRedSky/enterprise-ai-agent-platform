@@ -10,6 +10,12 @@ export type Event = {
   started_at: string; ended_at?: string; duration_ms?: number; model_id?: string; tool_id?: string; error_code?: string;
   metadata?: Record<string, unknown>;
 };
+export type WorkflowTraceItem = {
+  id: string; tenant_id: string; execution_id: string; workflow_id: string; workflow_version_id: string;
+  node_id?: string; event_type: string; status: string; trace_id: string; actor_id?: string;
+  data?: Record<string, unknown>; error_code?: string; error_message?: string; created_at: string;
+};
+export type WorkflowTrace = { execution_id: string; items: WorkflowTraceItem[] };
 export type AuditLog = {
   id: string; actor_id?: string; agent_id?: string; tool_id?: string; execution_id?: string;
   action: string; status: string; error_code?: string; created_at: string;
@@ -21,5 +27,6 @@ export const runtimeApi = {
   executions(params: Record<string, unknown>) { return request.get<Page<Execution>>("/runtime/executions", { params }); },
   execution(id: string) { return request.get<Timeline>(`/runtime/executions/${id}`); },
   executionEvents(id: string) { return request.get<Timeline>(`/runtime/executions/${id}/events`); },
+  executionTrace(id: string) { return request.get<WorkflowTrace>(`/runtime/executions/${id}/trace`); },
   auditLogs(params: Record<string, unknown>) { return request.get<Page<AuditLog>>("/runtime/audit-logs", { params }); },
 };
