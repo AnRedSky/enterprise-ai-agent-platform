@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
+from pathlib import Path
 
 import httpx
 
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TIMEOUT = 20.0
+ENV_FILE = Path(__file__).with_name(".api_real_validation.env.json")
 
 
 def request(client: httpx.Client, method: str, path: str, **kwargs) -> httpx.Response:
@@ -39,18 +42,17 @@ def main() -> int:
         client.headers["Authorization"] = f"Bearer {token}"
 
         workflows = request(client, "GET", "/workflows").json()
-        workflow_id = None
-        for workflow in workflows:
-            if workflow.get("published_version_id"):
-                workflow_id = workflow["id"]
-                break
+        workflow_id = next((item["id"] for item in workflows if item.get("published_version_id")), None)
 
         if workflow_id is None:
             created = request(
                 client,
                 "POST",
                 "/workflows",
-                json={"name": f"API Real Validation {uuid.uuid4().hex[:8]}", "description": "Automated real API validation fixture"},
+                json={
+                    "name": f"API Real Validation {uuid.uuid4().hex[:8]}",
+                    "description": "Automated real API validation fixture",
+                },
             ).json()
             workflow_id = created["id"]
             version = request(
@@ -69,11 +71,18 @@ def main() -> int:
         ).json()
         execution_id = execution["id"]
 
-    os.environ["ACCESS_TOKEN"] = token
-    os.environ["WORKFLOW_ID"] = str(workflow_id)
-    os.environ["WORKFLOW_EXECUTION_ID"] = str(execution_id)
+    ENV_FILE.write_text(
+        json.dumps(
+            {
+                "ACCESS_TOKEN": token,
+                "WORKFLOW_ID": str(workflow_id),
+                "WORKFLOW_EXECUTION_ID": str(execution_id),
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    print(f"Real API validation identity: {username}")
+    print(f"Real API validation identity prepared: {username}")
     print(f"WORKFLOW_ID={workflow_id}")
     print(f"WORKFLOW_EXECUTION_ID={execution_id}")
     return 0
