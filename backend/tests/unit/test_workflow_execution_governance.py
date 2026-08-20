@@ -51,7 +51,9 @@ async def test_retry_creates_new_execution_with_lineage():
             "edges": [],
         }
     )
-    db.execute.return_value.scalar_one.return_value = version
+    # AsyncSession.execute() is awaited by the service, so configure the
+    # awaited result rather than chaining through AsyncMock.return_value.
+    db.execute.return_value = SimpleNamespace(scalar_one=lambda: version)
     service = WorkflowExecutionService(db)
     service.governance.audit = AsyncMock()
     service.governance.trace = AsyncMock()
@@ -75,6 +77,7 @@ async def test_retry_creates_new_execution_with_lineage():
     assert result.workflow_version_id == execution.workflow_version_id
     assert result.input_data == execution.input_data
     db.add.assert_called_once_with(result)
+    db.execute.assert_awaited_once()
     assert service.governance.trace.await_count == 2
 
 
