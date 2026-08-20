@@ -153,7 +153,7 @@ async def test_run_exhausts_retry_budget_before_scheduling_retry(monkeypatch):
     assert service.governance.audit.await_args_list[-1].args[2] == "workflow.node.retry_exhausted"
     assert service.governance.trace.await_args_list[-1].args[2] == "node.retry.exhausted"
     assert service.governance.trace.await_args_list[-1].kwargs["data"]["reason"] == "retry_budget"
-    assert not any(call.args[1] == "running" for call in service.transition_node.await_args_list[1:])
+    assert not any(call.args[2] == "running" for call in service.transition_node.await_args_list[1:])
 
 
 @pytest.mark.asyncio
@@ -197,4 +197,4 @@ async def test_run_exhausts_retry_when_backoff_crosses_workflow_deadline(monkeyp
     assert trace.args[2] == "node.retry.exhausted"
     assert trace.kwargs["error_code"] == "WORKFLOW_TIMEOUT"
     assert trace.kwargs["data"]["reason"] == "workflow_deadline"
-    assert not any(call.args[1] == "running" for call in service.transition_node.await_args_list[1:])
+    assert not any(call.args[2] == "running" for call in service.transition_node.await_args_list[1:])
