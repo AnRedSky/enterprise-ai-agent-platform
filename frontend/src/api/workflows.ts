@@ -29,6 +29,7 @@ export type WorkflowExecution = {
   workflow_version_id: string;
   created_by: string;
   retry_of_execution_id?: string;
+  idempotency_key?: string;
   status: string;
   current_node_id?: string;
   input_data: Record<string, unknown>;
@@ -78,8 +79,12 @@ export const workflowApi = {
   versions(id: string) { return request.get<WorkflowVersion[]>(`/workflows/${id}/versions`); },
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
-  createExecution(workflowId: string, inputData: Record<string, unknown> = {}) {
-    return request.post<WorkflowExecution>(`/workflows/${workflowId}/executions`, { input_data: inputData });
+  createExecution(workflowId: string, inputData: Record<string, unknown> = {}, idempotencyKey?: string) {
+    return request.post<WorkflowExecution>(
+      `/workflows/${workflowId}/executions`,
+      { input_data: inputData },
+      idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+    );
   },
   runExecution(executionId: string) { return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/run`); },
   cancelExecution(executionId: string, reason?: string) {
