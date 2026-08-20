@@ -17,5 +17,36 @@ export default defineConfig(({ mode }) => {
         "/api": apiBaseUrl,
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            if (id.includes("@vueuse")) return "vueuse-vendor";
+            if (id.includes("element-plus")) return "element-plus-vendor";
+            if (id.includes("@element-plus/icons-vue")) return "element-plus-icons";
+            if (id.includes("vue-router")) return "vue-router-vendor";
+            if (id.includes("pinia")) return "pinia-vendor";
+            if (id.includes("axios")) return "axios-vendor";
+            if (id.includes("/vue/")) return "vue-vendor";
+            return undefined;
+          },
+        },
+        onwarn(warning, defaultHandler) {
+          // @vueuse/core 14.3.x shipped two misplaced PURE annotations.
+          // Rollup removes these annotations safely, so filter only this
+          // known upstream INVALID_ANNOTATION warning rather than hiding all
+          // build diagnostics. The project can remove this filter after the
+          // dependency is upgraded to a fixed release.
+          if (
+            warning.code === "INVALID_ANNOTATION" &&
+            warning.message.includes("@vueuse/core")
+          ) {
+            return;
+          }
+          defaultHandler(warning);
+        },
+      },
+    },
   };
 });
