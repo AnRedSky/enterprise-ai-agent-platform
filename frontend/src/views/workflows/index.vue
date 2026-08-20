@@ -10,10 +10,10 @@ const selectedVersion = ref<WorkflowVersion>();
 const traces = ref<WorkflowTrace[]>([]);
 const audits = ref<Array<Record<string, unknown>>>([]);
 const loading = ref(false);
-const drawer = ref(false);
 const auditLoading = ref(false);
 const form = ref({ name: "", description: "" });
 const definitionText = ref('{\n  "nodes": [],\n  "edges": []\n}');
+const traceExecutionId = ref("");
 
 async function load() {
   loading.value = true;
@@ -56,13 +56,15 @@ async function saveVersion() {
 
 async function publishVersion(version: WorkflowVersion) {
   if (!selected.value) return;
-  await ElMessageBox.confirm(`确认发布 Version ${version.version}？`, "发布 Workflow", { type: "warning" });
   try {
+    await ElMessageBox.confirm(`确认发布 Version ${version.version}？`, "发布 Workflow", { type: "warning" });
     await workflowApi.publish(selected.value.id, version.id);
     ElMessage.success("Workflow Version 发布成功");
     await load();
     await selectWorkflow(selected.value);
-  } catch { ElMessage.error("Workflow Version 发布失败"); }
+  } catch (error) {
+    if (error !== "cancel") ElMessage.error("Workflow Version 发布失败");
+  }
 }
 
 async function loadAudit() {
@@ -73,8 +75,9 @@ async function loadAudit() {
   finally { auditLoading.value = false; }
 }
 
-async function loadTrace(executionId: string) {
-  try { traces.value = (await workflowApi.trace(executionId)).data.items; }
+async function loadTrace() {
+  if (!traceExecutionId.value.trim()) return ElMessage.warning("请输入 Workflow Execution ID");
+  try { traces.value = (await workflowApi.trace(traceExecutionId.value.trim())).data.items; }
   catch { ElMessage.error("Trace 查询失败"); }
 }
 
@@ -116,8 +119,8 @@ onMounted(load);
             <el-descriptions-item label="Owner">{{ selected.owner_id }}</el-descriptions-item>
             <el-descriptions-item label="Updated">{{ selected.updated_at }}</el-descriptions-item>
           </el-descriptions>
-          <el-tabs>
-            <el-tab-pane label="Versions">
+          <el-tabs @tab-change="(name) => name === 'audit' && loadAudit()">
+            <el-tab-pane label="Versions" name="versions">
               <el-table :data="versions" @row-click="useVersion">
                 <el-table-column prop="version" label="Version" width="90" />
                 <el-table-column prop="status" label="状态" width="110" />
@@ -127,12 +130,12 @@ onMounted(load);
                 </el-table-column>
               </el-table>
             </el-tab-pane>
-            <el-tab-pane label="Definition">
+            <el-tab-pane label="Definition" name="definition">
               <el-alert title="当前阶段使用 JSON Definition 合约；后续可替换为可视化 DAG 编排器。" type="info" :closable="false" />
               <el-input v-model="definitionText" type="textarea" :rows="18" class="definition" />
               <el-button type="primary" @click="saveVersion">创建新 Version</el-button>
             </el-tab-pane>
-            <el-tab-pane label="Audit" @tab-click="loadAudit">
+            <el-tab-pane label="Audit" name="audit">
               <el-table v-loading="auditLoading" :data="audits">
                 <el-table-column prop="action" label="Action" min-width="180" />
                 <el-table-column prop="status" label="Status" width="110" />
@@ -140,9 +143,9 @@ onMounted(load);
                 <el-table-column prop="error_code" label="Error" width="130" />
               </el-table>
             </el-tab-pane>
-            <el-tab-pane label="Trace">
+            <el-tab-pane label="Trace" name="trace">
               <el-alert title="输入 Workflow Execution ID 查看完整 Trace。" type="info" :closable="false" />
-              <el-input placeholder="execution UUID" @keyup.enter="loadTrace(($event.target as HTMLInputElement).value.trim())" />
+              <div class="trace-query"><el-input v-model="traceExecutionId" placeholder="execution UUID" @keyup.enter="loadTrace" /><el-button type="primary" @click="loadTrace">查询 Trace</el-button></div>
               <el-timeline v-if="traces.length" class="trace-list">
                 <el-timeline-item v-for="item in traces" :key="item.id" :timestamp="item.created_at">
                   <strong>{{ item.event_type }}</strong> / {{ item.status }} / node={{ item.node_id || '-' }}
@@ -163,6 +166,8 @@ onMounted(load);
 .workflow-page { padding: 16px; }
 .header { display: flex; align-items: center; justify-content: space-between; }
 .definition { margin: 12px 0; font-family: monospace; }
+.trace-query { display: flex; gap: 8px; margin-top: 12px; }
+.trace-query .el-input { flex: 1; }
 .trace-list { margin-top: 20px; }
 .error { margin-top: 4px; }
 </style>
