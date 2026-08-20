@@ -126,7 +126,7 @@ onMounted(load);
                 <el-table-column prop="status" label="状态" width="110" />
                 <el-table-column prop="created_at" label="Created" min-width="180" />
                 <el-table-column label="操作" width="110">
-                  <template #default="scope"><el-button size="small" type="success" @click.stop="publishVersion(scope.row)">发布</el-button></template>
+                  <template #default="scope"><el-button size="small" type="success" @click.stop="publishVersion(scope.row as WorkflowVersion)">发布</el-button></template>
                 </el-table-column>
               </el-table>
             </el-tab-pane>
