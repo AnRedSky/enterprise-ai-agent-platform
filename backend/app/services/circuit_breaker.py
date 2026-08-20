@@ -110,6 +110,9 @@ class CircuitBreakerService:
                 state.half_opened_at = now
                 state.success_count = 1
                 await self.db.flush()
+                # Release the row lock after atomically reserving the first probe.
+                # Concurrent callers now observe the consumed HALF_OPEN quota.
+                await self.db.commit()
                 return "half_open"
             raise CircuitOpenError(circuit_key)
         if state.state == "half_open":
@@ -117,6 +120,7 @@ class CircuitBreakerService:
                 raise CircuitOpenError(circuit_key)
             state.success_count += 1
             await self.db.flush()
+            await self.db.commit()
             return "half_open"
         return "closed"
 
