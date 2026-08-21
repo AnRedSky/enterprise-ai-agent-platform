@@ -50,6 +50,20 @@ describe("workflowApi", () => {
     expect(del).toHaveBeenCalledWith("/workflows/w1/triggers/t1");
   });
 
+  it("creates a webhook trigger with secret config without inventing a second endpoint", async () => {
+    post.mockResolvedValue({ data: {} });
+    await workflowApi.createTrigger("w1", {
+      name: "Webhook trigger",
+      trigger_type: "webhook",
+      config: { auth_mode: "secret", secret: "1234567890123456", event_id_field: "event_id" },
+    });
+    expect(post).toHaveBeenCalledWith("/workflows/w1/triggers", {
+      name: "Webhook trigger",
+      trigger_type: "webhook",
+      config: { auth_mode: "secret", secret: "1234567890123456", event_id_field: "event_id" },
+    });
+  });
+
   it("invokes a trigger with an optional idempotency key", async () => {
     post.mockResolvedValue({ data: {} });
     await workflowApi.invokeTrigger("w1", "t1", { order_id: "o1" }, "trigger-request-1");
