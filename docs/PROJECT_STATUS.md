@@ -27,7 +27,7 @@
 | Workflow Definition / Version / Execution | 已实现当前历史范围 | Definition、Publish、Execution State Machine、Runtime Integration 已形成 |
 | Workflow Governance / Audit / Trace | 已实现当前历史范围 | Tenant/RBAC、Audit、Trace、Execution lineage 已形成 |
 | Retry / Timeout / Idempotency / Deadline | 已实现当前历史范围 | 基础 Contract 已形成；Phase 1.9-B 正在重新验证 Retry / Deadline / Circuit 跨边界行为 |
-| Circuit Breaker | **正在修复 / 验证** | 1.9-A 已完成代码修复；专项测试、完整 Backend Gate、Migration head、Real API Gate 均已由开发者本地实际执行并通过；仍需完成 1.9-B/C/D 才能完成 Phase 1.9 Reliability Acceptance |
+| Circuit Breaker | **正在修复 / 验证** | 1.9-A 已完成代码修复并通过本地专项/Backend/Real API Gate；1.9-B 已增加 stale Probe completion recovery-window 隔离，但等待本地重新验证 |
 | Scheduled Trigger | 已实现当前历史范围 | Phase 1.7 已形成持久化、治理和 Browser E2E 能力 |
 | Webhook Trigger | 已实现当前历史范围 | Phase 1.8 已形成认证、durable idempotency、Workflow Execution 和 Browser E2E |
 | Frontend Governance UI | 已实现当前历史范围 | Vue 管理端已覆盖 Agent/Workflow/Knowledge/Trigger 等历史范围 |
@@ -48,35 +48,23 @@
 | Phase 1.6 | 已完成 / 正式关闭 | Trigger / Frontend / Browser 历史范围；未发现独立 1.6-D 正文，不补造 |
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
-| **Phase 1.9** | **进行中** | 1.9-A 本地验证完成；1.9-B Runtime Failure / Retry / Circuit Boundary Audit 继续进行 |
+| **Phase 1.9** | **进行中** | 1.9-A 本地验证完成；1.9-B stale Probe completion 边界修复已提交，等待本地验证 |
 
 ## 4. Phase 1.9 当前任务
 
 ### 1.9-A Circuit Breaker HALF_OPEN Concurrent Recovery
 
-状态：**本地验证完成，待进入 1.9-B。**
+状态：**本地验证完成。**
 
 开发者实际执行结果：
 
 ```text
-Targeted Circuit Breaker tests
-→ 16 passed in 0.68s
-
-Alembic
-→ PostgreSQL migration upgrade completed successfully
-
-Backend Regression Gate
-→ Backend: 262 passed, 20 deselected in 3.64s
-→ Migration head: 0022_workflow_trigger (head)
-→ Mandatory Real API: 20 passed in 32.99s
-→ [PASS] Backend regression gate completed
-
-Standalone Real API Gate
-→ 20 passed in 33.26s
-→ [PASS] Real API gate completed
+Targeted Circuit Breaker tests → 16 passed in 0.68s
+Backend Regression → 262 passed, 20 deselected in 3.64s
+Migration head → 0022_workflow_trigger (head)
+Mandatory Real API → 20 passed in 32.99s
+Standalone Real API → 20 passed in 33.26s
 ```
-
-因此 1.9-A 的代码、专项 Unit Test、Backend Regression、Migration head 和 Real API Gate 均已获得当前 main 的本地实际验证证据。
 
 ### 1.9-B Runtime Failure / Retry / Circuit Boundary Audit
 
@@ -92,11 +80,36 @@ Standalone Real API Gate
 - retry lineage 通过 `retry_of_execution_id` 保留。
 - HALF_OPEN probe failure 会转换为 `CIRCUIT_OPEN`，避免恢复 Probe 再次消耗 node retry budget。
 
-仍需继续验证：
+本轮已完成第一项 stale Probe completion 修复：
 
-- HALF_OPEN reservation 当前没有独立 probe token；需要真实超时/并发场景验证迟到旧 Probe completion 不会影响新的 recovery window。
-- `record_failure()` / `record_success()` 与 Workflow transition 的事务边界需要真实 PostgreSQL、多 worker 场景验证。
-- 1.9-C 需要扩展 Real API Reliability Scenarios，覆盖 OPEN fast-fail、HALF_OPEN recovery、concurrent probes、retry lineage、deadline boundary、idempotency、tenant isolation。
+```text
+旧 Recovery Window Probe completion
+        ↓
+必须携带当前 async execution context 的
+(tenant_id, circuit_key, half_opened_at)
+        ↓
+与 PostgreSQL 当前 Recovery Window 比对
+        ↓
+不匹配 → 不修改新 Window
+```
+
+代码提交：
+
+```text
+8085e5c7c6009a97a7d3a1d73094f7812c9f9258
+fix: isolate stale circuit probe completions
+```
+
+专项测试提交：
+
+```text
+f7ef0c55810171cb70e5873a99cba82a01a64047
+ test: cover stale half-open probe completion
+```
+
+**以上代码/测试尚未由开发者在本地重新执行，因此当前不能标记 PASS。**
+
+下一步：本地 Unit → Backend Regression → PostgreSQL/Migration → Real API → 多 worker/recovery-window 专项验证。
 
 ## 5. 已完成文档治理整改
 
@@ -114,42 +127,41 @@ docs/
 └── 04-errors/
 ```
 
-Phase 1.4、1.5、1.6、1.7、历史 Phase 14–24 以及旧 `error-tracking` 已逐份核对、迁移并清理旧入口。不存在独立历史正文的任务没有被补造。
-
 ## 6. 当前 Phase 1.9 实际测试记录
 
 本轮实际结果全部来自开发者本地反馈，不使用 GitHub Actions 作为验收依据：
 
 ```text
-Circuit Breaker targeted tests: 16 passed in 0.68s
-Backend Regression: 262 passed, 20 deselected in 3.64s
-Alembic head: 0022_workflow_trigger
-Real API via Backend Gate: 20 passed in 32.99s
-Standalone Real API Gate: 20 passed in 33.26s
+1.9-A Circuit Breaker targeted tests: 16 passed in 0.68s
+1.9-A Backend Regression: 262 passed, 20 deselected in 3.64s
+1.9-A Alembic head: 0022_workflow_trigger
+1.9-A Real API via Backend Gate: 20 passed in 32.99s
+1.9-A Standalone Real API Gate: 20 passed in 33.26s
+1.9-B stale Probe fix: code committed, local verification pending
 ```
-
-历史 Phase Acceptance 的结果仍按历史事实保留，不与本轮结果混淆。
 
 ## 7. 当前风险 / 未完成范围
 
 1. 1.9-A 当前 main 的本地 Unit / Backend / PostgreSQL Migration / Real API Gate 已全部通过。
-2. HALF_OPEN reservation 当前没有独立 probe token；仍需通过 1.9-B 的真实超时/并发场景验证迟到旧 Probe completion 风险。
-3. Real API Gate 已通过现有 20 个真实 HTTP API 场景，但尚未等价于完成专门的 1.9-C Reliability Scenarios。
-4. Frontend / Browser Reliability Convergence 尚未执行，因此不能关闭 Phase 1.9。
-5. Multi-Agent orchestration、MQ/Kafka/Event Bus、Temporal/完整分布式 Worker 不属于当前已完成范围。
+2. 1.9-B stale Probe completion 修复已经提交，但尚未取得新的本地执行证据。
+3. `record_failure()` / `record_success()` 与 Workflow transition 的事务边界仍需真实 PostgreSQL、多 worker 场景验证。
+4. Real API Gate 已通过现有 20 个真实 HTTP API 场景，但尚未等价于完成专门的 1.9-C Reliability Scenarios。
+5. Frontend / Browser Reliability Convergence 尚未执行，因此不能关闭 Phase 1.9。
+6. Multi-Agent orchestration、MQ/Kafka/Event Bus、Temporal/完整分布式 Worker 不属于当前已完成范围。
 
 ## 8. 下一步执行顺序
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
-1. **完成 1.9-B Runtime Failure / Retry / Circuit Boundary Audit。**
-2. 针对 HALF_OPEN stale Probe / transaction boundary 增加真实 PostgreSQL、多 worker 测试；如验证发现 reservation 语义无法隔离 recovery window，则引入独立 probe token。
-3. 完成 1.9-C Real API Reliability Scenarios。
-4. 执行 Frontend Regression Gate：`npm test`、`npm run build`。
-5. 执行独立 Browser E2E Gate。
-6. 完成 Frontend / Backend 联调可靠性检查。
-7. 最终同步 `03-acceptance/PHASE_1_9_ACCEPTANCE.md`，只有所有门禁通过后才能关闭 Phase 1.9。
-8. 每个已发生并完成分析的工程错误记录到 `docs/04-errors/ERR-xxxx-description.md`。
+1. **本地验证 1.9-B stale Probe completion 修复。**
+2. 针对 HALF_OPEN stale Probe / transaction boundary 增加真实 PostgreSQL、多 worker 测试；如验证仍发现 reservation 语义无法隔离 recovery window，再引入独立 probe token。
+3. 完成 1.9-B Runtime Failure / Retry / Circuit Boundary Audit。
+4. 完成 1.9-C Real API Reliability Scenarios。
+5. 执行 Frontend Regression Gate：`npm test`、`npm run build`。
+6. 执行独立 Browser E2E Gate。
+7. 完成 Frontend / Backend 联调可靠性检查。
+8. 最终同步 `03-acceptance/PHASE_1_9_ACCEPTANCE.md`，只有所有门禁通过后才能关闭 Phase 1.9。
+9. 每个已发生并完成分析的工程错误记录到 `docs/04-errors/ERR-xxxx-description.md`。
 
 ## 9. 文档治理入口
 
@@ -160,3 +172,4 @@ Standalone Real API Gate: 20 passed in 33.26s
 - `docs/01-governance/LOCAL_TESTING.md`
 - `docs/01-governance/API_TESTING.md`
 - `docs/02-phases/PHASE_1_9.md`
+- `docs/03-acceptance/PHASE_1_9_ACCEPTANCE.md`
