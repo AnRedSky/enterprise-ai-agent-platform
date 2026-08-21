@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
-from app.services.circuit_breaker import CircuitBreakerService
+from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 
 
 def _service(state):
@@ -29,6 +30,41 @@ def _state(*, success_count=2, half_open_max_calls=2):
         recovery_timeout_ms=10_000,
         half_open_max_calls=half_open_max_calls,
     )
+
+
+@pytest.mark.asyncio
+async def test_half_open_probe_reservation_is_bounded_for_multiple_calls():
+    tenant_id = uuid4()
+    state = _state(success_count=1, half_open_max_calls=2)
+    service = _service(state)
+    config = {"circuit_breaker": {"enabled": True, "half_open_max_calls": 2}}
+
+    result = await service.before_call(tenant_id, "agent:a:model:m", config)
+
+    assert result == "half_open"
+    assert state.state == "half_open"
+    assert state.success_count == 2
+
+    with pytest.raises(CircuitOpenError):
+        await service.before_call(tenant_id, "agent:a:model:m", config)
+    assert state.success_count == 2
+
+
+@pytest.mark.asyncio
+async def test_half_open_policy_mismatch_is_rejected_before_probe_reservation():
+    tenant_id = uuid4()
+    state = _state(success_count=1, half_open_max_calls=2)
+    service = _service(state)
+
+    with pytest.raises(HTTPException) as exc:
+        await service.before_call(
+            tenant_id,
+            "agent:a:model:m",
+            {"circuit_breaker": {"enabled": True, "half_open_max_calls": 3}},
+        )
+
+    assert exc.value.status_code == 409
+    assert state.success_count == 1
 
 
 @pytest.mark.asyncio
