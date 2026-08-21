@@ -28,8 +28,8 @@
 | Circuit Breaker | **1.9-C 当前 Real API 验证通过** | Open boundary、retry governance trace 与 fast-fail 场景已通过当前 Gate |
 | Scheduled Trigger | **1.9-D 跨层复验通过** | Scheduled Trigger real browser contract 已通过独立 Browser E2E；Final Acceptance 尚未关闭 Phase 1.9 |
 | Webhook Trigger | **1.9-D 跨层复验通过** | Webhook browser contract、duplicate convergence 与 lifecycle security 已通过独立 Browser E2E |
-| Frontend Governance UI | **1.9-D Regression Gate 通过** | Frontend Vitest 52 tests 与 production build 已通过；Audit error-state fixture 已修正为真实 rejection 场景 |
-| Browser E2E | **1.9-D 当前 Gate 通过** | 3 个 Desktop Chrome E2E 已通过；Final Acceptance 尚未关闭 Phase 1.9 |
+| Frontend Governance UI | **1.9-D 待本地复验** | 用户反馈 AuditLog error-state Vitest 失败；已在 main 修正测试 mock 时序耦合，待开发者本地复验后恢复 Gate 通过状态 |
+| Browser E2E | **1.9-D 当前 Gate 通过，待前端修复后复核** | 既有 3 个 Desktop Chrome E2E 已通过；本轮 Frontend Regression 失败需复核后才能进入 Final Acceptance |
 | Multi-Agent orchestration | 未纳入当前已完成范围 | 当前架构文档列为长期目标 |
 | MQ/Kafka/Event Bus | 未纳入当前范围 | Phase 1.8 明确 Out of Scope |
 | 分布式 Worker / Temporal | 未纳入当前范围 | 当前 Runtime 仍为现有单体边界，不宣称已有完整分布式调度系统 |
@@ -46,7 +46,7 @@
 | Phase 1.6 | 已完成 / 正式关闭 | Trigger / Frontend / Browser 历史范围 |
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
-| **Phase 1.9** | **进行中** | 1.9-A、1.9-B 已验证；1.9-C Runtime Reliability 场景已通过；1.9-D Frontend / Browser Reliability Convergence 已通过当前本地 Gate；继续 1.9-E Final Acceptance |
+| **Phase 1.9** | **进行中** | 1.9-A、1.9-B 已验证；1.9-C Runtime Reliability 场景已通过；1.9-D 出现新的 Frontend Vitest 回归，修复已提交 main，待本地复验；1.9-E Final Acceptance 尚未开始 |
 
 ## 4. Phase 1.9 当前任务
 
@@ -116,45 +116,38 @@ fix: record workflow node retry audit event
 
 ### 1.9-D Frontend / Browser Reliability Convergence
 
-状态：**当前开发者本地验证通过。**
+状态：**出现新的 Frontend Vitest 回归，修复已提交 main，待开发者本地复验。**
 
-实际开发者测试结果：
+开发者反馈：
 
 ```text
 Frontend Vitest:
-13 test files passed
-52 tests passed
+12 test files passed
+51 tests passed
+1 failed: tests/views/AuditLog.test.ts > AuditLogPanel > renders error state
 
 Frontend production build:
 passed
 
 Frontend Regression Gate:
-[PASS] Frontend regression gate completed.
-
-Browser test listing:
-3 tests / 3 files
+blocked by the same AuditLog error-state test
 
 Browser E2E:
-3 passed in 12.0s
-[PASS] Phase 1.7-D browser E2E gate completed.
+既有 3 个 Desktop Chrome tests 已通过，但本轮 Frontend Regression 尚未重新通过，因此不能提前宣称 1.9-D Gate 恢复。
 ```
 
-实际覆盖：
+根因与修复：
 
-- Scheduled Trigger real browser contract。
-- Webhook Trigger real browser contract。
-- Webhook duplicate-event convergence 与 lifecycle security。
-- Browser → Vue UI → Backend HTTP → Workflow Trigger Governance 跨层链路。
-
-Frontend `AuditLogPanel` error-state 测试此前使用不完整响应对象触发 `TypeError`，虽然测试最终通过，但会产生无意义 stderr。该测试 fixture 已修正为 `auditLogs.mockRejectedValue(...)`，与生产代码真实错误处理路径一致；生产代码无需修改。
-
-1.9-D 已通过，但不能因此提前关闭 Phase 1.9；1.9-E Final Acceptance 仍需独立执行。
+- `AuditLogPanel.vue` 生产代码已经在 `load()` 的 `try/catch` 中处理 Audit API 异常。
+- 原 error-state fixture 使用 `mockRejectedValue(...)`，与 Vitest 当前 unhandled-rejection 调度产生时序耦合。
+- 已将测试边界改为同步抛出异常，直接覆盖组件 `catch` 路径；生产代码无需修改。
+- 工程错误已记录：`docs/04-errors/ERR-0019-frontend-audit-log-error-state-mock-rejection.md`。
 
 ### 1.9-E Final Acceptance
 
-状态：**下一项任务。**
+状态：**尚未开始。**
 
-完成 Backend / Frontend / Browser 三层独立 Gate、Real API、Migration head、关键失败场景和文档同步后关闭 Phase 1.9。
+必须在 1.9-D Frontend Regression 恢复通过后，完成 Backend / Frontend / Browser 三层独立 Gate、Real API、Migration head、关键失败场景和文档同步后关闭 Phase 1.9。
 
 ## 5. 已完成文档治理整改
 
@@ -193,17 +186,19 @@ Fixed: workflow.node.retry audit missing
 1.9-C Latest focused Runtime / Retry / Timeout suite: 13 passed in 1.17s
 1.9-C Latest Real API Gate: 23 passed in 37.61s
 
-1.9-D Frontend Vitest: 13 test files passed, 52 tests passed
-1.9-D Frontend production build: passed
-1.9-D Frontend Regression Gate: passed
-1.9-D Browser E2E: 3 passed in 12.0s
+1.9-D Previous Frontend Vitest: 13 test files passed, 52 tests passed
+1.9-D Previous Frontend production build: passed
+1.9-D Previous Frontend Regression Gate: passed
+1.9-D Previous Browser E2E: 3 passed in 12.0s
+
+1.9-D Latest developer feedback: 1 AuditLog error-state test failed; fix committed as b7b19f586762bb91234174f5daaec1e38ba58aec
 ```
 
 ## 7. 当前风险 / 未完成范围
 
 1. 1.9-A 与 1.9-B 已通过各自历史本地验证。
 2. 1.9-C 当前 Runtime / Retry / Timeout focused suite 与 Real API Gate 已通过最新开发者本地执行结果。
-3. 1.9-D 当前 Frontend Regression / Build 与 Browser E2E 已通过最新开发者本地执行结果。
+3. 1.9-D 当前有新的 AuditLog error-state Vitest 回归；修复已提交 main，但尚未由开发者本地执行确认。
 4. Cross-Tenant isolation 尚未形成真实 API 测试上下文。
 5. 1.9-E Final Acceptance 尚未执行，因此不能关闭 Phase 1.9。
 6. Multi-Agent orchestration、MQ/Kafka/Event Bus、Temporal/完整分布式 Worker 不属于当前已完成范围。
@@ -212,9 +207,10 @@ Fixed: workflow.node.retry audit missing
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
-1. **1.9-C 当前 focused + Real API 验证已通过，不再重复修改已通过的 Runtime retry 代码。**
-2. **1.9-D Frontend / Browser Reliability Convergence 已通过当前开发者本地 Frontend Regression Gate 与 Browser E2E Gate。**
-3. **进入 1.9-E Final Acceptance：重新执行 Backend default regression、Alembic migration head、Real API Gate，并复核 Frontend / Browser Gate。**
-4. 发现新的工程错误立即记录到 `docs/04-errors/`，不提前关闭当前错误。
-5. 完成 1.9-E 后执行 Final Acceptance，并同步对应 Phase / Acceptance 文档。
-6. 最终通过 Backend / Frontend / Browser 三层独立 Gate 后关闭 Phase 1.9。
+1. **先同步远端最新 `main`，确认包含 `b7b19f586762bb91234174f5daaec1e38ba58aec`。**
+2. **先执行 AuditLog focused test，确认本轮修复实际生效；随后重新执行 Frontend Regression Gate。**
+3. **Frontend Regression 恢复后，再复核 Browser E2E；不得将此前通过结果冒充本轮修复后的通过结果。**
+4. **1.9-D 全部恢复后进入 1.9-E Final Acceptance：重新执行 Backend default regression、Alembic migration head、Real API Gate，并复核 Frontend / Browser Gate。**
+5. 发现新的工程错误立即记录到 `docs/04-errors/`，不提前关闭当前错误。
+6. 完成 1.9-E 后执行 Final Acceptance，并同步对应 Phase / Acceptance 文档。
+7. 最终通过 Backend / Frontend / Browser 三层独立 Gate 后关闭 Phase 1.9。
