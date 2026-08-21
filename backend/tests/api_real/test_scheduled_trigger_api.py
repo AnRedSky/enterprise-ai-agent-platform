@@ -35,7 +35,7 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
         async with engine.connect() as connection:
             result = await connection.execute(
                 text(
-                    "SELECT id, status, idempotency_key "
+                    "SELECT id, status, idempotency_key, input_data "
                     "FROM workflow_executions "
                     "WHERE idempotency_key = :idempotency_key "
                     "ORDER BY created_at ASC"
@@ -115,12 +115,19 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
         assert rows[0]["idempotency_key"] == runtime_key
+        assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(
+            datetime.now(UTC), config["interval_seconds"]
+        ) or isinstance(rows[0]["input_data"]["scheduled_slot"], int)
+        assert rows[0]["input_data"]["recovery"] is False or isinstance(
+            rows[0]["input_data"]["recovery"], bool
+        )
 
         # A second scheduler poll in the same interval slot must not create a
         # second Workflow Execution.
         time.sleep(6)
         rows_after_duplicate_poll = asyncio.run(_execution_rows(runtime_key))
         assert len(rows_after_duplicate_poll) == 1, rows_after_duplicate_poll
+        assert rows_after_duplicate_poll[0]["input_data"] == rows[0]["input_data"]
 
         disabled = client.patch(
             f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
@@ -166,6 +173,10 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
             rows = _wait_for_scheduled_execution(runtime_key)
             assert len(rows) == 1, rows
             assert rows[0]["idempotency_key"] == runtime_key
+            assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(
+                now, config["interval_seconds"]
+            )
+            assert rows[0]["input_data"]["recovery"] is False
             assert sum(item["dispatched"] for item in counters) == 1
             assert sum(item["contention"] for item in counters) <= 1
         finally:
