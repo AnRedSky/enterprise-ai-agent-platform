@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 class ScheduledTriggerScheduler:
     """DB-backed scheduler for interval-based Workflow Triggers.
 
-    Cross-worker convergence is owned by the PostgreSQL unique constraint on
-    ``(tenant_id, idempotency_key)``. Each tick attempts an atomic INSERT ...
-    ON CONFLICT DO NOTHING claim; exactly one worker receives ``created=True``.
+    Cross-worker convergence is owned by a PostgreSQL transaction advisory lock
+    around the idempotency check/claim, with the unique constraint remaining as
+    the final persistence correctness boundary.
     """
 
     DEFAULT_RECOVERY_SLOTS = 2
@@ -75,9 +75,12 @@ class ScheduledTriggerScheduler:
         now = now or datetime.now(UTC)
         counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0, "recovered": 0, "contention": 0}
 
-        async with SessionLocal() as db:
-            result = await db.execute(
-                select(WorkflowTrigger, Workflow)
+        # Discover only stable primary keys in one short-lived session. Each
+        # trigger is then processed in its own session so a rollback cannot
+        # expire ORM instances that a later candidate would access implicitly.
+        async with SessionLocal() as discovery_db:
+            result = await discovery_db.execute(
+                select(WorkflowTrigger.id)
                 .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
                 .where(
                     WorkflowTrigger.trigger_type == "scheduled",
@@ -87,13 +90,32 @@ class ScheduledTriggerScheduler:
                 )
                 .order_by(WorkflowTrigger.created_at.asc(), WorkflowTrigger.id.asc())
             )
-            candidates = result.all()
+            trigger_ids = list(result.scalars().all())
 
-            for trigger, workflow in candidates:
-                counters["eligible"] += 1
-                trigger_id = str(trigger.id)
-                workflow_id = str(workflow.id)
+        for trigger_id in trigger_ids:
+            async with SessionLocal() as db:
+                trigger_id_text = str(trigger_id)
+                workflow_id_text = "unknown"
                 try:
+                    candidate = (
+                        await db.execute(
+                            select(WorkflowTrigger, Workflow)
+                            .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
+                            .where(
+                                WorkflowTrigger.id == trigger_id,
+                                WorkflowTrigger.trigger_type == "scheduled",
+                                WorkflowTrigger.status == "enabled",
+                                Workflow.status == "published",
+                                Workflow.published_version_id.is_not(None),
+                            )
+                        )
+                    ).one_or_none()
+                    if candidate is None:
+                        continue
+                    trigger, workflow = candidate
+                    workflow_id_text = str(workflow.id)
+                    counters["eligible"] += 1
+
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
                     service = WorkflowTriggerService(db)
                     current_slot = self.interval_slot(now, config["interval_seconds"])
@@ -125,7 +147,7 @@ class ScheduledTriggerScheduler:
                     counters["failed"] += 1
                     logger.exception(
                         "Scheduled Trigger dispatch failed",
-                        extra={"trigger_id": trigger_id, "workflow_id": workflow_id},
+                        extra={"trigger_id": trigger_id_text, "workflow_id": workflow_id_text},
                     )
         return counters
 
