@@ -23,7 +23,7 @@
 | Vector / Hybrid Retrieval | 已实现当前代码范围；真实语义质量仍需真实 Provider 评估 |
 | Workflow / Execution / Governance | 已实现当前历史范围 |
 | Retry / Timeout / Idempotency / Deadline | 已实现当前历史范围；本阶段继续验证跨边界语义 |
-| Circuit Breaker | 基础状态机已实现；1.9-A 正在收口 HALF_OPEN 多 Probe 恢复语义 |
+| Circuit Breaker | 1.9-A 代码修复及本地 Gate 已完成；1.9-B 继续验证跨 worker / stale Probe 边界 |
 | Scheduled Trigger | 已实现当前历史范围 |
 | Webhook Trigger | 已实现当前历史范围 |
 | Frontend Governance UI | 已实现当前历史范围 |
@@ -37,7 +37,7 @@
 
 ### 1.9-A — Circuit Breaker HALF_OPEN Concurrent Recovery
 
-状态：**代码实现完成，待本地 Gate**。
+状态：**本地验证完成，进入 1.9-B。**
 
 目标：
 
@@ -54,18 +54,33 @@
 - 增加 `half_open_max_calls=2` quota 上限测试。
 - 增加 HALF_OPEN policy mismatch 不消耗 quota 的测试。
 
-待验证：
+### 1.9-A 本地实际验证
 
-```powershell
-cd backend
-uv run pytest -q backend/tests/unit/test_circuit_breaker.py backend/tests/unit/test_circuit_breaker_half_open_concurrency.py
+开发者在最新 `main` 本地实际执行：
+
+```text
+Targeted Circuit Breaker tests
+→ 16 passed in 0.68s
+
+Alembic
+→ PostgreSQL migration upgrade completed successfully
+
+Backend Regression Gate
+→ Backend: 262 passed, 20 deselected in 3.64s
+→ Migration head: 0022_workflow_trigger (head)
+→ Mandatory Real API: 20 passed in 32.99s
+→ [PASS] Backend regression gate completed
+
+Standalone Real API Gate
+→ 20 passed in 33.26s
+→ [PASS] Real API gate completed
 ```
 
-以及完整 Backend Gate、Alembic head、Real API Gate。
+结论：1.9-A 的代码、专项 Unit Test、Backend Regression、Migration head 和现有 Real API Gate 均已通过当前 main 的本地实际验证。
 
 ### 1.9-B — Runtime Failure / Retry / Circuit Boundary Audit
 
-**代码审查阶段：进行中。**
+**状态：进行中。**
 
 当前 `WorkflowExecutionService` 已明确：
 
@@ -82,16 +97,26 @@ uv run pytest -q backend/tests/unit/test_circuit_breaker.py backend/tests/unit/t
 - HALF_OPEN probe failure 转换为 `CIRCUIT_OPEN`，避免将恢复 Probe 再次消耗 node retry budget。
 - Circuit Breaker 与 Workflow retry 使用同一 error classification boundary。
 
-当前发现的待进一步验证风险：
+待进一步验证：
 
-- HALF_OPEN probe reservation 当前以 circuit state 的计数表示，没有独立 probe token；必须通过真实并发/超时场景确认迟到的旧 Probe completion 不会影响新的 recovery window。
-- `record_failure()` / `record_success()` 与 Workflow transition 的事务边界需要通过真实 PostgreSQL、多 worker 场景验证，而不能仅凭 unit mock 认定安全。
+- HALF_OPEN probe reservation 当前没有独立 probe token；需要真实超时/并发场景验证迟到旧 Probe completion 不会影响新的 recovery window。
+- `record_failure()` / `record_success()` 与 Workflow transition 的事务边界需要真实 PostgreSQL、多 worker 场景验证。
 
 因此 1.9-B 尚不能标记完成。
 
 ### 1.9-C — Real API Reliability Scenarios
 
-基于真实数据库和真实 HTTP API 验证 circuit OPEN fast-fail、HALF_OPEN recovery、concurrent probes、retry lineage、deadline boundary、idempotency、tenant isolation。
+基于真实数据库和真实 HTTP API 专门验证：
+
+- circuit OPEN fast-fail
+- HALF_OPEN recovery
+- concurrent probes
+- retry lineage
+- deadline boundary
+- idempotency
+- tenant isolation
+
+现有 Backend Gate 的 20 个 Real API 测试已经通过，但不等价于 1.9-C 专项 Reliability Acceptance。
 
 ### 1.9-D — Frontend / Browser Reliability Convergence
 
@@ -105,6 +130,8 @@ uv run pytest -q backend/tests/unit/test_circuit_breaker.py backend/tests/unit/t
 
 必须遵守 `docs/01-governance/DEVELOPMENT.md`：Backend pytest、Alembic upgrade head、Real API Gate、Frontend test/build、Browser E2E、前后端联调。GitHub Actions 不作为本阶段本地验收依据。
 
-## 6. 完成定义
+## 6. 当前完成定义
+
+1.9-A 已完成本地验证，但 Phase 1.9 整体仍未关闭。
 
 Phase 1.9 只有在 Runtime Reliability 风险完成修复，并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
