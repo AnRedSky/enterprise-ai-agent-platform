@@ -45,6 +45,16 @@ class WorkflowTriggerService:
             raise HTTPException(404, "Workflow Trigger 不存在")
         return trigger
 
+    async def find_execution_by_idempotency_key(self, tenant_id: UUID, idempotency_key: str) -> WorkflowExecution | None:
+        return (
+            await self.db.execute(
+                select(WorkflowExecution).where(
+                    WorkflowExecution.tenant_id == tenant_id,
+                    WorkflowExecution.idempotency_key == idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+
     @classmethod
     def validate_type(cls, trigger_type: str) -> str:
         if trigger_type not in cls.ALLOWED_TYPES:
@@ -114,29 +124,9 @@ class WorkflowTriggerService:
         await self.db.delete(trigger)
         await self.db.commit()
 
-    async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
-                     input_data: dict, idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
-        if trigger.status != "enabled":
-            raise HTTPException(409, "Trigger 已禁用")
-        if trigger.trigger_type != "manual":
-            raise HTTPException(409, "当前 Trigger 类型不可直接调用")
+    async def _get_published_version(self, workflow: Workflow) -> WorkflowVersion:
         if workflow.status != "published" or workflow.published_version_id is None:
             raise HTTPException(409, "Trigger 只能调用已发布 Workflow")
-
-        if idempotency_key:
-            existing = (
-                await self.db.execute(
-                    select(WorkflowExecution).where(
-                        WorkflowExecution.tenant_id == workflow.tenant_id,
-                        WorkflowExecution.idempotency_key == idempotency_key,
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing is not None:
-                if existing.workflow_id != workflow.id:
-                    raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
-                return existing
-
         version = (
             await self.db.execute(
                 select(WorkflowVersion).where(
@@ -147,6 +137,69 @@ class WorkflowTriggerService:
         ).scalar_one_or_none()
         if version is None or version.status != "published":
             raise HTTPException(409, "Workflow Published Version 不可用")
+        return version
+
+    async def invoke_scheduled(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
+                               input_data: dict, idempotency_key: str) -> WorkflowExecution:
+        """Dispatch a scheduled Trigger through the same Workflow Runtime as manual execution."""
+        if trigger.status != "enabled":
+            raise HTTPException(409, "Trigger 已禁用")
+        if trigger.trigger_type != "scheduled":
+            raise HTTPException(409, "当前 Trigger 类型不是 scheduled")
+        config = self.validate_config(trigger.trigger_type, trigger.config or {})
+        if not idempotency_key:
+            raise HTTPException(422, "Scheduled Trigger 必须提供调度 Idempotency-Key")
+        version = await self._get_published_version(workflow)
+        existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
+        if existing is not None:
+            return existing
+
+        execution_service = WorkflowExecutionService(self.db)
+        execution = await execution_service.create(
+            workflow, version, actor_id, input_data, idempotency_key=idempotency_key
+        )
+        await self.governance.audit(
+            execution,
+            actor_id,
+            "workflow.trigger.scheduled",
+            "success",
+            metadata={
+                "trigger_id": str(trigger.id),
+                "trigger_type": trigger.trigger_type,
+                "timezone": config["timezone"],
+                "interval_seconds": config["interval_seconds"],
+                "idempotency_key": idempotency_key,
+            },
+        )
+        await self.governance.trace(
+            execution,
+            actor_id,
+            "trigger.scheduled",
+            "pending",
+            data={
+                "trigger_id": str(trigger.id),
+                "trigger_type": trigger.trigger_type,
+                "timezone": config["timezone"],
+                "interval_seconds": config["interval_seconds"],
+            },
+        )
+        await self.db.commit()
+        return await execution_service.run(execution, version, actor_id)
+
+    async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
+                     input_data: dict, idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
+        if trigger.status != "enabled":
+            raise HTTPException(409, "Trigger 已禁用")
+        if trigger.trigger_type != "manual":
+            raise HTTPException(409, "当前 Trigger 类型不可直接调用")
+        version = await self._get_published_version(workflow)
+
+        if idempotency_key:
+            existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
+            if existing is not None:
+                if existing.workflow_id != workflow.id:
+                    raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
+                return existing
 
         execution_service = WorkflowExecutionService(self.db)
         execution = await execution_service.create(workflow, version, actor_id, input_data, idempotency_key=idempotency_key)
