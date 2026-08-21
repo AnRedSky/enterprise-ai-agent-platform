@@ -60,7 +60,7 @@ class ScheduledTriggerScheduler:
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
         """Dispatch enabled scheduled triggers for the bounded recovery window."""
         now = now or datetime.now(UTC)
-        counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0}
+        counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0, "recovered": 0}
 
         async with SessionLocal() as db:
             result = await db.execute(
@@ -81,20 +81,26 @@ class ScheduledTriggerScheduler:
                 try:
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
                     service = WorkflowTriggerService(db)
-                    for slot in self.recovery_slots(now, config["interval_seconds"], self.recovery_slots):
+                    slots = self.recovery_slots(now, config["interval_seconds"], self.recovery_slots)
+                    current_slot = self.interval_slot(now, config["interval_seconds"])
+                    for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
                         existing = await service.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
                         if existing is not None:
                             counters["skipped"] += 1
                             continue
+                        recovery = slot != current_slot
                         await service.invoke_scheduled(
                             workflow=workflow,
                             trigger=trigger,
                             actor_id=trigger.created_by,
-                            input_data={"scheduled_slot": slot},
+                            input_data={"scheduled_slot": slot, "recovery": recovery},
                             idempotency_key=idempotency_key,
+                            recovery=recovery,
                         )
                         counters["dispatched"] += 1
+                        if recovery:
+                            counters["recovered"] += 1
                 except Exception:
                     await db.rollback()
                     counters["failed"] += 1
