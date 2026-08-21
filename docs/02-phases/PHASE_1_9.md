@@ -51,7 +51,7 @@ Standalone Real API → 20 passed in 33.26s
 
 ### 1.9-B — Runtime Failure / Retry / Circuit Boundary Audit
 
-**状态：当前专项修复已通过本地验证，继续进入 1.9-C。**
+**状态：当前专项修复已通过本地验证。**
 
 当前 `WorkflowExecutionService` 已明确：
 
@@ -113,19 +113,11 @@ Standalone Real API → 20 passed in 31.38s
 
 因此 **1.9-B 当前 focused scope 已通过本地 Backend / PostgreSQL / Real API 验证。**
 
-### 1.9-B 完成边界
-
-本次 Acceptance 覆盖 stale Probe completion、Circuit Breaker 与 Retry/Timeout/Deadline 现有边界测试。当前没有发现需要继续修改代码的 1.9-B blocking issue。
-
-后续可靠性专项进入 1.9-C；如 Real API 场景发现新的跨 worker、retry、idempotency 或 tenant isolation 问题，应新增错误记录并回到相应修复任务。
-
 ### 1.9-C — Real API Reliability Scenarios
 
-**状态：开发/测试扩展进行中，尚未 Acceptance。**
+**状态：阻塞于新发现的 Idempotency 并发 500，修复已提交，等待本地重新验证。**
 
-现有 Backend Gate 的 20 个 Real API 测试已经覆盖 Circuit OPEN/HALF_OPEN、Retry、Retry Budget、Deadline、Trigger Idempotency 等场景，但不等价于 1.9-C 专项 Reliability Acceptance。
-
-本轮已新增真实 HTTP API 专项测试文件：
+新增专项测试文件：
 
 ```text
 backend/tests/api_real/test_phase_1_9c_reliability_api.py
@@ -137,19 +129,72 @@ backend/tests/api_real/test_phase_1_9c_reliability_api.py
 - 两个并发真实 HTTP 请求使用相同 `Idempotency-Key` 时必须收敛到同一个 Execution，不能产生重复 Execution 或 500。
 - 同一 Tenant 下另一用户不能读取其他用户创建的 Execution，验证当前 Execution ownership isolation boundary。
 
-注意：当前注册接口将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此上述第三项是**同 Tenant ownership isolation**，不能扩大解释为跨 Tenant isolation。跨 Tenant 专项仍待能够创建不同 Tenant 的真实 API 测试上下文后执行。
+当前注册接口将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此第三项是**同 Tenant ownership isolation**，不能扩大解释为跨 Tenant isolation。跨 Tenant 专项仍待能够创建不同 Tenant 的真实 API 测试上下文后执行。
 
-当前 1.9-C 专项测试刚提交，**尚未获得本地实际 PASS 结果，因此不得标记 PASS。**
+#### 首轮本地验证结果
 
-下一步本地验证：
+直接运行专项测试时，三个测试因没有提前准备 `WORKFLOW_ID` context 而失败：
 
-```powershell
-cd backend
-uv run pytest -q tests/api_real/test_phase_1_9c_reliability_api.py -m real_api
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```text
+3 failed in 0.10s
+WORKFLOW_ID is required for 1.9-C reliability validation
 ```
 
-通过后再继续补充跨 Tenant / stale completion 的真实 HTTP 场景，并同步 Acceptance。
+随后通过正式 Real API Gate 自动 bootstrap context 后执行完整 suite：
+
+```text
+22 passed, 1 failed in 39.35s
+```
+
+唯一失败：
+
+```text
+test_execution_idempotency_is_race_safe_over_real_http
+```
+
+实际一个并发请求返回：
+
+```text
+HTTP 500 Internal Server Error
+```
+
+原测试的 `response.json()` 又因 body 为纯文本 `Internal Server Error` 产生 `JSONDecodeError`，已同时修正测试诊断逻辑，使非 JSON 响应保留原始 body。
+
+错误记录：
+
+```text
+docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md
+```
+
+#### 根因与修复
+
+原 `WorkflowExecutionService.create()` 在 idempotency 唯一约束并发竞争的 `IntegrityError` 路径使用完整 `AsyncSession.rollback()`，随后继续访问 rollback 后可能已过期的 ORM `workflow` / `version` 对象，存在 AsyncSession 隐式异步加载导致 500 的风险。
+
+当前已修复：
+
+- Idempotency 创建使用 `AsyncSession.begin_nested()` SAVEPOINT。
+- 唯一约束竞争只回滚 SAVEPOINT，不回滚整个业务事务。
+- flush 前保存 `tenant_id`、`workflow_id`、`workflow_version_id` 标量值。
+- IntegrityError 后使用保存的标量值重新查询已提交 Execution。
+- 非 idempotency 创建路径保持原有事务行为。
+
+代码提交：
+
+```text
+bdecd76b7c186c48fc3b7afdd23cc5d7dff1ecb6
+fix: make idempotency race recovery transaction safe
+```
+
+测试诊断提交：
+
+```text
+7d7ff84d3c0449dd52c98882fbdb61ce8524d1d7
+ test: improve Phase 1.9-C real API diagnostics
+```
+
+**注意：修复尚未获得新的本地 PASS 证据，因此 1.9-C 不能标记 PASS。**
+
+下一步必须重新执行完整 Real API Gate；通过后再继续跨 Tenant / stale completion 等专项场景。
 
 ### 1.9-D — Frontend / Browser Reliability Convergence
 
@@ -165,6 +210,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 
 ## 6. 当前完成定义
 
-1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；1.9-C 已开始新增专项真实 HTTP API 场景，但尚未完成本地 Acceptance。
+1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；1.9-C 已发现并记录真实 HTTP 并发 Idempotency 500，修复已提交但等待本地重新验证。
 
 Phase 1.9 只有在 1.9-C、1.9-D、1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
