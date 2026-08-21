@@ -4,7 +4,7 @@ from app.models.workflow_execution import WorkflowExecution
 from app.services.webhook_trigger import WebhookTriggerService
 
 
-def test_webhook_durable_idempotency_key_is_deterministic_and_fits_execution_schema():
+def test_webhook_durable_idempotency_key_preserves_bounded_public_identity():
     trigger_id = UUID("00000000-0000-0000-0000-000000000401")
     first = WebhookTriggerService.durable_idempotency_key(trigger_id, "event-123")
     second = WebhookTriggerService.durable_idempotency_key(trigger_id, "event-123")
@@ -12,9 +12,8 @@ def test_webhook_durable_idempotency_key_is_deterministic_and_fits_execution_sch
 
     assert first == second
     assert first != other
-    assert first.startswith("webhook:")
+    assert first == f"webhook:{trigger_id}:event-123"
     assert len(first) <= 100
-    assert len(first) == len("webhook:") + 64
 
 
 def test_workflow_execution_keeps_webhook_idempotency_as_the_durable_unique_boundary():
