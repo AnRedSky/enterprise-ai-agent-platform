@@ -76,6 +76,10 @@ def _version_response(version):
 
 
 def _trigger_response(trigger):
+    config = dict(trigger.config or {})
+    if trigger.trigger_type == "webhook":
+        config.pop("secret_hash", None)
+        config["secret_configured"] = True
     return {
         "id": trigger.id,
         "workflow_id": trigger.workflow_id,
@@ -84,7 +88,7 @@ def _trigger_response(trigger):
         "trigger_type": trigger.trigger_type,
         "status": trigger.status,
         "created_by": trigger.created_by,
-        "config": trigger.config,
+        "config": config,
         "created_at": trigger.created_at,
         "updated_at": trigger.updated_at,
     }
