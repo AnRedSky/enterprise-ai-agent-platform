@@ -28,7 +28,7 @@ class WorkflowExecutionService:
         self.governance = WorkflowGovernanceService(db)
 
     async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict,
-                     idempotency_key: str | None = None, *, commit: bool = True) -> WorkflowExecution:
+                     idempotency_key: str | None = None) -> WorkflowExecution:
         if workflow.published_version_id != version.id or version.status != "published":
             raise HTTPException(409, "只能执行当前已发布版本")
         WorkflowRuntime.validate_definition(version.definition)
@@ -70,9 +70,8 @@ class WorkflowExecutionService:
         await self.governance.trace(execution, actor_id, "execution.created", "pending", data={
             "input_keys": sorted(input_data.keys()), "idempotency_key_present": idempotency_key is not None,
         })
-        if commit:
-            await self.db.commit()
-            await self.db.refresh(execution)
+        await self.db.commit()
+        await self.db.refresh(execution)
         return execution
 
     async def get(self, execution_id: UUID, tenant_id: UUID, actor_id: UUID, admin: bool = False) -> WorkflowExecution:
@@ -167,8 +166,214 @@ class WorkflowExecutionService:
         self.db.add(retry_execution)
         await self.db.flush()
         await self.governance.audit(execution, actor_id, "workflow.execution.retry_requested", "success")
-        await self.governance.trace(execution, actor_id, "workflow.execution.retry_requested", execution.status,
+        await self.governance.trace(execution, actor_id, "execution.retry_requested", execution.status,
                                      data={"retry_execution_id": str(retry_execution.id)})
+        await self.governance.audit(retry_execution, actor_id, "workflow.execution.created", "success")
+        await self.governance.trace(retry_execution, actor_id, "execution.created", "pending", data={
+            "retry_of_execution_id": str(execution.id),
+            "input_keys": sorted((execution.input_data or {}).keys()),
+        })
         await self.db.commit()
         await self.db.refresh(retry_execution)
         return retry_execution
+
+    async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,
+                              input_data: dict | None = None, output_data: dict | None = None,
+                              error_code: str | None = None, error_message: str | None = None) -> WorkflowNodeExecution:
+        if target_status not in self.NODE_STATES:
+            raise HTTPException(400, "不支持的 Node Execution 状态")
+        execution = await self._lock_execution(execution)
+        if execution.status in self.TERMINAL_EXECUTION_STATES:
+            raise HTTPException(409, "已结束 Execution 不允许继续推进节点")
+        node = (await self.db.execute(select(WorkflowNodeExecution).where(
+            WorkflowNodeExecution.execution_id == execution.id, WorkflowNodeExecution.node_id == node_id
+        ))).scalar_one_or_none()
+        if node is None:
+            node = WorkflowNodeExecution(execution_id=execution.id, node_id=node_id, attempt=1)
+            self.db.add(node)
+            await self.db.flush()
+        allowed = {"pending": {"running", "skipped"}, "running": {"completed", "failed", "skipped"},
+                   "completed": set(), "failed": {"running"}, "skipped": set()}
+        if target_status not in allowed[node.status]:
+            raise HTTPException(409, f"Node 不允许从 {node.status} 到 {target_status}")
+        now = datetime.now(UTC).replace(tzinfo=None)
+        previous_status = node.status
+        if target_status == "running" and previous_status == "failed":
+            if node.error_code == "CIRCUIT_OPEN":
+                raise CircuitOpenError(f"node:{node_id}")
+            node.attempt += 1
+            node.ended_at = None
+        node.status = target_status
+        if input_data is not None:
+            node.input_data = input_data
+        if output_data is not None:
+            node.output_data = output_data
+        if error_code is not None:
+            node.error_code = error_code
+        if error_message is not None:
+            node.error_message = error_message
+        if target_status == "running":
+            node.started_at = now
+            execution.current_node_id = node_id
+        if target_status in {"completed", "failed", "skipped"}:
+            node.ended_at = now
+        await self.governance.trace(execution, execution.created_by, "node.state_changed", target_status,
+                                     node_id=node_id, error_code=error_code, error_message=error_message,
+                                     data={"from": previous_status, "to": target_status,
+                                           "attempt": node.attempt,
+                                           "input_present": input_data is not None,
+                                           "output_present": output_data is not None})
+        await self.db.commit()
+        await self.db.refresh(node)
+        return node
+
+    async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID,
+                  is_admin: bool = False) -> WorkflowExecution:
+        definition = version.definition
+        nodes = WorkflowRuntime.validate_definition(definition)
+        runtime_config = definition.get("config") or {}
+        retry_budget_config = runtime_config.get("retry_budget") or {}
+        if not isinstance(retry_budget_config, dict):
+            raise HTTPException(422, "retry_budget config 必须为对象")
+        retry_budget_remaining = retry_budget_config.get("max_retries", 20)
+        if isinstance(retry_budget_remaining, bool) or not isinstance(retry_budget_remaining, int) or not 0 <= retry_budget_remaining <= 100:
+            raise HTTPException(422, "retry_budget.max_retries 必须在 0-100 范围内")
+        workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms(runtime_config)
+        execution = await self._lock_execution(execution)
+        if execution.status != "pending":
+            raise HTTPException(409, "只有 pending Execution 可以启动 Runtime")
+        runtime = WorkflowRuntime(self.db)
+        data = dict(execution.input_data or {})
+        deadline = asyncio.get_running_loop().time() + workflow_timeout_ms / 1000
+        await self.governance.audit(execution, actor_id, "workflow.execution.run", "started")
+        try:
+            await self.transition(execution, "running", actor_id=actor_id)
+            for node in nodes:
+                node_id = node["id"]
+                node_timeout_ms = WorkflowRuntime.resolve_timeout_ms(node["config"])
+                retry_policy = WorkflowRuntime.resolve_retry_policy(node["config"])
+                node_execution = await self.transition_node(execution, node_id, "running", input_data=data)
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        await self.transition_node(execution, node_id, "failed", error_code="WORKFLOW_TIMEOUT",
+                                                   error_message="Workflow Execution timeout")
+                        await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT",
+                                              error_message="Workflow Execution timeout", actor_id=actor_id)
+                        raise HTTPException(504, "Workflow Execution timeout")
+                    effective_timeout = min(node_timeout_ms / 1000, remaining)
+                    exc: BaseException | None = None
+                    workflow_timeout = remaining <= node_timeout_ms / 1000
+                    try:
+                        data = await asyncio.wait_for(
+                            runtime.execute_node(node, data, actor_id, is_admin, execution.id, execution.tenant_id),
+                            timeout=effective_timeout,
+                        )
+                    except CircuitOpenError as caught:
+                        exc = caught
+                        error_code = "CIRCUIT_OPEN"
+                        error_message = str(caught.detail)
+                    except asyncio.TimeoutError as caught:
+                        exc = caught
+                        error_code = WorkflowRuntime.classify_error(caught, workflow_timeout=workflow_timeout)
+                        error_message = "Workflow Execution timeout" if workflow_timeout else f"Workflow node timeout: {node_id}"
+                    except Exception as caught:
+                        exc = caught
+                        error_code = WorkflowRuntime.classify_error(caught)
+                        error_message = str(caught) or "Workflow node execution failed"
+                    else:
+                        await self.transition_node(execution, node_id, "completed", output_data=data)
+                        break
+
+                    failed_node_execution = await self.transition_node(execution, node_id, "failed", error_code=error_code,
+                                                                       error_message=error_message)
+                    raw_attempt = getattr(failed_node_execution, "attempt", None)
+                    if not isinstance(raw_attempt, int) or isinstance(raw_attempt, bool):
+                        raw_attempt = getattr(node_execution, "attempt", 1)
+                    attempt = raw_attempt if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool) else 1
+                    circuit_open = isinstance(exc, CircuitOpenError) or error_code == "CIRCUIT_OPEN"
+                    retryable = error_code in retry_policy["retryable_error_codes"] and not circuit_open and error_code not in {"WORKFLOW_TIMEOUT"}
+                    can_retry = retryable and attempt < retry_policy["max_attempts"]
+                    if not can_retry:
+                        if retryable and attempt >= retry_policy["max_attempts"]:
+                            await self.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
+                                                        error_code=error_code)
+                            await self.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
+                                                        node_id=node_id, error_code=error_code,
+                                                        error_message="Node retry max attempts exhausted",
+                                                        data={"reason": "max_attempts", "attempt": attempt,
+                                                              "max_attempts": retry_policy["max_attempts"]})
+                        await self.transition(execution, "failed", error_code=error_code,
+                                              error_message=error_message, actor_id=actor_id)
+                        if error_code.startswith("HTTP_") and error_code in {"HTTP_429", "HTTP_502", "HTTP_503", "HTTP_504"}:
+                            raise HTTPException(int(error_code.split("_", 1)[1]), error_message) from exc
+                        if error_code == "NODE_TIMEOUT":
+                            raise HTTPException(504, error_message) from exc
+                        if error_code == "WORKFLOW_TIMEOUT":
+                            raise HTTPException(504, error_message) from exc
+                        if isinstance(exc, HTTPException):
+                            raise exc
+                        raise exc
+
+                    if retry_budget_remaining <= 0:
+                        await self.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
+                                                    error_code=error_code)
+                        await self.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
+                                                    node_id=node_id, error_code=error_code,
+                                                    error_message="Workflow retry budget exhausted",
+                                                    data={"reason": "retry_budget", "attempt": attempt,
+                                                          "max_attempts": retry_policy["max_attempts"],
+                                                          "retry_budget_max": retry_budget_config.get("max_retries", 20)})
+                        await self.transition(execution, "failed", error_code=error_code,
+                                              error_message=error_message, actor_id=actor_id)
+                        if error_code.startswith("HTTP_") and error_code in {"HTTP_429", "HTTP_502", "HTTP_503", "HTTP_504"}:
+                            raise HTTPException(int(error_code.split("_", 1)[1]), error_message) from exc
+                        if error_code == "NODE_TIMEOUT":
+                            raise HTTPException(504, error_message) from exc
+                        if isinstance(exc, HTTPException):
+                            raise exc
+                        raise exc
+
+                    retry_budget_remaining -= 1
+                    delay = WorkflowRuntime.retry_delay_seconds(retry_policy, attempt, random.random())
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0 or delay >= remaining:
+                        timeout_message = "Workflow Execution timeout before retry"
+                        await self.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
+                                                    error_code="WORKFLOW_TIMEOUT")
+                        await self.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
+                                                    node_id=node_id, error_code="WORKFLOW_TIMEOUT",
+                                                    error_message=timeout_message,
+                                                    data={"reason": "workflow_deadline", "attempt": attempt,
+                                                          "next_attempt": attempt + 1, "delay_seconds": delay,
+                                                          "remaining_seconds": max(0.0, remaining),
+                                                          "max_attempts": retry_policy["max_attempts"],
+                                                          "retry_budget_remaining": retry_budget_remaining})
+                        await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT",
+                                              error_message=timeout_message, actor_id=actor_id)
+                        raise HTTPException(504, timeout_message) from exc
+
+                    await self.governance.audit(execution, actor_id, "workflow.node.retry", "success",
+                                                error_code=error_code)
+                    await self.governance.audit(execution, actor_id, "workflow.node.retry_scheduled", "success",
+                                                error_code=error_code)
+                    await self.governance.trace(execution, actor_id, "node.retry.scheduled", "pending",
+                                                node_id=node_id, error_code=error_code,
+                                                error_message=f"Retry scheduled after {delay:.3f}s",
+                                                data={"attempt": attempt, "next_attempt": attempt + 1,
+                                                      "delay_seconds": delay, "max_attempts": retry_policy["max_attempts"],
+                                                      "retry_budget_remaining": retry_budget_remaining})
+                    await asyncio.sleep(delay)
+                    node_execution = await self.transition_node(execution, node_id, "running", input_data=data)
+            return await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            error_code = WorkflowRuntime.classify_error(exc)
+            error_message = str(exc) or "Workflow Execution failed"
+            try:
+                await self.transition(execution, "failed", error_code=error_code,
+                                      error_message=error_message, actor_id=actor_id)
+            except HTTPException:
+                pass
+            raise
