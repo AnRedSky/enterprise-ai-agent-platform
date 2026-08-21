@@ -34,7 +34,7 @@
 | 测试基础设施治理 | 已修复 | Backend / Frontend Gate 已拆分，测试脚本归属正确 |
 | Phase 1.6-A | **已完成** | Workflow Trigger Backend Contract；Backend Domain / API / Migration / Contract / Real API 两道 Gate 已由开发者本地手工验收通过 |
 | Phase 1.6-B | **已完成** | Frontend API Type / Vitest / Workflow Trigger Governance UI 已实现；Frontend Vitest、production build、Trigger Real HTTP、UI 手动验收已通过 |
-| Phase 1.6-C | **开发中** | Browser / Frontend-Backend E2E 第三独立测试层已建立，等待开发者本地执行 E2E Gate |
+| Phase 1.6-C | **开发中** | Browser / Frontend-Backend E2E 第三独立测试层已建立；首次 Gate 因 Playwright project 配置不一致在测试启动前阻塞，已修复配置，等待开发者本地重新执行 E2E Gate |
 
 ## 3. 测试 Gate 结构
 
@@ -124,7 +124,19 @@ E2E 真实用户链路覆盖：
 → Delete
 ```
 
-当前状态：**实现完成，E2E 尚未执行，不得标记通过。**
+首次执行时发现：
+
+```text
+Project(s) "Desktop Chrome" not found. Available projects: ""
+```
+
+根因是 `frontend/playwright.config.ts` 原先只使用 `devices["Desktop Chrome"]`，但未声明与 Gate 脚本一致的 `projects[].name`。该工程错误已记录在：
+
+```text
+`docs/error-tracking/004-playwright-project-missing.md`
+```
+
+当前已修正为显式 `Desktop Chrome` project。**修复后尚未重新执行 Browser E2E，因此不得标记 Phase 1.6-C 通过。**
 
 ## 6. Phase 1.6-C 本地执行要求
 
@@ -150,7 +162,14 @@ cd frontend
 npm run dev
 ```
 
-执行 E2E Gate：
+建议先验证 Playwright project：
+
+```powershell
+cd frontend
+npx playwright test --list --project="Desktop Chrome"
+```
+
+执行正式 E2E Gate：
 
 ```powershell
 cd frontend
