@@ -10,9 +10,9 @@
 - 开发方式：所有功能直接在 `main` 开发与提交
 - Phase 1.5：**已完成**
 - 当前阶段：**Phase 1.6 Workflow Production Hardening**
-- 当前任务：**Phase 1.6-B Frontend Contract / Workflow Governance UI Contract**
+- 当前任务：**Phase 1.6-C Frontend / Backend Integration & Browser E2E Contract**
 - 当前角色：开发执行
-- 测试 Gate 治理：Backend 与 Frontend Gate 已拆分，禁止单脚本跨前后端执行测试
+- 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立
 - 规范核查：已完成，详见 `docs/14-project-compliance-audit-and-correction-plan.md`
 
 ## 2. 阶段状态
@@ -29,11 +29,12 @@
 | Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
 | Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
 | Phase 1.5-F | 已完成 | Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery / Node Retry / Attempt / Retry Budget / Workflow Deadline 治理已完成并通过 Real API 边界验收 |
-| Phase 1.5-G | **已完成** | CLOSED / OPEN / HALF_OPEN、持久化 Circuit Policy、OPEN Fast-Fail、并发 HALF_OPEN probe quota、成功恢复、失败重新 OPEN、Retry / Timeout / Governance 边界已完成；Backend pytest、migration/head、Real API Gate 全部通过 |
-| Phase 1.5 | **已完成** | A～G 全部完成；不再重复开发 Circuit Breaker，进入后续生产化建设 |
-| 测试基础设施治理 | 已修复 | Backend / Frontend Gate 已拆分，Frontend 脚本位于 `frontend/`，Backend 脚本位于 `backend/` |
-| Phase 1.6-A | **已完成** | Workflow Trigger Contract；Backend Domain / API / Migration / Contract / Real API 两道 Gate 已由开发者本地手工验收通过 |
-| Phase 1.6-B | **进行中** | Frontend API Type / Vitest / Workflow Trigger Governance UI 已实现；Frontend Gate 尚未执行 |
+| Phase 1.5-G | **已完成** | Circuit Breaker 治理完成；Backend pytest、migration/head、Real API Gate 全部通过 |
+| Phase 1.5 | **已完成** | A～G 全部完成；不再重复开发 Circuit Breaker |
+| 测试基础设施治理 | 已修复 | Backend / Frontend Gate 已拆分，测试脚本归属正确 |
+| Phase 1.6-A | **已完成** | Workflow Trigger Backend Contract；Backend Domain / API / Migration / Contract / Real API 两道 Gate 已由开发者本地手工验收通过 |
+| Phase 1.6-B | **已完成** | Frontend API Type / Vitest / Workflow Trigger Governance UI 已实现；Frontend Vitest、production build、Trigger Real HTTP、UI 手动验收已通过 |
+| Phase 1.6-C | **开发中** | Browser / Frontend-Backend E2E 第三独立测试层已建立，等待开发者本地执行 E2E Gate |
 
 ## 3. 测试 Gate 结构
 
@@ -44,144 +45,134 @@ Backend regression → Migration/head → Real API
 Frontend Gate（独立）
 Frontend test → production build
 
-Browser / Frontend-Backend E2E（独立层，当前未实现）
+E2E Gate（独立第三层）
+Browser → real Frontend → real Backend HTTP
 ```
 
-Backend 默认回归：
+E2E 不复制 Backend 或 Frontend 现有 Gate。
 
-```powershell
-cd backend
-uv run pytest -q
-```
+## 4. Phase 1.6-A / 1.6-B 实际验收摘要
 
-Backend Regression Gate：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
-```
-
-Frontend Regression Gate：
-
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
-```
-
-Real API 唯一入口：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
-```
-
-不得恢复一个同时调用 `uv run pytest` 与 `npm test` / `npm run build` 的 `Full Regression Gate`。
-
-## 4. Phase 1.5-G Real API 验收结果
-
-开发者本地真实 PostgreSQL + HTTP Real API Gate 已完成：
-
-### Migration
-
-```text
-uv run alembic upgrade head
-INFO  Running upgrade 0020_workflow_circuit_breaker -> 0021_workflow_circuit_policy, persist circuit breaker policy
-```
-
-### Backend Regression
-
-```text
-uv run pytest -q
-209 passed, 11 deselected in 3.44s
-```
-
-### Real API Gate
-
-```text
-scripts/test/api-real/01_run_real_api_tests.ps1
-11 passed in 17.62s
-[PASS] Real API gate completed. Frontend/backend integration may proceed.
-```
-
-因此 Phase 1.5-G 的本地验收门禁全部通过，Phase 1.5 正式关闭。
-
-## 5. 规范核查与纠偏记录
-
-本次远端 `main` 整体核查形成：
-
-- `docs/14-project-compliance-audit-and-correction-plan.md`：项目规范核查、完成度对照、偏差修正与后续规划。
-- `docs/error-tracking/002-backend-frontend-test-gate-coupling.md`：记录 Backend / Frontend Gate 跨栈耦合错误。
-- `docs/error-tracking/003-circuit-breaker-state-initialization.md`：记录 Circuit Breaker 新建状态计数初始化缺陷。
-- `docs/15-phase-1.6-workflow-production-hardening-plan.md`：建立 Phase 1.6 执行基线。
-- `docs/16-phase-1.6-b-frontend-workflow-governance-ui-contract.md`：建立 Phase 1.6-B Frontend Contract / UI Contract。
-
-本次核查确认：
-
-1. Backend / Frontend 测试必须继续完全独立。
-2. 测试脚本必须位于所属技术栈目录内。
-3. Browser / Frontend-Backend E2E 未来作为第三独立测试层。
-4. Phase 1.5-G 已完成，不再重复开发 Circuit Breaker。
-5. 总体架构中尚未完成的 MQ / Worker、Multi-Agent、Evaluation、复杂审批、可视化 Workflow 等能力不得提前标记完成。
-
-## 6. Phase 1.6-A Backend Contract 验收结果
-
-开发者本地两道 Backend Gate 已通过：
+### Phase 1.6-A
 
 ```text
 Backend pytest / Migration / Real API
-→ Phase 1.6-A Backend Contract 已正式关闭
+→ Phase 1.6-A Backend Contract 正式关闭
 ```
 
-触发器 Contract 包含：
+Trigger Contract 包含：
 
 - WorkflowTrigger domain model 与 Tenant / Workflow scope。
 - Migration `0022_workflow_trigger`。
 - Trigger CRUD、manual invoke、enabled/disabled、Published Workflow 校验。
-- Idempotency-Key 复用现有 Workflow Execution 治理。
-- Trigger invoke 复用 `WorkflowExecutionService.create/run`。
+- Idempotency-Key 复用 Workflow Execution 治理。
 - Trigger identity 写入 Audit metadata / Trace data。
 
-## 7. Phase 1.6-B Frontend Contract / Workflow Governance UI
+### Phase 1.6-B
 
-已实现并提交 `main`：
+已完成：
 
 - `frontend/src/api/workflows.ts`
-  - `WorkflowTrigger` TypeScript contract。
-  - Trigger list/create/update/delete/invoke API。
-  - Invoke Idempotency-Key header。
 - `frontend/src/views/workflow-triggers/index.vue`
-  - Workflow 选择。
-  - Trigger CRUD。
-  - Enable / Disable。
-  - Disabled Trigger 不允许 Invoke。
-  - Invoke Input JSON。
-  - 最近一次 Execution 摘要。
 - `frontend/src/router/index.ts`
-  - `/workflows/triggers`。
 - `frontend/tests/api/workflows.test.ts`
-  - Trigger API contract / idempotency request tests。
 - `frontend/tests/views/WorkflowTriggers.test.ts`
-  - Trigger Governance UI tests。
-- `docs/16-phase-1.6-b-frontend-workflow-governance-ui-contract.md`
-  - Phase 1.6-B contract、实现范围、验收门禁与风险。
+- `frontend/scripts/test/api-real/01_run_trigger_http_contract.ps1`
 
-### Frontend 当前验收状态
+开发者反馈的最终结果：
 
-**尚未执行 Frontend Gate，不得标记为通过。**
+```text
+Frontend Vitest             PASS — 50 passed
+Frontend production build   PASS
+Backend Real API            PASS — 14 passed
+Frontend Trigger HTTP       PASS（手动测试）
+Frontend UI 手动验收         PASS
+```
 
-待开发者本地执行：
+因此 Phase 1.6-B 正式关闭。
+
+## 5. Phase 1.6-C 当前实现
+
+已建立第三独立 E2E 层：
+
+```text
+frontend/playwright.config.ts
+frontend/tests/e2e/workflow-trigger-governance.spec.ts
+frontend/scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
+```
+
+`frontend/package.json` 增加：
+
+```text
+@playwright/test
+npm run test:e2e
+```
+
+E2E 真实用户链路覆盖：
+
+```text
+注册隔离用户
+→ Backend 创建 Published Workflow fixture
+→ Browser 登录
+→ Workflow Trigger Governance
+→ 创建 manual Trigger
+→ Invoke
+→ completed Execution
+→ Disable
+→ UI 禁止 Invoke
+→ Enable
+→ Delete
+```
+
+当前状态：**实现完成，E2E 尚未执行，不得标记通过。**
+
+## 6. Phase 1.6-C 本地执行要求
+
+首次安装：
 
 ```powershell
 cd frontend
-npm test
-npm run build
+npm install
+npx playwright install chromium
 ```
 
-或：
+启动 Backend：
+
+```powershell
+cd backend
+uv run python run.py
+```
+
+启动 Frontend：
 
 ```powershell
 cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+npm run dev
 ```
 
-Frontend Gate 通过后，再进入 Phase 1.6 Trigger UI 实际联调 / Browser-E2E 独立层评估。
+执行 E2E Gate：
+
+```powershell
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+```
+
+可选环境变量：
+
+```text
+FRONTEND_BASE_URL=http://127.0.0.1:5173
+API_BASE_URL=http://127.0.0.1:8000/api/v1
+```
+
+## 7. 下一步关闭条件
+
+Phase 1.6-C 关闭前必须以开发者本地实际结果为准完成：
+
+1. Browser E2E Gate。
+2. Backend Gate。
+3. Frontend Gate。
+4. 更新本文件与 `docs/17-phase-1.6-c-frontend-backend-e2e-contract.md`。
+5. 若出现工程错误，记录到 `docs/error-tracking/`。
+6. 提交 `main`。
+
+E2E Gate 通过前，不进入下一 Phase 的业务功能扩展。
