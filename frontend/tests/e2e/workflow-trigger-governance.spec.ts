@@ -71,9 +71,15 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     await workflowOption.click();
 
     await page.getByLabel("Trigger 名称").fill(`Browser Scheduled Trigger ${nonce}`);
-    await page.getByLabel("Trigger 类型").click();
+
+    // The production form labels this field as “类型”; scope the lookup to
+    // its form item instead of relying on an invented accessible label.
+    const triggerTypeFormItem = page.locator(".el-form-item").filter({ hasText: "类型" }).first();
+    await triggerTypeFormItem.locator(".el-select").click();
     await page.locator(".el-select-dropdown:visible .el-select-dropdown__item").filter({ hasText: "scheduled" }).click();
-    await expect(page.getByLabel("Schedule Config JSON")).toHaveValue('{"timezone":"UTC","interval_seconds":60}');
+
+    const scheduleConfigFormItem = page.locator(".el-form-item").filter({ hasText: "Config JSON" }).first();
+    await expect(scheduleConfigFormItem.locator("textarea")).toHaveValue('{"timezone":"UTC","interval_seconds":60}');
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
     const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` });
