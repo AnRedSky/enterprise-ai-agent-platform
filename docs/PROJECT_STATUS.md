@@ -11,7 +11,7 @@
 - Phase 1.6：**已完成并正式关闭**
 - Phase 1.7：**已完成并正式关闭**
 - 当前阶段：**Phase 1.8 Event / Webhook Trigger Expansion**
-- 当前任务：**Phase 1.8-A 需求 / 架构确认已完成，准备进入 1.8-B Backend Contract**
+- 当前任务：**Phase 1.8-B Backend Domain + API 已进入实现，Migration 判定完成**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立
 
@@ -34,75 +34,22 @@
 | Phase 1.7-D | **已完成并关闭** | Browser / Frontend-Backend E2E Scheduling Contract 完成；D-01～D-04 全部验收通过 |
 | **Phase 1.7** | **已正式关闭** | A～D 全部完成；Backend、Frontend、Browser 三层 Gate 独立通过；Scheduler → Execution 真实边界完成验收 |
 | **Phase 1.8-A** | **已完成** | Event / Webhook Trigger 需求、领域边界、Backend Contract 原则、Security / Idempotency、三层 Gate 已确认 |
-| **Phase 1.8** | **进行中** | Event / Webhook Trigger Expansion；当前进入 1.8-B Backend Domain + API |
+| **Phase 1.8-B** | **进行中** | Trigger Model / Schema / Service 审计完成；确认复用 `workflow_triggers` + `workflow_executions`，本批无需新增 migration；Webhook config / endpoint / authentication / durable idempotency 已进入实现 |
+| **Phase 1.8** | **进行中** | Event / Webhook Trigger Expansion |
 
 ## 3. Phase 1.7-A/B 基线与 Runtime 结论
 
-当前 main 已包含：
+当前 main 已包含 Scheduled Trigger、Scheduler、interval slot、deterministic idempotency key、bounded recovery、workflow execution persistence 与 runtime execution 闭环。Scheduler 使用 PostgreSQL 数据库 unique constraint `(tenant_id, idempotency_key)` 作为同 slot 多 worker 的持久化收敛边界。
 
-```text
-Scheduled Trigger Contract
-        ↓
-FastAPI lifespan Scheduler
-        ↓
-interval slot
-        ↓
-deterministic idempotency key
-        ↓
-bounded recovery slots
-        ↓
-WorkflowExecutionService.create()
-        ↓
-workflow_executions persistence
-        ↓
-WorkflowExecutionService.run()
-        ↓
-completed / failed Execution
-```
+## 4. Phase 1.7 最终验收
 
-Scheduler 使用 PostgreSQL 数据库 unique constraint `(tenant_id, idempotency_key)` 作为同 slot 多 worker 的持久化收敛边界；只有实际成功完成 durable claim 的 worker 计为 dispatched，不增加并发旁路方案。
-
-Phase 1.7-B 已完成并验证：
-
-- current scheduled slot persistence；
-- recovery slot persistence；
-- deterministic idempotency key；
-- duplicate tick / scheduler restart 不重复产生同 slot Execution；
-- Real API 测试进程 AsyncEngine event-loop 生命周期治理；
-- recovery 测试按 per-trigger persistence contract 断言；
-- scheduler → workflow execution 的真实运行时边界。
-
-## 4. Phase 1.7-C / D 与最终验收
-
-Phase 1.7-C 已按既有 Backend Contract 完成前端 Schedule Governance Integration，未新增 Backend API、migration 或 Scheduler runtime implementation。
-
-Phase 1.7-D 已完成真实 Browser → Vue → Backend HTTP → application scheduler → workflow execution 链路，并保持 Browser / Backend / Frontend 三层 Gate 独立。
-
-最终验收结论：
-
-- Phase 1.7-A：完成；
-- Phase 1.7-B：完成；
-- Phase 1.7-C：完成并关闭；
-- Phase 1.7-D D-01：完成；
-- Phase 1.7-D D-02：完成；
-- Phase 1.7-D D-03：完成；
-- Phase 1.7-D D-04：完成；
-- Backend Gate：通过；
-- Frontend Gate：通过；
-- Browser / Frontend-Backend E2E Gate：通过；
-- 无新增 migration；
-- 无新增 Backend API contract；
-- 无前端 scheduler 业务实现；
-- 无跨层 Full Regression Gate；
-- Phase 1.7：**正式关闭**。
+Phase 1.7-A～D 全部完成；Backend、Frontend、Browser / Frontend-Backend E2E 三层 Gate 独立通过；Scheduler → Execution 真实边界完成验收；Phase 1.7 正式关闭。
 
 ## 5. Phase 1.8 需求 / 架构确认
 
-> Phase 1.8 的具体主题并非历史文档中的既定事实。本阶段采用“Event / Webhook Trigger Expansion”作为基于已完成 Scheduled Trigger 能力的下一步工程方案，并已形成独立计划文档 `docs/PHASE_1_8.md`。
+Phase 1.8 采用“Event / Webhook Trigger Expansion”作为基于已完成 Scheduled Trigger 能力的下一步工程方案，详细计划维护在 `docs/PHASE_1_8.md`。
 
 ### 目标
-
-将 Trigger 入口从时间驱动扩展为受治理的外部事件驱动入口：
 
 ```text
 External Event
@@ -120,65 +67,57 @@ Workflow Execution
 Trace / Audit / Observable Result
 ```
 
-### 核心边界
+### 1.8-B 审计与 Migration 判定
 
-- Webhook Trigger 与 Scheduled Trigger 共用 Trigger Domain / Workflow Execution Contract；
-- Webhook 不重写 Scheduled Scheduler；
-- 不引入 MQ/Kafka / 通用 Event Bus；
-- 不允许任意代码执行；
-- 重复事件必须通过数据库持久化唯一约束最终收敛；
-- secret / token 不进入 AuditLog 或普通业务日志；
-- Frontend 只消费 Backend Contract，不实现 runtime / idempotency / authentication。
+审计结论：
 
-### 任务状态
+1. `workflow_triggers` 已具备 `trigger_type + config + tenant/workflow/status` 表达能力，无需新增 Webhook 专用 Trigger 表或字段；该模型来自既有 `0022_workflow_trigger` migration。
+2. `workflow_executions` 已具备 `(tenant_id, idempotency_key)` 唯一持久化边界，可直接承担 Webhook 重复事件的 durable claim，不新增 `webhook_events` 表。
+3. Webhook event identity 采用 `Idempotency-Key`，或从配置的 `event_id_field` 提取；最终 durable key 为 `webhook:{trigger_id}:{event_identity}`。
+4. Webhook secret 不以明文持久化，config 中仅保存 SHA-256 `secret_hash`；Trigger API response 不返回 hash。
+5. Webhook endpoint 独立于 Scheduled Scheduler：`POST /api/v1/webhooks/{trigger_id}`。
+6. Webhook authentication 在 durable claim 前执行；secret/token 不写入 AuditLog / Trace metadata / 普通日志。
+7. 本批 **无需新增 Alembic migration**。
 
-```text
-1.8-A 需求 / Contract Baseline       ✅ 完成
-1.8-B Backend Domain + API           ⏳ 下一步
-1.8-C Frontend API + Governance UI   ⏳ 待 1.8-B
-1.8-D Real API / Runtime Boundary    ⏳ 待 1.8-B
-1.8-E Browser E2E                    ⏳ 待联调
-1.8-F Final Acceptance               ⏳ 待完成
+### 当前实现范围
+
+- Webhook Trigger type 已加入 Trigger Domain。
+- Webhook config contract 已加入 secret / event identity validation。
+- Webhook secret 已改为 hash persistence。
+- Webhook HTTP endpoint 已注册。
+- accepted / duplicate 响应 contract 已建立。
+- durable idempotent execution claim 已复用 PostgreSQL unique constraint。
+- unit test 已覆盖 config hash、secret verification、非法 auth mode / secret 长度。
+
+### 测试状态
+
+代码已提交到 `main`，但当前环境未执行本地 PostgreSQL / `uv` 测试，因此**不得将 Backend Gate 标记为通过**。下一步必须在开发环境执行：
+
+```powershell
+cd backend
+uv run pytest -q
+uv run alembic upgrade head
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-### 1.8-B 第一批实现任务
-
-1. 审计现有 Trigger Model / Schema / Service；
-2. 判断现有 Trigger / Execution 结构是否足以表达 Webhook；
-3. 只有确有必要才新增 Alembic migration；
-4. 定义 Webhook Trigger config contract；
-5. 定义 Webhook endpoint 与统一响应 / error contract；
-6. 定义 secret/header authentication contract；
-7. 实现 durable idempotent execution claim；
-8. 建立 unit → integration → api_contract → api_real 测试链路。
-
-当前没有已知阻塞。实际测试结果在实现完成后记录，不预填通过。
+实际结果通过后再进入 1.8-C。
 
 ## 6. 下一步
 
-严格遵循 `docs/DEVELOPMENT.md` 固定顺序：
-
 ```text
-1.8-B Backend Domain + API Contract
+1.8-B Backend Contract 本批实现
         ↓
-Migration 判定 / 实施 + Backend tests
+本地 Backend Gate / Real API 验证
+        ↓
+补齐 Webhook API Contract / Real API 覆盖
         ↓
 1.8-C Frontend API Types + Vitest
         ↓
 Frontend UI
         ↓
-Real API Gate
-        ↓
-Backend Gate / Frontend Gate
-        ↓
-Frontend / Backend 联调
+1.8-D Real API / Runtime Boundary
         ↓
 1.8-E Browser E2E
         ↓
-文档更新
-        ↓
-提交 main
+1.8-F Final Acceptance
 ```
-
-当前责任角色：开发执行。
-当前目标：完成 1.8-B Backend Contract 与 Migration 判定。
