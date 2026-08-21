@@ -70,6 +70,10 @@ class ScheduledTriggerScheduler:
     def is_concurrent_runtime_claim(exc: BaseException) -> bool:
         return isinstance(exc, HTTPException) and exc.status_code == 409 and "只有 pending Execution 可以启动 Runtime" in str(exc.detail)
 
+    @staticmethod
+    def is_scheduled_claim_contention(exc: BaseException) -> bool:
+        return isinstance(exc, HTTPException) and exc.status_code == 409 and "Scheduled Trigger Idempotency claim contention" in str(exc.detail)
+
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
         """Dispatch enabled scheduled triggers for the bounded recovery window."""
         now = now or datetime.now(UTC)
@@ -133,6 +137,9 @@ class ScheduledTriggerScheduler:
                             )
                         except HTTPException as exc:
                             if self.is_concurrent_runtime_claim(exc):
+                                counters["contention"] += 1
+                                continue
+                            if self.is_scheduled_claim_contention(exc):
                                 counters["contention"] += 1
                                 continue
                             raise
