@@ -212,7 +212,7 @@ class WorkflowRuntime:
                     if error_code == "CIRCUIT_OPEN":
                         raise CircuitOpenError(node["id"])
                     if error_code == "NODE_TIMEOUT":
-                        raise failure if isinstance(failure, (asyncio.TimeoutError, TimeoutError)) else asyncio.TimeoutError(error_message)
+                        raise HTTPException(504, error_message)
                     if error_code == "CONNECTION_ERROR":
                         raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
                     raise HTTPException(500, error_message)
@@ -227,7 +227,7 @@ class WorkflowRuntime:
                     if error_code.startswith("HTTP_"):
                         raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
                     if error_code == "NODE_TIMEOUT":
-                        raise failure if isinstance(failure, (asyncio.TimeoutError, TimeoutError)) else asyncio.TimeoutError(error_message)
+                        raise HTTPException(504, error_message)
                     if error_code == "CONNECTION_ERROR":
                         raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
                     raise HTTPException(500, error_message)
