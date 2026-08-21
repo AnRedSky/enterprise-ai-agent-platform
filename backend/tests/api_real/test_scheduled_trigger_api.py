@@ -150,7 +150,10 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
         )
         assert created.status_code == 201, created.text
         trigger_id = created.json()["id"]
-        now = datetime.now(UTC)
+        # Use a historical slot so the application's background scheduler
+        # cannot independently claim the same slot while this contract test
+        # runs two scheduler workers concurrently.
+        now = datetime(2020, 1, 1, 0, 0, 37, tzinfo=UTC)
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, now, config["interval_seconds"])
 
         async def dispatch_from_two_workers():
