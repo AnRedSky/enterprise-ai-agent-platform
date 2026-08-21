@@ -73,5 +73,5 @@ async function load() {
   }
 }
 
-onMounted(() => void load());
+onMounted(load);
 </script>
