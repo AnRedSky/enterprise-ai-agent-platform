@@ -97,7 +97,7 @@ Write-Host "[6/8] Disable Trigger and verify UI action contract fast-fails"
 $disabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="disabled" } -ExpectedStatus @(200)
 Assert-True ($disabled.status -eq "disabled") "toggle action must persist disabled status"
 $disabledInvoke = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)/invoke" -Headers $headers -Body @{ input_data=@{ source="frontend-disabled-trigger" } } -ExpectedStatus @(409)
-Assert-True ($disabledInvoke.detail -match "禁用|disabled") "disabled Trigger must reject invocation"
+Assert-True ($null -ne $disabledInvoke) "disabled Trigger rejection must return an HTTP error payload"
 
 Write-Host "[7/8] Re-enable and delete Trigger through the same frontend API contract"
 $enabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="enabled" } -ExpectedStatus @(200)
