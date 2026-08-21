@@ -88,10 +88,10 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
       interval_seconds: 60,
     });
 
-    await scheduleConfigTextarea.fill(JSON.stringify({ timezone: "UTC", interval_seconds: 5 }));
+    await scheduleConfigTextarea.fill(JSON.stringify({ timezone: "UTC", interval_seconds: 60 }));
     expect(JSON.parse(await scheduleConfigTextarea.inputValue())).toEqual({
       timezone: "UTC",
-      interval_seconds: 5,
+      interval_seconds: 60,
     });
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
@@ -100,7 +100,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: triggerName });
     await expect(triggerRow).toBeVisible();
     await expect(triggerRow).toContainText("scheduled");
-    await expect(triggerRow).toContainText("UTC / 每 5 秒");
+    await expect(triggerRow).toContainText("UTC / 每 60 秒");
     await expect(triggerRow.getByRole("button", { name: "Invoke" })).toHaveCount(0);
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
@@ -118,7 +118,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(persistedItems).toBeInstanceOf(Array);
     const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === triggerName);
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
-    expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 5 });
+    expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 60 });
 
     await expect.poll(
       async () => {
