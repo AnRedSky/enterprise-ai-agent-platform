@@ -1,3 +1,5 @@
+import inspect
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -12,10 +14,11 @@ def test_webhook_route_is_registered_without_bearer_authentication():
 
 def test_webhook_request_headers_are_exposed_by_route_contract():
     route = next(route for route in app.routes if route.path == "/api/v1/webhooks/{trigger_id}")
+    parameters = inspect.signature(route.endpoint).parameters
     assert route.methods == {"POST"}
-    assert route.endpoint.__annotations__["x_webhook_secret"] == str | None
-    assert route.endpoint.__annotations__["idempotency_key"] == str | None
-    assert route.endpoint.__annotations__["request_id"] == str | None
+    assert parameters["x_webhook_secret"].default.alias == "X-Webhook-Secret"
+    assert parameters["idempotency_key"].default.alias == "Idempotency-Key"
+    assert parameters["request_id"].default.alias == "X-Request-ID"
 
 
 def test_webhook_endpoint_does_not_require_platform_bearer_authentication():
