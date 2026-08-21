@@ -104,7 +104,9 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     const persisted = await api.get(apiPath(`/workflows/${workflow.id}/triggers`), { headers });
     expect(persisted.ok()).toBeTruthy();
     const persistedTriggers = await persisted.json();
-    const persistedTrigger = persistedTriggers.items.find((item: { name: string }) => item.name === `Browser Scheduled Trigger ${nonce}`);
+    const persistedItems = Array.isArray(persistedTriggers) ? persistedTriggers : persistedTriggers.items;
+    expect(persistedItems).toBeInstanceOf(Array);
+    const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === `Browser Scheduled Trigger ${nonce}`);
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
     expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 60 });
 
