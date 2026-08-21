@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
+from app.dependencies.db import engine as app_engine
 from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
@@ -17,6 +18,30 @@ TOKEN = os.getenv("ACCESS_TOKEN")
 TRIGGER_WORKFLOW_ID = os.getenv("TRIGGER_WORKFLOW_ID")
 
 pytestmark = pytest.mark.real_api
+
+
+@pytest.fixture(scope="module")
+def scheduler_event_loop():
+    """Keep one event loop alive for AsyncEngine connections used by scheduler tests.
+
+    The real API tests are synchronous HTTP tests, but the scheduler contract calls
+    the application's AsyncEngine directly. Repeated asyncio.run() calls create and
+    close different loops while SQLAlchemy's AsyncEngine pool may retain a connection
+    bound to the previous loop. A module-scoped loop keeps that test-owned async work
+    on one lifecycle and disposes the imported application engine before the loop closes.
+    """
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        yield loop
+    finally:
+        loop.run_until_complete(app_engine.dispose())
+        loop.close()
+        asyncio.set_event_loop(None)
+
+
+def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
+    return loop.run_until_complete(coroutine)
 
 
 def _client() -> httpx.Client:
@@ -47,17 +72,21 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
         await engine.dispose()
 
 
-def _wait_for_scheduled_execution(idempotency_key: str, timeout_seconds: float = 15.0) -> list[dict]:
+def _wait_for_scheduled_execution(
+    loop: asyncio.AbstractEventLoop,
+    idempotency_key: str,
+    timeout_seconds: float = 15.0,
+) -> list[dict]:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        rows = asyncio.run(_execution_rows(idempotency_key))
+        rows = _run_async(loop, _execution_rows(idempotency_key))
         if rows:
             return rows
         time.sleep(1.0)
-    return asyncio.run(_execution_rows(idempotency_key))
+    return _run_async(loop, _execution_rows(idempotency_key))
 
 
-def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http():
+def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(scheduler_event_loop):
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled Trigger validation")
 
@@ -107,7 +136,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
 
-        rows = _wait_for_scheduled_execution(runtime_key)
+        rows = _wait_for_scheduled_execution(scheduler_event_loop, runtime_key)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
         assert rows[0]["idempotency_key"] == runtime_key
@@ -115,7 +144,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert rows[0]["input_data"]["recovery"] is False
 
         time.sleep(6)
-        rows_after_duplicate_poll = asyncio.run(_execution_rows(runtime_key))
+        rows_after_duplicate_poll = _run_async(scheduler_event_loop, _execution_rows(runtime_key))
         assert len(rows_after_duplicate_poll) == 1, rows_after_duplicate_poll
         assert rows_after_duplicate_poll[0]["input_data"] == rows[0]["input_data"]
 
@@ -132,7 +161,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert missing.status_code == 404, missing.text
 
 
-def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http():
+def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(scheduler_event_loop):
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for multi-worker scheduler validation")
 
@@ -156,8 +185,8 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
             return await asyncio.gather(first.tick_once(now), second.tick_once(now))
 
         try:
-            counters = asyncio.run(dispatch_from_two_workers())
-            rows = _wait_for_scheduled_execution(runtime_key)
+            counters = _run_async(scheduler_event_loop, dispatch_from_two_workers())
+            rows = _wait_for_scheduled_execution(scheduler_event_loop, runtime_key)
             assert len(rows) == 1, rows
             assert rows[0]["idempotency_key"] == runtime_key
             assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(
@@ -171,7 +200,7 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
             assert deleted.status_code == 204, deleted.text
 
 
-def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http():
+def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(scheduler_event_loop):
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled recovery validation")
 
@@ -198,9 +227,9 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http()
         current_key = scheduler.slot_idempotency_key(trigger_id, current_slot)
 
         try:
-            counters = asyncio.run(scheduler.tick_once(now))
-            recovery_rows = _wait_for_scheduled_execution(recovery_key)
-            current_rows = _wait_for_scheduled_execution(current_key)
+            counters = _run_async(scheduler_event_loop, scheduler.tick_once(now))
+            recovery_rows = _wait_for_scheduled_execution(scheduler_event_loop, recovery_key)
+            current_rows = _wait_for_scheduled_execution(scheduler_event_loop, current_key)
 
             assert counters["recovered"] == 1, counters
             assert len(recovery_rows) == 1, recovery_rows
@@ -219,10 +248,10 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http()
             # A scheduler restart/re-poll over the same historical window must
             # reuse the persisted idempotency boundary rather than create new rows.
             restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
-            second_counters = asyncio.run(restarted.tick_once(now))
+            second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))
             assert second_counters["dispatched"] == 0, second_counters
-            assert len(asyncio.run(_execution_rows(recovery_key))) == 1
-            assert len(asyncio.run(_execution_rows(current_key))) == 1
+            assert len(_run_async(scheduler_event_loop, _execution_rows(recovery_key))) == 1
+            assert len(_run_async(scheduler_event_loop, _execution_rows(current_key))) == 1
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
             assert deleted.status_code == 204, deleted.text
