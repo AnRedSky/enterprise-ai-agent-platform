@@ -25,7 +25,7 @@ async def receive_webhook(
     request_id = request_id or str(uuid.uuid4())
     service = WebhookTriggerService(db)
     trigger = await service.get_trigger(trigger_id)
-    execution, created, identity = await service.invoke(
+    execution, created, _ = await service.invoke(
         trigger,
         payload,
         x_webhook_secret,
@@ -33,19 +33,12 @@ async def receive_webhook(
         request_id,
     )
 
-    # The database uses a bounded, deterministic digest as its durable
-    # idempotency key. The public webhook contract must expose the stable,
-    # human-auditable identity that the caller supplied, however. Keeping these
-    # two representations separate also avoids leaking the internal digest
-    # implementation into the HTTP API.
-    public_idempotency_key = f"webhook:{trigger.id}:{identity}"
-
     return JSONResponse(
         status_code=202 if created else 200,
         content={
             "status": "accepted" if created else "duplicate",
             "request_id": request_id,
             "execution_id": str(execution.id),
-            "idempotency_key": public_idempotency_key,
+            "idempotency_key": execution.idempotency_key,
         },
     )
