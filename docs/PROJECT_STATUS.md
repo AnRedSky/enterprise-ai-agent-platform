@@ -1,6 +1,6 @@
 # 项目开发进度
 
-> 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。工程开发规则统一维护在 `docs/DEVELOPMENT.md` 及其当前补充规则文档中。阶段计划维护在对应 `docs/PHASE_*.md`。
+> 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。工程开发规则统一维护在 `docs/DEVELOPMENT.md`、`docs/DEVELOPMENT_GUIDELINES.md` 及当前补充规则文档中。阶段计划维护在对应 `docs/PHASE_*.md`。
 
 ## 1. 当前主线
 
@@ -10,8 +10,8 @@
 - Phase 1.5：**已完成**
 - Phase 1.6：**已完成并正式关闭**
 - Phase 1.7：**已完成并正式关闭**
-- 当前阶段：**Phase 1.8 Event / Webhook Trigger Expansion**
-- 当前任务：**Phase 1.8-D Real Webhook HTTP / Runtime Boundary 已进入实现与本地验收；1.8-C Frontend Build / Regression Gate 已由开发者本地通过**
+- 当前阶段：**Phase 1.8 Event / Webhook Trigger Expansion 已正式关闭**
+- 当前任务：**Phase 1.8-F Final Acceptance 已完成**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立；不使用 GitHub Actions workflow run
 
@@ -27,111 +27,105 @@
 | Phase 1.6 | **已正式关闭** | Trigger CRUD、Governance、Real HTTP、Browser E2E 全部完成 |
 | Phase 1.7 | **已正式关闭** | Scheduled Trigger A～D 全部完成；Backend、Frontend、Browser 三层 Gate 通过 |
 | **Phase 1.8-A** | **已完成** | Event / Webhook Trigger 需求、领域边界、Security / Idempotency、三层 Gate 已确认 |
-| **Phase 1.8-B** | **已完成** | Trigger Model / Schema / Service 审计、无需 Migration、Webhook API / authentication / durable idempotency 完成；本地 Backend Gate 与 Real API 已通过 |
+| **Phase 1.8-B** | **已完成** | Trigger Model / Schema / Service 审计、无需 Migration、Webhook API / authentication / durable idempotency 完成 |
 | **Phase 1.8-C** | **已完成** | Frontend API Types、Webhook Governance UI、Vitest、production build、Frontend Regression Gate 已通过 |
-| **Phase 1.8-D** | **实现与验收中** | Real Webhook HTTP / Runtime Boundary；补齐 missing identity、bounded durable key、duplicate convergence、authentication、disable/delete 的 Real API 覆盖 |
-| **Phase 1.8-E** | 待 1.8-D | Browser E2E 完整 Webhook → Execution observable contract |
-| **Phase 1.8-F** | 待 1.8-E | Final Acceptance / Phase 1.8 正式关闭 |
+| **Phase 1.8-D** | **已完成** | Real Webhook HTTP / Runtime Boundary；accepted / duplicate / authentication / lifecycle / bounded key 全部通过 |
+| **Phase 1.8-E** | **已完成** | Browser E2E 三条测试全部通过，真实 Webhook → Execution observable contract 完成 |
+| **Phase 1.8-F** | **已正式关闭** | Backend / Frontend / Browser 三层 Gate 通过，验收文档与状态文档已收口 |
 
-## 3. Phase 1.8-B 本地验收结果
+## 3. Phase 1.8 最终验收结果
 
-开发者实际反馈：
-
-```text
-uv run pytest -q
-→ 257 passed, 18 deselected in 4.11s
-
-scripts/test/api-real/01_run_real_api_tests.ps1
-→ 18 passed in 30.47s
-→ [PASS] Real API gate completed. Frontend/backend integration may proceed.
-```
-
-此前 `uv run alembic upgrade head` 已实际通过；本轮反馈未重复执行 Migration，因此不将本轮 Migration 标记为新执行结果。
-
-## 4. Phase 1.8-C 本地验收结果
-
-已完成：
-
-- Webhook Trigger Frontend API Types；
-- Trigger inventory 中 Webhook 展示；
-- Webhook Secret 创建输入 / 生成；
-- `event_id_field` Contract；
-- Secret 只展示配置状态，不展示 hash；
-- Webhook lifecycle 操作；
-- Webhook Browser Contract 测试基础；
-- Frontend Vitest。
+### Backend
 
 开发者最新实际反馈：
 
 ```text
+uv run pytest -q
+→ 257 passed, 20 deselected in 4.95s
+
+scripts/test/api-real/01_run_real_api_tests.ps1
+→ 20 passed in 37.94s
+→ [PASS] Real API gate completed. Frontend/backend integration may proceed.
+```
+
+Phase 1.8-B 已实际执行 `uv run alembic upgrade head` 并通过；Phase 1.8 无新增数据库 Migration。
+
+### Frontend
+
+开发者实际反馈：
+
+```text
+npm test
+→ 13 test files passed
+→ 52 tests passed
+
 npm run build
-→ vite production build succeeded
+→ production build succeeded
 → 1709 modules transformed
-→ built in 4.15s
 
 scripts/test/release/01_frontend_regression_gate.ps1
-→ Frontend automated regression: 13 test files passed, 52 tests passed
-→ Frontend production build: succeeded
+→ Frontend automated regression passed
+→ Frontend production build passed
 → [PASS] Frontend regression gate completed.
 ```
 
-上述结果为开发者本地实际执行结果，已满足 1.8-C Gate，不再将 1.8-C 标记为验收中。
+### Browser E2E
 
-## 5. Phase 1.8-D 当前结果
-
-本批在 `main` 上补齐 Real API / Runtime Boundary 测试覆盖：
-
-- Webhook 合法请求 → durable Workflow Execution；
-- duplicate event → 同一 Execution；
-- invalid secret → `401`；
-- disabled Trigger → `409`；
-- deleted Trigger → `404`；
-- 缺失 `Idempotency-Key` 且 payload 缺失配置事件字段 → `422`；
-- 100 字符事件身份触发 bounded durable idempotency key，并验证长度为 `webhook:` + SHA-256 64 hex；
-- duplicate 对 bounded key 再次投递保持同一 Execution。
-
-本批代码已提交，但**尚未声称 Real API Gate 通过**；必须由开发者本地执行后记录实际结果。
-
-## 6. 当前测试规则
-
-本项目不提交、不触发、不依赖 GitHub Actions workflow run。所有测试命令和验收 Gate 必须由开发者在本地执行，实际结果反馈后才能写入本状态文档。
-
-### Phase 1.8-D 本地验收
-
-```powershell
-cd backend
-uv run pytest -q
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
-```
-
-如果本批涉及 Migration，另执行：
-
-```powershell
-uv run alembic upgrade head
-```
-
-本批没有新增数据库 Migration，因此不要求重复创建 Migration；但 Backend Gate 的既定 Migration/head verification 仍以开发者本地 Gate 流程为准。
-
-### Phase 1.8-E Browser E2E
-
-```powershell
-cd frontend
-npx playwright test --list --project="Desktop Chrome"
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
-```
-
-Browser E2E 作为独立 Gate，不复制 Backend / Frontend regression。
-
-## 7. 下一步
+开发者最新实际反馈：
 
 ```text
-1.8-D Real Webhook HTTP / Runtime Boundary
-        ↓
-本地 Backend default regression + Real API Gate
-        ↓
-1.8-E Browser E2E
-        ↓
-1.8-F Final Acceptance
-        ↓
-Phase 1.8 正式关闭
+npx playwright test --list --project="Desktop Chrome"
+→ 3 tests listed
+
+scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
+→ scheduled Trigger governance: passed
+→ webhook Trigger governance: passed
+→ webhook runtime convergence / lifecycle security: passed
+→ 3 passed
+→ [PASS] Phase 1.7-D browser E2E gate completed.
 ```
+
+Browser Gate 为独立 Gate，不重复 Backend / Frontend regression。
+
+## 4. Phase 1.8 核心交付
+
+- Webhook Trigger Domain Contract。
+- Webhook Trigger CRUD / enable / disable / delete。
+- `POST /api/v1/webhooks/{trigger_id}` 外部事件入口。
+- Secret authentication 与安全 response contract。
+- 缺失事件身份 `422`。
+- durable idempotency claim 与 duplicate convergence。
+- bounded durable key，满足 Execution schema 100 字符边界。
+- Webhook → Workflow Execution 的真实 HTTP / persistence contract。
+- Frontend Webhook Governance UI / API Types。
+- Browser Webhook Governance + Runtime E2E。
+
+## 5. Database / Migration 结论
+
+Phase 1.8 不新增数据库表或字段。
+
+现有 `workflow_triggers` 的 `trigger_type + config + tenant/workflow/status` 已足够表达 Webhook Trigger；现有 `workflow_executions` 的 `(tenant_id, idempotency_key)` 唯一持久化边界已足够表达 Webhook durable claim。
+
+不创建 `webhook_events` 表，不修改现有 `0022_workflow_trigger` migration。
+
+## 6. 测试与开发治理
+
+本项目：
+
+1. 不提交、不触发、不依赖 GitHub Actions workflow run。
+2. 所有测试由开发者在本地执行。
+3. 实际测试结果只能在开发者反馈后写入状态文档。
+4. Backend、Frontend、Browser/E2E 三层 Gate 独立。
+5. 不提交 secret、Real API context、Playwright trace/screenshot 等本地运行产物。
+6. 所有开发工作以最新 `main` 为唯一基线，禁止创建开发分支、临时分支或任务分支。
+
+Phase 1.8 最终验收文档：`docs/PHASE_1_8_ACCEPTANCE.md`。
+Phase 1.8 阶段计划：`docs/PHASE_1_8.md`。
+
+## 7. 最终结论
+
+**Phase 1.8 Event / Webhook Trigger Expansion 正式关闭。**
+
+1.8-A ～ 1.8-F 全部完成，Backend / Frontend / Browser 三层本地 Gate 均已通过。
+
+下一阶段：从最新 `main` 基线开始，先完成需求 / 架构确认与任务拆解，再进入实现；不得跳过需求确认直接扩展代码。
