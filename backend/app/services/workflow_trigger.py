@@ -139,9 +139,23 @@ class WorkflowTriggerService:
             raise HTTPException(409, "Workflow Published Version 不可用")
         return version
 
-    async def invoke_scheduled(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
-                               input_data: dict, idempotency_key: str, recovery: bool = False) -> WorkflowExecution:
-        """Dispatch a scheduled Trigger through the same Workflow Runtime as manual execution."""
+    async def invoke_scheduled(
+        self,
+        workflow: Workflow,
+        trigger: WorkflowTrigger,
+        actor_id: UUID,
+        input_data: dict,
+        idempotency_key: str,
+        recovery: bool = False,
+        return_created: bool = False,
+    ) -> WorkflowExecution | tuple[WorkflowExecution, bool]:
+        """Dispatch a scheduled Trigger through the same Workflow Runtime as manual execution.
+
+        ``return_created`` is an internal scheduler contract. It lets the scheduler
+        distinguish the worker that won the database idempotency claim from a worker
+        that converged on an already-created execution. The normal service contract
+        continues to return only WorkflowExecution.
+        """
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "scheduled":
@@ -152,12 +166,19 @@ class WorkflowTriggerService:
         version = await self._get_published_version(workflow)
         existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
         if existing is not None:
-            return existing
+            return (existing, False) if return_created else existing
 
         execution_service = WorkflowExecutionService(self.db)
         execution = await execution_service.create(
             workflow, version, actor_id, input_data, idempotency_key=idempotency_key
         )
+        created = execution.id == getattr(execution_service, "_last_created_execution_id", execution.id)
+        # WorkflowExecutionService.create returns the pre-existing row when a
+        # concurrent worker loses the idempotency race. The service intentionally
+        # keeps that behavior for all callers; the scheduler only needs a creation
+        # signal to maintain accurate worker convergence counters.
+        if not created:
+            return (execution, False) if return_created else execution
         audit_action = "workflow.trigger.scheduled_recovery" if recovery else "workflow.trigger.scheduled"
         trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
         await self.governance.audit(
@@ -188,7 +209,8 @@ class WorkflowTriggerService:
             },
         )
         await self.db.commit()
-        return await execution_service.run(execution, version, actor_id)
+        result = await execution_service.run(execution, version, actor_id)
+        return (result, True) if return_created else result
 
     async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
                      input_data: dict, idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
