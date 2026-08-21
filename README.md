@@ -17,6 +17,7 @@
 - [Phase 1.6-C Frontend / Backend E2E](docs/17-phase-1.6-c-frontend-backend-e2e-contract.md)
 - [Phase 1.7 Workflow Trigger Scheduling Contract](docs/18-phase-1.7-workflow-trigger-scheduling-contract.md)
 - [Phase 1.7-C Schedule Governance / Frontend Integration](docs/19-phase-1.7-c-schedule-governance-frontend-integration.md)
+- [Phase 1.7-D Browser / Frontend-Backend E2E](docs/20-phase-1.7-d-browser-frontend-backend-e2e.md)
 - [错误跟踪记录](docs/error-tracking/README.md)
 - [本地功能测试与验收](docs/LOCAL_TESTING.md)
 - [提交规范](docs/CONTRIBUTING.md)
@@ -47,8 +48,8 @@ Workflow Production Hardening 已正式关闭：
 
 - Phase 1.7-A：Scheduled Trigger Backend / Scheduler / Recovery 基线审计完成，确认已有实现，不重复建设。
 - Phase 1.7-B：Scheduler execution / persistence integration 的 current/recovery persistence Real API Gate 已通过；Runtime failure persistence 专项仍待完成。
-- Phase 1.7-C：Schedule Governance / Frontend Integration 已开始实施。
-- Phase 1.7-D：Real HTTP + Browser E2E scheduling contract，待 C 阶段 Frontend Gate 验收后推进。
+- Phase 1.7-C：Schedule Governance / Frontend Integration 已完成并关闭；Frontend Gate 已通过。
+- Phase 1.7-D：Browser / Frontend-Backend E2E scheduling contract 已启动，正在扩展既有 Browser Trigger E2E。
 
 Scheduled Trigger 当前前后端统一使用 `timezone + interval_seconds` Contract；前端不实现 scheduler slot、recovery、lease、worker coordination 或 next-run 计算。
 
