@@ -33,8 +33,6 @@ class ScheduledTriggerScheduler:
         if isinstance(recovery_slots, bool) or not 1 <= recovery_slots <= self.MAX_RECOVERY_SLOTS:
             raise ValueError(f"recovery_slots 必须在 1-{self.MAX_RECOVERY_SLOTS} 范围内")
         self.poll_interval_seconds = poll_interval_seconds
-        # Preserve the class-level recovery_slots API while making the
-        # constructor's recovery_slots setting effective for this worker.
         self.max_recovery_slots = recovery_slots
         self.recovery_slots = lambda now, interval_seconds: type(self).recovery_slots(
             now, interval_seconds, self.max_recovery_slots
@@ -102,13 +100,6 @@ class ScheduledTriggerScheduler:
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
-
-                        # The pre-check above is only an optimization. Two workers can
-                        # observe the same missing execution concurrently, so serialize
-                        # the check+dispatch for this slot at the database boundary.
-                        # pg_advisory_xact_lock is transaction-scoped and is released
-                        # automatically when invoke_scheduled commits or the tick rolls
-                        # back, without relying on ORM rollback/reload behavior.
                         await db.execute(
                             select(func.pg_advisory_xact_lock(func.hashtext(idempotency_key)))
                         )
