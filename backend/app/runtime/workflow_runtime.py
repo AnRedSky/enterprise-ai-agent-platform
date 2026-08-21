@@ -243,6 +243,11 @@ class WorkflowRuntime:
                                                    data={"reason": "workflow_deadline", "attempt": attempt})
                     raise HTTPException(504, "Retry backoff exceeds workflow deadline")
                 workflow_retries += 1
+                await service.governance.audit(
+                    execution, actor_id, "workflow.node.retry", "scheduled",
+                    error_code=error_code,
+                    metadata={"node_id": node["id"], "attempt": attempt + 1, "delay_ms": int(delay * 1000)},
+                )
                 await asyncio.sleep(delay)
 
         await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
