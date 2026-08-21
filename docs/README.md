@@ -16,7 +16,19 @@
 
 **Phase 1.9 — Runtime Reliability / Production Hardening，进行中。**
 
-当前第一项任务为 `1.9-A Circuit Breaker HALF_OPEN Concurrent Recovery`；代码修复和单元测试已提交，尚待开发者本地实际执行 Gate 后记录结果。
+`1.9-A Circuit Breaker HALF_OPEN Concurrent Recovery` 已完成代码修复以及开发者本地实际 Unit / Backend / Migration / Real API Gate；当前进入 `1.9-B Runtime Failure / Retry / Circuit Boundary Audit`。
+
+## 当前 1.9-A 验证结果
+
+```text
+Circuit Breaker targeted tests: 16 passed in 0.68s
+Backend Regression: 262 passed, 20 deselected in 3.64s
+Alembic head: 0022_workflow_trigger
+Real API via Backend Gate: 20 passed in 32.99s
+Standalone Real API Gate: 20 passed in 33.26s
+```
+
+以上均来自开发者本地实际执行结果，不使用 GitHub Actions 作为验收依据。
 
 ## 目录
 
