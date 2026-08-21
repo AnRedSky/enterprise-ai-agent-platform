@@ -10,7 +10,7 @@
 - Phase 1.5：**已完成**
 - Phase 1.6：**已完成并正式关闭**
 - 当前阶段：**Phase 1.7 Workflow Trigger Expansion / Scheduling Contract**
-- 当前任务：**Phase 1.7-C Schedule Governance / Frontend Integration**
+- 当前任务：**Phase 1.7-D Browser / Frontend-Backend E2E Scheduling Contract**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立
 
@@ -29,7 +29,8 @@
 | Phase 1.6 | **已正式关闭** | A～C 全部完成，三层 Gate 与实际联调完成 |
 | Phase 1.7-A | **基线审计完成** | Scheduled Trigger Contract、Scheduler Runtime、bounded recovery、multi-worker slot convergence 已存在于最新 main；不重复实现 |
 | Phase 1.7-B | **核心 Persistence Gate 已通过；专项 Runtime failure 待完成** | Scheduled current/recovery persistence、idempotency、Real API lifecycle 已完成并通过；Runtime failure persistence 仍需专项真实失败 Workflow 验收 |
-| Phase 1.7-C | **开发中** | Schedule Governance Frontend API/UI Contract 已开始实施 |
+| Phase 1.7-C | **已完成并关闭** | Schedule Governance Frontend API/UI Contract 完成；本地 Frontend Gate 全部通过 |
+| Phase 1.7-D | **已启动** | Browser / Frontend-Backend E2E Scheduling Contract 已定义，正在扩展现有 Browser Trigger E2E |
 
 ## 3. Phase 1.7-A/B 基线结论
 
@@ -66,78 +67,59 @@ Phase 1.7-B 已完成并验证：
 - Real API 测试进程 AsyncEngine event-loop 生命周期治理；
 - recovery 测试按 per-trigger persistence contract 断言，而非错误解释 global scheduler counters。
 
-## 4. 最近实际验收结果
+## 4. Phase 1.7-C 完成收口
 
-开发者最近一次反馈：
+Phase 1.7-C 已按既有 Backend Contract 完成前端 Schedule Governance Integration，未新增 Backend API、migration 或 Scheduler runtime implementation。
+
+### 已完成
+
+- `WorkflowTrigger.trigger_type` 支持 `manual | scheduled`。
+- 新增 `ScheduledTriggerConfig` 前端类型。
+- Scheduled Trigger 默认配置 `timezone=UTC, interval_seconds=60`。
+- 创建前校验 timezone 非空、interval_seconds 为正整数。
+- Trigger inventory 展示 schedule contract。
+- Scheduled Trigger 不显示 Manual Invoke。
+- enable / disable / delete 沿用现有 Trigger API。
+- Tenant 不由前端提交。
+- 前端未实现 next-run、slot、recovery、lease、worker coordination。
+- `WorkflowTriggers.test.ts` 覆盖 scheduled inventory / contract / create / invalid interval，以及 manual CRUD / invoke 回归。
+
+### 测试结果
+
+开发者已反馈本地 Frontend 测试全部通过，因此 Phase 1.7-C 收口采用实际结果：
 
 ```text
-Backend pytest:
-245 passed, 17 deselected in 4.81s
+npm test
+51 passed
 
-Migration:
-uv run alembic upgrade head -> success
+npm run build
+PASS
 
-Real API Gate:
-17 passed in 33.44s
+01_frontend_regression_gate.ps1
+PASS
+```
+
+此前 Backend 独立 Gate 最近实际结果仍为：
+
+```text
+uv run pytest -q
+245 passed, 17 deselected
+
+uv run alembic upgrade head
+success
+
+01_run_real_api_tests.ps1
+17 passed
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-直接执行：
+### 测试桩修正
 
-```text
-uv run pytest -q tests/api_real/test_scheduled_trigger_api.py -m real_api
-```
+Frontend Schedule Contract 的两项失败来自 `el-table-column` 测试 stub 未保留 `prop` 与 scoped-slot rendering 语义；未修改生产 Scheduler 或 Governance UI 以适配错误 stub。测试 stub 已修正并提交 main。
 
-得到 3 个 `TRIGGER_WORKFLOW_ID is required`，因为该命令绕过统一 Real API bootstrap；不作为 Gate 失败结论。Real API 必须使用统一入口脚本准备上下文。
+## 5. Phase 1.7-C 工程清理
 
-## 5. Phase 1.7-C 基线审计
-
-现有 Frontend 已有 `Workflow Trigger Governance` 页面、Trigger CRUD、enable/disable、manual invoke 和 API client，但 `WorkflowTrigger.trigger_type` 当前只允许 `manual`，因此不能完整消费后端已经存在的 scheduled Trigger Contract。
-
-后端已提供统一 Trigger API：
-
-```text
-GET    /workflows/{workflow_id}/triggers
-POST   /workflows/{workflow_id}/triggers
-GET    /workflows/{workflow_id}/triggers/{trigger_id}
-PATCH  /workflows/{workflow_id}/triggers/{trigger_id}
-DELETE /workflows/{workflow_id}/triggers/{trigger_id}
-POST   /workflows/{workflow_id}/triggers/{trigger_id}/invoke
-```
-
-因此 1.7-C 不新增 Backend API、不新增 migration、不重复实现 Scheduler。
-
-## 6. Phase 1.7-C 已实施代码范围
-
-### API Types
-
-- `WorkflowTrigger.trigger_type` 扩展为 `manual | scheduled`。
-- 新增 `ScheduledTriggerConfig` 类型。
-- Trigger create/update client 不再把类型锁死为 manual。
-
-### Schedule Governance UI
-
-- Trigger 创建支持 `manual / scheduled`。
-- scheduled 默认配置为 `timezone=UTC, interval_seconds=60`。
-- 前端仅执行最小输入校验，不替代 Backend Contract。
-- 列表展示 scheduled Trigger 的 timezone / interval。
-- scheduled Trigger 不显示 manual Invoke 操作。
-- Tenant 不由前端提交。
-- 不实现 next-run、slot、recovery、lease、worker 状态等后端运行时逻辑。
-
-### Frontend tests
-
-`frontend/tests/views/WorkflowTriggers.test.ts` 增加：
-
-- scheduled inventory；
-- schedule contract 展示；
-- scheduled create；
-- invalid interval 拦截；
-- manual CRUD / invoke 回归。
-
-## 7. 工程清理
-
-本轮清理已确认被正式 Backend Release Gate 替代且无引用的旧 regression wrapper：
+已清理确认被正式 Backend Release Gate 替代且无引用的旧 regression wrapper：
 
 ```text
 backend/scripts/test/regression/01_backend_regression.ps1
@@ -146,7 +128,7 @@ backend/scripts/test/regression/README.md
 
 同时移除空的 `backend/README.md`，避免与根 README / `docs/DEVELOPMENT.md` 形成重复入口。
 
-保留以下仍有明确职责的脚本域：
+保留仍有明确职责的脚本域：
 
 ```text
 backend/scripts/dev/
@@ -158,11 +140,33 @@ backend/scripts/test/phase/
 backend/scripts/test/release/
 ```
 
-## 8. Phase 1.7-C 测试步骤
+## 6. Phase 1.7-D 实施范围
 
-开发者在拉取本轮 main 后执行：
+Phase 1.7-D 继续复用已有 Browser E2E 测试基础设施，不新建重复 Gate。
 
-### Frontend
+目标是把既有 Manual Trigger Browser Contract 扩展为 Scheduled Trigger Browser Contract，覆盖：
+
+1. Browser 登录与真实 Workflow fixture；
+2. Schedule Governance 页面；
+3. Scheduled Trigger 创建；
+4. `timezone + interval_seconds` UI contract；
+5. Scheduled Trigger inventory；
+6. Scheduled Trigger 不显示 Manual Invoke；
+7. enable / disable / delete lifecycle；
+8. 通过真实 HTTP API 检查 Trigger persistence；
+9. 后续补充可控 scheduler interval 与 Workflow Execution runtime observation。
+
+新增阶段文档：
+
+```text
+docs/20-phase-1.7-d-browser-frontend-backend-e2e.md
+```
+
+Browser E2E 仍不重复执行 Backend pytest、migration、Real API 全量 Gate 或 Frontend regression。
+
+## 7. Phase 1.7-D 本地测试流程
+
+### 1. Frontend regression
 
 ```powershell
 cd frontend
@@ -171,7 +175,7 @@ npm run build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
-### Backend 独立 Gate
+### 2. Backend regression / migration / Real API
 
 ```powershell
 cd backend
@@ -180,26 +184,36 @@ uv run alembic upgrade head
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-### Browser E2E
+### 3. Browser E2E
 
-Phase 1.7-D 再加入 Schedule 用户链路；C 阶段不复制 Browser Gate。
+启动 Backend 与 Frontend 后：
 
-本轮代码提交前未由开发者执行上述 Frontend 命令，因此这里不预填测试通过结果。
+```powershell
+cd frontend
+npx playwright test --list --project="Desktop Chrome"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+```
 
-## 9. 下一步
+本阶段 Browser E2E 的目标结果不是复制其他 Gate，而是验证真实 Browser → Vue → HTTP → Trigger persistence → Scheduler / Execution 的跨层契约。
+
+## 8. 下一步
 
 ```text
 Phase 1.7-C
-  C-01 API Type Contract          ← 已实施
-  C-02 Schedule Governance UI     ← 已实施
-  C-03 Runtime Boundary           ← 已实施
-  C-04 Frontend Tests              ← 已实施
+  C-01 API Type Contract          ← 完成
+  C-02 Schedule Governance UI     ← 完成
+  C-03 Runtime Boundary           ← 完成
+  C-04 Frontend Tests              ← 完成
         ↓
-本地 Frontend Gate 验收
+Phase 1.7-C 关闭
         ↓
-Phase 1.7-D Real HTTP + Browser E2E scheduling contract
+Phase 1.7-D Browser / Frontend-Backend E2E
+  D-01 Browser Schedule Governance
+  D-02 Trigger Lifecycle
+  D-03 Scheduler / Execution Boundary
+  D-04 Regression Boundaries
         ↓
-最终关闭 Phase 1.7
+Phase 1.7 最终验收 / 关闭评估
 ```
 
-本状态文件只记录已经确认的实际结果，不预先宣称未执行的 Gate 通过。
+本状态文件只记录已经确认的实际结果；Phase 1.7-D 的 Browser Gate 在实际执行前不预先宣称通过。
