@@ -11,8 +11,14 @@ if ([string]::IsNullOrWhiteSpace($env:FRONTEND_BASE_URL)) {
 }
 if ([string]::IsNullOrWhiteSpace($env:API_BASE_URL)) {
     $env:API_BASE_URL = "http://127.0.0.1:8000/api/v1"
+} else {
+    $env:API_BASE_URL = $env:API_BASE_URL.TrimEnd('/')
+    if (-not $env:API_BASE_URL.EndsWith('/api/v1')) {
+        $env:API_BASE_URL = "$($env:API_BASE_URL)/api/v1"
+    }
 }
 
+Write-Host "API_BASE_URL: $env:API_BASE_URL"
 Write-Host "[1/2] Run browser E2E contract"
 npm run test:e2e -- --project="Desktop Chrome"
 if ($LASTEXITCODE -ne 0) {
