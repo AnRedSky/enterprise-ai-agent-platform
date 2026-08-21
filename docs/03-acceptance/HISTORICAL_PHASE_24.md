@@ -1,27 +1,28 @@
 # Historical Phase 24 — Acceptance / Historical Evidence
 
-> 历史规划记录。不得作为当前项目状态源。
+> 历史验收证据，不作为当前项目状态源。
 
-## 1. 历史结论
+## 1. 已确认的历史证据
 
-当前可读取的 Phase 24 来源主要是 `40-phase-23-completion-and-phase-24-plan.md` 中的下一阶段规划。该文档把 Phase 24 进入条件定义为 Phase 23 手工测试全部通过并完成记录；因此没有独立完整验收结果时，不得将 Phase 24 写成已完成。
+- Phase 23 Frontend 验证已在前一阶段实际反馈中通过。
+- Phase 24 Task 01 解决 pytest import path 与后续 collection compatibility 问题。
+- Task 02 形成 Runtime / Tool / Memory / Model Gateway / Observability 验证顺序和人工执行门禁。
+- uv 环境修复将依赖、pytest 配置和 CI 统一到 uv，并明确要求重新生成真实 `uv.lock`。
 
-## 2. 历史计划范围
+## 2. 未确认的最终证据
 
-- 根据手工测试结果修复 P0 问题
-- CI 恢复并验证
-- Tool Runtime 功能闭环验收
-- Memory 功能闭环验收
-- Observability 功能闭环验收
-- Vue 管理端 Agent / Session / Debug 闭环
-- 最终端到端验收
+历史记录没有提供完整的 Phase 24 Final Acceptance，尤其没有完整覆盖 Runtime、Tool Runtime、Memory、Model Gateway、Observability 的最终全量实际通过结果。因此不能把 Task plan、修复 commit 或 collection 成功当作 Phase 24 完成。
 
-## 3. 验收记录规则
+`51-phase-24-task-02-uv-environment-fix.md` 更明确指出当时环境无法访问 Python Package Index，不能虚构 `uv sync` / `pytest` 最终通过结果。
 
-当前 main 没有发现独立、完整的 Phase 24 验收任务文档集合，因此本记录不虚构测试结果或完成状态。后续如果发现历史遗漏文档，应先补入迁移矩阵，再逐份核对。
+## 3. 验收规则
+
+Backend 必须先 collection，再真实 pytest、Runtime/RBAC、Tool、Memory、Model Gateway、Observability；失败修复后重新执行受影响测试并回归。不得 skip/xfail/降低断言。
 
 ## 4. 来源
 
-- `40-phase-23-completion-and-phase-24-plan.md`
-- `24-phase-23-plan.md`
-- `02-phases/HISTORICAL_PHASE_23.md`
+- `47-phase-24-task-01-backend-pytest-import-fix.md`
+- `48-phase-24-task-02-backend-runtime-tool-memory-validation-plan.md`
+- `49-phase-24-task-01-backend-compatibility-fix.md`
+- `50-phase-24-task-02-backend-runtime-validation-plan.md`
+- `51-phase-24-task-02-uv-environment-fix.md`
