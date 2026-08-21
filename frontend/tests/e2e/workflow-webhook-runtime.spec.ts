@@ -70,16 +70,13 @@ test("Webhook browser runtime converges duplicate events and enforces lifecycle 
 
     await page.getByLabel("Trigger 名称").fill(triggerName);
     const triggerTypeFormItem = page.locator(".el-form-item").filter({ hasText: "类型" }).first();
-    await triggerTypeFormItem.locator(".el-select").click();
-    const webhookOption = page
-      .locator(".el-select-dropdown:visible .el-select-dropdown__item")
-      .filter({ hasText: "webhook" })
-      .first();
-    await expect(webhookOption).toBeVisible();
-    // Element Plus re-renders the dropdown item while the selection popup settles.
-    // Use the option's keyboard activation instead of a pointer click so Playwright
-    // does not wait for a transient DOM node to become geometrically stable.
-    await webhookOption.press("Enter");
+    const triggerTypeSelect = triggerTypeFormItem.locator(".el-select");
+    await triggerTypeSelect.click();
+    // Element Plus may replace dropdown <li> nodes while the popup settles. Drive
+    // the select through its keyboard contract instead of clicking a transient node.
+    await triggerTypeSelect.press("End");
+    await triggerTypeSelect.press("Enter");
+    await expect(page.getByLabel("Webhook Secret")).toBeVisible();
 
     await page.getByLabel("Webhook Secret").fill(secret);
     await page.getByRole("button", { name: "创建 Trigger" }).click();
