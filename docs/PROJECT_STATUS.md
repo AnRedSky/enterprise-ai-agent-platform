@@ -24,10 +24,10 @@
 | Observability / Audit / Trace | 已实现当前历史范围 | Execution/Event/Trace/Token/Audit 已形成跨 Runtime / Workflow 关联 |
 | Knowledge / Ingestion | 已实现当前历史范围 | Knowledge、Document/Version/Chunk ingestion 和权限边界已形成 |
 | Retrieval / Vector / Hybrid | 已实现当前代码范围 | Lexical、Vector、Hybrid、Evaluation 与 Debug 已形成；真实 Embedding Provider 的语义质量不能由 Mock 结论替代 |
-| Workflow Definition / Version / Execution | **1.9-C 正在 Runtime reliability 重新验证** | `WorkflowRuntime.execute()` 已恢复；当前专项测试仅剩 timeout exception mapping 回归，已修复等待本地复测 |
+| Workflow Definition / Version / Execution | **1.9-C 正在 Runtime reliability 重新验证** | `WorkflowRuntime.execute()` 已恢复；timeout 语义修复、retry governance 修复已提交，等待本地专项与 Real API Gate |
 | Workflow Governance / Audit / Trace | 已实现当前历史范围 | Tenant/RBAC、Audit、Trace、Execution lineage 已形成 |
-| Retry / Timeout / Idempotency / Deadline | **1.9-C 正在真实 API 可靠性验证** | focused retry/timeout suite 已达到 12/13；剩余 node timeout HTTP 504 mapping 已修复；Real API Gate 尚未重新通过 |
-| Circuit Breaker | **1.9-C bootstrap fixture 修复后待重新验证** | 既有 1.9-A/1.9-B focused scope 已验证；本轮 Real API bootstrap 发现 Open boundary fixture 未提供 workflow retry budget，已修复 fixture |
+| Retry / Timeout / Idempotency / Deadline | **1.9-C 正在真实 API 可靠性验证** | focused retry/timeout suite 的已知失败已修复；Real API Gate 尚未重新通过 |
+| Circuit Breaker | **1.9-C 修复后待重新验证** | Open boundary fixture retry budget 与 retry scheduled governance trace 已修复；等待完整 Real API Gate |
 | Scheduled Trigger | **历史能力存在，待 Runtime 修复后复验** | Runtime `execute()` 缺失问题已修复；需要通过本地 Gate 确认 Scheduled Trigger dispatch 不再回归 |
 | Webhook Trigger | 已实现当前历史范围 | Phase 1.8 已形成认证、durable idempotency、Workflow Execution 和 Browser E2E |
 | Frontend Governance UI | 已实现当前历史范围 | Vue 管理端已覆盖 Agent/Workflow/Knowledge/Trigger 等历史范围 |
@@ -48,7 +48,7 @@
 | Phase 1.6 | 已完成 / 正式关闭 | Trigger / Frontend / Browser 历史范围；未发现独立 1.6-D 正文，不补造 |
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
-| **Phase 1.9** | **进行中** | 1.9-A 已验证；1.9-B focused scope 已验证；1.9-C 正在处理 Runtime timeout mapping 与 Circuit bootstrap fixture 两个新验证边界 |
+| **Phase 1.9** | **进行中** | 1.9-A 已验证；1.9-B focused scope 已验证；1.9-C 正在处理 Runtime timeout、retry budget、retry governance trace 与 Circuit bootstrap 验证边界 |
 
 ## 4. Phase 1.9 当前任务
 
@@ -78,7 +78,7 @@ Standalone Real API → 20 passed in 31.38s
 
 ### 1.9-C Real API Reliability Scenarios
 
-状态：**阻塞，正在修复后重新验证。**
+状态：**修复已提交，等待开发者本地重新验证。**
 
 首轮完整 Real API Gate：
 
@@ -101,7 +101,7 @@ AttributeError: 'WorkflowRuntime' object has no attribute 'execute'
 
 该问题同时影响 Scheduled Trigger dispatch。`WorkflowRuntime.execute()` 已恢复，原 ERR-0019 仍需本地重新验证。
 
-本轮开发者反馈的 focused suite：
+开发者反馈的 focused suite：
 
 ```text
 12 passed, 1 failed
@@ -109,28 +109,36 @@ Failure: test_run_marks_workflow_timeout_as_failed
 Observed: asyncio.TimeoutError / expected HTTP 504
 ```
 
+已修复：`WorkflowExecutionService.run()` 区分节点 504 与 Workflow deadline 504；节点超时持久化为 `NODE_TIMEOUT`，Workflow deadline/backoff 超时持久化为 `WORKFLOW_TIMEOUT`。
+
 新增错误记录：
 
 ```text
-docs/04-errors/ERR-0020-workflow-timeout-exception-mapping.md
+docs/04-errors/ERR-0020-workflow-timeout-error-code-preservation.md
 ```
 
-已修复：`WorkflowRuntime.execute()` 在 `NODE_TIMEOUT` 耗尽 retry policy / retry budget 时直接返回 HTTP 504，避免 Python 3.12 的 `asyncio.TimeoutError` 被 Execution Service 重新暴露为裸 timeout 异常。
-
-本轮 Real API bootstrap 进一步暴露 Circuit Breaker Open fixture 问题：
+Real API Governance Gate 随后暴露两项边界：
 
 ```text
-expected CIRCUIT_OPEN
-persisted HTTP_503
+Failure 1: retry fixture node attempt remained 1 instead of 2
+Failure 2: missing node.retry.scheduled trace in Circuit Breaker boundary
 ```
 
-根因是 fixture 未配置 workflow retry budget，第一次 provider 失败后 `max_retries=0` 直接结束，未进入第二次 Circuit Breaker call。新增错误记录：
+根因：
+
+1. retry fixture 的 Node `max_attempts=2` 不能绕过 Workflow `retry_budget.max_retries`；fixture 默认 budget 为 0，因此第一次 HTTP_404 后直接结束。
+2. `failed -> running` 的 Node retry 状态转换此前只有 `node.state_changed` trace，没有 `node.retry.scheduled` governance trace。
+
+已修复：
+
+1. Real API retry governance fixture 显式配置 `retry_budget.max_retries=1`。
+2. `WorkflowExecutionService.transition_node()` 在 retry 状态转换时记录 `node.retry.scheduled` 并携带 attempt。
+
+新增错误记录：
 
 ```text
-docs/04-errors/ERR-0021-real-api-circuit-fixture-missing-retry-budget.md
+docs/04-errors/ERR-0021-real-api-retry-budget-and-governance-trace.md
 ```
-
-已修复：Circuit Breaker Open fixture 增加 `retry_budget.max_retries=1`，等待开发者本地完整 Gate 验证。
 
 ## 5. 已完成文档治理整改
 
@@ -166,12 +174,15 @@ docs/
 1.9-C First Real API Gate: 22 passed, 1 failed in 39.35s
 Failure: concurrent idempotency request returned HTTP 500
 
-1.9-C Focused runtime/retry/timeout suite after ERR-0019 restoration: 12 passed, 1 failed
+1.9-C Focused runtime/retry/timeout suite: 12 passed, 1 failed
 Failure: node timeout exposed as raw TimeoutError instead of HTTP 504
 
-1.9-C Subsequent Real API bootstrap: Circuit Breaker Open fixture persisted HTTP_503 instead of CIRCUIT_OPEN
+1.9-C Subsequent Real API Gate: 21 passed, 2 failed in 37.25s
+Failures:
+- node retry attempt remained 1 instead of 2
+- Circuit Breaker missing node.retry.scheduled trace
 
-Latest code changes: node timeout HTTP 504 mapping + circuit fixture workflow retry budget
+Latest code changes: timeout error-code preservation + retry fixture budget + retry scheduled governance trace
 Latest full Real API Gate: not yet re-run
 ```
 
@@ -179,7 +190,7 @@ Latest full Real API Gate: not yet re-run
 
 1. 1.9-A 已通过本地 Unit / Backend / PostgreSQL Migration / Real API Gate。
 2. 1.9-B focused scope 已通过本地验证。
-3. 1.9-C 当前仍存在尚未重新验证的修复边界：ERR-0018 Idempotency race、ERR-0019 WorkflowRuntime orchestration、ERR-0020 timeout mapping、ERR-0021 Circuit bootstrap fixture。
+3. 1.9-C 当前仍存在尚未重新验证的修复边界：ERR-0018 Idempotency race、ERR-0019 WorkflowRuntime orchestration、ERR-0020 timeout error-code preservation、ERR-0021 retry budget/governance trace。
 4. Scheduled Trigger 当前必须通过本地 Gate 确认 Runtime orchestration 修复没有回归。
 5. Cross-Tenant isolation 尚未形成真实 API 测试上下文。
 6. Frontend / Browser Reliability Convergence 尚未执行，因此不能关闭 Phase 1.9。
@@ -189,8 +200,8 @@ Latest full Real API Gate: not yet re-run
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
-1. **先执行 Workflow Runtime / Retry / Timeout 专项单元测试，确认 ERR-0020 修复。**
-2. **再执行完整 Real API Gate，确认 ERR-0018、ERR-0019、ERR-0021。**
+1. **先执行 Workflow Runtime / Retry / Timeout 专项单元测试，确认 ERR-0020、ERR-0021 修复。**
+2. **再执行完整 Real API Gate，确认 ERR-0018、ERR-0019、ERR-0020、ERR-0021。**
 3. 如果 bootstrap 成功，继续完成 1.9-C 剩余 Real API Reliability 场景，包括 idempotency、access isolation、retry/deadline、Circuit Breaker HALF_OPEN recovery 与 Scheduled Trigger。
 4. 发现新的阻塞问题立即进入 `docs/04-errors/`，不提前关闭当前错误。
 5. 完成 Frontend Regression、Browser E2E 和 Frontend/Backend reliability convergence。
