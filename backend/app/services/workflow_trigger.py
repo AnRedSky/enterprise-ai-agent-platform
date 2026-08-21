@@ -140,7 +140,7 @@ class WorkflowTriggerService:
         return version
 
     async def invoke_scheduled(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
-                               input_data: dict, idempotency_key: str) -> WorkflowExecution:
+                               input_data: dict, idempotency_key: str, recovery: bool = False) -> WorkflowExecution:
         """Dispatch a scheduled Trigger through the same Workflow Runtime as manual execution."""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
@@ -158,10 +158,12 @@ class WorkflowTriggerService:
         execution = await execution_service.create(
             workflow, version, actor_id, input_data, idempotency_key=idempotency_key
         )
+        audit_action = "workflow.trigger.scheduled_recovery" if recovery else "workflow.trigger.scheduled"
+        trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
         await self.governance.audit(
             execution,
             actor_id,
-            "workflow.trigger.scheduled",
+            audit_action,
             "success",
             metadata={
                 "trigger_id": str(trigger.id),
@@ -169,18 +171,20 @@ class WorkflowTriggerService:
                 "timezone": config["timezone"],
                 "interval_seconds": config["interval_seconds"],
                 "idempotency_key": idempotency_key,
+                "recovery": recovery,
             },
         )
         await self.governance.trace(
             execution,
             actor_id,
-            "trigger.scheduled",
+            trace_event,
             "pending",
             data={
                 "trigger_id": str(trigger.id),
                 "trigger_type": trigger.trigger_type,
                 "timezone": config["timezone"],
                 "interval_seconds": config["interval_seconds"],
+                "recovery": recovery,
             },
         )
         await self.db.commit()
