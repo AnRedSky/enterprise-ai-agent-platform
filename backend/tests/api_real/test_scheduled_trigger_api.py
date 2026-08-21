@@ -82,6 +82,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         runtime_key = ScheduledTriggerScheduler.idempotency_key(
             trigger_id, datetime.now(UTC), config["interval_seconds"]
         )
+        runtime_slot = int(runtime_key.rsplit(":", 1)[1])
 
         detail = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
         assert detail.status_code == 200, detail.text
@@ -115,12 +116,8 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
         assert rows[0]["idempotency_key"] == runtime_key
-        assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(
-            datetime.now(UTC), config["interval_seconds"]
-        ) or isinstance(rows[0]["input_data"]["scheduled_slot"], int)
-        assert rows[0]["input_data"]["recovery"] is False or isinstance(
-            rows[0]["input_data"]["recovery"], bool
-        )
+        assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
+        assert rows[0]["input_data"]["recovery"] is False
 
         # A second scheduler poll in the same interval slot must not create a
         # second Workflow Execution.
