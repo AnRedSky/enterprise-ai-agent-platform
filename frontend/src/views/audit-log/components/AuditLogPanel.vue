@@ -56,16 +56,11 @@ async function load() {
   loading.value = true;
   error.value = false;
   try {
-    // Normalize the transport boundary into a promise before invoking it.
-    // This makes synchronous mock/adapter throws follow the same error path
-    // as rejected HTTP requests, so the UI can reliably render the error state.
-    const response = await Promise.resolve().then(() =>
-      runtimeApi.auditLogs({
-        page: page.value,
-        page_size: pageSize.value,
-        ...(status.value ? { status: status.value } : {}),
-      }),
-    );
+    const response = await runtimeApi.auditLogs({
+      page: page.value,
+      page_size: pageSize.value,
+      ...(status.value ? { status: status.value } : {}),
+    });
     items.value = response.data.items ?? [];
     total.value = response.data.total ?? 0;
   } catch (err) {
