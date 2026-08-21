@@ -1,6 +1,10 @@
 $ErrorActionPreference = "Stop"
 
-$baseUrl = ($env:API_BASE_URL ?? "http://127.0.0.1:8000/api/v1").TrimEnd("/")
+if ([string]::IsNullOrWhiteSpace($env:API_BASE_URL)) {
+    $baseUrl = "http://127.0.0.1:8000/api/v1"
+} else {
+    $baseUrl = $env:API_BASE_URL.TrimEnd("/")
+}
 $timeoutSec = 20
 
 Write-Host "============================================================"
