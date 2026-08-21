@@ -133,3 +133,38 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
 
         missing = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
         assert missing.status_code == 404, missing.text
+
+
+def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http():
+    if not TRIGGER_WORKFLOW_ID:
+        pytest.fail("TRIGGER_WORKFLOW_ID is required for multi-worker scheduler validation")
+
+    name = f"api-real-scheduled-workers-{uuid.uuid4().hex[:8]}"
+    config = {"timezone": "UTC", "interval_seconds": 60}
+    trigger_id = None
+
+    with _client() as client:
+        created = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers",
+            json={"name": name, "trigger_type": "scheduled", "config": config},
+        )
+        assert created.status_code == 201, created.text
+        trigger_id = created.json()["id"]
+        now = datetime.now(UTC)
+        runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, now, config["interval_seconds"])
+
+        async def dispatch_from_two_workers():
+            first = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
+            second = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
+            return await asyncio.gather(first.tick_once(now), second.tick_once(now))
+
+        try:
+            counters = asyncio.run(dispatch_from_two_workers())
+            rows = _wait_for_scheduled_execution(runtime_key)
+            assert len(rows) == 1, rows
+            assert rows[0]["idempotency_key"] == runtime_key
+            assert sum(item["dispatched"] for item in counters) == 1
+            assert sum(item["contention"] for item in counters) <= 1
+        finally:
+            deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
+            assert deleted.status_code == 204, deleted.text
