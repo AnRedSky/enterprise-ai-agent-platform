@@ -3,20 +3,14 @@ from __future__ import annotations
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.db import get_db
 from app.services.webhook_trigger import WebhookTriggerService
-from fastapi import Depends
 
 router = APIRouter()
-
-
-class WebhookPayload(BaseModel):
-    model_config = {"extra": "allow"}
 
 
 @router.post("/{trigger_id}")
@@ -29,8 +23,10 @@ async def receive_webhook(
     db: AsyncSession = Depends(get_db),
 ):
     request_id = request_id or str(uuid.uuid4())
-    execution, created, _identity = await WebhookTriggerService(db).invoke(
-        await WebhookTriggerService(db).get_trigger(trigger_id),
+    service = WebhookTriggerService(db)
+    trigger = await service.get_trigger(trigger_id)
+    execution, created, _identity = await service.invoke(
+        trigger,
         payload,
         x_webhook_secret,
         idempotency_key,
