@@ -1,6 +1,11 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
 
-const apiBaseUrl = (process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
+function normalizeApiBaseUrl(value: string): string {
+  const normalized = value.replace(/\/+$/, "");
+  return normalized.endsWith("/api/v1") ? normalized : `${normalized}/api/v1`;
+}
+
+const apiBaseUrl = normalizeApiBaseUrl(process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1");
 
 test("Workflow Trigger Governance completes the real browser contract", async ({ page, playwright }) => {
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
