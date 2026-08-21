@@ -99,7 +99,7 @@ Frontend: 52 tests passed / build succeeded
 Browser E2E: 3 passed
 ```
 
-这些是历史实际结果，不是本次 Phase 1.9 修复后的新测试结果。fileciteturn372file0L2-L2
+这些是历史实际结果，不是本次 Phase 1.9 修复后的新测试结果。
 
 ## 7. 当前风险 / 未完成范围
 
