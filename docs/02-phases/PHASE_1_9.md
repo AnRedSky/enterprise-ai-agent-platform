@@ -23,7 +23,7 @@
 | Vector / Hybrid Retrieval | 已实现当前代码范围；真实语义质量仍需真实 Provider 评估 |
 | Workflow / Execution / Governance | 已实现当前历史范围 |
 | Retry / Timeout / Idempotency / Deadline | 已实现当前历史范围；本阶段继续验证跨边界语义 |
-| Circuit Breaker | 1.9-A 代码修复及本地 Gate 已完成；1.9-B 继续验证跨 worker / stale Probe 边界 |
+| Circuit Breaker | 1.9-A 已通过本地 Gate；1.9-B 已开始修复 stale Probe completion 边界 |
 | Scheduled Trigger | 已实现当前历史范围 |
 | Webhook Trigger | 已实现当前历史范围 |
 | Frontend Governance UI | 已实现当前历史范围 |
@@ -37,7 +37,7 @@
 
 ### 1.9-A — Circuit Breaker HALF_OPEN Concurrent Recovery
 
-状态：**本地验证完成，进入 1.9-B。**
+状态：**本地验证完成。**
 
 目标：
 
@@ -47,36 +47,15 @@
 4. 继续使用 PostgreSQL 行锁保证跨 worker 的 quota 更新原子性。
 5. Policy mismatch 不得消耗新的 Probe reservation。
 
-已完成：
-
-- 修复 `CircuitBreakerService.record_success()` 的 HALF_OPEN reservation 语义。
-- 新增并发恢复单元测试覆盖。
-- 增加 `half_open_max_calls=2` quota 上限测试。
-- 增加 HALF_OPEN policy mismatch 不消耗 quota 的测试。
-
-### 1.9-A 本地实际验证
-
-开发者在最新 `main` 本地实际执行：
+本地实际验证已通过：
 
 ```text
-Targeted Circuit Breaker tests
-→ 16 passed in 0.68s
-
-Alembic
-→ PostgreSQL migration upgrade completed successfully
-
-Backend Regression Gate
-→ Backend: 262 passed, 20 deselected in 3.64s
-→ Migration head: 0022_workflow_trigger (head)
-→ Mandatory Real API: 20 passed in 32.99s
-→ [PASS] Backend regression gate completed
-
-Standalone Real API Gate
-→ 20 passed in 33.26s
-→ [PASS] Real API gate completed
+Targeted Circuit Breaker tests → 16 passed in 0.68s
+Backend Regression → 262 passed, 20 deselected in 3.64s
+Migration head → 0022_workflow_trigger (head)
+Mandatory Real API → 20 passed in 32.99s
+Standalone Real API → 20 passed in 33.26s
 ```
-
-结论：1.9-A 的代码、专项 Unit Test、Backend Regression、Migration head 和现有 Real API Gate 均已通过当前 main 的本地实际验证。
 
 ### 1.9-B — Runtime Failure / Retry / Circuit Boundary Audit
 
@@ -97,12 +76,40 @@ Standalone Real API Gate
 - HALF_OPEN probe failure 转换为 `CIRCUIT_OPEN`，避免将恢复 Probe 再次消耗 node retry budget。
 - Circuit Breaker 与 Workflow retry 使用同一 error classification boundary。
 
-待进一步验证：
+本轮已发现并修复的边界：
 
-- HALF_OPEN probe reservation 当前没有独立 probe token；需要真实超时/并发场景验证迟到旧 Probe completion 不会影响新的 recovery window。
-- `record_failure()` / `record_success()` 与 Workflow transition 的事务边界需要真实 PostgreSQL、多 worker 场景验证。
+> 旧 Recovery Window 的迟到 Probe completion 不能修改新的 HALF_OPEN Recovery Window。
 
-因此 1.9-B 尚不能标记完成。
+实现方式：
+
+- 在 Circuit Breaker 的 async execution context 中记录 `(tenant_id, circuit_key, half_opened_at)` Probe reservation token。
+- `record_success()` / `record_failure()` 在 HALF_OPEN 状态下校验 token 对应的 recovery window。
+- stale completion 与当前 window 不匹配时只释放当前调用上下文，不修改新 window 的 state/quota。
+- 直接调用 `record_success()` / `record_failure()` 且没有 Probe token 的历史 service-level 调用仍保持兼容。
+- 本修复不新增数据库字段或 migration；Recovery Window 复用现有 `half_opened_at` 作为 generation boundary。
+
+代码提交：
+
+```text
+8085e5c7c6009a97a7d3a1d73094f7812c9f9258
+fix: isolate stale circuit probe completions
+```
+
+新增专项测试覆盖：
+
+- stale HALF_OPEN success 不关闭新的 recovery window。
+- stale HALF_OPEN failure 不重新 OPEN 新的 recovery window。
+
+测试提交：
+
+```text
+f7ef0c55810171cb70e5873a99cba82a01a64047
+ test: cover stale half-open probe completion
+```
+
+**注意：以上代码和测试已提交，但尚未由开发者在本地重新执行，因此不能标记 1.9-B PASS。**
+
+下一步必须进行真实 PostgreSQL / 多 worker / retry boundary 验证。
 
 ### 1.9-C — Real API Reliability Scenarios
 
@@ -111,6 +118,7 @@ Standalone Real API Gate
 - circuit OPEN fast-fail
 - HALF_OPEN recovery
 - concurrent probes
+- stale Probe completion
 - retry lineage
 - deadline boundary
 - idempotency
@@ -132,6 +140,6 @@ Standalone Real API Gate
 
 ## 6. 当前完成定义
 
-1.9-A 已完成本地验证，但 Phase 1.9 整体仍未关闭。
+1.9-A 已完成本地验证；1.9-B 已完成第一项 stale Probe completion 代码修复，但等待本地真实验证。
 
 Phase 1.9 只有在 Runtime Reliability 风险完成修复，并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
