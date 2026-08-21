@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.dependencies.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - register legacy execution table for AuditLog FK metadata
@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 class ScheduledTriggerScheduler:
     """DB-backed scheduler for interval-based Workflow Triggers.
 
-    Cross-worker convergence is owned by the PostgreSQL unique constraint on
-    ``(tenant_id, idempotency_key)``. Each tick attempts an atomic INSERT ...
-    ON CONFLICT DO NOTHING claim; exactly one worker receives ``created=True``.
+    Cross-worker convergence uses a non-blocking PostgreSQL advisory claim per
+    trigger slot, followed by the durable workflow-execution idempotency unique
+    constraint. This keeps the losing worker out of the dispatch path while the
+    database remains the final persistence boundary.
     """
 
     DEFAULT_RECOVERY_SLOTS = 2
@@ -100,27 +101,38 @@ class ScheduledTriggerScheduler:
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
-                        try:
-                            execution, created = await service.invoke_scheduled(
-                                workflow=workflow,
-                                trigger=trigger,
-                                actor_id=trigger.created_by,
-                                input_data={"scheduled_slot": slot, "recovery": slot != current_slot},
-                                idempotency_key=idempotency_key,
-                                recovery=slot != current_slot,
-                                return_created=True,
-                            )
-                        except HTTPException as exc:
-                            if self.is_concurrent_runtime_claim(exc):
-                                counters["contention"] += 1
-                                continue
-                            raise
-                        if not created:
-                            counters["skipped"] += 1
+                        lock_key = func.hashtext(idempotency_key)
+                        acquired = bool((await db.execute(select(func.pg_try_advisory_lock(lock_key)))).scalar_one())
+                        if not acquired:
+                            counters["contention"] += 1
                             continue
-                        counters["dispatched"] += 1
-                        if slot != current_slot:
-                            counters["recovered"] += 1
+                        try:
+                            existing = await service.find_execution_by_idempotency_key(
+                                workflow.tenant_id, idempotency_key
+                            )
+                            if existing is not None:
+                                counters["skipped"] += 1
+                                continue
+                            recovery = slot != current_slot
+                            try:
+                                await service.invoke_scheduled(
+                                    workflow=workflow,
+                                    trigger=trigger,
+                                    actor_id=trigger.created_by,
+                                    input_data={"scheduled_slot": slot, "recovery": recovery},
+                                    idempotency_key=idempotency_key,
+                                    recovery=recovery,
+                                )
+                            except HTTPException as exc:
+                                if self.is_concurrent_runtime_claim(exc):
+                                    counters["contention"] += 1
+                                    continue
+                                raise
+                            counters["dispatched"] += 1
+                            if recovery:
+                                counters["recovered"] += 1
+                        finally:
+                            await db.execute(select(func.pg_advisory_unlock(lock_key)))
                 except Exception:
                     await db.rollback()
                     counters["failed"] += 1
