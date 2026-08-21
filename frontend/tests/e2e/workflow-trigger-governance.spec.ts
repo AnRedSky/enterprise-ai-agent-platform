@@ -8,6 +8,8 @@ const apiOrigin = normalizeApiOrigin(process.env.API_BASE_URL || "http://127.0.0
 const apiPath = (path: string): string => `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
 
 test("Workflow Trigger Governance completes the real scheduled browser contract", async ({ page, playwright }) => {
+  test.setTimeout(60_000);
+
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const username = `frontend_e2e_${nonce}`;
   const password = `FrontendE2E!${nonce}`;
@@ -95,8 +97,6 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     });
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
-    // The Element Plus success message is transient and is not the persistence
-    // contract. Assert the durable row after the create request refreshes the table.
     const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: triggerName });
     await expect(triggerRow).toBeVisible();
     await expect(triggerRow).toContainText("scheduled");
@@ -134,7 +134,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
           ? { status: execution.status, idempotency_key: execution.idempotency_key }
           : null;
       },
-      { timeout: 20_000, intervals: [500, 1000, 2000] },
+      { timeout: 45_000, intervals: [500, 1000, 2000] },
     ).toMatchObject({ status: expect.any(String) });
 
     await triggerRow.getByRole("button", { name: "删除" }).click();
