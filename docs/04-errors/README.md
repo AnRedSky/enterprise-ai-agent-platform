@@ -23,6 +23,7 @@
 | ERR-0015 | 011 | Circuit policy / HALF_OPEN probe |
 | ERR-0016 | 012 | Retry node state / deadline |
 | ERR-0017 | 2026-08-21 | Scheduled multi-worker / MissingGreenlet |
+| ERR-0018 | 2026-08-21 | Real API Idempotency race / AsyncSession rollback |
 
 ## 迁移规则
 
