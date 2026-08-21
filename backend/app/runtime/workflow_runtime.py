@@ -50,10 +50,11 @@ class WorkflowRuntime:
     }
     CIRCUIT_FAILURE_CODES = {"NODE_TIMEOUT", "HTTP_429", "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR"}
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, execution_service=None):
         self.db = db
         self.gateway = ModelGateway()
         self.circuit_breaker = CircuitBreakerService(db)
+        self.execution_service = execution_service
 
     @classmethod
     def validate_timeout_ms(cls, value: object, *, field: str = "timeout_ms") -> int:
@@ -177,7 +178,7 @@ class WorkflowRuntime:
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0 or max_retries > 20:
             raise HTTPException(422, "retry_budget.max_retries 必须在 0-20 范围内")
 
-        service = WorkflowExecutionService(self.db)
+        service = self.execution_service or WorkflowExecutionService(self.db)
         current_data = dict(execution.input_data or {})
         started = asyncio.get_running_loop().time()
         workflow_retries = 0
@@ -201,10 +202,7 @@ class WorkflowRuntime:
                                                    data={"reason": "workflow_deadline", "attempt": attempt})
                     raise HTTPException(504, "Workflow deadline exceeded")
 
-                if attempt == 1:
-                    await service.transition_node(execution, node["id"], "running", input_data=current_data)
-                else:
-                    await service.transition_node(execution, node["id"], "running", input_data=current_data)
+                await service.transition_node(execution, node["id"], "running", input_data=current_data)
 
                 node_timeout = self.resolve_timeout_ms(node["config"])
                 timeout_seconds = min(node_timeout / 1000, remaining)
@@ -291,7 +289,6 @@ class WorkflowRuntime:
                 workflow_retries += 1
                 await asyncio.sleep(delay)
 
-        from app.services.workflow_execution import WorkflowExecutionService
         await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
         return current_data
 
