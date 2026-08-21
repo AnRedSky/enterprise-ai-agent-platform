@@ -12,10 +12,11 @@ from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.workflow_execution import WorkflowExecutionService
 from app.services.workflow_governance import WorkflowGovernanceService
+from app.services.workflow_trigger_schedule import validate_trigger_config
 
 
 class WorkflowTriggerService:
-    ALLOWED_TYPES = {"manual"}
+    ALLOWED_TYPES = {"manual", "scheduled"}
     ALLOWED_STATUSES = {"enabled", "disabled"}
 
     def __init__(self, db: AsyncSession):
@@ -47,7 +48,7 @@ class WorkflowTriggerService:
     @classmethod
     def validate_type(cls, trigger_type: str) -> str:
         if trigger_type not in cls.ALLOWED_TYPES:
-            raise HTTPException(422, "当前仅支持 manual Trigger")
+            raise HTTPException(422, "Trigger type 必须为 manual 或 scheduled")
         return trigger_type
 
     @classmethod
@@ -56,6 +57,14 @@ class WorkflowTriggerService:
             raise HTTPException(422, "Trigger status 必须为 enabled 或 disabled")
         return status
 
+    @classmethod
+    def validate_config(cls, trigger_type: str, config: dict) -> dict:
+        cls.validate_type(trigger_type)
+        try:
+            return validate_trigger_config(trigger_type, config)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+
     async def create(self, workflow: Workflow, actor_id: UUID, name: str, trigger_type: str, config: dict) -> WorkflowTrigger:
         if workflow.status == "archived":
             raise HTTPException(409, "归档 Workflow 不允许创建 Trigger")
@@ -63,6 +72,7 @@ class WorkflowTriggerService:
         name = name.strip()
         if not name:
             raise HTTPException(422, "Trigger name 不能为空")
+        config = self.validate_config(trigger_type, config)
         trigger = WorkflowTrigger(
             tenant_id=workflow.tenant_id,
             workflow_id=workflow.id,
@@ -90,6 +100,7 @@ class WorkflowTriggerService:
         if status is not None:
             trigger.status = self.validate_status(status)
         if config is not None:
+            config = self.validate_config(trigger.trigger_type, config)
             trigger.config = config
         try:
             await self.db.commit()
