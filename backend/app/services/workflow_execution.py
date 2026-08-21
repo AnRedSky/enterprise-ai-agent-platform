@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -45,13 +44,8 @@ class WorkflowExecutionService:
                     raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
                 return existing
         execution = WorkflowExecution(
-            tenant_id=tenant_id,
-            workflow_id=workflow_id,
-            workflow_version_id=workflow_version_id,
-            created_by=actor_id,
-            idempotency_key=idempotency_key,
-            status="pending",
-            input_data=input_data,
+            tenant_id=tenant_id, workflow_id=workflow_id, workflow_version_id=workflow_version_id,
+            created_by=actor_id, idempotency_key=idempotency_key, status="pending", input_data=input_data,
         )
         try:
             if idempotency_key:
@@ -65,8 +59,7 @@ class WorkflowExecutionService:
             if not idempotency_key:
                 raise
             existing = (await self.db.execute(select(WorkflowExecution).where(
-                WorkflowExecution.tenant_id == tenant_id,
-                WorkflowExecution.idempotency_key == idempotency_key,
+                WorkflowExecution.tenant_id == tenant_id, WorkflowExecution.idempotency_key == idempotency_key,
             ))).scalar_one_or_none()
             if existing is None:
                 raise
@@ -107,9 +100,7 @@ class WorkflowExecutionService:
         if not isinstance(self.db, AsyncSession):
             return execution
         locked = (await self.db.execute(
-            select(WorkflowExecution)
-            .where(WorkflowExecution.id == execution.id)
-            .with_for_update()
+            select(WorkflowExecution).where(WorkflowExecution.id == execution.id).with_for_update()
         )).scalar_one_or_none()
         if locked is None:
             raise HTTPException(404, "Workflow Execution 不存在")
@@ -177,8 +168,7 @@ class WorkflowExecutionService:
                                      data={"retry_execution_id": str(retry_execution.id)})
         await self.governance.audit(retry_execution, actor_id, "workflow.execution.created", "success")
         await self.governance.trace(retry_execution, actor_id, "execution.created", "pending", data={
-            "retry_of_execution_id": str(execution.id),
-            "input_keys": sorted((execution.input_data or {}).keys()),
+            "retry_of_execution_id": str(execution.id), "input_keys": sorted((execution.input_data or {}).keys()),
         })
         await self.db.commit()
         await self.db.refresh(retry_execution)
@@ -245,10 +235,12 @@ class WorkflowExecutionService:
         except HTTPException as exc:
             if exc.status_code == 504:
                 await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT", error_message=str(exc.detail), actor_id=actor_id)
-            elif exc.status_code >= 500:
-                await self.transition(execution, "failed", error_code=f"HTTP_{exc.status_code}", error_message=str(exc.detail), actor_id=actor_id)
             else:
                 await self.transition(execution, "failed", error_code=f"HTTP_{exc.status_code}", error_message=str(exc.detail), actor_id=actor_id)
+            raise
+        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as exc:
+            error_code = "CONNECTION_ERROR" if isinstance(exc, ConnectionError) else "NODE_TIMEOUT"
+            await self.transition(execution, "failed", error_code=error_code, error_message=str(exc), actor_id=actor_id)
             raise
         except Exception as exc:
             await self.transition(execution, "failed", error_code="RUNTIME_ERROR", error_message=str(exc), actor_id=actor_id)
