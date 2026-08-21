@@ -1,8 +1,16 @@
+import asyncio
 import os
+import time
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from app.core.config import settings
+from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -21,13 +29,41 @@ def _client() -> httpx.Client:
     )
 
 
-def test_scheduled_trigger_create_update_and_invoke_contract_real_http():
+async def _execution_rows(idempotency_key: str) -> list[dict]:
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT id, status, idempotency_key "
+                    "FROM workflow_executions "
+                    "WHERE idempotency_key = :idempotency_key "
+                    "ORDER BY created_at ASC"
+                ),
+                {"idempotency_key": idempotency_key},
+            )
+            return [dict(row._mapping) for row in result]
+    finally:
+        await engine.dispose()
+
+
+def _wait_for_scheduled_execution(idempotency_key: str, timeout_seconds: float = 15.0) -> list[dict]:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        rows = asyncio.run(_execution_rows(idempotency_key))
+        if rows:
+            return rows
+        time.sleep(1.0)
+    return asyncio.run(_execution_rows(idempotency_key))
+
+
+def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http():
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled Trigger validation")
 
     name = f"api-real-scheduled-{uuid.uuid4().hex[:8]}"
     config = {"timezone": "Asia/Shanghai", "interval_seconds": 300}
-    updated_config = {"timezone": "UTC", "interval_seconds": 600}
+    updated_config = {"timezone": "UTC", "interval_seconds": 60}
 
     with _client() as client:
         created = client.post(
@@ -65,6 +101,29 @@ def test_scheduled_trigger_create_update_and_invoke_contract_real_http():
         )
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
+
+        # Scheduler dispatch is automatic; the first tick may dispatch the current
+        # interval slot immediately. The deterministic key is the runtime's
+        # idempotency contract and is also safe across multiple workers.
+        runtime_key = ScheduledTriggerScheduler.idempotency_key(
+            trigger_id, datetime.now(UTC), updated_config["interval_seconds"]
+        )
+        rows = _wait_for_scheduled_execution(runtime_key)
+        assert len(rows) == 1, rows
+        assert rows[0]["status"] == "completed", rows
+        assert rows[0]["idempotency_key"] == runtime_key
+
+        # A second scheduler poll in the same interval slot must not create a
+        # second Workflow Execution.
+        time.sleep(6)
+        rows_after_duplicate_poll = asyncio.run(_execution_rows(runtime_key))
+        assert len(rows_after_duplicate_poll) == 1, rows_after_duplicate_poll
+
+        disabled = client.patch(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
+            json={"status": "disabled"},
+        )
+        assert disabled.status_code == 200, disabled.text
 
         deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
         assert deleted.status_code == 204, deleted.text
