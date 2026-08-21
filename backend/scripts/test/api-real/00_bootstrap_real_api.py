@@ -176,7 +176,8 @@ def create_circuit_recovery_fixture(client, agent_id, *, name, circuit_key, reco
 
 def create_retry_boundary_fixtures(client, agent_id):
     retry_workflow_id, retry_execution_id = create_retry_fixture(
-        client, agent_id, name="API Retry Governance Validation"
+        client, agent_id, name="API Retry Governance Validation",
+        runtime_config={"timeout_ms": 30_000, "retry_budget": {"max_retries": 1}},
     )
     budget_workflow_id, budget_execution_id = create_retry_fixture(
         client, agent_id,
