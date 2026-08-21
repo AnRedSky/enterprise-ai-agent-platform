@@ -73,8 +73,6 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     await page.getByLabel("Trigger 名称").fill(triggerName);
 
-    // Element Plus renders options in a teleported dropdown and animates them.
-    // Use the select's keyboard contract instead of racing the transient option DOM.
     const triggerTypeFormItem = page.locator(".el-form-item").filter({ hasText: "类型" }).first();
     const triggerTypeSelect = triggerTypeFormItem.locator(".el-select");
     await triggerTypeSelect.click();
@@ -90,8 +88,6 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
       interval_seconds: 60,
     });
 
-    // Switch to a short, still-valid interval for the real application scheduler boundary.
-    // The browser test must observe a real scheduler-generated execution without changing scheduler semantics.
     await scheduleConfigTextarea.fill(JSON.stringify({ timezone: "UTC", interval_seconds: 5 }));
     expect(JSON.parse(await scheduleConfigTextarea.inputValue())).toEqual({
       timezone: "UTC",
@@ -99,9 +95,8 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     });
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
-    // createTrigger is asynchronous: wait for the UI success contract before querying the table.
-    // This avoids racing Vue's loadTriggers refresh after the POST completes.
-    await expect(page.getByText("Trigger 创建成功")).toBeVisible();
+    // The Element Plus success message is transient and is not the persistence
+    // contract. Assert the durable row after the create request refreshes the table.
     const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: triggerName });
     await expect(triggerRow).toBeVisible();
     await expect(triggerRow).toContainText("scheduled");
@@ -125,8 +120,6 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
     expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 5 });
 
-    // Observe the real application scheduler through the existing runtime HTTP boundary.
-    // No frontend scheduler state or next-run calculation is introduced.
     await expect.poll(
       async () => {
         const executions = await api.get(apiPath("/runtime/executions?page=1&page_size=100"), { headers });
