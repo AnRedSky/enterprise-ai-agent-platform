@@ -131,6 +131,11 @@ class CircuitBreakerService:
         if state.state == "half_open":
             if state.success_count >= state.half_open_max_calls:
                 raise CircuitOpenError(circuit_key)
+            # ``success_count`` represents active HALF_OPEN probe reservations.
+            # A completed successful probe releases one reservation; the circuit
+            # closes only after all reservations from the current recovery window
+            # have completed successfully. This prevents a fast success from
+            # closing the circuit while another concurrent probe is still running.
             state.success_count += 1
             await self.db.flush()
             await self.db.commit()
@@ -154,11 +159,15 @@ class CircuitBreakerService:
             return
         self._assert_policy_matches(state, policy)
         if state.state == "half_open":
-            state.state = "closed"
-            state.failure_count = 0
-            state.success_count = 0
-            state.opened_at = None
-            state.half_opened_at = None
+            # The persisted counter is the number of in-flight HALF_OPEN probes,
+            # not the number of successful probes. A success releases its slot.
+            # Close only when the recovery window has no outstanding probes.
+            state.success_count = max(state.success_count - 1, 0)
+            if state.success_count == 0:
+                state.state = "closed"
+                state.failure_count = 0
+                state.opened_at = None
+                state.half_opened_at = None
         elif state.state == "closed":
             state.failure_count = 0
         await self.db.flush()
