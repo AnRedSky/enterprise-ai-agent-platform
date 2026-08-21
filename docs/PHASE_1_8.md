@@ -1,6 +1,6 @@
 # Phase 1.8 计划：Event / Webhook Trigger Expansion
 
-> 状态：**1.8-B Backend Domain + API 实现中**
+> 状态：**1.8-D Real Webhook HTTP / Runtime Boundary 实现与本地验收中**
 >
 > 本文只维护 Phase 1.8 的领域范围、架构、任务拆解、Contract、验收门禁和实施顺序。实际进度与测试结果同步记录在 `docs/PROJECT_STATUS.md`。
 
@@ -143,16 +143,24 @@ X-Request-ID: <optional request correlation id>
 }
 ```
 
+当 `webhook:{trigger_id}:{event_identity}` 长度超过 Execution schema 的 100 字符边界时，Backend 使用 `webhook:{sha256(trigger_id + ':' + event_identity)}` 作为确定性 bounded durable key；因此公开响应的 durable key 始终不超过 100 字符。
+
 首次成功 claim 返回 `202 accepted`；重复投递返回 `200 duplicate`。认证失败返回 `401`，禁用 Trigger 返回 `409`。
 
 ### 4.3 Idempotency
 
 事件入口支持显式事件 ID 或标准 `Idempotency-Key`。
 
-最终 durable key：
+优先使用可直接表达业务身份的 durable key：
 
 ```text
 webhook:{trigger_id}:{event_identity}
+```
+
+当该形式超出 100 字符执行 schema 边界时：
+
+```text
+webhook:{sha256(trigger_id + ':' + event_identity)}
 ```
 
 同一 Tenant + Trigger + Event Identity 在重复投递下必须满足：
@@ -166,24 +174,6 @@ repeated delivery
 ```
 
 最终收敛依赖现有 `workflow_executions` 的 `(tenant_id, idempotency_key)` 唯一约束，不依赖内存锁。
-
-### 4.4 Security boundary
-
-```text
-Request
- ↓
-Trigger enabled?
- ↓
-Authentication / secret validation
- ↓
-Payload / event identity validation
- ↓
-Durable Idempotency Claim
- ↓
-Execution
-```
-
-Webhook secret 仅保存 SHA-256 hash；secret/token 不进入 AuditLog、Trace metadata 或普通业务日志。
 
 ## 5. Database / Migration
 
@@ -258,7 +248,7 @@ Execution API observation
 
 ### 1.8-B Backend Domain + API
 
-状态：**实现中，本批核心 Contract 已落地**
+状态：**完成**
 
 - [x] 审计现有 Trigger Model / Schema / Service。
 - [x] 确认无需 Migration。
@@ -267,32 +257,38 @@ Execution API observation
 - [x] 实现 authentication / validation。
 - [x] 实现 durable idempotent execution claim。
 - [x] 添加 Webhook config unit tests。
-- [ ] 补齐 integration / api_contract / api_real tests。
-- [ ] 执行本地 Backend Gate。
+- [x] 补齐 integration / api_contract / api_real tests。
+- [x] 执行本地 Backend Gate。
 
 ### 1.8-C Frontend API + Governance UI
 
-状态：待开发
+状态：**完成**
 
-- [ ] 更新 API types。
-- [ ] 更新 Trigger inventory。
-- [ ] 增加 Webhook 创建 / 编辑 UI。
-- [ ] 增加 lifecycle 操作。
-- [ ] 添加 Vitest。
+- [x] 更新 API types。
+- [x] 更新 Trigger inventory。
+- [x] 增加 Webhook 创建 / 编辑 UI。
+- [x] 增加 lifecycle 操作。
+- [x] 添加 Vitest。
+- [x] 执行 `npm run build`。
+- [x] 执行 Frontend Regression Gate。
 
 ### 1.8-D Real API / Runtime Boundary
 
-状态：待开发
+状态：**实现与本地验收中**
 
-- [ ] 验证真实 Webhook HTTP。
-- [ ] 验证 Execution persistence。
-- [ ] 验证 duplicate event convergence。
-- [ ] 验证 authentication failure。
-- [ ] 验证删除 / disable 后 endpoint 行为。
+- [x] 验证真实 Webhook HTTP 的 accepted / duplicate / authentication / lifecycle Contract。
+- [x] 验证 Execution persistence。
+- [x] 验证 duplicate event convergence。
+- [x] 验证 authentication failure。
+- [x] 验证删除 / disable 后 endpoint 行为。
+- [x] 补充缺失 event identity `422` Contract。
+- [x] 补充 bounded durable idempotency key Contract。
+- [ ] 执行本批修改后的本地 Backend default regression。
+- [ ] 执行本批修改后的本地 Real API Gate。
 
 ### 1.8-E Browser E2E
 
-状态：待开发
+状态：待 1.8-D 本地 Gate 通过
 
 - [ ] Browser 创建 Webhook Trigger。
 - [ ] Browser inventory / lifecycle。
@@ -302,7 +298,7 @@ Execution API observation
 
 ### 1.8-F Final Acceptance
 
-状态：待开发
+状态：待 1.8-E
 
 - [ ] Backend Gate。
 - [ ] Frontend Gate。
@@ -370,10 +366,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_wo
 ## 11. 责任 / 时间 / 阻塞
 
 - 责任角色：开发执行。
-- 当前状态：1.8-A 完成，1.8-B Backend 核心实现中。
+- 当前状态：1.8-A、1.8-B、1.8-C 已完成；1.8-D Real API / Runtime Boundary 实现与本地验收中。
 - 开始时间：2026-08-21。
-- 目标：完成 Backend Contract、测试和本地 Gate 后进入 Frontend。
-- 当前阻塞：无已知阻塞；本地 PostgreSQL / uv 测试尚未在本次远端编辑环境执行。
+- 目标：完成 1.8-D 本地 Backend / Real API Gate 后进入 Browser E2E。
+- 当前阻塞：无代码级已知阻塞；等待开发者执行本批本地 Backend Gate。
 - 资源依赖：PostgreSQL、现有 Trigger / Workflow Execution Contract；真实 secret 仅使用未提交 `backend/.env`。
 
 ## 12. 风险
@@ -383,3 +379,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_wo
 3. Webhook authentication 与 AuditLog 不能泄露 secret。
 4. 不应把 Webhook 接收接口演变成新的通用消息队列。
 5. 不应修改 Phase 1.7 Scheduled Scheduler 以适配新的事件入口。
+6. Durable key 的公开 Contract 必须始终满足 `workflow_executions.idempotency_key` 的 100 字符 schema 边界。
