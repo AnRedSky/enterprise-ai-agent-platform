@@ -198,7 +198,6 @@ class WorkflowTriggerService:
         )
         claimed_id = (await self.db.execute(stmt)).scalar_one_or_none()
         if claimed_id is None:
-            await self.db.rollback()
             existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
             if existing is None:
                 raise HTTPException(409, "Scheduled Trigger Idempotency claim 未收敛")
