@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowTrigger } from "@/api/workflows";
+import { workflowApi, type ScheduledTriggerConfig, type Workflow, type WorkflowExecution, type WorkflowTrigger } from "@/api/workflows";
 
 const workflows = ref<Workflow[]>([]);
 const triggers = ref<WorkflowTrigger[]>([]);
@@ -9,8 +9,26 @@ const selectedWorkflowId = ref("");
 const loading = ref(false);
 const actionLoading = ref(false);
 const execution = ref<WorkflowExecution>();
-const form = ref({ name: "", configText: "{}" });
+const form = ref({ name: "", triggerType: "manual" as "manual" | "scheduled", configText: "{}" });
 const inputText = ref("{}");
+
+const defaultSchedule = (): ScheduledTriggerConfig => ({ timezone: "UTC", interval_seconds: 60 });
+
+function isScheduled(trigger: WorkflowTrigger) {
+  return trigger.trigger_type === "scheduled";
+}
+
+function scheduleConfig(trigger: WorkflowTrigger): ScheduledTriggerConfig {
+  return {
+    timezone: typeof trigger.config.timezone === "string" ? trigger.config.timezone : "UTC",
+    interval_seconds: typeof trigger.config.interval_seconds === "number" ? trigger.config.interval_seconds : 60,
+  };
+}
+
+function validateSchedule(config: Record<string, unknown>) {
+  if (typeof config.timezone !== "string" || !config.timezone.trim()) throw new Error("Schedule timezone 必须是非空字符串");
+  if (!Number.isInteger(config.interval_seconds) || Number(config.interval_seconds) < 1) throw new Error("Schedule interval_seconds 必须是大于 0 的整数");
+}
 
 async function loadWorkflows() {
   loading.value = true;
@@ -37,18 +55,32 @@ async function loadTriggers() {
   }
 }
 
+function resetForm() {
+  form.value = { name: "", triggerType: "manual", configText: "{}" };
+}
+
+function selectTriggerType(type: "manual" | "scheduled") {
+  form.value.triggerType = type;
+  form.value.configText = type === "scheduled" ? JSON.stringify(defaultSchedule(), null, 2) : "{}";
+}
+
 async function createTrigger() {
   if (!selectedWorkflowId.value) return ElMessage.warning("请选择 Workflow");
   if (!form.value.name.trim()) return ElMessage.warning("请输入 Trigger 名称");
   try {
     const config = JSON.parse(form.value.configText) as Record<string, unknown>;
+    if (form.value.triggerType === "scheduled") validateSchedule(config);
     actionLoading.value = true;
-    await workflowApi.createTrigger(selectedWorkflowId.value, { name: form.value.name, trigger_type: "manual", config });
-    form.value = { name: "", configText: "{}" };
+    await workflowApi.createTrigger(selectedWorkflowId.value, {
+      name: form.value.name,
+      trigger_type: form.value.triggerType,
+      config,
+    });
+    resetForm();
     await loadTriggers();
     ElMessage.success("Trigger 创建成功");
   } catch (error) {
-    ElMessage.error(error instanceof SyntaxError ? "Trigger Config 不是合法 JSON" : "Trigger 创建失败");
+    ElMessage.error(error instanceof SyntaxError ? "Trigger Config 不是合法 JSON" : error instanceof Error ? error.message : "Trigger 创建失败");
   } finally {
     actionLoading.value = false;
   }
@@ -105,7 +137,7 @@ onMounted(loadWorkflows);
   <div class="trigger-page">
     <el-card v-loading="loading">
       <template #header><div class="header"><span>Workflow Trigger Governance</span><el-button size="small" @click="loadWorkflows">刷新</el-button></div></template>
-      <el-alert title="Trigger 只能作用于当前 Tenant 可访问的 Published Workflow；Tenant 不由前端提交。" type="info" :closable="false" />
+      <el-alert title="Trigger 只能作用于当前 Tenant 可访问的 Workflow；Tenant 不由前端提交。Scheduled Trigger 只使用后端已定义的 timezone + interval_seconds Contract。" type="info" :closable="false" />
 
       <el-form label-position="top" class="selector">
         <el-form-item label="Workflow">
@@ -117,22 +149,33 @@ onMounted(loadWorkflows);
 
       <el-divider />
       <el-form label-position="top" inline @submit.prevent="createTrigger">
-        <el-form-item label="Trigger 名称"><el-input v-model="form.name" placeholder="例如：订单人工触发" /></el-form-item>
-        <el-form-item label="类型"><el-tag>manual</el-tag></el-form-item>
-        <el-form-item label="Config JSON"><el-input v-model="form.configText" style="width: 280px" /></el-form-item>
+        <el-form-item label="Trigger 名称"><el-input v-model="form.name" placeholder="例如：订单每分钟同步" /></el-form-item>
+        <el-form-item label="类型">
+          <el-select :model-value="form.triggerType" @update:model-value="selectTriggerType">
+            <el-option label="manual" value="manual" />
+            <el-option label="scheduled" value="scheduled" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
         <el-form-item label=" "><el-button type="primary" :loading="actionLoading" native-type="submit">创建 Trigger</el-button></el-form-item>
       </el-form>
 
       <el-table :data="triggers" empty-text="暂无 Trigger">
         <el-table-column prop="name" label="名称" min-width="180" />
-        <el-table-column prop="trigger_type" label="类型" width="100" />
+        <el-table-column prop="trigger_type" label="类型" width="110" />
+        <el-table-column label="Schedule" min-width="220">
+          <template #default="scope">
+            <span v-if="isScheduled(scope.row as WorkflowTrigger)">{{ scheduleConfig(scope.row as WorkflowTrigger).timezone }} / 每 {{ scheduleConfig(scope.row as WorkflowTrigger).interval_seconds }} 秒</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="scope"><el-tag :type="scope.row.status === 'enabled' ? 'success' : 'info'">{{ scope.row.status }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" min-width="180" />
+        <el-table-column prop="updated_at" label="更新时间" min-width="180" />
         <el-table-column label="操作" width="250">
           <template #default="scope">
-            <el-button size="small" :disabled="scope.row.status === 'disabled'" @click="invokeTrigger(scope.row as WorkflowTrigger)">Invoke</el-button>
+            <el-button v-if="scope.row.trigger_type === 'manual'" size="small" :disabled="scope.row.status === 'disabled'" @click="invokeTrigger(scope.row as WorkflowTrigger)">Invoke</el-button>
             <el-button size="small" :loading="actionLoading" @click="toggleTrigger(scope.row as WorkflowTrigger)">{{ scope.row.status === 'enabled' ? '禁用' : '启用' }}</el-button>
             <el-button size="small" type="danger" :loading="actionLoading" @click="deleteTrigger(scope.row as WorkflowTrigger)">删除</el-button>
           </template>
@@ -141,12 +184,12 @@ onMounted(loadWorkflows);
 
       <el-divider />
       <el-form label-position="top">
-        <el-form-item label="Invoke Input JSON">
+        <el-form-item label="Manual Invoke Input JSON">
           <el-input v-model="inputText" type="textarea" :rows="4" />
         </el-form-item>
       </el-form>
 
-      <el-descriptions v-if="execution" title="最近一次 Trigger Execution" :column="2" border>
+      <el-descriptions v-if="execution" title="最近一次 Manual Trigger Execution" :column="2" border>
         <el-descriptions-item label="Execution ID">{{ execution.id }}</el-descriptions-item>
         <el-descriptions-item label="Status"><el-tag>{{ execution.status }}</el-tag></el-descriptions-item>
         <el-descriptions-item label="Workflow Version">{{ execution.workflow_version_id }}</el-descriptions-item>

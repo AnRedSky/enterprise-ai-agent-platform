@@ -72,13 +72,21 @@ export type WorkflowTrace = {
   created_at: string;
 };
 
+export type WorkflowTriggerType = "manual" | "scheduled";
+export type WorkflowTriggerStatus = "enabled" | "disabled";
+
+export type ScheduledTriggerConfig = {
+  timezone: string;
+  interval_seconds: number;
+};
+
 export type WorkflowTrigger = {
   id: string;
   tenant_id: string;
   workflow_id: string;
   name: string;
-  trigger_type: "manual";
-  status: "enabled" | "disabled";
+  trigger_type: WorkflowTriggerType;
+  status: WorkflowTriggerStatus;
   config: Record<string, unknown>;
   created_by: string;
   created_at: string;
@@ -93,10 +101,10 @@ export const workflowApi = {
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
   triggers(id: string) { return request.get<WorkflowTrigger[]>(`/workflows/${id}/triggers`); },
-  createTrigger(id: string, payload: { name: string; trigger_type: "manual"; config: Record<string, unknown> }) {
+  createTrigger(id: string, payload: { name: string; trigger_type: WorkflowTriggerType; config: Record<string, unknown> }) {
     return request.post<WorkflowTrigger>(`/workflows/${id}/triggers`, payload);
   },
-  updateTrigger(id: string, triggerId: string, payload: { name?: string; status?: WorkflowTrigger["status"]; config?: Record<string, unknown> }) {
+  updateTrigger(id: string, triggerId: string, payload: { name?: string; status?: WorkflowTriggerStatus; config?: Record<string, unknown> }) {
     return request.patch<WorkflowTrigger>(`/workflows/${id}/triggers/${triggerId}`, payload);
   },
   deleteTrigger(id: string, triggerId: string) { return request.delete<void>(`/workflows/${id}/triggers/${triggerId}`); },

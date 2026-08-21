@@ -1,6 +1,6 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 核心闭环已完成，Phase 1.5 Workflow / Governance 已完成，Phase 1.6 Workflow Production Hardening 已正式关闭，当前进入 Phase 1.7 Workflow Trigger Expansion / Scheduling Contract。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 核心闭环已完成，Phase 1.5 Workflow / Governance 已完成，Phase 1.6 Workflow Production Hardening 已正式关闭，当前推进 Phase 1.7 Workflow Trigger Expansion / Scheduling Contract。
 
 ## 项目文档
 
@@ -16,6 +16,7 @@
 - [Phase 1.6-B Frontend Workflow Governance UI](docs/16-phase-1.6-b-frontend-workflow-governance-ui-contract.md)
 - [Phase 1.6-C Frontend / Backend E2E](docs/17-phase-1.6-c-frontend-backend-e2e-contract.md)
 - [Phase 1.7 Workflow Trigger Scheduling Contract](docs/18-phase-1.7-workflow-trigger-scheduling-contract.md)
+- [Phase 1.7-C Schedule Governance / Frontend Integration](docs/19-phase-1.7-c-schedule-governance-frontend-integration.md)
 - [错误跟踪记录](docs/error-tracking/README.md)
 - [本地功能测试与验收](docs/LOCAL_TESTING.md)
 - [提交规范](docs/CONTRIBUTING.md)
@@ -42,12 +43,14 @@ Workflow Production Hardening 已正式关闭：
 
 ### Phase 1.7
 
-当前进入 Workflow Trigger Expansion / Scheduling Contract：
+当前推进 Workflow Trigger Expansion / Scheduling Contract：
 
-- Phase 1.7-A-01：Scheduled Trigger Backend Contract **开发中**。
-- 第一项只实现 Domain / Schema / pytest/API Contract。
-- 暂不引入 MQ、Worker、Event Bus、Cron daemon 或具体 Workflow Engine。
-- Schedule 初始基线采用 `timezone + interval_seconds`，保存配置不直接产生 Execution。
+- Phase 1.7-A：Scheduled Trigger Backend / Scheduler / Recovery 基线审计完成，确认已有实现，不重复建设。
+- Phase 1.7-B：Scheduler execution / persistence integration 的 current/recovery persistence Real API Gate 已通过；Runtime failure persistence 专项仍待完成。
+- Phase 1.7-C：Schedule Governance / Frontend Integration 已开始实施。
+- Phase 1.7-D：Real HTTP + Browser E2E scheduling contract，待 C 阶段 Frontend Gate 验收后推进。
+
+Scheduled Trigger 当前前后端统一使用 `timezone + interval_seconds` Contract；前端不实现 scheduler slot、recovery、lease、worker coordination 或 next-run 计算。
 
 ## 前端测试目录约束
 
