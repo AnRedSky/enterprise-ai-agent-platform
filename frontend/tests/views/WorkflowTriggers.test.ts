@@ -36,7 +36,24 @@ const stubs = {
   "el-tag": { template: "<span><slot /></span>" },
   "el-divider": { template: "<hr />" },
   "el-table": { template: "<div><slot /></div>" },
-  "el-table-column": { template: "<div />" },
+  // Element Plus provides a row to each column scoped slot and renders
+  // prop-backed cells. Preserve those semantics in the unit-test stub so
+  // governance assertions exercise the actual column templates.
+  "el-table-column": {
+    props: ["prop"],
+    setup(props: { prop?: string }) {
+      const row: Record<string, unknown> = {
+        name: "Scheduled Order Trigger",
+        trigger_type: "scheduled",
+        status: "enabled",
+        config: { timezone: "Asia/Seoul", interval_seconds: 60 },
+        updated_at: "2026-08-20T00:00:00Z",
+      };
+      const value = () => (props.prop ? String(row[props.prop] ?? "") : "");
+      return { row, value };
+    },
+    template: "<div>{{ value() }}<slot :row=\"row\" /></div>",
+  },
   "el-descriptions": { template: "<div><slot /></div>" },
   "el-descriptions-item": { props: ["label"], template: "<div>{{ label }}: <slot /></div>" },
 };
