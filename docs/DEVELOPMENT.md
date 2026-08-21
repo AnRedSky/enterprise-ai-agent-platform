@@ -14,6 +14,7 @@
 - Migration：Alembic
 - Backend Test：pytest
 - Frontend Test：Vitest
+- Browser E2E：Playwright
 
 ## 2. 本地测试原则
 
@@ -55,7 +56,12 @@ Frontend Gate（独立执行）
         ↓
 ② Frontend production build
 
-Browser / Frontend-Backend E2E（独立层，当前未实现）
+Browser / Frontend-Backend E2E（独立第三层）
+① Browser
+        ↓
+② Real Frontend
+        ↓
+③ Real Backend HTTP
 ```
 
 Backend Gate 与 Frontend Gate 必须保持脚本、工作目录、运行时、依赖和失败状态完全独立：
@@ -65,7 +71,7 @@ Backend Gate 与 Frontend Gate 必须保持脚本、工作目录、运行时、�
 - Backend Gate 失败不得自动执行 Frontend Gate。
 - Frontend Gate 失败不得自动执行 Backend Gate。
 - 不得再创建一个同时执行 Backend 与 Frontend 测试的 `Full Regression Gate`。
-- Browser / Frontend-Backend E2E 未来必须作为第三个独立层实现，不得复制 Backend 或 Frontend 现有 Gate。
+- Browser / Frontend-Backend E2E 必须作为第三个独立层实现，不得复制 Backend 或 Frontend 现有 Gate。
 
 ### 脚本目录归属
 
@@ -78,9 +84,12 @@ backend/scripts/test/api-real/01_run_real_api_tests.ps1
 
 Frontend
 frontend/scripts/test/release/01_frontend_regression_gate.ps1
+frontend/scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
 ```
 
 Frontend Gate 必须从 `frontend/` 项目目录启动，并只使用 Frontend 自身的 `package.json`、`node_modules`、Vitest 和 Vite；不得通过 `backend/scripts/` 间接编排 Frontend 测试。
+
+Browser E2E Gate 同样从 `frontend/` 项目目录启动，只负责浏览器、真实 Frontend 与真实 Backend HTTP 用户链路，不执行 Backend / Frontend regression gate。
 
 Backend Gate 必须从 `backend/` 项目目录启动，并只使用 Backend 自身的 `uv`、pytest、Alembic 和 Real API 测试入口；不得调用 Frontend Gate。
 
@@ -105,6 +114,13 @@ cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
+Browser E2E Gate：
+
+```powershell
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+```
+
 Real API 唯一入口：
 
 ```powershell
@@ -112,7 +128,7 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-`backend/scripts/test/integration/` 仅用于未来真正的 Frontend / Backend E2E 或联调编排，不得复制 Backend regression、Migration、Real API 或 Frontend regression 已有测试。当前不存在 `01_frontend_backend_gate.ps1`。
+`backend/scripts/test/integration/` 仅用于未来真正的 Frontend / Backend 联调编排，不得复制 Backend regression、Migration、Real API 或 Frontend regression 已有测试。
 
 Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api.py` 自动准备，禁止手工填写或在其他脚本复制 Bootstrap/Fixture 逻辑。
 
@@ -140,7 +156,7 @@ Real API 的 Token、Workflow ID、Execution ID 必须由 `00_bootstrap_real_api
 4. 前端测试必须与业务源码分离，只放在 `frontend/tests/`。
 5. Backend 测试脚本不得调用 `npm test`、`npm run build`；Frontend 测试独立执行。
 6. Runtime Integration 必须在基础 API Contract 稳定、Real API 可验收后进行。
-7. 联调完成后必须分别执行 Backend Gate、Frontend Gate，以及未来独立的 E2E Gate。
+7. 联调完成后必须分别执行 Backend Gate、Frontend Gate，以及独立的 E2E Gate。
 8. 验收文档必须在代码提交前同步更新。
 9. 功能完成、延期、阻塞或范围变更时，必须同步更新 `docs/PROJECT_STATUS.md` 与对应 Phase 计划文档。
 10. **禁止创建任何功能分支、临时分支、开发分支或长期分支；所有开发、修复、文档与测试变更均直接基于并提交 `main`。**
@@ -184,7 +200,9 @@ backend/scripts/test/release/
 backend/scripts/test/phase/
 
 frontend/tests/
+frontend/tests/e2e/
 frontend/scripts/test/release/
+frontend/scripts/test/e2e/
 ```
 
 核心模块要求 Unit Test Coverage ≥ 80%，核心安全模块 ≥ 90%。测试重点包括 API Contract、Service/Domain、Database/Migration、Agent Runtime、Tool Runtime、Knowledge/RAG、Memory、RBAC/Security、Observability、Frontend API/UI。
