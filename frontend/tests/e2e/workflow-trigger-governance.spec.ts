@@ -88,11 +88,19 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
       timezone: "UTC",
       interval_seconds: 60,
     });
+
+    // Switch to a short, still-valid interval for the real application scheduler boundary.
+    // The browser test must observe a real scheduler-generated execution without changing scheduler semantics.
+    await scheduleConfigTextarea.fill(JSON.stringify({ timezone: "UTC", interval_seconds: 5 }));
+    expect(JSON.parse(await scheduleConfigTextarea.inputValue())).toEqual({
+      timezone: "UTC",
+      interval_seconds: 5,
+    });
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
     const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` });
     await expect(triggerRow).toContainText("scheduled");
-    await expect(triggerRow).toContainText("UTC / 每 60 秒");
+    await expect(triggerRow).toContainText("UTC / 每 5 秒");
     await expect(triggerRow.getByRole("button", { name: "Invoke" })).toHaveCount(0);
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
@@ -108,7 +116,26 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(persistedItems).toBeInstanceOf(Array);
     const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === `Browser Scheduled Trigger ${nonce}`);
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
-    expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 60 });
+    expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 5 });
+
+    // Observe the real application scheduler through the existing runtime HTTP boundary.
+    // No frontend scheduler state or next-run calculation is introduced.
+    await expect.poll(
+      async () => {
+        const executions = await api.get(apiPath("/runtime/executions?page=1&page_size=100"), { headers });
+        expect(executions.ok()).toBeTruthy();
+        const payload = await executions.json();
+        const items = Array.isArray(payload) ? payload : payload.items;
+        const execution = items.find(
+          (item: { workflow_id: string; idempotency_key?: string }) =>
+            item.workflow_id === workflow.id && item.idempotency_key?.startsWith(`scheduled:${persistedTrigger.id}:`),
+        );
+        return execution
+          ? { status: execution.status, idempotency_key: execution.idempotency_key }
+          : null;
+      },
+      { timeout: 20_000, intervals: [500, 1000, 2000] },
+    ).toMatchObject({ status: expect.any(String) });
 
     await triggerRow.getByRole("button", { name: "删除" }).click();
     const deleteDialog = page.locator(".el-message-box:visible");
