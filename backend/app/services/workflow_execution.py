@@ -15,6 +15,7 @@ from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecuti
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.runtime.workflow_runtime import WorkflowRuntime
 from app.services.workflow_governance import WorkflowGovernanceService
+from app.services.circuit_breaker import CircuitOpenError
 
 
 class WorkflowExecutionService:
@@ -260,10 +261,6 @@ class WorkflowExecutionService:
                         raise HTTPException(504, "Workflow Execution timeout")
                     effective_timeout = min(node_timeout_ms / 1000, remaining)
                     exc: BaseException | None = None
-                    # Classify based on the configured node deadline versus the remaining workflow budget.
-                    # Using effective_timeout >= remaining is incorrect because min() makes them equal whenever
-                    # the workflow deadline wins, and event-loop overhead can make a 1ms node timeout appear
-                    # to consume the workflow deadline after the loop has already elapsed several milliseconds.
                     workflow_timeout = remaining <= node_timeout_ms / 1000
                     try:
                         data = await asyncio.wait_for(
@@ -288,7 +285,11 @@ class WorkflowExecutionService:
                     if not isinstance(raw_attempt, int) or isinstance(raw_attempt, bool):
                         raw_attempt = getattr(node_execution, "attempt", 1)
                     attempt = raw_attempt if isinstance(raw_attempt, int) and not isinstance(raw_attempt, bool) else 1
-                    retryable = error_code in retry_policy["retryable_error_codes"] and error_code not in {"WORKFLOW_TIMEOUT", "CIRCUIT_OPEN"}
+                    # Circuit-open is a governance boundary, not a transient node failure.
+                    # Keep the original CircuitOpenError marker so a circuit rejection can
+                    # never be retried even if an HTTP 503 is surfaced by an adapter.
+                    circuit_open = isinstance(exc, CircuitOpenError) or error_code == "CIRCUIT_OPEN"
+                    retryable = error_code in retry_policy["retryable_error_codes"] and not circuit_open and error_code not in {"WORKFLOW_TIMEOUT"}
                     can_retry = retryable and attempt < retry_policy["max_attempts"]
                     if not can_retry:
                         if retryable and attempt >= retry_policy["max_attempts"]:
@@ -359,10 +360,13 @@ class WorkflowExecutionService:
         except HTTPException:
             raise
         except Exception as exc:
-            if execution.status not in self.TERMINAL_EXECUTION_STATES:
-                await self.transition(execution, "failed", error_code=WorkflowRuntime.classify_error(exc),
-                                      error_message=str(exc) or "Workflow execution failed", actor_id=actor_id)
-                raise HTTPException(500, str(exc) or "Workflow execution failed") from exc
+            error_code = WorkflowRuntime.classify_error(exc)
+            error_message = str(exc) or "Workflow Execution failed"
+            try:
+                await self.transition(execution, "failed", error_code=error_code,
+                                      error_message=error_message, actor_id=actor_id)
+            except HTTPException:
+                pass
             raise
-        await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
-        return execution
+        else:
+            return await self.transition(execution, "completed", output_data=data, actor_id=actor_id)
