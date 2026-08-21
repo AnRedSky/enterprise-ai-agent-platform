@@ -353,6 +353,8 @@ class WorkflowExecutionService:
                                               error_message=timeout_message, actor_id=actor_id)
                         raise HTTPException(504, timeout_message) from exc
 
+                    await self.governance.audit(execution, actor_id, "workflow.node.retry", "success",
+                                                error_code=error_code)
                     await self.governance.audit(execution, actor_id, "workflow.node.retry_scheduled", "success",
                                                 error_code=error_code)
                     await self.governance.trace(execution, actor_id, "node.retry.scheduled", "pending",
