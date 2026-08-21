@@ -15,19 +15,24 @@ logger = logging.getLogger(__name__)
 
 
 class ScheduledTriggerScheduler:
-    """Small DB-backed scheduler for the first interval-based Trigger runtime.
+    """DB-backed scheduler for interval-based Workflow Triggers.
 
-    The scheduler deliberately uses the existing WorkflowExecution idempotency
-    contract instead of adding scheduler state columns in Phase 1.7-A. Each
-    trigger gets one deterministic idempotency key per interval slot, which also
-    makes duplicate dispatches from multiple application workers converge on a
-    single execution.
+    Phase 1.7-A-03 adds bounded recovery: a worker restart may recover a small,
+    deterministic window of missed interval slots. Execution idempotency remains
+    the source of truth, so recovery never creates a duplicate for an already
+    completed/in-flight slot.
     """
 
-    def __init__(self, poll_interval_seconds: float = 5.0):
+    DEFAULT_RECOVERY_SLOTS = 2
+    MAX_RECOVERY_SLOTS = 5
+
+    def __init__(self, poll_interval_seconds: float = 5.0, recovery_slots: int = DEFAULT_RECOVERY_SLOTS):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds 必须大于 0")
+        if isinstance(recovery_slots, bool) or not 1 <= recovery_slots <= self.MAX_RECOVERY_SLOTS:
+            raise ValueError(f"recovery_slots 必须在 1-{self.MAX_RECOVERY_SLOTS} 范围内")
         self.poll_interval_seconds = poll_interval_seconds
+        self.recovery_slots = recovery_slots
         self._stop_event = asyncio.Event()
 
     @staticmethod
@@ -38,12 +43,22 @@ class ScheduledTriggerScheduler:
         return int(timestamp // interval_seconds)
 
     @classmethod
-    def idempotency_key(cls, trigger_id, now: datetime, interval_seconds: int) -> str:
-        slot = cls.interval_slot(now, interval_seconds)
+    def slot_idempotency_key(cls, trigger_id, slot: int) -> str:
         return f"scheduled:{trigger_id}:{slot}"
 
+    @classmethod
+    def idempotency_key(cls, trigger_id, now: datetime, interval_seconds: int) -> str:
+        return cls.slot_idempotency_key(trigger_id, cls.interval_slot(now, interval_seconds))
+
+    @classmethod
+    def recovery_slots(cls, now: datetime, interval_seconds: int, max_recovery_slots: int = DEFAULT_RECOVERY_SLOTS) -> list[int]:
+        if isinstance(max_recovery_slots, bool) or not 1 <= max_recovery_slots <= cls.MAX_RECOVERY_SLOTS:
+            raise ValueError(f"max_recovery_slots 必须在 1-{cls.MAX_RECOVERY_SLOTS} 范围内")
+        current = cls.interval_slot(now, interval_seconds)
+        return list(range(current - max_recovery_slots + 1, current + 1))
+
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
-        """Dispatch all enabled scheduled triggers once and return counters."""
+        """Dispatch enabled scheduled triggers for the bounded recovery window."""
         now = now or datetime.now(UTC)
         counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0}
 
@@ -65,22 +80,21 @@ class ScheduledTriggerScheduler:
                 counters["eligible"] += 1
                 try:
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
-                    idempotency_key = self.idempotency_key(trigger.id, now, config["interval_seconds"])
-                    execution_service = WorkflowTriggerService(db)
-                    existing = await execution_service.find_execution_by_idempotency_key(
-                        workflow.tenant_id, idempotency_key
-                    )
-                    if existing is not None:
-                        counters["skipped"] += 1
-                        continue
-                    await execution_service.invoke_scheduled(
-                        workflow=workflow,
-                        trigger=trigger,
-                        actor_id=trigger.created_by,
-                        input_data={},
-                        idempotency_key=idempotency_key,
-                    )
-                    counters["dispatched"] += 1
+                    service = WorkflowTriggerService(db)
+                    for slot in self.recovery_slots(now, config["interval_seconds"], self.recovery_slots):
+                        idempotency_key = self.slot_idempotency_key(trigger.id, slot)
+                        existing = await service.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
+                        if existing is not None:
+                            counters["skipped"] += 1
+                            continue
+                        await service.invoke_scheduled(
+                            workflow=workflow,
+                            trigger=trigger,
+                            actor_id=trigger.created_by,
+                            input_data={"scheduled_slot": slot},
+                            idempotency_key=idempotency_key,
+                        )
+                        counters["dispatched"] += 1
                 except Exception:
                     await db.rollback()
                     counters["failed"] += 1
