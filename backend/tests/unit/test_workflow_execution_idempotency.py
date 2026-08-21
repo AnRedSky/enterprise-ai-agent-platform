@@ -60,6 +60,8 @@ async def test_create_handles_concurrent_idempotency_insert(workflow_and_version
     existing = SimpleNamespace(workflow_id=workflow.id, workflow_version_id=version.id)
     db = AsyncMock()
     db.add = Mock()
+    savepoint = AsyncMock()
+    db.begin_nested = Mock(return_value=savepoint)
     db.execute.side_effect = [
         SimpleNamespace(scalar_one_or_none=lambda: None),
         SimpleNamespace(scalar_one_or_none=lambda: existing),
@@ -70,5 +72,7 @@ async def test_create_handles_concurrent_idempotency_insert(workflow_and_version
     result = await service.create(workflow, version, uuid4(), {"source": "race"}, "request-1")
 
     assert result is existing
-    db.rollback.assert_awaited_once()
+    db.begin_nested.assert_called_once()
+    savepoint.__aenter__.assert_awaited_once()
+    savepoint.__aexit__.assert_awaited_once()
     assert db.execute.await_count == 2
