@@ -102,40 +102,39 @@ class ScheduledTriggerScheduler:
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
-
-                        # The pre-check above is only an optimization. Two workers can
-                        # observe the same missing execution concurrently, so serialize
-                        # the check+dispatch for this slot at the database boundary.
-                        # pg_advisory_xact_lock is transaction-scoped and is released
-                        # automatically when invoke_scheduled commits or the tick rolls
-                        # back, without relying on ORM rollback/reload behavior.
-                        await db.execute(
-                            select(func.pg_advisory_xact_lock(func.hashtext(idempotency_key)))
-                        )
-                        existing = await service.find_execution_by_idempotency_key(
-                            workflow.tenant_id, idempotency_key
-                        )
-                        if existing is not None:
-                            counters["skipped"] += 1
-                            continue
-                        recovery = slot != current_slot
+                        lock_key = func.hashtext(idempotency_key)
+                        # invoke_scheduled commits its transaction. Therefore the
+                        # claim lock must be session-scoped, not transaction-scoped:
+                        # otherwise the commit releases the lock before the worker
+                        # finishes the idempotency boundary.
+                        await db.execute(select(func.pg_advisory_lock(lock_key)))
                         try:
-                            await service.invoke_scheduled(
-                                workflow=workflow,
-                                trigger=trigger,
-                                actor_id=trigger.created_by,
-                                input_data={"scheduled_slot": slot, "recovery": recovery},
-                                idempotency_key=idempotency_key,
-                                recovery=recovery,
+                            existing = await service.find_execution_by_idempotency_key(
+                                workflow.tenant_id, idempotency_key
                             )
-                        except HTTPException as exc:
-                            if self.is_concurrent_runtime_claim(exc):
-                                counters["contention"] += 1
+                            if existing is not None:
+                                counters["skipped"] += 1
                                 continue
-                            raise
-                        counters["dispatched"] += 1
-                        if recovery:
-                            counters["recovered"] += 1
+                            recovery = slot != current_slot
+                            try:
+                                await service.invoke_scheduled(
+                                    workflow=workflow,
+                                    trigger=trigger,
+                                    actor_id=trigger.created_by,
+                                    input_data={"scheduled_slot": slot, "recovery": recovery},
+                                    idempotency_key=idempotency_key,
+                                    recovery=recovery,
+                                )
+                            except HTTPException as exc:
+                                if self.is_concurrent_runtime_claim(exc):
+                                    counters["contention"] += 1
+                                    continue
+                                raise
+                            counters["dispatched"] += 1
+                            if recovery:
+                                counters["recovered"] += 1
+                        finally:
+                            await db.execute(select(func.pg_advisory_unlock(lock_key)))
                 except Exception:
                     await db.rollback()
                     counters["failed"] += 1
