@@ -63,19 +63,37 @@ f7ef0c55810171cb70e5873a99cba82a01a64047
 
 结论：**1.9-B 当前 focused scope 已通过本地 Backend / PostgreSQL / Real API 验证。**
 
-### 1.9-B 当前边界
+## 4. 1.9-C Acceptance — Real API Reliability Scenarios
 
-本次 Acceptance 已覆盖 stale Probe completion、Circuit Breaker 与 Retry/Timeout/Deadline 现有边界测试。当前没有发现需要继续修改代码的 1.9-B blocking issue。
+状态：**进行中，尚未 Acceptance。**
 
-后续可靠性专项进入 1.9-C。若 Real API 专项场景发现新的跨 worker、retry、idempotency 或 tenant isolation 问题，应新增错误记录并回到相应修复任务。
+已新增真实 HTTP API 专项测试：
 
-## 4. 下一验收顺序
+```text
+backend/tests/api_real/test_phase_1_9c_reliability_api.py
+```
 
-1. 1.9-C Real API Reliability Scenarios。
-2. 1.9-D Frontend / Browser Reliability Convergence。
-3. 1.9-E Final Acceptance。
+新增覆盖：
 
-## 5. Phase 1.9 关闭条件
+- Workflow Execution `Idempotency-Key` 顺序重放返回同一 Execution。
+- 两个并发真实 HTTP 请求使用相同 `Idempotency-Key` 时收敛到同一个 Execution。
+- 同一 Tenant 下其他用户不能读取目标用户创建的 Execution（ownership isolation）。
+
+当前明确不能将上述场景标记 PASS，因为新增测试尚未获得开发者本地实际执行结果。
+
+另外，当前注册接口把新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此 ownership isolation **不等价于跨 Tenant isolation**。跨 Tenant 场景需要独立 Tenant 创建/切换的真实 API 测试上下文后才能验收。
+
+现有 20 个 Real API Gate 测试的历史 PASS 仍然保留为证据，但不扩大解释为 1.9-C 全部 PASS。
+
+## 5. 下一验收顺序
+
+1. 在本地执行新增 1.9-C 专项 Real API 测试。
+2. 执行完整 Real API Gate，确认新增场景与历史场景共同通过。
+3. 如发现跨 worker、retry、idempotency 或 tenant isolation 问题，记录 `docs/04-errors/` 并修复后重新验收。
+4. 完成 Frontend / Browser Reliability Convergence。
+5. 最终执行 Phase 1.9 Acceptance。
+
+## 6. Phase 1.9 关闭条件
 
 必须同时满足：
 
