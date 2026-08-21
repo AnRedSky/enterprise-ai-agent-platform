@@ -32,7 +32,8 @@ class ScheduledTriggerScheduler:
         if isinstance(recovery_slots, bool) or not 1 <= recovery_slots <= self.MAX_RECOVERY_SLOTS:
             raise ValueError(f"recovery_slots 必须在 1-{self.MAX_RECOVERY_SLOTS} 范围内")
         self.poll_interval_seconds = poll_interval_seconds
-        self.recovery_slots = recovery_slots
+        # Keep the callable recovery_slots classmethod unshadowed.
+        self.max_recovery_slots = recovery_slots
         self._stop_event = asyncio.Event()
 
     @staticmethod
@@ -85,7 +86,7 @@ class ScheduledTriggerScheduler:
                 try:
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
                     service = WorkflowTriggerService(db)
-                    slots = self.recovery_slots(now, config["interval_seconds"], self.recovery_slots)
+                    slots = self.recovery_slots(now, config["interval_seconds"], self.max_recovery_slots)
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
