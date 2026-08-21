@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.dependencies.db import SessionLocal
+from app.models.execution import Execution  # noqa: F401 - register legacy execution table for AuditLog FK metadata
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.workflow_trigger import WorkflowTriggerService
@@ -32,8 +33,12 @@ class ScheduledTriggerScheduler:
         if isinstance(recovery_slots, bool) or not 1 <= recovery_slots <= self.MAX_RECOVERY_SLOTS:
             raise ValueError(f"recovery_slots 必须在 1-{self.MAX_RECOVERY_SLOTS} 范围内")
         self.poll_interval_seconds = poll_interval_seconds
-        # Keep the callable recovery_slots classmethod unshadowed.
+        # Preserve the class-level recovery_slots API while making the
+        # constructor's recovery_slots setting effective for this worker.
         self.max_recovery_slots = recovery_slots
+        self.recovery_slots = lambda now, interval_seconds: type(self).recovery_slots(
+            now, interval_seconds, self.max_recovery_slots
+        )
         self._stop_event = asyncio.Event()
 
     @staticmethod
@@ -52,7 +57,12 @@ class ScheduledTriggerScheduler:
         return cls.slot_idempotency_key(trigger_id, cls.interval_slot(now, interval_seconds))
 
     @classmethod
-    def recovery_slots(cls, now: datetime, interval_seconds: int, max_recovery_slots: int = DEFAULT_RECOVERY_SLOTS) -> list[int]:
+    def recovery_slots(
+        cls,
+        now: datetime,
+        interval_seconds: int,
+        max_recovery_slots: int = DEFAULT_RECOVERY_SLOTS,
+    ) -> list[int]:
         if isinstance(max_recovery_slots, bool) or not 1 <= max_recovery_slots <= cls.MAX_RECOVERY_SLOTS:
             raise ValueError(f"max_recovery_slots 必须在 1-{cls.MAX_RECOVERY_SLOTS} 范围内")
         current = cls.interval_slot(now, interval_seconds)
@@ -83,10 +93,12 @@ class ScheduledTriggerScheduler:
 
             for trigger, workflow in candidates:
                 counters["eligible"] += 1
+                trigger_id = str(trigger.id)
+                workflow_id = str(workflow.id)
                 try:
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
                     service = WorkflowTriggerService(db)
-                    slots = self.recovery_slots(now, config["interval_seconds"], self.max_recovery_slots)
+                    slots = self.recovery_slots(now, config["interval_seconds"])
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
@@ -117,7 +129,7 @@ class ScheduledTriggerScheduler:
                     counters["failed"] += 1
                     logger.exception(
                         "Scheduled Trigger dispatch failed",
-                        extra={"trigger_id": str(trigger.id), "workflow_id": str(workflow.id)},
+                        extra={"trigger_id": trigger_id, "workflow_id": workflow_id},
                     )
         return counters
 
