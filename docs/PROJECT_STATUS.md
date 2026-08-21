@@ -11,6 +11,7 @@
 - Phase 1.6：**已完成并正式关闭**
 - 当前阶段：**Phase 1.7 Workflow Trigger Expansion / Scheduling Contract**
 - 当前任务：**Phase 1.7-D Browser / Frontend-Backend E2E Scheduling Contract**
+- 当前子任务：**D-03 Scheduler / Execution Boundary**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立
 
@@ -30,7 +31,7 @@
 | Phase 1.7-A | **基线审计完成** | Scheduled Trigger Contract、Scheduler Runtime、bounded recovery、multi-worker slot convergence 已存在于最新 main；不重复实现 |
 | Phase 1.7-B | **核心 Persistence Gate 已通过；专项 Runtime failure 待完成** | Scheduled current/recovery persistence、idempotency、Real API lifecycle 已完成并通过；Runtime failure persistence 仍需专项真实失败 Workflow 验收 |
 | Phase 1.7-C | **已完成并关闭** | Schedule Governance Frontend API/UI Contract 完成；本地 Frontend Gate 全部通过 |
-| Phase 1.7-D | **已启动** | Browser / Frontend-Backend E2E Scheduling Contract 已定义，正在扩展现有 Browser Trigger E2E |
+| Phase 1.7-D | **进行中** | Browser / Frontend-Backend E2E Scheduling Contract 已建立；D-01/D-02 基础链路已有测试，当前推进 D-03 Scheduler / Execution Boundary |
 
 ## 3. Phase 1.7-A/B 基线结论
 
@@ -144,25 +145,40 @@ backend/scripts/test/release/
 
 Phase 1.7-D 继续复用已有 Browser E2E 测试基础设施，不新建重复 Gate。
 
-目标是把既有 Manual Trigger Browser Contract 扩展为 Scheduled Trigger Browser Contract，覆盖：
+已实现/正在推进：
 
-1. Browser 登录与真实 Workflow fixture；
-2. Schedule Governance 页面；
-3. Scheduled Trigger 创建；
-4. `timezone + interval_seconds` UI contract；
-5. Scheduled Trigger inventory；
-6. Scheduled Trigger 不显示 Manual Invoke；
-7. enable / disable / delete lifecycle；
-8. 通过真实 HTTP API 检查 Trigger persistence；
-9. 后续补充可控 scheduler interval 与 Workflow Execution runtime observation。
+- Browser 登录与真实 Workflow fixture；
+- Schedule Governance 页面；
+- Scheduled Trigger 创建；
+- `timezone + interval_seconds` UI contract；
+- Scheduled Trigger inventory；
+- Scheduled Trigger 不显示 Manual Invoke；
+- enable / disable / delete lifecycle；
+- 通过真实 HTTP API 检查 Trigger persistence；
+- D-03 新增短 interval 的真实 application scheduler observation：通过 `/runtime/executions` 检查 scheduler 产生的 deterministic `scheduled:{trigger_id}:{slot}` Execution。
 
-新增阶段文档：
+D-03 测试保持边界：
+
+- 前端不计算 next-run；
+- 前端不实现 scheduler polling；
+- 不修改生产 Scheduler 语义以适配 E2E；
+- 使用独立测试 Workflow / Trigger；
+- 使用 5 秒短 interval 作为真实 scheduler observation 的受控测试数据。
+
+### 最近 E2E 修正
+
+已修正两类实际测试契约问题：
+
+1. Element Plus Scheduled 类型下拉采用键盘选择，避免 teleported dropdown 动画造成 `locator.click` 不稳定。
+2. Config JSON 采用语义 JSON 断言，不要求 UI textarea 必须保持 minified 格式。
+3. Trigger list 的真实 Backend API 返回数组；E2E persistence assertion 现兼容真实数组响应，并保持对 `items` 包装响应的防御性读取，但生产 API contract 仍以 Backend 实现为准。
+
+当前 main 最新修复提交：
 
 ```text
-docs/20-phase-1.7-d-browser-frontend-backend-e2e.md
+d84df68 fix(e2e): align trigger persistence assertion with API response contract
+7236570 feat(e2e): cover scheduled trigger execution boundary
 ```
-
-Browser E2E 仍不重复执行 Backend pytest、migration、Real API 全量 Gate 或 Frontend regression。
 
 ## 7. Phase 1.7-D 本地测试流程
 
@@ -194,26 +210,22 @@ npx playwright test --list --project="Desktop Chrome"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-本阶段 Browser E2E 的目标结果不是复制其他 Gate，而是验证真实 Browser → Vue → HTTP → Trigger persistence → Scheduler / Execution 的跨层契约。
+D-03 需要 Backend scheduler 实际启用；E2E 不在脚本中重复启动或修改生产 scheduler。
+
+### 当前验收状态
+
+本轮 `d84df68` / `7236570` 的代码已提交 main，但尚未把用户本地最新 Browser Gate 结果预先标记为通过。必须以本地实际执行结果作为 D-03 验收依据。
 
 ## 8. 下一步
 
 ```text
-Phase 1.7-C
-  C-01 API Type Contract          ← 完成
-  C-02 Schedule Governance UI     ← 完成
-  C-03 Runtime Boundary           ← 完成
-  C-04 Frontend Tests              ← 完成
-        ↓
-Phase 1.7-C 关闭
-        ↓
-Phase 1.7-D Browser / Frontend-Backend E2E
-  D-01 Browser Schedule Governance
-  D-02 Trigger Lifecycle
-  D-03 Scheduler / Execution Boundary
-  D-04 Regression Boundaries
+Phase 1.7-D
+  D-01 Browser Schedule Governance     ← 已实现
+  D-02 Trigger Lifecycle               ← 已实现
+  D-03 Scheduler / Execution Boundary  ← 当前
+  D-04 Regression Boundaries           ← 待 D-03 实际 Gate 通过后收口
         ↓
 Phase 1.7 最终验收 / 关闭评估
 ```
 
-本状态文件只记录已经确认的实际结果；Phase 1.7-D 的 Browser Gate 在实际执行前不预先宣称通过。
+本状态文件只记录已经确认的实际结果；Phase 1.7-D Browser Gate 与 D-03 Runtime observation 在实际执行前不预先宣称通过。
