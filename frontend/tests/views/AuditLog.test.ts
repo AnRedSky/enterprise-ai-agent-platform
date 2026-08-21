@@ -34,15 +34,23 @@ describe("AuditLogPanel", () => {
   });
 
   it("renders error state", async () => {
-    // Throw synchronously from the mocked transport boundary so the test
-    // deterministically exercises the component's catch path without relying
-    // on Vitest's unhandled-rejection scheduling.
-    auditLogs.mockImplementation(() => {
-      throw new Error("Audit API unavailable");
-    });
+    let rejectAuditLogs: ((reason?: unknown) => void) | undefined;
+    auditLogs.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          rejectAuditLogs = reject;
+        }),
+    );
+
     const wrapper = mount(AuditLog, { global });
-    await flushPromises();
     expect(auditLogs).toHaveBeenCalledTimes(1);
+
+    // Reject only after the component has attached its await/catch handler.
+    // This models an HTTP failure without creating an already-rejected promise
+    // or synchronous throw that Vitest may report as an unhandled test error.
+    rejectAuditLogs?.(new Error("Audit API unavailable"));
+    await flushPromises();
+
     expect(wrapper.find(".alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("Audit 查询失败");
   });
