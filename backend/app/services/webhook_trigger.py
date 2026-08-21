@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from uuid import UUID
 
@@ -56,6 +57,12 @@ class WebhookTriggerService:
             raise HTTPException(422, "Webhook event identity 最长 100 个字符")
         return identity
 
+    @staticmethod
+    def durable_idempotency_key(trigger_id: UUID, identity: str) -> str:
+        """Return a deterministic key that always fits WorkflowExecution.idempotency_key."""
+        digest = hashlib.sha256(f"{trigger_id}:{identity}".encode("utf-8")).hexdigest()
+        return f"webhook:{digest}"
+
     async def _published_version(self, trigger: WorkflowTrigger) -> tuple[WorkflowVersion, WorkflowTrigger]:
         workflow = (
             await self.db.execute(select(WorkflowTrigger).where(WorkflowTrigger.id == trigger.id))
@@ -75,9 +82,7 @@ class WebhookTriggerService:
     ) -> tuple[WorkflowExecution, bool, str]:
         self.authenticate(trigger, supplied_secret)
         identity = self.event_identity(trigger, payload, idempotency_key)
-        durable_key = f"webhook:{trigger.id}:{identity}"
-        if len(durable_key) > 255:
-            raise HTTPException(422, "Webhook Idempotency-Key 超出系统限制")
+        durable_key = self.durable_idempotency_key(trigger.id, identity)
 
         workflow = await self.db.get(Workflow, trigger.workflow_id)
         if workflow is None or workflow.tenant_id != trigger.tenant_id:
