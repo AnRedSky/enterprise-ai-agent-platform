@@ -1,57 +1,25 @@
 # Phase 1.9 — Runtime Reliability / Production Hardening
 
-> 状态：进行中
+> 状态：**已完成 / 正式关闭**
 > 基线：最新 `main`
 
 ## 1. 阶段目标
 
 在 Phase 1.3～1.8 已形成 Model Gateway、Tool Runtime、Memory、Observability、Knowledge/RAG、Workflow/Governance、Scheduler/Webhook Trigger 能力的基础上，进行跨领域 Runtime Reliability 收口。
 
-本阶段不新增新的产品领域，重点验证并修复已经存在的生产一致性、并发、失败恢复、Real API 与跨层联调边界。
+本阶段不新增新的产品领域，重点验证并修复生产一致性、并发、失败恢复、Real API 与跨层联调边界。
 
-## 2. 当前能力基线
+## 2. 完成情况
 
-| 能力 | 当前判断 |
-|---|---|
-| Identity / JWT / RBAC / Tenant | 已实现当前历史范围 |
-| Agent / AgentVersion / Publish | 已实现当前历史范围 |
-| Agent Chat / Model Gateway | 已实现当前历史范围 |
-| Tool Registry / HTTP Tool / 安全边界 | 已实现当前历史范围 |
-| Memory / Runtime Context | 已实现当前历史范围 |
-| Observability / Audit / Trace | 已实现当前历史范围 |
-| Knowledge / Ingestion / Retrieval | 已实现当前历史范围 |
-| Vector / Hybrid Retrieval | 已实现当前代码范围；真实语义质量仍需真实 Provider 评估 |
-| Workflow / Execution / Governance | 1.9-C Runtime reliability 专项已通过当前本地验证 |
-| Retry / Timeout / Idempotency / Deadline | 1.9-C 当前 focused + Real API 验证通过 |
-| Circuit Breaker | 1.9-A/1.9-B 已验证，1.9-C Real API boundary 已通过 |
-| Scheduled Trigger | 已实现当前历史范围；1.9-D 跨层复验通过 |
-| Webhook Trigger | 已实现当前历史范围；1.9-D Browser E2E 本轮复验通过 |
-| Frontend Governance UI | 已实现当前历史范围；1.9-D Frontend regression/build 本轮通过 |
-| Browser E2E | 1.9-D 独立 Gate 本轮通过 |
+| 子阶段 | 状态 | 结果 |
+|---|---|---|
+| 1.9-A Circuit Breaker HALF_OPEN Concurrent Recovery | 已完成 | focused、Backend、Migration、Real API 均通过 |
+| 1.9-B Runtime Failure / Retry / Circuit Boundary Audit | 已完成 | focused、Backend、Migration、Real API 均通过 |
+| 1.9-C Real API Reliability Scenarios | 已完成 | Runtime / Retry / Timeout / Idempotency / Circuit Breaker Real API 验证通过 |
+| 1.9-D Frontend / Browser Reliability Convergence | 已完成 | Frontend Regression、Build、Browser E2E 均通过 |
+| 1.9-E Final Acceptance | **已完成** | Backend、Migration、Real API、Frontend、Browser 三层独立 Gate 均取得本地实际通过证据 |
 
-## 3. 重要边界
-
-历史 Acceptance 的 PASS 只代表当时实际执行的测试结果，不自动证明当前代码不存在新的并发/生产问题。本阶段以当前 `main` 代码重新验证发现的风险。
-
-## 4. 任务拆解
-
-### 1.9-A — Circuit Breaker HALF_OPEN Concurrent Recovery
-
-状态：**本地验证完成。**
-
-历史实际验证：
-
-```text
-Targeted Circuit Breaker tests → 16 passed
-Backend Regression → 262 passed, 20 deselected
-Migration head → 0022_workflow_trigger (head)
-Mandatory Real API → 20 passed
-Standalone Real API → 20 passed
-```
-
-### 1.9-B — Runtime Failure / Retry / Circuit Boundary Audit
-
-状态：**focused scope 已完成本地验证。**
+## 3. 关键可靠性边界
 
 已验证：
 
@@ -62,52 +30,38 @@ Standalone Real API → 20 passed
 - deadline 在每次 retry 前重新计算，backoff 超过剩余 deadline 时直接以 `WORKFLOW_TIMEOUT` 结束。
 - Retry lineage 通过 `retry_of_execution_id` 保留。
 - HALF_OPEN stale probe completion 不得修改新的 recovery window。
+- Workflow node retry 的 trace / audit governance 已通过 Real API 验证。
+- Real HTTP idempotency reliability 场景已通过。
+- Scheduled Trigger 与 Webhook Trigger 的 Browser → Vue → Backend HTTP → Workflow Governance 链路已通过。
+- Webhook duplicate-event convergence 与 lifecycle security 已通过 Browser E2E。
 
-### 1.9-C — Real API Reliability Scenarios
+## 4. 最终本地验收结果
 
-状态：**当前专项验证通过。**
-
-本轮开发者本地实际执行：
+### Backend
 
 ```text
-Focused Runtime / Retry / Timeout suite:
-13 passed in 1.17s
+uv run pytest -q
+264 passed, 23 deselected
 
+uv run alembic upgrade head
+completed
+
+uv run alembic current
+0022_workflow_trigger (head)
+
+uv run alembic heads
+0022_workflow_trigger (head)
+```
+
+### Real API
+
+```text
 Real API Gate:
-23 passed in 37.61s
-[PASS] Real API gate completed. Frontend/backend integration may proceed.
+23 passed in 39.47s
+[PASS] Real API gate completed.
 ```
 
-已通过的边界包括：
-
-- Workflow node timeout / workflow deadline timeout → HTTP 504。
-- `NODE_TIMEOUT` / `WORKFLOW_TIMEOUT` error code preservation。
-- node retry transition 与 attempt lineage。
-- workflow retry budget exhaustion。
-- retry backoff crossing workflow deadline。
-- retry policy / retryable error code boundary。
-- Real API node retry business loop。
-- `node.retry.scheduled` trace。
-- `workflow.node.retry`、`workflow.node.retry_exhausted`、`workflow.execution.failed` audit。
-- Circuit Breaker open / fast-fail boundary。
-- Real HTTP idempotency reliability 场景。
-
-本轮最后一个失败为 Real API retry business loop 缺少 `workflow.node.retry` audit。已修复并提交：
-
-```text
-3a0ecfec47ab079b2ce284b56e20a88aa64efd0b
-fix: record workflow node retry audit event
-```
-
-修复位于 `WorkflowRuntime` retry scheduling 路径：确认 retry 不因 node policy、workflow budget 或 deadline exhaustion 被截断后，在 backoff sleep 前记录 `workflow.node.retry` audit，并携带 node、next attempt、delay metadata。
-
-因此 1.9-C 不再存在当前已知的 Runtime retry / timeout / governance Real API failure；后续不得重复修改已通过的边界，除非新的 Gate 暴露回归。
-
-### 1.9-D — Frontend / Browser Reliability Convergence
-
-状态：**本轮 Frontend / Browser Gate 已通过。**
-
-本轮开发者实际执行结果：
+### Frontend
 
 ```text
 Frontend Vitest:
@@ -118,58 +72,40 @@ Frontend production build:
 passed
 
 Frontend Regression Gate:
-[PASS] Frontend regression gate completed.
+[PASS]
+```
 
-Browser E2E:
+AuditLog focused regression：`2 passed / 0 failed`。
+
+### Browser E2E
+
+```text
+Desktop Chrome Browser E2E:
 3 passed in 10.5s
 [PASS] Phase 1.7-D browser E2E gate completed.
 ```
 
-Browser Gate 实际覆盖：
+覆盖：
 
-- Scheduled Trigger real browser contract。
-- Webhook Trigger real browser contract。
+- Scheduled Trigger real browser contract；
+- Webhook Trigger real browser contract；
 - Webhook duplicate-event convergence 与 lifecycle security。
-- Browser → Vue UI → Backend HTTP → Workflow Trigger Governance 跨层链路。
 
-AuditLog focused regression 同时为 2 passed / 0 failed。测试中的 malformed response `TypeError` 仅进入组件既有 catch 路径并输出 console.error，没有造成测试失败；生产 `AuditLogPanel.vue` 无需无关修改。
+## 5. Final Acceptance 结论
 
-因此 1.9-D 当前定义范围的 Frontend / Browser Gate 已取得本轮实际通过证据，不再依赖修复前的历史 Browser E2E 结果。
+Phase 1.9 关闭条件全部满足：
 
-### 1.9-E — Final Acceptance
+1. 1.9-A Acceptance PASS；
+2. 1.9-B Runtime Failure / Retry / Circuit Boundary PASS；
+3. 1.9-C Real API Reliability PASS；
+4. 1.9-D Frontend / Browser Reliability PASS；
+5. Backend / Frontend / Browser 三层 Gate 均来自开发者本地实际执行；
+6. Migration head 为 `0022_workflow_trigger`，且本轮实际执行 `upgrade head / current / heads` 均通过；
+7. `PROJECT_STATUS.md`、Phase 文档、Acceptance 文档已同步；
+8. 当前没有未记录的 Phase 1.9 阻塞错误。
 
-状态：**进行中，下一步完成 Migration / head 本轮复核后关闭。**
+因此 **Phase 1.9 Runtime Reliability / Production Hardening 正式关闭**。
 
-本轮已经取得：
+## 6. 后续原则
 
-- Backend default regression：264 passed, 23 deselected。
-- Real API Gate：23 passed。
-- Frontend Regression Gate：PASS。
-- Browser E2E：3 passed。
-
-剩余必须补齐：
-
-1. 本轮实际 `alembic upgrade head` / `current` / `heads` 证据；
-2. 最终 Backend / Frontend / Browser 三层 Gate 文档同步；
-3. 完成 Acceptance 后正式关闭 Phase 1.9。
-
-## 5. 验收门禁
-
-必须遵守 `docs/01-governance/DEVELOPMENT.md`：Backend pytest、Alembic upgrade head、Real API Gate、Frontend test/build、Browser E2E、前后端联调。GitHub Actions 不作为本阶段本地验收依据。
-
-Backend、Frontend、Browser 三层 Gate 必须独立执行，不创建 Full Regression Gate。
-
-## 6. 当前完成定义
-
-1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；**1.9-C 已通过当前开发者本地 focused Runtime / Retry / Timeout suite 与完整 Real API Gate；1.9-D Frontend / Browser Reliability Convergence 已通过当前开发者本地 Frontend Regression Gate 与独立 Browser E2E Gate。**
-
-Phase 1.9 只有在 1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate、Migration head 复核及文档同步后才能标记正式关闭。
-
-## 7. 下一步
-
-1. 进入 1.9-E Final Acceptance。
-2. 本轮执行 `uv run alembic upgrade head`、`uv run alembic current`、`uv run alembic heads`，确认 migration head。
-3. 核对 Backend 264 passed / 23 deselected、Real API 23 passed、Frontend 13 files / 52 tests、Browser 3 passed 的本轮证据。
-4. 完成关键失败场景、跨层联调与文档一致性检查。
-5. 发现新错误立即记录 `docs/04-errors/`，不提前关闭 Phase 1.9。
-6. Migration / head 与最终文档同步完成后，正式关闭 Phase 1.9。
+Phase 1.9 已通过的可靠性边界不得无原因重复修改；只有后续新 Gate 暴露回归或新的明确需求时才进入修复。后续任务必须继续遵守 `docs/01-governance/DEVELOPMENT.md`，直接基于最新 `main` 开发并提交。
