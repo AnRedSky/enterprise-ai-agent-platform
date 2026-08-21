@@ -58,7 +58,9 @@ test("Workflow Trigger Governance completes the real browser contract", async ({
     await expect(page.getByText("Workflow Trigger Governance")).toBeVisible();
     await expect(page.getByText("Tenant 不由前端提交")).toBeVisible();
 
-    const workflowSelect = page.getByRole("combobox").first();
+    const workflowFormItem = page.locator(".el-form-item").filter({ hasText: "Workflow" }).first();
+    const workflowSelect = workflowFormItem.locator(".el-select");
+    await expect(workflowSelect).toBeVisible();
     await workflowSelect.click();
     await page.getByText(`${workflow.name} (published)`, { exact: true }).click();
 
