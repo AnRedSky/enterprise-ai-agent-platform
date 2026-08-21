@@ -4,12 +4,13 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
+from app.runtime.workflow_runtime import WorkflowRuntime
 from app.services.workflow_execution import WorkflowExecutionService
 from app.services.workflow_governance import WorkflowGovernanceService
 from app.services.workflow_trigger_schedule import validate_trigger_config
@@ -95,9 +96,12 @@ class WorkflowTriggerService:
         self.db.add(trigger)
         try:
             await self.db.commit()
-        except IntegrityError as exc:
-            await self.db.rollback()
-            raise HTTPException(409, "同一 Workflow 下 Trigger name 已存在") from exc
+        except Exception as exc:
+            from sqlalchemy.exc import IntegrityError
+            if isinstance(exc, IntegrityError):
+                await self.db.rollback()
+                raise HTTPException(409, "同一 Workflow 下 Trigger name 已存在") from exc
+            raise
         await self.db.refresh(trigger)
         return trigger
 
@@ -114,9 +118,12 @@ class WorkflowTriggerService:
             trigger.config = config
         try:
             await self.db.commit()
-        except IntegrityError as exc:
-            await self.db.rollback()
-            raise HTTPException(409, "同一 Workflow 下 Trigger name 已存在") from exc
+        except Exception as exc:
+            from sqlalchemy.exc import IntegrityError
+            if isinstance(exc, IntegrityError):
+                await self.db.rollback()
+                raise HTTPException(409, "同一 Workflow 下 Trigger name 已存在") from exc
+            raise
         await self.db.refresh(trigger)
         return trigger
 
@@ -149,13 +156,7 @@ class WorkflowTriggerService:
         recovery: bool = False,
         return_created: bool = False,
     ) -> WorkflowExecution | tuple[WorkflowExecution, bool]:
-        """Dispatch a scheduled Trigger through the same Workflow Runtime as manual execution.
-
-        ``return_created`` is an internal scheduler contract. It lets the scheduler
-        distinguish the worker that won the database idempotency claim from a worker
-        that converged on an already-created execution. The normal service contract
-        continues to return only WorkflowExecution.
-        """
+        """Dispatch a scheduled Trigger with an atomic PostgreSQL idempotency claim."""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "scheduled":
@@ -164,21 +165,48 @@ class WorkflowTriggerService:
         if not idempotency_key:
             raise HTTPException(422, "Scheduled Trigger 必须提供调度 Idempotency-Key")
         version = await self._get_published_version(workflow)
+        WorkflowRuntime.validate_definition(version.definition)
+
         existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
         if existing is not None:
+            result: WorkflowExecution | tuple[WorkflowExecution, bool] = (existing, False) if return_created else existing
+            return result
+
+        execution = WorkflowExecution(
+            tenant_id=workflow.tenant_id,
+            workflow_id=workflow.id,
+            workflow_version_id=version.id,
+            created_by=actor_id,
+            idempotency_key=idempotency_key,
+            status="pending",
+            input_data=input_data,
+        )
+        stmt = (
+            pg_insert(WorkflowExecution)
+            .values(
+                id=execution.id,
+                tenant_id=execution.tenant_id,
+                workflow_id=execution.workflow_id,
+                workflow_version_id=execution.workflow_version_id,
+                created_by=execution.created_by,
+                idempotency_key=execution.idempotency_key,
+                status=execution.status,
+                input_data=execution.input_data,
+            )
+            .on_conflict_do_nothing(index_elements=["tenant_id", "idempotency_key"])
+            .returning(WorkflowExecution.id)
+        )
+        claimed_id = (await self.db.execute(stmt)).scalar_one_or_none()
+        if claimed_id is None:
+            await self.db.rollback()
+            existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
+            if existing is None:
+                raise HTTPException(409, "Scheduled Trigger Idempotency claim 未收敛")
             return (existing, False) if return_created else existing
 
-        execution_service = WorkflowExecutionService(self.db)
-        execution = await execution_service.create(
-            workflow, version, actor_id, input_data, idempotency_key=idempotency_key
-        )
-        created = execution.id == getattr(execution_service, "_last_created_execution_id", execution.id)
-        # WorkflowExecutionService.create returns the pre-existing row when a
-        # concurrent worker loses the idempotency race. The service intentionally
-        # keeps that behavior for all callers; the scheduler only needs a creation
-        # signal to maintain accurate worker convergence counters.
-        if not created:
-            return (execution, False) if return_created else execution
+        execution = (await self.db.execute(
+            select(WorkflowExecution).where(WorkflowExecution.id == claimed_id)
+        )).scalar_one()
         audit_action = "workflow.trigger.scheduled_recovery" if recovery else "workflow.trigger.scheduled"
         trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
         await self.governance.audit(
@@ -209,8 +237,8 @@ class WorkflowTriggerService:
             },
         )
         await self.db.commit()
-        result = await execution_service.run(execution, version, actor_id)
-        return (result, True) if return_created else result
+        result_execution = await WorkflowExecutionService(self.db).run(execution, version, actor_id)
+        return (result_execution, True) if return_created else result_execution
 
     async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID,
                      input_data: dict, idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
@@ -219,14 +247,12 @@ class WorkflowTriggerService:
         if trigger.trigger_type != "manual":
             raise HTTPException(409, "当前 Trigger 类型不可直接调用")
         version = await self._get_published_version(workflow)
-
         if idempotency_key:
             existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
             if existing is not None:
                 if existing.workflow_id != workflow.id:
                     raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
                 return existing
-
         execution_service = WorkflowExecutionService(self.db)
         execution = await execution_service.create(workflow, version, actor_id, input_data, idempotency_key=idempotency_key)
         await self.governance.audit(
@@ -237,8 +263,7 @@ class WorkflowTriggerService:
             metadata={"trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type},
         )
         await self.governance.trace(execution, actor_id, "trigger.invoked", "pending", data={
-            "trigger_id": str(trigger.id),
-            "trigger_type": trigger.trigger_type,
+            "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type,
         })
         await self.db.commit()
         return await execution_service.run(execution, version, actor_id, is_admin)
