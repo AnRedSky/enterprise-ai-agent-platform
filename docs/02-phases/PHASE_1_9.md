@@ -24,10 +24,10 @@
 | Workflow / Execution / Governance | 1.9-C Runtime reliability 专项已通过当前本地验证 |
 | Retry / Timeout / Idempotency / Deadline | 1.9-C 当前 focused + Real API 验证通过 |
 | Circuit Breaker | 1.9-A/1.9-B 已验证，1.9-C Real API boundary 已通过 |
-| Scheduled Trigger | 已实现当前历史范围；待 1.9-D/E 跨层复验 |
-| Webhook Trigger | 已实现当前历史范围 |
-| Frontend Governance UI | 已实现当前历史范围 |
-| Browser E2E | 已形成独立 Gate；1.9-D 尚未完成 |
+| Scheduled Trigger | 已实现当前历史范围；1.9-D 跨层复验通过 |
+| Webhook Trigger | 已实现当前历史范围；1.9-D Browser E2E 复验通过 |
+| Frontend Governance UI | 已实现当前历史范围；1.9-D Frontend regression/build 通过 |
+| Browser E2E | 独立 Gate 已通过当前 1.9-D 范围 |
 
 ## 3. 重要边界
 
@@ -105,15 +105,40 @@ fix: record workflow node retry audit event
 
 ### 1.9-D — Frontend / Browser Reliability Convergence
 
-状态：**下一项任务，尚未完成。**
+状态：**当前开发者本地验证通过。**
 
-目标：验证已有 UI/API 的失败态、重复提交、Execution 状态刷新和 Trigger 生命周期，不新增产品范围。
+本轮实际执行结果：
 
-必须保持 Backend、Frontend、Browser 三层 Gate 独立，并通过真实 Frontend + Backend HTTP 的 Browser E2E 验证跨层行为。
+```text
+Frontend Vitest:
+13 test files passed
+52 tests passed
+
+Frontend production build:
+passed
+
+Frontend Regression Gate:
+[PASS] Frontend regression gate completed.
+
+Browser E2E:
+3 passed in 12.0s
+[PASS] Phase 1.7-D browser E2E gate completed.
+```
+
+Browser Gate 实际覆盖：
+
+- Scheduled Trigger real browser contract。
+- Webhook Trigger real browser contract。
+- Webhook duplicate-event convergence 与 lifecycle security。
+- Browser → Vue UI → Backend HTTP → Workflow Trigger Governance 跨层链路。
+
+另外，Frontend `AuditLogPanel` 的 error-state 测试 fixture 已从“返回不完整响应对象”修正为真实 API rejection 场景，避免测试通过时产生无意义的 `TypeError` stderr；生产代码无需因此改变。
+
+因此 1.9-D 当前定义范围的 Frontend / Browser Gate 已通过。尚未因此提前关闭 Phase 1.9，1.9-E Final Acceptance 仍需独立执行。
 
 ### 1.9-E — Final Acceptance
 
-状态：**未开始。**
+状态：**下一项任务。**
 
 完成 Backend / Frontend / Browser 三层独立 Gate、Real API、Migration head、关键失败场景和文档同步后关闭 Phase 1.9。
 
@@ -125,14 +150,15 @@ Backend、Frontend、Browser 三层 Gate 必须独立执行，不创建 Full Reg
 
 ## 6. 当前完成定义
 
-1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；**1.9-C 已通过当前开发者本地 focused Runtime / Retry / Timeout suite 与完整 Real API Gate**。
+1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；**1.9-C 已通过当前开发者本地 focused Runtime / Retry / Timeout suite 与完整 Real API Gate；1.9-D Frontend / Browser Reliability Convergence 已通过当前开发者本地 Frontend Regression Gate 与独立 Browser E2E Gate。**
 
-Phase 1.9 只有在 1.9-D、1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
+Phase 1.9 只有在 1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
 
 ## 7. 下一步
 
-1. 进入 1.9-D Frontend / Browser Reliability Convergence。
-2. 执行 Frontend Regression / Build。
-3. 执行独立 Browser / Frontend-Backend E2E，重点覆盖 Execution failure state、重复提交、状态刷新、Scheduled Trigger 生命周期。
-4. 发现新错误立即记录 `docs/04-errors/`，不提前关闭 Phase 1.9。
-5. 通过 1.9-D 后进入 1.9-E Final Acceptance，并同步 Acceptance 文档。
+1. 进入 1.9-E Final Acceptance。
+2. 重新执行 Backend default regression、Alembic migration head 与 Real API Gate，确认 1.9-C 后端基线没有回归。
+3. 复核 Frontend Regression Gate 与 Browser E2E Gate 的当前结果。
+4. 完成关键失败场景、跨层联调与文档一致性检查。
+5. 发现新错误立即记录 `docs/04-errors/`，不提前关闭 Phase 1.9。
+6. 通过 1.9-E 后同步 `PROJECT_STATUS.md` 与 Acceptance 文档，并正式关闭 Phase 1.9。
