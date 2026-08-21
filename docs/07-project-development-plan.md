@@ -18,10 +18,14 @@
 | Phase 1.4-E | Knowledge / Retrieval 生产化深化 | pgvector schema、adapter、Embedding Provider contract、真实 Chunk → Embedding → pgvector indexing 链路已实现；mock + PostgreSQL/pgvector deterministic quality validation 已通过；真实 Embedding 语义质量仍待真实 Provider |
 | Phase 1.4-F/G | Vue Knowledge / Retrieval Debug / Runtime Trace | **G-01 / G-02 已完成；Backend 152 passed、0 warnings；migration 0012 已到 head** |
 | Phase 1.5 | Workflow / Governance | **1.5-A～1.5-G 全部完成；1.5-G Circuit Breaker Real API 已完成最终验收** |
-| Phase 1.6 | Workflow Production Hardening | **已建立阶段基线；下一项为 1.6-A Workflow Trigger Contract，尚未开始代码实现** |
+| Phase 1.6 | Workflow Production Hardening | **A～C 全部完成并正式关闭；Backend / Frontend / Browser E2E 三层 Gate 与实际联调完成** |
+| Phase 1.7-A | Scheduled Trigger Backend Contract | **开发中** |
+| Phase 1.7-B | Scheduler execution / persistence integration | 待 1.7-A 验收 |
+| Phase 1.7-C | Frontend Schedule Governance UI Contract | 待 1.7-B |
+| Phase 1.7-D | Real HTTP + Browser E2E scheduling contract | 待 1.7-C |
 
-详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`、`docs/12-phase-1.4-e-vector-retrieval-provider.md`、`docs/13-phase-1.5-workflow-governance-plan.md` 与 `docs/15-phase-1.6-workflow-production-hardening-plan.md`。
-当前项目实时进度统一见 `docs/PROJECT_STATUS.md`；工程长期开发规则统一见 `docs/DEVELOPMENT.md`；规范核查与纠偏见 `docs/14-project-compliance-audit-and-correction-plan.md`。
+详细执行基线见 `docs/11-phase-1.4-knowledge-rag-plan.md`、`docs/12-phase-1.4-e-vector-retrieval-provider.md`、`docs/13-phase-1.5-workflow-governance-plan.md`、`docs/15-phase-1.6-workflow-production-hardening-plan.md` 与 `docs/18-phase-1.7-workflow-trigger-scheduling-contract.md`。
+当前项目实时进度统一见 `docs/PROJECT_STATUS.md`；工程长期开发规则统一见 `docs/DEVELOPMENT.md`。
 
 ## 6. 固定前后端开发顺序
 
@@ -44,6 +48,8 @@ Frontend production build
   ↓
 前后端实际联调
   ↓
+Browser E2E（需要时作为第三独立层）
+  ↓
 更新验收文档
   ↓
 直接提交 main
@@ -51,53 +57,64 @@ Frontend production build
 
 Backend 统一使用 uv 项目环境；Python、Alembic、pytest 以及脚本内 Python 命令必须通过 `uv run` 执行。Frontend 必须同时通过 `npm test` 与 `npm run build` 后才能进入下一模块。
 
-## 7. Phase 1.5-G Circuit Breaker Real API 完成记录
+## 7. Phase 1.6 最终关闭记录
 
-Phase 1.5-G 已完成以下能力：
+Phase 1.6 已完成：
 
-1. `WorkflowCircuitState` 持久化模型。
-2. `0020_workflow_circuit_breaker` 基础表迁移。
-3. `0021_workflow_circuit_policy` 持久化 `failure_threshold` / `recovery_timeout_ms` / `half_open_max_calls`。
-4. Database-backed `CircuitBreakerService`。
-5. CLOSED / OPEN / HALF_OPEN 状态机。
-6. `tenant_id + circuit_key` 隔离。
-7. OPEN Fast-Fail，`CIRCUIT_OPEN` 不进入 Node Retry。
-8. HALF_OPEN probe quota 并发治理。
-9. probe success → CLOSED；probe failure → OPEN。
-10. policy drift 返回 `409`，禁止静默改变既有治理参数。
-11. Retry / Timeout / Workflow Deadline / Governance 边界。
-12. Real API deterministic fixture 与并发 HALF_OPEN probe 场景。
-13. 修复 Circuit State 新建对象在 SQLAlchemy flush 前计数值可能为 `None` 的初始化缺陷。
+1. Workflow Trigger Backend Contract。
+2. Trigger CRUD / invoke / lifecycle / Published Workflow validation。
+3. Idempotency / Concurrency / Reliability Governance 复用。
+4. Audit / Trace Trigger identity。
+5. Frontend Trigger API Type / Vitest / Governance UI。
+6. Trigger Real HTTP contract 与 UI 手工验收。
+7. 第三独立 Browser E2E 层。
 
-开发者本地验收结果：
+最终开发者本地验收：
 
 ```text
-uv run alembic upgrade head
-→ 0020_workflow_circuit_breaker -> 0021_workflow_circuit_policy 成功
+Backend Real API
+→ 14 passed in 21.28s
 
-uv run pytest -q
-→ 209 passed, 11 deselected in 3.44s
+Frontend Vitest
+→ 50 passed
 
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
-→ 11 passed in 17.62s
-→ [PASS] Real API gate completed. Frontend/backend integration may proceed.
+Frontend production build
+→ PASS
+
+Browser E2E
+→ 1 passed (3.9s)
 ```
 
-Phase 1.5-G 最终验收通过，Phase 1.5 正式关闭。
+Phase 1.6 正式关闭。
 
-## 8. 当前规则
+## 8. Phase 1.7 当前基线
+
+Phase 1.7 是项目在 Phase 1.6 manual Trigger 业务入口闭环之后的下一项能力扩展。当前只推进 Scheduled Trigger Backend Contract，不提前引入 Scheduler 基础设施。
+
+第一项任务：**Phase 1.7-A-01 Scheduled Trigger Backend Contract**。
+
+初始 Schedule Contract 采用可测试的：
+
+```json
+{
+  "timezone": "Asia/Shanghai",
+  "interval_seconds": 300
+}
+```
+
+第一项任务明确不实现 MQ、Worker、Event Bus、Cron daemon、Temporal/Airflow 或任意 Cron DSL。保存 Schedule 不产生 Workflow Execution。
+
+## 9. 当前规则
 
 - 本地开发 / 测试阶段，不执行 GitHub Actions CI。
 - Backend 所有测试、脚本、Alembic 使用 `uv run` 项目环境。
 - 真实 `.env` / API Key / DB credentials 不提交 Git。
 - pgvector 必须由 PostgreSQL 服务端提供，不能通过 Python 依赖替代。
-- Phase 1.5 必须严格遵循“Backend Contract → Migration/pytest → Frontend API/Vitest → UI → 手工验收 → 联调 → 全量回归 → 文档 → main”。Phase 1.6 继续执行相同固定顺序。
-- Backend 测试脚本禁止混入 Frontend 测试；Frontend 测试必须独立通过 `npm test` / `npm run build` 执行。
 - Backend Regression Gate 与 Frontend Regression Gate 必须分别位于 `backend/` 与 `frontend/` 目录。
 - Real API 唯一入口为 `backend/scripts/test/api-real/01_run_real_api_tests.ps1`。
-- 不得恢复同时调用 Backend 与 Frontend 测试的 Full Regression 脚本。
+- Browser / Frontend-Backend E2E 作为第三独立测试层维护在 `frontend/scripts/test/e2e/`。
 - 工程错误统一记录到 `docs/error-tracking/`。
 
-## 9. 下一步任务
+## 10. 下一步任务
 
-Phase 1.5 已正式完成。下一阶段为 **Phase 1.6 Workflow Production Hardening**，当前第一项执行任务为 **1.6-A Workflow Trigger Contract**。必须先完成 Backend Contract，再按固定前后端顺序推进；不得直接实现 MQ、Worker、Cron、Event Bus 或具体 Workflow Engine。
+立即进入 **Phase 1.7-A-01 Scheduled Trigger Backend Contract**：先实现 Domain / Schema Contract 与 pytest/API Contract；完成 Backend Contract 后再进入 migration、Real API 与 Frontend，不得跳过 Backend Contract 直接开发调度 UI。

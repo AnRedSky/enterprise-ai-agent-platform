@@ -1,6 +1,6 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 核心闭环已完成，Phase 1.5 Workflow / Governance 已完成，当前主线进入 Phase 1.6 Workflow Production Hardening。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 核心闭环已完成，Phase 1.5 Workflow / Governance 已完成，Phase 1.6 Workflow Production Hardening 已正式关闭，当前进入 Phase 1.7 Workflow Trigger Expansion / Scheduling Contract。
 
 ## 项目文档
 
@@ -14,6 +14,8 @@
 - [Phase 1.5 Workflow / Governance](docs/13-phase-1.5-workflow-governance-plan.md)
 - [Phase 1.6 Workflow Production Hardening](docs/15-phase-1.6-workflow-production-hardening-plan.md)
 - [Phase 1.6-B Frontend Workflow Governance UI](docs/16-phase-1.6-b-frontend-workflow-governance-ui-contract.md)
+- [Phase 1.6-C Frontend / Backend E2E](docs/17-phase-1.6-c-frontend-backend-e2e-contract.md)
+- [Phase 1.7 Workflow Trigger Scheduling Contract](docs/18-phase-1.7-workflow-trigger-scheduling-contract.md)
 - [错误跟踪记录](docs/error-tracking/README.md)
 - [本地功能测试与验收](docs/LOCAL_TESTING.md)
 - [提交规范](docs/CONTRIBUTING.md)
@@ -28,14 +30,24 @@ Workflow / Governance 基础闭环已完成：Workflow Definition、Publish Gove
 
 ### Phase 1.6
 
-当前进入 Workflow Production Hardening：
+Workflow Production Hardening 已正式关闭：
 
-- Phase 1.6-A Workflow Trigger Contract：Backend Contract 已完成并关闭，Backend 两道 Gate 已通过开发者本地手工验收。
-- Phase 1.6-B Frontend Contract / Workflow Governance UI：已实现 Frontend API Type、Vitest contract tests、Trigger Governance UI；Frontend Gate 待开发者本地执行。
+- Phase 1.6-A Backend Trigger Contract 已关闭。
+- Phase 1.6-B Frontend Workflow Governance UI Contract 已关闭。
+- Phase 1.6-C Browser / Frontend-Backend E2E Contract 已关闭。
+- Backend Real API：14 passed。
+- Frontend Vitest：50 passed。
+- Frontend production build：PASS。
+- Browser E2E：1 passed。
 
-Phase 1.6-B 页面入口：`/workflows/triggers`。
+### Phase 1.7
 
-前后端继续严格按“后端 contract → 后端测试 → 前端 API/测试 → 前端 UI → 独立 Gate → 联调”的顺序推进。
+当前进入 Workflow Trigger Expansion / Scheduling Contract：
+
+- Phase 1.7-A-01：Scheduled Trigger Backend Contract **开发中**。
+- 第一项只实现 Domain / Schema / pytest/API Contract。
+- 暂不引入 MQ、Worker、Event Bus、Cron daemon 或具体 Workflow Engine。
+- Schedule 初始基线采用 `timezone + interval_seconds`，保存配置不直接产生 Execution。
 
 ## 前端测试目录约束
 
@@ -44,24 +56,22 @@ Frontend 业务源码与测试严格分离：
 ```text
 frontend/
 ├── src/       # 业务源码
-└── tests/     # Vitest 测试
-    ├── api/
-    ├── views/
-    └── setup.ts
+└── tests/     # Vitest / Browser E2E 测试
 ```
 
-`frontend/src/` 禁止新增 `*.test.*`；Vitest 只执行 `frontend/tests/**/*.test.ts`。
+Frontend 单元 / UI 测试统一位于 `frontend/tests/`；`frontend/src/` 禁止新增 `*.test.*`。
 
 ## 测试 Gate 独立性
 
-Backend 与 Frontend Gate 完全独立：
+Backend、Frontend、Browser/E2E 三层 Gate 完全独立：
 
 ```text
-backend/scripts/test/   # Backend 测试 Gate
-frontend/scripts/test/  # Frontend 测试 Gate
+backend/scripts/test/   # Backend Gate
+frontend/scripts/test/  # Frontend Gate
+frontend/scripts/test/e2e/  # Browser / Frontend-Backend E2E Gate
 ```
 
-Backend Gate 不调用 npm；Frontend Gate 不调用 uv、pytest、Alembic 或 Real API。Browser / Frontend-Backend E2E 未来作为第三独立测试层实现。
+E2E 不复制 Backend regression、Migration、Real API 或 Frontend regression。
 
 ## 环境配置
 
@@ -72,7 +82,7 @@ Copy-Item backend/.env.example backend/.env
 Copy-Item frontend/.env.example frontend/.env
 ```
 
-Backend 使用 **uv** 管理依赖与虚拟环境，后端测试、脚本和服务运行统一使用项目 `.venv` 中的 `uv run`。
+Backend 使用 **uv** 管理依赖与虚拟环境；后端测试、脚本和服务运行统一使用项目 `.venv` 中的 `uv run`。
 
 ## 本地启动
 
@@ -120,8 +130,10 @@ cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
-当前阶段测试与质量门禁均在本地执行，暂不执行 GitHub Actions CI。
+Browser E2E：
 
-## 配置真实模型
-
-复制 `backend/.env.example` 为 `backend/.env`，设置真实 Provider 配置。禁止将 `.env` 或任何密钥提交到 Git。
+```powershell
+cd frontend
+npx playwright test --list --project="Desktop Chrome"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+```

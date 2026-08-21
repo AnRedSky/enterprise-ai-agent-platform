@@ -1,7 +1,6 @@
 # 项目开发进度
 
-> 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。
-> 工程开发规则统一维护在 `docs/DEVELOPMENT.md`，不得在本文件复制或替代开发准则。
+> 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。工程开发规则统一维护在 `docs/DEVELOPMENT.md`。
 
 ## 1. 当前主线
 
@@ -9,11 +8,11 @@
 - 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
 - 开发方式：所有功能直接在 `main` 开发与提交
 - Phase 1.5：**已完成**
-- 当前阶段：**Phase 1.6 Workflow Production Hardening**
-- 当前任务：**Phase 1.6-C Frontend / Backend Integration & Browser E2E Contract**
+- Phase 1.6：**已完成并正式关闭**
+- 当前阶段：**Phase 1.7 Workflow Trigger Expansion / Scheduling Contract**
+- 当前任务：**Phase 1.7-A-01 Scheduled Trigger Backend Contract**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立
-- 规范核查：已完成，详见 `docs/14-project-compliance-audit-and-correction-plan.md`
 
 ## 2. 阶段状态
 
@@ -23,96 +22,52 @@
 | Phase 1.2 | 已完成 | Identity、RBAC、Agent、Session、SSE、基础 Tool |
 | Phase 1.3 | 已完成 | Model Gateway、Tool Runtime、Memory、Observability、基础管理端 |
 | Phase 1.4 | 已完成核心闭环 | Knowledge / RAG、pgvector、Embedding / Retrieval contract、Runtime Trace |
-| Phase 1.5-A | 已完成 | Workflow Definition Contract，本地 Backend 验收通过 |
-| Phase 1.5-B | 已完成 | Publish Governance、Tenant Contract，本地 Backend 手工验收通过 |
-| Phase 1.5-C | 已完成 | Workflow Execution State Machine，本地 Backend 验收通过 |
-| Phase 1.5-D | 已完成 | Workflow Runtime Integration；本地验收无异常 |
-| Phase 1.5-E | 已完成 | Governance / Audit / Trace；全量测试通过，warning 已修复并验收通过 |
-| Phase 1.5-F | 已完成 | Cancel / Retry / Retry lineage / Idempotency-Key / Execution Concurrency / Timeout / Failure Recovery / Node Retry / Attempt / Retry Budget / Workflow Deadline 治理已完成并通过 Real API 边界验收 |
-| Phase 1.5-G | **已完成** | Circuit Breaker 治理完成；Backend pytest、migration/head、Real API Gate 全部通过 |
-| Phase 1.5 | **已完成** | A～G 全部完成；不再重复开发 Circuit Breaker |
-| 测试基础设施治理 | 已修复 | Backend / Frontend Gate 已拆分，测试脚本归属正确 |
-| Phase 1.6-A | **已完成** | Workflow Trigger Backend Contract；Backend Domain / API / Migration / Contract / Real API 两道 Gate 已由开发者本地手工验收通过 |
-| Phase 1.6-B | **已完成** | Frontend API Type / Vitest / Workflow Trigger Governance UI 已实现；Frontend Vitest、production build、Trigger Real HTTP、UI 手动验收已通过 |
-| Phase 1.6-C | **开发中** | Browser / Frontend-Backend E2E 第三独立测试层已建立；首次 Gate 因 Playwright project 配置不一致在测试启动前阻塞，已修复配置，等待开发者本地重新执行 E2E Gate |
+| Phase 1.5 | **已完成** | Workflow / Governance A～G 全部完成；Circuit Breaker 最终验收通过 |
+| Phase 1.6-A | **已完成** | Workflow Trigger Backend Contract；Backend Domain / API / Migration / Contract / Real API 两道 Gate 通过 |
+| Phase 1.6-B | **已完成** | Frontend API Type / Vitest / Workflow Trigger Governance UI；Frontend Regression、Trigger Real HTTP、UI 手动验收通过 |
+| Phase 1.6-C | **已完成** | Browser / Frontend-Backend E2E 第三独立测试层建立并通过；最终 Browser E2E 1 passed |
+| Phase 1.6 | **已正式关闭** | A～C 全部完成，三层 Gate 与实际联调完成 |
+| Phase 1.7-A-01 | **开发中** | Scheduled Trigger Backend Contract；先做 Domain / Schema / pytest，暂不实现 Scheduler / Worker |
 
-## 3. 测试 Gate 结构
+## 3. Phase 1.6 最终验收
+
+### Backend
 
 ```text
-Backend Gate（独立）
-Backend regression → Migration/head → Real API
-
-Frontend Gate（独立）
-Frontend test → production build
-
-E2E Gate（独立第三层）
-Browser → real Frontend → real Backend HTTP
+Real API Gate
+→ 14 passed in 21.28s
+→ PASS
 ```
 
-E2E 不复制 Backend 或 Frontend 现有 Gate。
+开发者随后完成 Trigger disabled invoke 的 HTTP 409 边界手工验证，并确认最终联调通过。
 
-## 4. Phase 1.6-A / 1.6-B 实际验收摘要
-
-### Phase 1.6-A
+### Frontend
 
 ```text
-Backend pytest / Migration / Real API
-→ Phase 1.6-A Backend Contract 正式关闭
+Frontend Vitest
+→ 50 passed
+Frontend production build
+→ PASS
+Trigger Real HTTP Contract
+→ 手动测试全部通过
+Frontend UI 手动验收
+→ PASS
 ```
 
-Trigger Contract 包含：
-
-- WorkflowTrigger domain model 与 Tenant / Workflow scope。
-- Migration `0022_workflow_trigger`。
-- Trigger CRUD、manual invoke、enabled/disabled、Published Workflow 校验。
-- Idempotency-Key 复用 Workflow Execution 治理。
-- Trigger identity 写入 Audit metadata / Trace data。
-
-### Phase 1.6-B
-
-已完成：
-
-- `frontend/src/api/workflows.ts`
-- `frontend/src/views/workflow-triggers/index.vue`
-- `frontend/src/router/index.ts`
-- `frontend/tests/api/workflows.test.ts`
-- `frontend/tests/views/WorkflowTriggers.test.ts`
-- `frontend/scripts/test/api-real/01_run_trigger_http_contract.ps1`
-
-开发者反馈的最终结果：
+### Browser E2E
 
 ```text
-Frontend Vitest             PASS — 50 passed
-Frontend production build   PASS
-Backend Real API            PASS — 14 passed
-Frontend Trigger HTTP       PASS（手动测试）
-Frontend UI 手动验收         PASS
+Playwright project: Desktop Chrome
+Browser E2E Gate
+→ 1 passed (3.9s)
+→ PASS
 ```
 
-因此 Phase 1.6-B 正式关闭。
-
-## 5. Phase 1.6-C 当前实现
-
-已建立第三独立 E2E 层：
-
-```text
-frontend/playwright.config.ts
-frontend/tests/e2e/workflow-trigger-governance.spec.ts
-frontend/scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
-```
-
-`frontend/package.json` 增加：
-
-```text
-@playwright/test
-npm run test:e2e
-```
-
-E2E 真实用户链路覆盖：
+真实浏览器链路覆盖：
 
 ```text
 注册隔离用户
-→ Backend 创建 Published Workflow fixture
+→ 创建 Published Workflow fixture
 → Browser 登录
 → Workflow Trigger Governance
 → 创建 manual Trigger
@@ -124,74 +79,63 @@ E2E 真实用户链路覆盖：
 → Delete
 ```
 
-首次执行时发现：
+Phase 1.6-C 最终通过后，Phase 1.6 正式关闭。
+
+## 4. Phase 1.6 工程错误收口
+
+Phase 1.6-C 期间实际发现并修复的工程问题：
+
+1. Playwright Gate 使用 `--project="Desktop Chrome"`，但配置未声明同名 project。
+2. E2E fixture 对认证注册状态码的错误断言导致 404 预期与真实 API 不一致；已按真实 HTTP Contract 修正。
+3. Workflow Select 的 Element Plus input 被 selected item 拦截；E2E 改为稳定的可见 Select 交互。
+4. Published Workflow 文本同时存在于页面与下拉选项，导致 strict mode violation；E2E 选择范围已收窄到可见 dropdown。
+5. Delete confirmation 存在多个“确定”按钮；E2E 已将确认定位限定到可见 MessageBox。
+
+相关工程错误记录统一位于 `docs/error-tracking/`。
+
+## 5. Phase 1.7 下一阶段规划基线
+
+Phase 1.6 已验证 manual Trigger 的真实业务入口闭环。下一阶段采用“先 Contract、后 Scheduler”的原则，第一项为 Scheduled Trigger Backend Contract。
+
+Phase 1.7 分解：
 
 ```text
-Project(s) "Desktop Chrome" not found. Available projects: ""
+1.7-A Scheduled Trigger Backend Contract
+      ↓
+1.7-B Scheduler execution / persistence integration
+      ↓
+1.7-C Frontend Schedule Governance UI Contract
+      ↓
+1.7-D Real HTTP + Browser E2E scheduling contract
 ```
 
-根因是 `frontend/playwright.config.ts` 原先只使用 `devices["Desktop Chrome"]`，但未声明与 Gate 脚本一致的 `projects[].name`。该工程错误已记录在：
+1.7-A 明确不实现：
+
+- MQ / Worker
+- Event Bus
+- Cron daemon
+- Temporal / Airflow 等 Workflow Engine
+- 任意 Cron DSL
+
+首个 Schedule Contract 采用可测试的 `timezone + interval_seconds` 基线；保存 Schedule 不自动创建 Execution。
+
+## 6. 当前立即执行任务
+
+**Phase 1.7-A-01：Scheduled Trigger Backend Contract**
+
+固定顺序：
 
 ```text
-`docs/error-tracking/004-playwright-project-missing.md`
+Backend Domain + Schema
+→ pytest / API Contract
+→ migration（仅在需要时）
+→ Real API
+→ Frontend
+→ Frontend Gate
+→ 联调
+→ Browser E2E
+→ 文档
+→ main
 ```
 
-当前已修正为显式 `Desktop Chrome` project。**修复后尚未重新执行 Browser E2E，因此不得标记 Phase 1.6-C 通过。**
-
-## 6. Phase 1.6-C 本地执行要求
-
-首次安装：
-
-```powershell
-cd frontend
-npm install
-npx playwright install chromium
-```
-
-启动 Backend：
-
-```powershell
-cd backend
-uv run python run.py
-```
-
-启动 Frontend：
-
-```powershell
-cd frontend
-npm run dev
-```
-
-建议先验证 Playwright project：
-
-```powershell
-cd frontend
-npx playwright test --list --project="Desktop Chrome"
-```
-
-执行正式 E2E Gate：
-
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
-```
-
-可选环境变量：
-
-```text
-FRONTEND_BASE_URL=http://127.0.0.1:5173
-API_BASE_URL=http://127.0.0.1:8000/api/v1
-```
-
-## 7. 下一步关闭条件
-
-Phase 1.6-C 关闭前必须以开发者本地实际结果为准完成：
-
-1. Browser E2E Gate。
-2. Backend Gate。
-3. Frontend Gate。
-4. 更新本文件与 `docs/17-phase-1.6-c-frontend-backend-e2e-contract.md`。
-5. 若出现工程错误，记录到 `docs/error-tracking/`。
-6. 提交 `main`。
-
-E2E Gate 通过前，不进入下一 Phase 的业务功能扩展。
+本状态文件只在实际结果确认后更新，不预先宣称未执行的 Gate 通过。

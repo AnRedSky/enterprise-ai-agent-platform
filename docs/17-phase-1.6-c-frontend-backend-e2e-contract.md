@@ -1,48 +1,29 @@
 # Phase 1.6-C：Frontend / Backend Integration & Browser E2E Contract
 
-> 本阶段建立 Backend Contract、Frontend Contract 之外的第三独立测试层。依据 `docs/DEVELOPMENT.md`，Browser / Frontend-Backend E2E 不复制 Backend regression、Migration、Real API 或 Frontend regression。
+> 本阶段建立 Backend Contract、Frontend Contract 之外的第三独立测试层。Browser / Frontend-Backend E2E 不复制 Backend regression、Migration、Real API 或 Frontend regression。
 
 ## 1. 阶段目标
 
 验证 Workflow Trigger Governance 从真实浏览器入口到真实 Backend HTTP 的完整用户链路：
 
 ```text
-Browser
-  ↓
-Vue 3 UI
-  ↓
-Frontend API client
-  ↓
-FastAPI HTTP
-  ↓
-Workflow Trigger Service
-  ↓
-Workflow Execution
-  ↓
-PostgreSQL
+Browser → Vue 3 UI → Frontend API client → FastAPI HTTP → Workflow Trigger → Workflow Execution → PostgreSQL
 ```
-
-本阶段只验证已有 Phase 1.6-A / 1.6-B Contract，不扩展 MQ、Worker、Cron、Event Bus、Temporal 或其他 Workflow Engine 能力。
 
 ## 2. E2E Contract
 
-测试场景：
+真实浏览器场景覆盖：
 
 1. 注册隔离 E2E 用户并登录。
-2. 通过真实 Backend HTTP 创建 draft Workflow。
-3. 创建 Workflow Version 并发布。
-4. 浏览器打开 `/login`，通过真实 UI 登录。
-5. 进入 `/workflows/triggers`。
-6. 选择 Published Workflow。
-7. 通过 UI 创建 manual Trigger。
-8. 验证 Trigger 为 enabled。
-9. 通过 UI Invoke Trigger。
-10. 验证最近一次 Execution 为 completed。
-11. Disable Trigger。
-12. 验证 UI 禁止 Invoke。
-13. Re-enable Trigger。
-14. Delete Trigger。
-15. 验证 Trigger 从 UI inventory 消失。
+2. 通过真实 Backend HTTP 创建 draft Workflow、Version 并发布。
+3. 浏览器登录并进入 `/workflows/triggers`。
+4. 选择 Published Workflow。
+5. 创建 manual Trigger。
+6. 验证 enabled 状态。
+7. Invoke Trigger 并验证最近一次 Execution 为 completed。
+8. Disable Trigger 并验证 UI 禁止 Invoke。
+9. Re-enable Trigger。
+10. Delete Trigger 并验证 inventory 消失。
 
 治理边界同时验证：
 
@@ -53,8 +34,6 @@ PostgreSQL
 
 ## 3. 实现范围
 
-### Frontend
-
 ```text
 frontend/playwright.config.ts
 frontend/tests/e2e/workflow-trigger-governance.spec.ts
@@ -62,150 +41,88 @@ frontend/scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
 frontend/package.json
 ```
 
-Browser 测试使用 Playwright。测试 fixture 通过 Playwright APIRequestContext 调用真实 Backend HTTP；用户操作通过真实浏览器页面完成。
+Playwright 使用显式 `Desktop Chrome` project，Gate 脚本通过 `--project="Desktop Chrome"` 执行。
 
-`frontend/playwright.config.ts` 必须显式定义与 Gate 脚本一致的 project：
+## 4. 实际发现与修复
 
-```ts
-projects: [
-  {
-    name: "Desktop Chrome",
-    use: {
-      ...devices["Desktop Chrome"],
-    },
-  },
-],
-```
+Phase 1.6-C 开发过程中实际发现：
 
-Gate 脚本通过 `--project="Desktop Chrome"` 运行该项目。
-
-## 4. 已发生工程错误与修复
-
-首次执行 Browser E2E Gate 时，Chromium 已成功安装，但 Playwright 在测试启动前返回：
-
-```text
-Project(s) "Desktop Chrome" not found. Available projects: ""
-```
-
-根因：原 `playwright.config.ts` 仅在顶层 `use` 中展开 `devices["Desktop Chrome"]`，未定义 `projects[].name = "Desktop Chrome"`，与 E2E Gate 脚本的 `--project` 参数不一致。
-
-已完成修复：
-
-```text
-frontend/playwright.config.ts
-→ 显式定义 Desktop Chrome project
-```
+1. Playwright project 未显式命名，导致 Gate 在测试启动前失败；已修复。
+2. E2E 注册状态码断言与真实 Backend HTTP Contract 不一致；已修复为真实 `200/201`。
+3. Element Plus Workflow Select 的内部 input 被 selected item 拦截；已调整稳定交互方式。
+4. Published Workflow 文本在页面与 dropdown 同时出现；已限定 locator 范围，消除 strict mode violation。
+5. Delete confirmation 存在多个“确定”按钮；已将 locator 限定到可见 MessageBox。
 
 错误记录：
 
 ```text
-`docs/error-tracking/004-playwright-project-missing.md`
+docs/error-tracking/004-playwright-project-missing.md
 ```
 
-修复后正式 Browser E2E Gate **尚未重新执行**，因此本阶段仍不得标记通过。
+其他 E2E 定位问题属于测试实现缺陷，均已通过测试代码修正并在最终 Gate 验证。
 
-## 5. 依赖
+## 5. 最终验收结果
 
-`frontend/package.json` 增加：
-
-```text
-@playwright/test
-```
-
-首次安装依赖后需安装 Chromium：
+开发者本地最终执行：
 
 ```powershell
 cd frontend
-npm install
-npx playwright install chromium
-```
-
-## 6. 运行条件
-
-E2E 不自动启动 Backend，也不自动执行 Frontend regression。运行前需要：
-
-```powershell
-cd backend
-uv run python run.py
-```
-
-另一个终端启动 Frontend：
-
-```powershell
-cd frontend
-npm run dev
-```
-
-建议先验证 project 配置：
-
-```powershell
-cd frontend
+Remove-Item Env:API_BASE_URL -ErrorAction SilentlyContinue
 npx playwright test --list --project="Desktop Chrome"
 ```
 
-然后执行正式 Gate：
+结果：
+
+```text
+Listing tests:
+[Desktop Chrome] › workflow-trigger-governance.spec.ts:10:1
+Total: 1 test in 1 file
+```
+
+正式 Gate：
 
 ```powershell
-cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-可通过环境变量覆盖地址：
+最终结果：
 
 ```text
-FRONTEND_BASE_URL=http://127.0.0.1:5173
-API_BASE_URL=http://127.0.0.1:8000/api/v1
+✓ 1 [Desktop Chrome] … Workflow Trigger Governance completes the real browser contract (3.3s)
+1 passed (3.9s)
+[PASS] Phase 1.6-C browser E2E gate completed.
 ```
 
-## 7. Gate 隔离
+Phase 1.6-C **正式通过并关闭**。
+
+同时已有独立 Gate 结果：
+
+```text
+Backend Real API       PASS — 14 passed
+Frontend Vitest        PASS — 50 passed
+Frontend build         PASS
+Trigger Real HTTP      PASS — 开发者手动验收
+Frontend UI            PASS — 开发者手动验收
+Browser E2E             PASS — 1 passed
+```
+
+## 6. Gate 隔离
 
 ```text
 Backend Gate
-  Backend regression
-  → Migration/head
-  → Backend Real API
+  Backend regression → Migration/head → Real API
 
 Frontend Gate
-  Frontend Vitest
-  → production build
+  Frontend Vitest → production build
 
 E2E Gate
-  Browser
-  → real Frontend
-  → real Backend HTTP
+  Browser → real Frontend → real Backend HTTP
 ```
 
-E2E Gate 不调用：
+三层继续保持独立，E2E 不调用 Backend regression、Alembic、Backend Real API Gate、Frontend Vitest 或 production build。
 
-- `uv run pytest`
-- Alembic migration
-- Backend Real API Gate
-- `npm test`
-- `npm run build`
+## 7. Phase 1.6 收口
 
-## 8. 当前验收状态
+Phase 1.6-A、1.6-B、1.6-C 均已完成，Workflow Trigger 从 Backend Contract 到真实浏览器的完整业务闭环已验收。
 
-**Playwright project 配置错误已修复，但修复后的 Browser E2E Gate 尚未由开发者本地重新执行，因此当前不得标记 Phase 1.6-C 为通过。**
-
-当前必须区分：
-
-```text
-Chromium installation       PASS
-Playwright project config   FIXED
-Browser E2E Gate             PENDING
-Backend Gate                 PENDING（Phase 1.6-C 关闭前需重新确认）
-Frontend Gate                PENDING（Phase 1.6-C 关闭前需重新确认）
-```
-
-## 9. 后续关闭条件
-
-Phase 1.6-C 关闭前必须：
-
-1. 验证 `Desktop Chrome` project 可被 Playwright 解析。
-2. 启动真实 Backend 与 Frontend。
-3. 执行 Browser E2E Gate。
-4. E2E 全部通过。
-5. 独立 Backend Gate 通过。
-6. 独立 Frontend Gate 通过。
-7. 更新项目状态和本 Phase 文档。
-8. 提交 `main`。
+下一阶段不再继续扩展 manual Trigger；进入 **Phase 1.7 Workflow Trigger Expansion / Scheduling Contract**，第一项为 `Phase 1.7-A-01 Scheduled Trigger Backend Contract`。
