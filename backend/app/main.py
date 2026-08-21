@@ -1,18 +1,40 @@
+import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
-from app.api.agents import router as agents_router
-from app.api.runtime import router as runtime_router
-from app.api.tools import router as tools_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_ingestion import router as knowledge_ingestion_router
 from app.api.knowledge_retrieval import router as knowledge_retrieval_router
-from app.api.workflows import router as workflows_router
+from app.api.runtime import router as runtime_router
+from app.api.tools import router as tools_router
 from app.api.workflow_executions import router as workflow_executions_router
+from app.api.workflows import router as workflows_router
 from app.core.config import settings
+from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
 
-app = FastAPI(title=settings.app_name, version="0.2.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler = ScheduledTriggerScheduler(settings.scheduler_poll_interval_seconds)
+    task: asyncio.Task | None = None
+    if settings.scheduler_enabled:
+        task = asyncio.create_task(scheduler.run_forever(), name="scheduled-trigger-scheduler")
+    app.state.scheduled_trigger_scheduler = scheduler
+    try:
+        yield
+    finally:
+        scheduler.stop()
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
