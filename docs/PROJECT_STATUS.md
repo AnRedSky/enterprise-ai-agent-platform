@@ -26,7 +26,7 @@
 | Retrieval / Vector / Hybrid | 已实现当前代码范围 | Lexical、Vector、Hybrid、Evaluation 与 Debug 已形成；真实 Embedding Provider 的语义质量不能由 Mock 结论替代 |
 | Workflow Definition / Version / Execution | 已实现当前历史范围 | Definition、Publish、Execution State Machine、Runtime Integration 已形成 |
 | Workflow Governance / Audit / Trace | 已实现当前历史范围 | Tenant/RBAC、Audit、Trace、Execution lineage 已形成 |
-| Retry / Timeout / Idempotency / Deadline | 已实现当前历史范围 | 基础 Contract 已形成；1.9-B focused scope 已完成本地验证，后续可靠性专项继续进入 1.9-C |
+| Retry / Timeout / Idempotency / Deadline | **1.9-C 正在真实 API 可靠性验证** | 基础 Contract 与 1.9-B focused scope 已验证；1.9-C 首轮发现 idempotency 并发 500，修复已提交但尚未重新验证 |
 | Circuit Breaker | **1.9-A/1.9-B focused scope 已验证** | 1.9-A 与 1.9-B stale Probe completion 修复均已通过本地专项/Backend/PostgreSQL/Real API 验证；Phase 1.9 尚未整体关闭 |
 | Scheduled Trigger | 已实现当前历史范围 | Phase 1.7 已形成持久化、治理和 Browser E2E 能力 |
 | Webhook Trigger | 已实现当前历史范围 | Phase 1.8 已形成认证、durable idempotency、Workflow Execution 和 Browser E2E |
@@ -48,7 +48,7 @@
 | Phase 1.6 | 已完成 / 正式关闭 | Trigger / Frontend / Browser 历史范围；未发现独立 1.6-D 正文，不补造 |
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
-| **Phase 1.9** | **进行中** | 1.9-A 已验证；1.9-B focused scope 已验证；下一步进入 1.9-C |
+| **Phase 1.9** | **进行中** | 1.9-A 已验证；1.9-B focused scope 已验证；1.9-C 发现 idempotency 并发 500，修复等待本地复验 |
 
 ## 4. Phase 1.9 当前任务
 
@@ -70,48 +70,55 @@ Standalone Real API → 20 passed in 33.26s
 
 状态：**focused scope 本地验证完成。**
 
-本轮已完成 stale Probe completion 修复：
+已完成 stale Probe completion 修复，并通过：
 
 ```text
-旧 Recovery Window Probe completion
-        ↓
-携带当前 async execution context 的
-(tenant_id, circuit_key, half_opened_at)
-        ↓
-与 PostgreSQL 当前 Recovery Window 比对
-        ↓
-不匹配 → 不修改新 Window
-```
-
-代码提交：
-
-```text
-8085e5c7c6009a97a7d3a1d73094f7812c9f9258
-fix: isolate stale circuit probe completions
-```
-
-专项测试提交：
-
-```text
-f7ef0c55810171cb70e5873a99cba82a01a64047
- test: cover stale half-open probe completion
-```
-
-开发者本地实际验证结果：
-
-```text
-Focused 1.9-B runtime tests → 35 passed in 0.97s
+Focused runtime tests → 35 passed in 0.97s
 Backend Regression → 264 passed, 20 deselected in 4.79s
 Migration head → 0022_workflow_trigger (head)
 Mandatory Real API → 20 passed in 40.74s
 Standalone Real API → 20 passed in 31.38s
 ```
 
-结论：**1.9-B 当前 focused scope 已通过本地 Backend / PostgreSQL / Real API 验证。**
-
 ### 1.9-C Real API Reliability Scenarios
 
-下一项，尚未开始正式 Acceptance。现有 Real API Gate 的 20 个测试通过，不等价于 1.9-C 专项 Reliability Acceptance。
+状态：**阻塞于 Idempotency 并发 500；修复已提交，等待本地复验。**
+
+新增：
+
+```text
+backend/tests/api_real/test_phase_1_9c_reliability_api.py
+```
+
+首轮完整 Real API Gate：
+
+```text
+22 passed, 1 failed in 39.35s
+```
+
+失败：
+
+```text
+test_execution_idempotency_is_race_safe_over_real_http
+HTTP 500 Internal Server Error
+```
+
+正式错误记录：
+
+```text
+docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md
+```
+
+已提交修复：
+
+```text
+bdecd76b7c186c48fc3b7afdd23cc5d7dff1ecb6
+fix: make idempotency race recovery transaction safe
+```
+
+修复采用 `begin_nested()` SAVEPOINT，避免 idempotency 唯一约束竞争路径完整 rollback 后访问过期 ORM 对象。
+
+**尚未重新执行，因此不得标记 PASS。**
 
 ### 1.9-D Frontend / Browser Reliability Convergence
 
@@ -139,8 +146,6 @@ docs/
 
 ## 6. 当前 Phase 1.9 实际测试记录
 
-本轮实际结果全部来自开发者本地反馈，不使用 GitHub Actions 作为验收依据：
-
 ```text
 1.9-A Circuit Breaker targeted tests: 16 passed in 0.68s
 1.9-A Backend Regression: 262 passed, 20 deselected in 3.64s
@@ -153,23 +158,27 @@ docs/
 1.9-B Alembic head: 0022_workflow_trigger
 1.9-B Real API via Backend Gate: 20 passed in 40.74s
 1.9-B Standalone Real API Gate: 20 passed in 31.38s
+
+1.9-C First Real API Gate: 22 passed, 1 failed in 39.35s
+Failure: concurrent idempotency request returned HTTP 500
 ```
 
 ## 7. 当前风险 / 未完成范围
 
-1. 1.9-A 当前 main 的本地 Unit / Backend / PostgreSQL Migration / Real API Gate 已全部通过。
-2. 1.9-B focused scope 已通过本地验证，目前没有发现 blocking issue；继续进入 1.9-C 专项 Reliability Scenarios。
-3. Real API Gate 已通过现有 20 个真实 HTTP API 场景，但尚未等价于完成专门的 1.9-C Reliability Scenarios。
-4. Frontend / Browser Reliability Convergence 尚未执行，因此不能关闭 Phase 1.9。
-5. Multi-Agent orchestration、MQ/Kafka/Event Bus、Temporal/完整分布式 Worker 不属于当前已完成范围。
+1. 1.9-A 已通过本地 Unit / Backend / PostgreSQL Migration / Real API Gate。
+2. 1.9-B focused scope 已通过本地验证。
+3. 1.9-C 首轮发现真实 HTTP idempotency race 500，已记录 ERR-0018 并提交修复，等待本地复验。
+4. Cross-Tenant isolation 尚未形成真实 API 测试上下文。
+5. Frontend / Browser Reliability Convergence 尚未执行，因此不能关闭 Phase 1.9。
+6. Multi-Agent orchestration、MQ/Kafka/Event Bus、Temporal/完整分布式 Worker 不属于当前已完成范围。
 
 ## 8. 下一步执行顺序
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
-1. **进入 1.9-C Real API Reliability Scenarios。**
-2. 通过真实 HTTP API 验证 circuit OPEN fast-fail、HALF_OPEN recovery、concurrent probes、stale Probe completion、retry lineage、deadline boundary、idempotency、tenant isolation。
-3. 如 1.9-C 发现新的跨 worker / retry / idempotency / tenant isolation 问题，记录到 `docs/04-errors/` 并回到对应修复任务。
+1. **重新执行 1.9-C 完整 Real API Gate，验证 Idempotency race 修复。**
+2. 若仍失败，继续修复并更新 `docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md`。
+3. 修复通过后继续 1.9-C 剩余 Reliability Scenarios，并保持每个结果来自本地实际执行。
 4. 执行 Frontend Regression Gate：`npm test`、`npm run build`。
 5. 执行独立 Browser E2E Gate。
 6. 完成 Frontend / Backend 联调可靠性检查。
