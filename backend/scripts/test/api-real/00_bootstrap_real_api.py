@@ -186,7 +186,7 @@ def create_retry_boundary_fixtures(client, agent_id):
     deadline_workflow_id, deadline_execution_id = create_retry_fixture(
         client, agent_id,
         name="API Retry Deadline Validation",
-        runtime_config={"timeout_ms": 1000},
+        runtime_config={"timeout_ms": 1000, "retry_budget": {"max_retries": 1}},
         retry_config={
             "max_attempts": 3,
             "backoff_ms": 2000,
