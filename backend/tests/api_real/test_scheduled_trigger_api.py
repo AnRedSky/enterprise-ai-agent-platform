@@ -62,7 +62,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled Trigger validation")
 
     name = f"api-real-scheduled-{uuid.uuid4().hex[:8]}"
-    config = {"timezone": "Asia/Shanghai", "interval_seconds": 300}
+    config = {"timezone": "Asia/Shanghai", "interval_seconds": 60}
     updated_config = {"timezone": "UTC", "interval_seconds": 60}
 
     with _client() as client:
@@ -76,6 +76,12 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert trigger["trigger_type"] == "scheduled"
         assert trigger["status"] == "enabled"
         assert trigger["config"] == config
+
+        # Capture the current interval slot immediately after creation. The
+        # scheduler is allowed to dispatch the current slot on its first tick.
+        runtime_key = ScheduledTriggerScheduler.idempotency_key(
+            trigger_id, datetime.now(UTC), config["interval_seconds"]
+        )
 
         detail = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
         assert detail.status_code == 200, detail.text
@@ -102,12 +108,9 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
 
-        # Scheduler dispatch is automatic; the first tick may dispatch the current
-        # interval slot immediately. The deterministic key is the runtime's
-        # idempotency contract and is also safe across multiple workers.
-        runtime_key = ScheduledTriggerScheduler.idempotency_key(
-            trigger_id, datetime.now(UTC), updated_config["interval_seconds"]
-        )
+        # Scheduler dispatch is automatic; the first tick may dispatch the
+        # current interval slot immediately. The deterministic key is the
+        # runtime's idempotency contract and is safe across multiple workers.
         rows = _wait_for_scheduled_execution(runtime_key)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
