@@ -231,7 +231,12 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
             recovery_rows = _wait_for_scheduled_execution(scheduler_event_loop, recovery_key)
             current_rows = _wait_for_scheduled_execution(scheduler_event_loop, current_key)
 
-            assert counters["recovered"] == 1, counters
+            # tick_once intentionally evaluates every enabled scheduled trigger in
+            # the tenant. Other real-API fixtures/background-created triggers may be
+            # eligible at the same time, so global recovered/dispatched counters are
+            # not a per-trigger assertion. The persistence contract is asserted using
+            # this test's deterministic idempotency keys below.
+            assert counters["recovered"] >= 1, counters
             assert len(recovery_rows) == 1, recovery_rows
             assert len(current_rows) == 1, current_rows
             assert recovery_rows[0]["status"] == "completed", recovery_rows
