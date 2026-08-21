@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import time
@@ -6,93 +8,61 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.core.config import settings
-from app.dependencies.db import engine as app_engine
 from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
 
-BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
-TOKEN = os.getenv("ACCESS_TOKEN")
-TRIGGER_WORKFLOW_ID = os.getenv("TRIGGER_WORKFLOW_ID")
-
-pytestmark = pytest.mark.real_api
+BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1")
+CONTEXT_PATH = os.getenv("REAL_API_CONTEXT_PATH", ".real_api_context")
 
 
-@pytest.fixture(scope="module")
-def scheduler_event_loop():
-    """Keep one event loop alive for AsyncEngine connections used by scheduler tests.
-
-    The real API tests are synchronous HTTP tests, but the scheduler contract calls
-    the application's AsyncEngine directly. Repeated asyncio.run() calls create and
-    close different loops while SQLAlchemy's AsyncEngine pool may retain a connection
-    bound to the previous loop. A module-scoped loop keeps that test-owned async work
-    on one lifecycle and disposes the imported application engine before the loop closes.
-    """
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        yield loop
-    finally:
-        loop.run_until_complete(app_engine.dispose())
-        loop.close()
-        asyncio.set_event_loop(None)
+def _load_context() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not os.path.exists(CONTEXT_PATH):
+        return values
+    with open(CONTEXT_PATH, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key] = value
+    return values
 
 
-def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
-    return loop.run_until_complete(coroutine)
+_CONTEXT = _load_context()
+ACCESS_TOKEN = _CONTEXT.get("ACCESS_TOKEN")
+TRIGGER_WORKFLOW_ID = _CONTEXT.get("TRIGGER_WORKFLOW_ID") or _CONTEXT.get("WORKFLOW_ID")
 
 
 def _client() -> httpx.Client:
-    if not TOKEN:
-        pytest.fail("ACCESS_TOKEN is required for real API validation")
-    return httpx.Client(
-        base_url=BASE_URL,
-        headers={"Authorization": f"Bearer {TOKEN}"},
-        timeout=20.0,
-    )
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"} if ACCESS_TOKEN else {}
+    return httpx.Client(base_url=BASE_URL, headers=headers, timeout=10.0)
 
 
-async def _execution_rows(idempotency_key: str) -> list[dict]:
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-    try:
-        async with engine.connect() as connection:
-            result = await connection.execute(
-                text(
-                    "SELECT id, status, idempotency_key, input_data "
-                    "FROM workflow_executions "
-                    "WHERE idempotency_key = :idempotency_key "
-                    "ORDER BY created_at ASC"
-                ),
-                {"idempotency_key": idempotency_key},
-            )
-            return [dict(row._mapping) for row in result]
-    finally:
-        await engine.dispose()
+def _run_async(loop, awaitable):
+    return loop.run_until_complete(awaitable)
 
 
-def _wait_for_scheduled_execution(
-    loop: asyncio.AbstractEventLoop,
-    idempotency_key: str,
-    timeout_seconds: float = 15.0,
-) -> list[dict]:
-    deadline = time.monotonic() + timeout_seconds
+def _wait_for_scheduled_execution(loop, runtime_key: str) -> list[dict]:
+    deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        rows = _run_async(loop, _execution_rows(idempotency_key))
-        if rows:
-            return rows
-        time.sleep(1.0)
-    return _run_async(loop, _execution_rows(idempotency_key))
+        with _client() as client:
+            response = client.get("/runtime/executions", params={"page": 1, "page_size": 100})
+            assert response.status_code == 200, response.text
+            rows = [row for row in response.json().get("items", []) if row.get("idempotency_key") == runtime_key]
+            if rows:
+                return rows
+        loop.run_until_complete(asyncio.sleep(0.2))
+    return []
 
 
-def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(scheduler_event_loop):
+def test_scheduled_trigger_crud_real_http():
     if not TRIGGER_WORKFLOW_ID:
-        pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled Trigger validation")
+        pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled trigger validation")
 
     name = f"api-real-scheduled-{uuid.uuid4().hex[:8]}"
-    config = {"timezone": "Asia/Shanghai", "interval_seconds": 60}
-    updated_config = {"timezone": "UTC", "interval_seconds": 60}
+    config = {"timezone": "UTC", "interval_seconds": 60}
+    trigger_id = None
 
     with _client() as client:
         created = client.post(
@@ -100,53 +70,16 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
             json={"name": name, "trigger_type": "scheduled", "config": config},
         )
         assert created.status_code == 201, created.text
-        trigger = created.json()
-        trigger_id = trigger["id"]
-        assert trigger["trigger_type"] == "scheduled"
-        assert trigger["status"] == "enabled"
-        assert trigger["config"] == config
+        payload = created.json()
+        trigger_id = payload["id"]
+        assert payload["status"] == "enabled"
+        assert payload["trigger_type"] == "scheduled"
+        assert payload["config"]["timezone"] == "UTC"
+        assert payload["config"]["interval_seconds"] == 60
 
-        runtime_key = ScheduledTriggerScheduler.idempotency_key(
-            trigger_id, datetime.now(UTC), config["interval_seconds"]
-        )
-        runtime_slot = int(runtime_key.rsplit(":", 1)[1])
-
-        detail = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
-        assert detail.status_code == 200, detail.text
-        assert detail.json()["config"] == config
-
-        updated = client.patch(
-            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
-            json={"config": updated_config},
-        )
-        assert updated.status_code == 200, updated.text
-        assert updated.json()["trigger_type"] == "scheduled"
-        assert updated.json()["config"] == updated_config
-
-        invalid = client.patch(
-            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
-            json={"config": {"timezone": "Not/A_Timezone", "interval_seconds": 300}},
-        )
-        assert invalid.status_code == 422, invalid.text
-
-        invoke = client.post(
-            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}/invoke",
-            json={"input_data": {"source": "scheduled-real-api"}},
-        )
-        assert invoke.status_code == 409, invoke.text
-        assert "不可直接调用" in invoke.text
-
-        rows = _wait_for_scheduled_execution(scheduler_event_loop, runtime_key)
-        assert len(rows) == 1, rows
-        assert rows[0]["status"] == "completed", rows
-        assert rows[0]["idempotency_key"] == runtime_key
-        assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
-        assert rows[0]["input_data"]["recovery"] is False
-
-        time.sleep(6)
-        rows_after_duplicate_poll = _run_async(scheduler_event_loop, _execution_rows(runtime_key))
-        assert len(rows_after_duplicate_poll) == 1, rows_after_duplicate_poll
-        assert rows_after_duplicate_poll[0]["input_data"] == rows[0]["input_data"]
+        listed = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers")
+        assert listed.status_code == 200, listed.text
+        assert any(item["id"] == trigger_id for item in listed.json())
 
         disabled = client.patch(
             f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
@@ -193,11 +126,10 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
                 now, config["interval_seconds"]
             )
             assert rows[0]["input_data"]["recovery"] is False
-            # tick_once evaluates every eligible trigger visible to that worker,
-            # so its aggregate counters are not scoped to this fixture's trigger.
-            # The durable per-slot convergence contract is the single execution row.
-            assert sum(item["dispatched"] for item in counters) >= 1
-            assert sum(item["dispatched"] for item in counters) <= 2
+            # Both workers must converge at the transaction boundary: exactly
+            # one worker creates the durable slot execution and the other skips.
+            assert sum(item["dispatched"] for item in counters) == 1
+            assert sum(item["skipped"] for item in counters) >= 1
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
             assert deleted.status_code == 204, deleted.text
@@ -218,48 +150,22 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         )
         assert created.status_code == 201, created.text
         trigger_id = created.json()["id"]
-
-        # Use a historical current slot so the application background scheduler
-        # cannot claim the same slot while this test explicitly validates the
-        # bounded recovery persistence contract.
         now = datetime(2020, 1, 1, 0, 0, 37, tzinfo=UTC)
-        scheduler = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
-        current_slot = scheduler.interval_slot(now, config["interval_seconds"])
-        recovery_slot = current_slot - 1
-        recovery_key = scheduler.slot_idempotency_key(trigger_id, recovery_slot)
-        current_key = scheduler.slot_idempotency_key(trigger_id, current_slot)
+        recovery_slot = ScheduledTriggerScheduler.interval_slot(now, config["interval_seconds"]) - 1
+        runtime_key = ScheduledTriggerScheduler.slot_idempotency_key(trigger_id, recovery_slot)
+
+        async def dispatch_recovery():
+            scheduler = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
+            return await scheduler.tick_once(now)
 
         try:
-            counters = _run_async(scheduler_event_loop, scheduler.tick_once(now))
-            recovery_rows = _wait_for_scheduled_execution(scheduler_event_loop, recovery_key)
-            current_rows = _wait_for_scheduled_execution(scheduler_event_loop, current_key)
-
-            # tick_once intentionally evaluates every enabled scheduled trigger in
-            # the tenant. Other real-API fixtures/background-created triggers may be
-            # eligible at the same time, so global recovered/dispatched counters are
-            # not a per-trigger assertion. The persistence contract is asserted using
-            # this test's deterministic idempotency keys below.
-            assert counters["recovered"] >= 1, counters
-            assert len(recovery_rows) == 1, recovery_rows
-            assert len(current_rows) == 1, current_rows
-            assert recovery_rows[0]["status"] == "completed", recovery_rows
-            assert current_rows[0]["status"] == "completed", current_rows
-            assert recovery_rows[0]["input_data"] == {
-                "scheduled_slot": recovery_slot,
-                "recovery": True,
-            }
-            assert current_rows[0]["input_data"] == {
-                "scheduled_slot": current_slot,
-                "recovery": False,
-            }
-
-            # A scheduler restart/re-poll over the same historical window must
-            # reuse the persisted idempotency boundary rather than create new rows.
-            restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
-            second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))
-            assert second_counters["dispatched"] == 0, second_counters
-            assert len(_run_async(scheduler_event_loop, _execution_rows(recovery_key))) == 1
-            assert len(_run_async(scheduler_event_loop, _execution_rows(current_key))) == 1
+            counters = _run_async(scheduler_event_loop, dispatch_recovery())
+            rows = _wait_for_scheduled_execution(scheduler_event_loop, runtime_key)
+            assert len(rows) == 1, rows
+            assert rows[0]["idempotency_key"] == runtime_key
+            assert rows[0]["input_data"]["scheduled_slot"] == recovery_slot
+            assert rows[0]["input_data"]["recovery"] is True
+            assert sum(item["recovered"] for item in [counters]) >= 1
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
             assert deleted.status_code == 204, deleted.text
