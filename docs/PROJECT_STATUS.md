@@ -1,125 +1,154 @@
-# 项目开发进度
+# Project Status
 
-> 本文只记录当前项目基线、阶段状态、实际验收结果、阻塞项和下一步任务。工程开发规则统一维护在 `docs/01-governance/DEVELOPMENT.md`；文档治理统一维护在 `docs/01-governance/DOCUMENTATION.md`；阶段计划位于 `docs/02-phases/`；阶段验收位于 `docs/03-acceptance/`；工程错误位于 `docs/04-errors/`。
+> 当前项目状态唯一入口。文档治理规则见 `docs/01-governance/DOCUMENTATION.md`，工程开发规则见 `docs/01-governance/DEVELOPMENT.md`。
 
-## 1. 当前主线
+## 1. 当前基线
 
-- 主分支：`main`
-- 项目地址：`https://github.com/AnRedSky/enterprise-ai-agent-platform.git`
-- 开发方式：所有功能直接在 `main` 开发与提交
-- Phase 1.5：**已完成**
-- Phase 1.6：**已完成并正式关闭**
-- Phase 1.7：**已完成并正式关闭**
-- 当前阶段：**Phase 1.8 Event / Webhook Trigger Expansion 已正式关闭**
-- 当前任务：**Docs Governance Refactor：文档迁移矩阵已建立，新目录与正式入口已开始迁移**
-- 当前角色：开发执行
-- 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立；不使用 GitHub Actions workflow run
+- Repository: `AnRedSky/enterprise-ai-agent-platform`
+- Branch: `main`
+- 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
 
-## 2. 阶段状态
+## 2. 当前阶段
 
-| 阶段 | 状态 | 说明 |
-|---|---|---|
-| Phase 1.0 | 已完成 | 工程初始化、FastAPI + Vue |
-| Phase 1.2 | 已完成 | Identity、RBAC、Agent、Session、SSE、基础 Tool |
-| Phase 1.3 | 已完成 | Model Gateway、Tool Runtime、Memory、Observability、基础管理端 |
-| Phase 1.4 | 已完成核心闭环 | Knowledge / RAG、pgvector、Embedding / Retrieval contract、Runtime Trace |
-| Phase 1.5 | **已完成** | Workflow / Governance A～G 全部完成；Circuit Breaker 最终验收通过 |
-| Phase 1.6 | **已正式关闭** | Trigger CRUD、Governance、Real HTTP、Browser E2E 全部完成 |
-| Phase 1.7 | **已正式关闭** | Scheduled Trigger A～D 全部完成；Backend、Frontend、Browser 三层 Gate 通过 |
-| Phase 1.8 | **已正式关闭** | Webhook Trigger A～F 全部完成；Backend、Frontend、Browser 三层 Gate 通过 |
+**Docs Governance Refactor — 第二阶段已完成。**
 
-## 3. Phase 1.8 最终验收结果
+本阶段不是业务代码开发，目标是完成旧 `docs/` 内容的逐份核对、迁移、旧路径清理和最终目录验收。
 
-### Backend
+## 3. 已完成的文档迁移
 
-开发者最新实际反馈：
+### Phase 1.4
+
+- Knowledge / RAG plan
+- Retrieval baseline
+- Vector Provider / validation
+- Hybrid Retrieval
+- Provider checkpoint
+- Mock Embedding validation
+- Runtime Knowledge acceptance
+- F/G acceptance
+- Evaluation runner / mock fixture 历史失败与修复
+
+统一归并到：
 
 ```text
-uv run pytest -q
-→ 257 passed, 20 deselected in 4.95s
-
-scripts/test/api-real/01_run_real_api_tests.ps1
-→ 20 passed in 37.94s
-→ [PASS] Real API gate completed. Frontend/backend integration may proceed.
+docs/02-phases/PHASE_1_4.md
+docs/03-acceptance/PHASE_1_4_ACCEPTANCE.md
 ```
 
-Phase 1.8-B 已实际执行 `uv run alembic upgrade head` 并通过；Phase 1.8 无新增数据库 Migration。
+### Phase 1.5
 
-### Frontend
-
-开发者实际反馈：
+A～G 全部历史计划、Runtime Integration、Governance/Audit/Trace、Frontend Governance、Retry/Deadline/Idempotency、Circuit Breaker、F 子任务均已归并到：
 
 ```text
-npm test
-→ 13 test files passed
-→ 52 tests passed
-
-npm run build
-→ production build succeeded
-→ 1709 modules transformed
-
-scripts/test/release/01_frontend_regression_gate.ps1
-→ Frontend automated regression passed
-→ Frontend production build passed
-→ [PASS] Frontend regression gate completed.
+docs/02-phases/PHASE_1_5.md
+docs/03-acceptance/PHASE_1_5_ACCEPTANCE.md
 ```
 
-### Browser E2E
+### Phase 1.6
 
-开发者最新实际反馈：
+A～C 历史文档已归并；完整 tree 未发现独立 1.6-D，因此不补造：
 
 ```text
-npx playwright test --list --project="Desktop Chrome"
-→ 3 tests listed
-
-scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
-→ scheduled Trigger governance: passed
-→ webhook Trigger governance: passed
-→ webhook runtime convergence / lifecycle security: passed
-→ 3 passed
+docs/02-phases/PHASE_1_6.md
+docs/03-acceptance/PHASE_1_6_ACCEPTANCE.md
 ```
 
-## 4. Docs Governance Refactor
+### Phase 1.7
 
-### 已完成
+A/B/C/D 历史文档已归并；完整 tree 未发现独立 A-01/A-04 正文，因此不补造：
 
-1. 从最新 `main` 盘点 `docs/` 根目录及现有子目录。
-2. 建立 `docs/DOCS_MIGRATION_MATRIX.md`，先定义旧文档 → 新文档映射。
-3. 创建统一入口 `docs/README.md`。
-4. 创建 `docs/00-architecture/`、`docs/01-governance/`、`docs/02-phases/`、`docs/03-acceptance/`、`docs/04-errors/` 的正式文档入口。
-5. 新增 `01-governance/DOCUMENTATION.md`，废止新的连续 `00/01/02/...` 文档命名方式。
-6. 将工程规则迁移到 `01-governance/DEVELOPMENT.md`，并以当前 `DEVELOPMENT.md` 的规则为准解决旧 `DEVELOPMENT_GUIDELINES.md` 冲突。
-7. 建立 Phase 1.2～1.8 的统一 Phase 目录入口及 Phase Acceptance 入口。
-8. 建立历史 Phase 23 / 24 的明确历史入口，避免旧阶段状态覆盖当前状态。
-9. 建立 `04-errors/README.md`，准备迁移旧 `error-tracking/`。
+```text
+docs/02-phases/PHASE_1_7.md
+docs/03-acceptance/PHASE_1_7_ACCEPTANCE.md
+```
 
-### 尚未完成
+### 历史 Phase 14–24
 
-- 旧根级文档尚未全部删除。
-- 旧 `docs/error-tracking/` 尚未全部迁移并重新编号。
-- 旧 `docs/phase-1-5-f/` 尚未全部合并。
-- 全仓旧路径引用尚未最终清理。
-- 新旧文档内容的逐项一致性校验尚未完成。
+旧连续编号历史已隔离到：
 
-因此当前 Docs Governance Refactor **尚未宣称完成**。
+```text
+docs/02-phases/HISTORICAL_PHASE_14_22.md
+docs/02-phases/HISTORICAL_PHASE_23.md
+docs/02-phases/HISTORICAL_PHASE_24.md
 
-## 5. 当前下一步
+docs/03-acceptance/HISTORICAL_PHASE_14_22.md
+docs/03-acceptance/HISTORICAL_PHASE_23.md
+docs/03-acceptance/HISTORICAL_PHASE_24.md
+```
 
-继续严格按照 `docs/DOCS_MIGRATION_MATRIX.md`：
+这些历史文档不代表当前项目 Phase。
 
-1. 逐份完成剩余历史文档内容迁移。
-2. 迁移并重新编号 `error-tracking/`。
-3. 合并 `phase-1-5-f/`。
-4. 全仓搜索旧 `docs/` 路径并修正引用。
-5. 删除旧根级入口，完成目录收口。
-6. 做文档静态结构 / 引用 / 命名检查。
-7. 再次更新本文件，确认 Docs Governance Refactor 完成后，恢复下一 Phase 开发。
+### Error Tracking
 
-## 6. 开发治理
+旧 `docs/error-tracking/` 17 条记录已逐份迁移为：
 
-1. 不提交、不触发、不依赖 GitHub Actions workflow run。
-2. 所有测试由开发者本地执行。
-3. 实际测试结果只能在开发者反馈后写入状态文档。
-4. Backend、Frontend、Browser/E2E 三层 Gate 独立。
-5. 不提交 secret、Real API context、Playwright trace/screenshot 等本地运行产物。
-6. 所有开发工作以最新 `main` 为唯一基线，禁止创建开发分支、临时分支或任务分支。
+```text
+docs/04-errors/ERR-0001...ERR-0017
+```
+
+保留 Legacy ID，旧目录已删除。
+
+## 4. 根级 docs 清理
+
+本阶段完成后，`docs/` 根目录只保留：
+
+```text
+README.md
+PROJECT_STATUS.md
+DOCS_MIGRATION_MATRIX.md
+00-architecture/
+01-governance/
+02-phases/
+03-acceptance/
+04-errors/
+```
+
+旧连续编号文档、根级 Phase acceptance、旧 `DEVELOPMENT.md`、旧 `CONTRIBUTING.md`、旧 `API_*`、旧 `ARCHITECTURE.md` 等均已迁移后删除。
+
+GitHub 当前 docs 根目录已不再存在 `01-xxx.md`、`12-phase-*`、`phase-*`、根级 `PHASE_*` 旧入口。
+
+## 5. 文档真实性规则
+
+- 历史计划不等于当前完成。
+- 修复代码不等于测试通过。
+- 未实际执行的测试不得写 PASS。
+- 找不到历史源文档的任务不补造。
+- 历史 Phase 不覆盖当前 `PROJECT_STATUS`。
+- Error record 保留失败事实，即使已经修复。
+
+## 6. 当前正式阶段状态
+
+| Phase | 状态 |
+|---|---|
+| Phase 1.0 | 已完成 |
+| Phase 1.2 | 已完成 |
+| Phase 1.3 | 已完成当前历史范围 |
+| Phase 1.4 | 已完成 |
+| Phase 1.5 | 已完成 / 正式关闭 |
+| Phase 1.6 | 已完成 / 正式关闭 |
+| Phase 1.7 | 已完成 / 正式关闭 |
+| Phase 1.8 | 已完成 / 正式关闭 |
+
+## 7. Phase 1.8 历史实际结果
+
+原 Phase 1.8 Acceptance 中的实际历史结果继续保留在 canonical Acceptance 文档；本次文档迁移没有重新执行测试，也没有重新推断测试结果。
+
+## 8. 下一步
+
+Docs Governance Refactor 第二阶段已经完成。后续回到正常开发流程：
+
+1. 以最新 `main` 为基线。
+2. 从 `PROJECT_STATUS.md` 选择下一项正式任务。
+3. 如进入新 Phase，先建立 `docs/02-phases/PHASE_x_y.md`。
+4. Backend Contract → Migration/pytest → Frontend → Real API → 独立 Gate → 联调 → Acceptance。
+5. 新错误写入 `docs/04-errors/ERR-xxxx-description.md`。
+6. 完成后更新 `PROJECT_STATUS.md` 并直接提交 `main`。
+
+## 9. 文档治理入口
+
+- `docs/README.md`
+- `docs/DOCS_MIGRATION_MATRIX.md`
+- `docs/01-governance/DEVELOPMENT.md`
+- `docs/01-governance/DOCUMENTATION.md`
+- `docs/01-governance/LOCAL_TESTING.md`
+- `docs/01-governance/API_TESTING.md`
