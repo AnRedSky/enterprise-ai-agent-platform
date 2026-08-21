@@ -34,23 +34,17 @@ describe("AuditLogPanel", () => {
   });
 
   it("renders error state", async () => {
-    let rejectAuditLogs: ((reason?: unknown) => void) | undefined;
-    auditLogs.mockImplementation(
-      () =>
-        new Promise((_, reject) => {
-          rejectAuditLogs = reject;
-        }),
-    );
+    // Throw synchronously at the transport boundary. The component awaits this
+    // call inside load(), so the synchronous exception is caught by its catch
+    // block without relying on Vitest's unhandled-rejection scheduling.
+    auditLogs.mockImplementation(() => {
+      throw new Error("Audit API unavailable");
+    });
 
     const wrapper = mount(AuditLog, { global });
-
-    // Vue mount/onMounted and the mocked transport can cross an async boundary.
-    // Wait for the invocation before rejecting the deferred request so the test
-    // exercises the component's real await/catch path without a race.
-    await vi.waitFor(() => expect(auditLogs).toHaveBeenCalledTimes(1));
-    rejectAuditLogs?.(new Error("Audit API unavailable"));
     await flushPromises();
 
+    expect(auditLogs).toHaveBeenCalledTimes(1);
     expect(wrapper.find(".alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("Audit 查询失败");
   });
