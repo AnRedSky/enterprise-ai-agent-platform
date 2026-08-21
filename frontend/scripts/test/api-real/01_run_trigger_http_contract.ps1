@@ -65,7 +65,7 @@ Assert-True (-not [string]::IsNullOrWhiteSpace([string]$login.access_token)) "lo
 $headers = @{ Authorization = "Bearer $($login.access_token)" }
 
 Write-Host "[2/8] Create a published workflow fixture"
-$workflow = Invoke-JsonApi -Method POST -Path "/workflows" -Headers $headers -Body @{ name="Frontend Trigger HTTP $nonce"; description="Frontend real HTTP Trigger contract fixture" }
+$workflow = Invoke-JsonApi -Method POST -Path "/workflows" -Headers $headers -Body @{ name="Frontend Trigger HTTP $nonce"; description="Frontend real HTTP Trigger contract fixture" } -ExpectedStatus @(200,201)
 $definition = @{ nodes=@(
     @{ id="input"; type="input"; config=@{} },
     @{ id="output"; type="output"; config=@{} }
