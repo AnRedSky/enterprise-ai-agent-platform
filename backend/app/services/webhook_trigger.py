@@ -59,7 +59,10 @@ class WebhookTriggerService:
 
     @staticmethod
     def durable_idempotency_key(trigger_id: UUID, identity: str) -> str:
-        """Return a deterministic key that always fits WorkflowExecution.idempotency_key."""
+        """Return a stable public key when it fits, otherwise a deterministic bounded digest."""
+        public_key = f"webhook:{trigger_id}:{identity}"
+        if len(public_key) <= 100:
+            return public_key
         digest = hashlib.sha256(f"{trigger_id}:{identity}".encode("utf-8")).hexdigest()
         return f"webhook:{digest}"
 
