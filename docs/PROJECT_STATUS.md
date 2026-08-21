@@ -28,11 +28,11 @@
 | Phase 1.6-C | **已完成** | Browser / Frontend-Backend E2E 第三独立测试层建立并通过；最终 Browser E2E 1 passed |
 | Phase 1.6 | **已正式关闭** | A～C 全部完成，三层 Gate 与实际联调完成 |
 | Phase 1.7-A | **基线审计完成** | A-01 Contract、A-02 Scheduler Runtime、A-03 bounded recovery、A-04 multi-worker slot convergence 已存在于最新 main；不重复实现 |
-| Phase 1.7-B | **开发中** | 以现有 `workflow_executions` 为 persistence boundary，收口 scheduled execution / failure / recovery / restart 的持久化验收 |
+| Phase 1.7-B | **开发中 / 测试待执行** | Persistence contract 已收口；已补充 recovery persistence Real API contract；Runtime failure 专项验收与完整 Gate 尚未重新执行 |
 
 ## 3. Phase 1.7-A 基线审计结论
 
-远端 `main` 最新基线为 `ad0ca3d930a5dd9e1b196fa5879b88c091d99074`。审计确认当前代码已经包含：
+远端 `main` 最新基线已包含：
 
 ```text
 Scheduled Trigger Contract
@@ -75,7 +75,20 @@ Phase 1.7-B 不重新实现 Scheduler，而是验证并收口现有真实执行�
 
 当前阶段原则：**真实数据库优先，不使用 JSON fixture 替代数据库业务状态。**
 
-详细计划见 `docs/13-phase-1.7-b-scheduler-execution-persistence.md`。
+### 已完成的代码工作
+
+- 明确并记录 `workflow_executions` 为 Scheduled Trigger execution persistence boundary。
+- 保持现有 scheduler / idempotency / advisory-lock 实现，不增加并发旁路方案。
+- Real API 已直接查询 PostgreSQL `workflow_executions`，验证 current slot 的 `status / idempotency_key / input_data`。
+- 新增 recovery persistence Real API contract：验证 recovery slot 与 current slot 均落入同一 `workflow_executions` persistence boundary，并验证重复 tick / scheduler restart 不产生重复记录。
+
+### 尚未完成的验收
+
+- 本轮本地 `uv run pytest -q` 尚未重新执行。
+- 本轮 Real API Gate 尚未重新执行。
+- Runtime failure 的 scheduled persistence 尚未通过专项真实失败 Workflow 完成验收。
+
+详细计划与本地测试流程见 `docs/13-phase-1.7-b-scheduler-execution-persistence.md`。
 
 ## 5. Migration 决策
 
@@ -97,9 +110,9 @@ Phase 1.7-B 不重新实现 Scheduler，而是验证并收口现有真实执行�
 245 passed, 16 deselected in 4.16s
 ```
 
-该结果来自当前开发者实际反馈，可作为基线记录。
+该结果来自之前开发者实际反馈，仅作为历史基线，不代表本轮修改后的结果。
 
-Real API Gate 最近一次反馈为：
+Real API 最近一次反馈为：
 
 ```text
 15 tests total
@@ -109,7 +122,7 @@ Real API Gate 最近一次反馈为：
 
 失败项为 multi-worker scheduler contract 的 SQLAlchemy `MissingGreenlet`，该工程错误已经记录到 `docs/error-tracking/2026-08-21-scheduled-multi-worker-missing-greenlet.md`，并已在最新 main 中通过数据库 slot claim serialization 收口。
 
-**注意：在本轮 Phase 1.7-B 开发环境中尚未重新执行上述 Gate，因此不得将其标记为本轮 PASS。**
+**本轮新增 recovery persistence test 后尚未执行 Gate，因此当前不能标记 Backend / Real API PASS。**
 
 ## 7. Phase 1.7 下一阶段规划
 
