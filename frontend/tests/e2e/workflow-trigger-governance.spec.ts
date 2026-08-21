@@ -7,7 +7,7 @@ function normalizeApiOrigin(value: string): string {
 const apiOrigin = normalizeApiOrigin(process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1");
 const apiPath = (path: string): string => `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
 
-test("Workflow Trigger Governance completes the real browser contract", async ({ page, playwright }) => {
+test("Workflow Trigger Governance completes the real scheduled browser contract", async ({ page, playwright }) => {
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const username = `frontend_e2e_${nonce}`;
   const password = `FrontendE2E!${nonce}`;
@@ -25,7 +25,7 @@ test("Workflow Trigger Governance completes the real browser contract", async ({
 
     const workflowResponse = await api.post(apiPath("/workflows"), {
       headers,
-      data: { name: `Browser Trigger E2E ${nonce}`, description: "Phase 1.6-C browser fixture" },
+      data: { name: `Browser Scheduled Trigger E2E ${nonce}`, description: "Phase 1.7-D browser fixture" },
     });
     expect(workflowResponse.status()).toBe(201);
     const workflow = await workflowResponse.json();
@@ -70,33 +70,36 @@ test("Workflow Trigger Governance completes the real browser contract", async ({
     await expect(workflowOption).toBeVisible();
     await workflowOption.click();
 
-    await page.getByLabel("Trigger 名称").fill(`Browser Manual Trigger ${nonce}`);
-    await page.getByLabel("Config JSON").fill('{"source":"browser-e2e"}');
+    await page.getByLabel("Trigger 名称").fill(`Browser Scheduled Trigger ${nonce}`);
+    await page.getByLabel("Trigger 类型").click();
+    await page.locator(".el-select-dropdown:visible .el-select-dropdown__item").filter({ hasText: "scheduled" }).click();
+    await expect(page.getByLabel("Schedule Config JSON")).toHaveValue('{"timezone":"UTC","interval_seconds":60}');
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
-    const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Manual Trigger ${nonce}` });
-    await expect(triggerRow).toContainText("enabled");
-    await expect(triggerRow.getByRole("button", { name: "Invoke" })).toBeEnabled();
-
-    await page.getByLabel("Invoke Input JSON").fill('{"source":"browser-e2e"}');
-    await triggerRow.getByRole("button", { name: "Invoke" }).click();
-    await expect(page.getByText("最近一次 Trigger Execution")).toBeVisible();
-    await expect(page.getByText("completed", { exact: true })).toBeVisible();
+    const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` });
+    await expect(triggerRow).toContainText("scheduled");
+    await expect(triggerRow).toContainText("UTC / 每 60 秒");
+    await expect(triggerRow.getByRole("button", { name: "Invoke" })).toHaveCount(0);
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
     await expect(triggerRow).toContainText("disabled");
-    await expect(triggerRow.getByRole("button", { name: "Invoke" })).toBeDisabled();
 
     await triggerRow.getByRole("button", { name: "启用" }).click();
     await expect(triggerRow).toContainText("enabled");
-    await expect(triggerRow.getByRole("button", { name: "Invoke" })).toBeEnabled();
+
+    const persisted = await api.get(apiPath(`/workflows/${workflow.id}/triggers`), { headers });
+    expect(persisted.ok()).toBeTruthy();
+    const persistedTriggers = await persisted.json();
+    const persistedTrigger = persistedTriggers.items.find((item: { name: string }) => item.name === `Browser Scheduled Trigger ${nonce}`);
+    expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
+    expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 60 });
 
     await triggerRow.getByRole("button", { name: "删除" }).click();
     const deleteDialog = page.locator(".el-message-box:visible");
     await expect(deleteDialog).toBeVisible();
-    await expect(deleteDialog).toContainText(`确认删除 Trigger「Browser Manual Trigger ${nonce}」？`);
+    await expect(deleteDialog).toContainText(`确认删除 Trigger「Browser Scheduled Trigger ${nonce}」？`);
     await deleteDialog.locator(".el-message-box__btns .el-button--primary").click();
-    await expect(page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Manual Trigger ${nonce}` })).toHaveCount(0);
+    await expect(page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` })).toHaveCount(0);
   } finally {
     await api.dispose();
   }
