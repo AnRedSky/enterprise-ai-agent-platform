@@ -64,7 +64,47 @@ frontend/package.json
 
 Browser 测试使用 Playwright。测试 fixture 通过 Playwright APIRequestContext 调用真实 Backend HTTP；用户操作通过真实浏览器页面完成。
 
-### 依赖
+`frontend/playwright.config.ts` 必须显式定义与 Gate 脚本一致的 project：
+
+```ts
+projects: [
+  {
+    name: "Desktop Chrome",
+    use: {
+      ...devices["Desktop Chrome"],
+    },
+  },
+],
+```
+
+Gate 脚本通过 `--project="Desktop Chrome"` 运行该项目。
+
+## 4. 已发生工程错误与修复
+
+首次执行 Browser E2E Gate 时，Chromium 已成功安装，但 Playwright 在测试启动前返回：
+
+```text
+Project(s) "Desktop Chrome" not found. Available projects: ""
+```
+
+根因：原 `playwright.config.ts` 仅在顶层 `use` 中展开 `devices["Desktop Chrome"]`，未定义 `projects[].name = "Desktop Chrome"`，与 E2E Gate 脚本的 `--project` 参数不一致。
+
+已完成修复：
+
+```text
+frontend/playwright.config.ts
+→ 显式定义 Desktop Chrome project
+```
+
+错误记录：
+
+```text
+`docs/error-tracking/004-playwright-project-missing.md`
+```
+
+修复后正式 Browser E2E Gate **尚未重新执行**，因此本阶段仍不得标记通过。
+
+## 5. 依赖
 
 `frontend/package.json` 增加：
 
@@ -80,7 +120,7 @@ npm install
 npx playwright install chromium
 ```
 
-## 4. 运行条件
+## 6. 运行条件
 
 E2E 不自动启动 Backend，也不自动执行 Frontend regression。运行前需要：
 
@@ -96,7 +136,14 @@ cd frontend
 npm run dev
 ```
 
-然后：
+建议先验证 project 配置：
+
+```powershell
+cd frontend
+npx playwright test --list --project="Desktop Chrome"
+```
+
+然后执行正式 Gate：
 
 ```powershell
 cd frontend
@@ -110,7 +157,7 @@ FRONTEND_BASE_URL=http://127.0.0.1:5173
 API_BASE_URL=http://127.0.0.1:8000/api/v1
 ```
 
-## 5. Gate 隔离
+## 7. Gate 隔离
 
 ```text
 Backend Gate
@@ -136,19 +183,27 @@ E2E Gate 不调用：
 - `npm test`
 - `npm run build`
 
-## 6. 当前验收状态
+## 8. 当前验收状态
 
-**开发实现已提交，但 E2E Gate 尚未由开发者本地执行，因此当前不得标记为通过。**
+**Playwright project 配置错误已修复，但修复后的 Browser E2E Gate 尚未由开发者本地重新执行，因此当前不得标记 Phase 1.6-C 为通过。**
 
-必须以本地实际执行结果更新本文件和 `docs/PROJECT_STATUS.md`。
+当前必须区分：
 
-## 7. 后续关闭条件
+```text
+Chromium installation       PASS
+Playwright project config   FIXED
+Browser E2E Gate             PENDING
+Backend Gate                 PENDING（Phase 1.6-C 关闭前需重新确认）
+Frontend Gate                PENDING（Phase 1.6-C 关闭前需重新确认）
+```
+
+## 9. 后续关闭条件
 
 Phase 1.6-C 关闭前必须：
 
-1. 安装 Playwright Chromium。
+1. 验证 `Desktop Chrome` project 可被 Playwright 解析。
 2. 启动真实 Backend 与 Frontend。
-3. 执行 E2E Gate。
+3. 执行 Browser E2E Gate。
 4. E2E 全部通过。
 5. 独立 Backend Gate 通过。
 6. 独立 Frontend Gate 通过。
