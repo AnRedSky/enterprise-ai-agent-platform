@@ -92,7 +92,10 @@ test("Workflow Trigger Governance completes the real browser contract", async ({
     await expect(triggerRow.getByRole("button", { name: "Invoke" })).toBeEnabled();
 
     await triggerRow.getByRole("button", { name: "删除" }).click();
-    await page.getByRole("button", { name: "确定" }).click();
+    const deleteDialog = page.locator(".el-message-box:visible");
+    await expect(deleteDialog).toBeVisible();
+    await expect(deleteDialog).toContainText(`确认删除 Trigger「Browser Manual Trigger ${nonce}」？`);
+    await deleteDialog.locator(".el-message-box__btns .el-button--primary").click();
     await expect(page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Manual Trigger ${nonce}` })).toHaveCount(0);
   } finally {
     await api.dispose();
