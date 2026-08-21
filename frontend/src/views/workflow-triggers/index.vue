@@ -22,7 +22,7 @@ const form = ref({ name: "", triggerType: "manual" as WorkflowTriggerType, confi
 const inputText = ref("{}");
 
 const defaultSchedule = (): ScheduledTriggerConfig => ({ timezone: "UTC", interval_seconds: 60 });
-const defaultWebhook = (): Record<string, unknown> => ({ auth_mode: "secret", secret: "", event_id_field: "event_id" });
+const defaultWebhook = (): Record<string, unknown> => ({ auth_mode: "secret", event_id_field: "event_id" });
 
 function isScheduled(trigger: WorkflowTrigger) {
   return trigger.trigger_type === "scheduled";
@@ -43,7 +43,7 @@ function scheduleConfig(trigger: WorkflowTrigger): ScheduledTriggerConfig {
 function webhookConfig(trigger: WorkflowTrigger): WebhookTriggerConfig {
   const config = trigger.config as Partial<WebhookTriggerConfig>;
   return {
-    auth_mode: config.auth_mode === "secret" ? "secret" : "secret",
+    auth_mode: "secret",
     event_id_field: typeof config.event_id_field === "string" ? config.event_id_field : "event_id",
     secret_configured: config.secret_configured === true,
   };
@@ -55,12 +55,8 @@ function validateSchedule(config: Record<string, unknown>) {
 }
 
 function validateWebhook(config: Record<string, unknown>) {
-  if (typeof config.secret !== "string" || config.secret.length < 16 || config.secret.length > 256) {
-    throw new Error("Webhook secret 长度必须为 16-256 个字符");
-  }
-  if (typeof config.event_id_field !== "string" || !config.event_id_field.trim()) {
-    throw new Error("Webhook event_id_field 必须是非空字符串");
-  }
+  if (webhookSecret.value.length < 16 || webhookSecret.value.length > 256) throw new Error("Webhook secret 长度必须为 16-256 个字符");
+  if (typeof config.event_id_field !== "string" || !config.event_id_field.trim()) throw new Error("Webhook event_id_field 必须是非空字符串");
 }
 
 function webhookEndpoint(trigger: WorkflowTrigger) {
@@ -69,18 +65,6 @@ function webhookEndpoint(trigger: WorkflowTrigger) {
 
 function generateSecret() {
   webhookSecret.value = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 64);
-  syncWebhookSecretToConfig();
-}
-
-function syncWebhookSecretToConfig() {
-  if (form.value.triggerType !== "webhook") return;
-  try {
-    const config = JSON.parse(form.value.configText) as Record<string, unknown>;
-    config.secret = webhookSecret.value;
-    form.value.configText = JSON.stringify(config, null, 2);
-  } catch {
-    // The create action reports malformed JSON through the normal form error path.
-  }
 }
 
 async function loadWorkflows() {
@@ -127,18 +111,21 @@ async function createTrigger() {
   try {
     const config = JSON.parse(form.value.configText) as Record<string, unknown>;
     if (form.value.triggerType === "scheduled") validateSchedule(config);
-    if (form.value.triggerType === "webhook") validateWebhook(config);
+    if (form.value.triggerType === "webhook") {
+      validateWebhook(config);
+      config.secret = webhookSecret.value;
+    }
     actionLoading.value = true;
     await workflowApi.createTrigger(selectedWorkflowId.value, {
       name: form.value.name,
       trigger_type: form.value.triggerType,
       config,
     });
-    const createdSecret = form.value.triggerType === "webhook" ? String(config.secret || "") : "";
+    const createdSecret = form.value.triggerType === "webhook" ? webhookSecret.value : "";
     resetForm();
+    await loadTriggers();
     if (createdSecret) ElMessage.success("Webhook Trigger 创建成功；Secret 仅在创建时可见，请立即保存");
     else ElMessage.success("Trigger 创建成功");
-    await loadTriggers();
   } catch (error) {
     ElMessage.error(error instanceof SyntaxError ? "Trigger Config 不是合法 JSON" : error instanceof Error ? error.message : "Trigger 创建失败");
   } finally {
@@ -218,20 +205,9 @@ onMounted(loadWorkflows);
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.triggerType === 'webhook'" label="Webhook Secret">
-          <el-input v-model="webhookSecret" type="password" show-password placeholder="至少 16 个字符" @input="syncWebhookSecretToConfig" />
-          <el-button size="small" @click="generateSecret">生成 Secret</el-button>
+          <div class="secret-editor"><el-input v-model="webhookSecret" type="password" show-password placeholder="至少 16 个字符" /><el-button size="small" @click="generateSecret">生成 Secret</el-button></div>
         </el-form-item>
-        <el-form-item v-if="form.triggerType === 'webhook'" label="Event ID 字段">
-          <el-input value="event_id" @input="(value: string) => {
-            try {
-              const config = JSON.parse(form.configText) as Record<string, unknown>;
-              config.event_id_field = value;
-              form.configText = JSON.stringify(config, null, 2);
-            } catch { /* create action handles invalid JSON */ }
-          }" />
-        </el-form-item>
-        <el-form-item v-if="form.triggerType !== 'webhook'" label="Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
-        <el-form-item v-else label="Webhook Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
+        <el-form-item label="Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
         <el-form-item label=" "><el-button type="primary" :loading="actionLoading" native-type="submit">创建 Trigger</el-button></el-form-item>
       </el-form>
 
@@ -286,4 +262,5 @@ onMounted(loadWorkflows);
 .header { display: flex; align-items: center; justify-content: space-between; }
 .selector { margin-top: 16px; max-width: 520px; }
 .el-form--inline { align-items: end; }
+.secret-editor { display: flex; gap: 8px; align-items: center; }
 </style>
