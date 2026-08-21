@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
 from app.models.workflow import WorkflowVersion
+from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow import Workflow
 from app.services.workflow_execution import WorkflowExecutionService
 from app.services.workflow_registry import WorkflowRegistry
 
@@ -70,6 +72,38 @@ def _trace_response(item):
             "node_id": item.node_id, "event_type": item.event_type, "status": item.status,
             "trace_id": item.trace_id, "actor_id": item.actor_id, "data": item.data,
             "error_code": item.error_code, "error_message": item.error_message, "created_at": item.created_at}
+
+
+@router.get("/{workflow_id}/executions")
+async def list_workflow_executions(
+    workflow_id: UUID,
+    claims=Depends(current_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """List executions belonging to a workflow, including scheduler-created executions.
+
+    Authorization is based on workflow ownership rather than execution.created_by because
+    scheduled executions are created by the scheduler service identity.
+    """
+    tenant_id = _tenant_id(claims)
+    actor_id = UUID(claims["sub"])
+    is_admin = "admin" in claims.get("roles", [])
+    workflow_query = select(Workflow).where(Workflow.id == workflow_id, Workflow.tenant_id == tenant_id)
+    if not is_admin:
+        workflow_query = workflow_query.where(Workflow.owner_id == actor_id)
+    workflow = (await db.execute(workflow_query)).scalar_one_or_none()
+    if workflow is None:
+        raise HTTPException(404, "Workflow 不存在")
+
+    rows = (await db.execute(
+        select(WorkflowExecution)
+        .where(
+            WorkflowExecution.tenant_id == tenant_id,
+            WorkflowExecution.workflow_id == workflow_id,
+        )
+        .order_by(WorkflowExecution.created_at.desc(), WorkflowExecution.id.desc())
+    )).scalars().all()
+    return [_execution_response(item) for item in rows]
 
 
 @router.post("/{workflow_id}/executions", status_code=201)
