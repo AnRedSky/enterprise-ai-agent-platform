@@ -121,18 +121,35 @@ Standalone Real API → 20 passed in 31.38s
 
 ### 1.9-C — Real API Reliability Scenarios
 
-基于真实数据库和真实 HTTP API 专门验证：
+**状态：开发/测试扩展进行中，尚未 Acceptance。**
 
-- circuit OPEN fast-fail
-- HALF_OPEN recovery
-- concurrent probes
-- stale Probe completion
-- retry lineage
-- deadline boundary
-- idempotency
-- tenant isolation
+现有 Backend Gate 的 20 个 Real API 测试已经覆盖 Circuit OPEN/HALF_OPEN、Retry、Retry Budget、Deadline、Trigger Idempotency 等场景，但不等价于 1.9-C 专项 Reliability Acceptance。
 
-现有 Backend Gate 的 20 个 Real API 测试已经通过，但不等价于 1.9-C 专项 Reliability Acceptance。
+本轮已新增真实 HTTP API 专项测试文件：
+
+```text
+backend/tests/api_real/test_phase_1_9c_reliability_api.py
+```
+
+新增场景：
+
+- Workflow Execution `Idempotency-Key` 顺序重放必须返回同一 Execution。
+- 两个并发真实 HTTP 请求使用相同 `Idempotency-Key` 时必须收敛到同一个 Execution，不能产生重复 Execution 或 500。
+- 同一 Tenant 下另一用户不能读取其他用户创建的 Execution，验证当前 Execution ownership isolation boundary。
+
+注意：当前注册接口将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此上述第三项是**同 Tenant ownership isolation**，不能扩大解释为跨 Tenant isolation。跨 Tenant 专项仍待能够创建不同 Tenant 的真实 API 测试上下文后执行。
+
+当前 1.9-C 专项测试刚提交，**尚未获得本地实际 PASS 结果，因此不得标记 PASS。**
+
+下一步本地验证：
+
+```powershell
+cd backend
+uv run pytest -q tests/api_real/test_phase_1_9c_reliability_api.py -m real_api
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```
+
+通过后再继续补充跨 Tenant / stale completion 的真实 HTTP 场景，并同步 Acceptance。
 
 ### 1.9-D — Frontend / Browser Reliability Convergence
 
@@ -148,6 +165,6 @@ Standalone Real API → 20 passed in 31.38s
 
 ## 6. 当前完成定义
 
-1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证。
+1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；1.9-C 已开始新增专项真实 HTTP API 场景，但尚未完成本地 Acceptance。
 
 Phase 1.9 只有在 1.9-C、1.9-D、1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
