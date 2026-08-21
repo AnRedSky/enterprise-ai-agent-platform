@@ -72,11 +72,13 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     await page.getByLabel("Trigger 名称").fill(`Browser Scheduled Trigger ${nonce}`);
 
-    // The production form labels this field as “类型”; scope the lookup to
-    // its form item instead of relying on an invented accessible label.
+    // Element Plus renders options in a teleported dropdown and animates them.
+    // Use the select's keyboard contract instead of racing the transient option DOM.
     const triggerTypeFormItem = page.locator(".el-form-item").filter({ hasText: "类型" }).first();
-    await triggerTypeFormItem.locator(".el-select").click();
-    await page.locator(".el-select-dropdown:visible .el-select-dropdown__item").filter({ hasText: "scheduled" }).click();
+    const triggerTypeSelect = triggerTypeFormItem.locator(".el-select");
+    await triggerTypeSelect.click();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
 
     const scheduleConfigFormItem = page.locator(".el-form-item").filter({ hasText: "Config JSON" }).first();
     await expect(scheduleConfigFormItem.locator("textarea")).toHaveValue('{"timezone":"UTC","interval_seconds":60}');
