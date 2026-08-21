@@ -195,7 +195,8 @@ class WorkflowExecutionService:
             raise HTTPException(409, f"Node 不允许从 {node.status} 到 {target_status}")
         now = datetime.now(UTC).replace(tzinfo=None)
         previous_status = node.status
-        if target_status == "running" and previous_status == "failed":
+        is_retry = target_status == "running" and previous_status == "failed"
+        if is_retry:
             if node.error_code == "CIRCUIT_OPEN":
                 raise CircuitOpenError(f"node:{node_id}")
             node.attempt += 1
@@ -214,6 +215,11 @@ class WorkflowExecutionService:
             execution.current_node_id = node_id
         if target_status in {"completed", "failed", "skipped"}:
             node.ended_at = now
+        if is_retry:
+            await self.governance.trace(
+                execution, execution.created_by, "node.retry.scheduled", "running",
+                node_id=node_id, data={"attempt": node.attempt},
+            )
         await self.governance.trace(execution, execution.created_by, "node.state_changed", target_status,
                                      node_id=node_id, error_code=error_code, error_message=error_message,
                                      data={"attempt": node.attempt})
@@ -234,7 +240,11 @@ class WorkflowExecutionService:
             raise HTTPException(503, "Circuit Breaker is open")
         except HTTPException as exc:
             if exc.status_code == 504:
-                await self.transition(execution, "failed", error_code="WORKFLOW_TIMEOUT", error_message=str(exc.detail), actor_id=actor_id)
+                detail = str(exc.detail)
+                timeout_code = "WORKFLOW_TIMEOUT" if detail in {
+                    "Workflow deadline exceeded", "Retry backoff exceeds workflow deadline"
+                } else "NODE_TIMEOUT"
+                await self.transition(execution, "failed", error_code=timeout_code, error_message=detail, actor_id=actor_id)
             else:
                 await self.transition(execution, "failed", error_code=f"HTTP_{exc.status_code}", error_message=str(exc.detail), actor_id=actor_id)
             raise
