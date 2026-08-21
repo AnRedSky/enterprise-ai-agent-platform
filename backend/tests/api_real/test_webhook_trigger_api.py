@@ -164,3 +164,94 @@ def test_webhook_trigger_real_http_accepts_duplicate_and_rejects_invalid_secret(
             headers={"X-Webhook-Secret": secret},
         )
         assert missing.status_code == 404, missing.text
+
+
+def test_webhook_trigger_real_http_requires_event_identity():
+    if not TRIGGER_WORKFLOW_ID:
+        pytest.fail("TRIGGER_WORKFLOW_ID is required for webhook validation")
+
+    name = f"api-real-webhook-identity-{uuid.uuid4().hex[:8]}"
+    secret = f"real-webhook-identity-{uuid.uuid4().hex}"
+    trigger_id = None
+
+    with _client() as client:
+        created = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers",
+            json={
+                "name": name,
+                "trigger_type": "webhook",
+                "config": {
+                    "auth_mode": "secret",
+                    "secret": secret,
+                    "event_id_field": "event_id",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        trigger_id = created.json()["id"]
+
+        missing_identity = client.post(
+            f"/webhooks/{trigger_id}",
+            json={"source": "real-api"},
+            headers={"X-Webhook-Secret": secret},
+        )
+        assert missing_identity.status_code == 422, missing_identity.text
+
+        deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
+        assert deleted.status_code == 204, deleted.text
+
+
+def test_webhook_trigger_real_http_bounds_long_idempotency_key_deterministically(webhook_event_loop):
+    if not TRIGGER_WORKFLOW_ID:
+        pytest.fail("TRIGGER_WORKFLOW_ID is required for webhook validation")
+
+    name = f"api-real-webhook-long-key-{uuid.uuid4().hex[:8]}"
+    secret = f"real-webhook-long-key-{uuid.uuid4().hex}"
+    event_identity = "x" * 100
+    trigger_id = None
+
+    with _client() as client:
+        created = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers",
+            json={
+                "name": name,
+                "trigger_type": "webhook",
+                "config": {
+                    "auth_mode": "secret",
+                    "secret": secret,
+                    "event_id_field": "event_id",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        trigger_id = created.json()["id"]
+
+        first = client.post(
+            f"/webhooks/{trigger_id}",
+            json={"event_id": event_identity, "source": "real-api"},
+            headers={"X-Webhook-Secret": secret, "Idempotency-Key": event_identity},
+        )
+        assert first.status_code == 202, first.text
+        first_body = first.json()
+        durable_key = first_body["idempotency_key"]
+        assert durable_key.startswith("webhook:")
+        assert len(durable_key) == len("webhook:") + 64
+
+        duplicate = client.post(
+            f"/webhooks/{trigger_id}",
+            json={"event_id": event_identity, "source": "real-api"},
+            headers={"X-Webhook-Secret": secret, "Idempotency-Key": event_identity},
+        )
+        assert duplicate.status_code == 200, duplicate.text
+        duplicate_body = duplicate.json()
+        assert duplicate_body["status"] == "duplicate"
+        assert duplicate_body["execution_id"] == first_body["execution_id"]
+        assert duplicate_body["idempotency_key"] == durable_key
+
+        rows = _wait_for_execution(webhook_event_loop, durable_key)
+        assert len(rows) == 1, rows
+        assert rows[0]["idempotency_key"] == durable_key
+        assert rows[0]["status"] == "completed", rows
+
+        deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
+        assert deleted.status_code == 204, deleted.text
