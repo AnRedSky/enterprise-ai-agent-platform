@@ -21,13 +21,13 @@
 | Observability / Audit / Trace | 已实现当前历史范围 |
 | Knowledge / Ingestion / Retrieval | 已实现当前历史范围 |
 | Vector / Hybrid Retrieval | 已实现当前代码范围；真实语义质量仍需真实 Provider 评估 |
-| Workflow / Execution / Governance | 已实现当前历史范围 |
-| Retry / Timeout / Idempotency / Deadline | 已实现当前历史范围；本阶段继续验证跨边界语义 |
-| Circuit Breaker | 1.9-A 已通过本地 Gate；1.9-B stale Probe completion 已通过本地验证 |
-| Scheduled Trigger | 已实现当前历史范围 |
+| Workflow / Execution / Governance | 1.9-C Runtime reliability 专项已通过当前本地验证 |
+| Retry / Timeout / Idempotency / Deadline | 1.9-C 当前 focused + Real API 验证通过 |
+| Circuit Breaker | 1.9-A/1.9-B 已验证，1.9-C Real API boundary 已通过 |
+| Scheduled Trigger | 已实现当前历史范围；待 1.9-D/E 跨层复验 |
 | Webhook Trigger | 已实现当前历史范围 |
 | Frontend Governance UI | 已实现当前历史范围 |
-| Browser E2E | 已形成独立 Gate |
+| Browser E2E | 已形成独立 Gate；1.9-D 尚未完成 |
 
 ## 3. 重要边界
 
@@ -39,21 +39,21 @@
 
 状态：**本地验证完成。**
 
-本地实际验证：
+历史实际验证：
 
 ```text
-Targeted Circuit Breaker tests → 16 passed in 0.68s
-Backend Regression → 262 passed, 20 deselected in 3.64s
+Targeted Circuit Breaker tests → 16 passed
+Backend Regression → 262 passed, 20 deselected
 Migration head → 0022_workflow_trigger (head)
-Mandatory Real API → 20 passed in 32.99s
-Standalone Real API → 20 passed in 33.26s
+Mandatory Real API → 20 passed
+Standalone Real API → 20 passed
 ```
 
 ### 1.9-B — Runtime Failure / Retry / Circuit Boundary Audit
 
-**状态：当前专项修复已通过本地验证。**
+状态：**focused scope 已完成本地验证。**
 
-当前 `WorkflowExecutionService` 已明确：
+已验证：
 
 - `CIRCUIT_OPEN` 不进入 node retry。
 - `WORKFLOW_TIMEOUT` 不进入 retry。
@@ -61,153 +61,59 @@ Standalone Real API → 20 passed in 33.26s
 - node `max_attempts` 与 workflow `retry_budget.max_retries` 分开约束。
 - deadline 在每次 retry 前重新计算，backoff 超过剩余 deadline 时直接以 `WORKFLOW_TIMEOUT` 结束。
 - Retry lineage 通过 `retry_of_execution_id` 保留。
-
-当前 `WorkflowRuntime` 已明确：
-
-- transient provider failure 先进入 Circuit Breaker，再由 Workflow Runtime 决定是否 retry。
-- HALF_OPEN probe failure 转换为 `CIRCUIT_OPEN`，避免将恢复 Probe 再次消耗 node retry budget。
-- Circuit Breaker 与 Workflow retry 使用同一 error classification boundary。
-
-本轮已发现并修复的边界：
-
-> 旧 Recovery Window 的迟到 Probe completion 不能修改新的 HALF_OPEN Recovery Window。
-
-实现方式：
-
-- 在 Circuit Breaker 的 async execution context 中记录 `(tenant_id, circuit_key, half_opened_at)` Probe reservation token。
-- `record_success()` / `record_failure()` 在 HALF_OPEN 状态下校验 token 对应的 recovery window。
-- stale completion 与当前 window 不匹配时只释放当前调用上下文，不修改新 window 的 state/quota。
-- 直接调用 `record_success()` / `record_failure()` 且没有 Probe token 的历史 service-level 调用仍保持兼容。
-- 本修复不新增数据库字段或 migration；Recovery Window 复用现有 `half_opened_at` 作为 generation boundary。
-
-代码提交：
-
-```text
-8085e5c7c6009a97a7d3a1d73094f7812c9f9258
-fix: isolate stale circuit probe completions
-```
-
-新增专项测试覆盖：
-
-- stale HALF_OPEN success 不关闭新的 recovery window。
-- stale HALF_OPEN failure 不重新 OPEN 新的 recovery window。
-
-测试提交：
-
-```text
-f7ef0c55810171cb70e5873a99cba82a01a64047
- test: cover stale half-open probe completion
-```
-
-### 1.9-B 本地真实验证结果
-
-开发者在最新 `main` 本地实际执行：
-
-```text
-Focused 1.9-B runtime tests → 35 passed in 0.97s
-Backend Regression → 264 passed, 20 deselected in 4.79s
-Migration head → 0022_workflow_trigger (head)
-Mandatory Real API → 20 passed in 40.74s
-Standalone Real API → 20 passed in 31.38s
-```
-
-因此 **1.9-B 当前 focused scope 已通过本地 Backend / PostgreSQL / Real API 验证。**
+- HALF_OPEN stale probe completion 不得修改新的 recovery window。
 
 ### 1.9-C — Real API Reliability Scenarios
 
-**状态：专项修复已直接提交最新 `main`，等待开发者本地重新验证；当前不能标记 PASS。**
+状态：**当前专项验证通过。**
 
-新增专项测试文件：
-
-```text
-backend/tests/api_real/test_phase_1_9c_reliability_api.py
-```
-
-新增场景：
-
-- Workflow Execution `Idempotency-Key` 顺序重放必须返回同一 Execution。
-- 两个并发真实 HTTP 请求使用相同 `Idempotency-Key` 时必须收敛到同一个 Execution，不能产生重复 Execution 或 500。
-- 同一 Tenant 下另一用户不能读取其他用户创建的 Execution，验证当前 Execution ownership isolation boundary。
-
-当前注册接口将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此第三项是**同 Tenant ownership isolation**，不能扩大解释为跨 Tenant isolation。跨 Tenant 专项仍待能够创建不同 Tenant 的真实 API 测试上下文后执行。
-
-#### 已有首轮失败证据
-
-直接运行专项测试时，三个测试因没有提前准备 `WORKFLOW_ID` context 而失败：
+本轮开发者本地实际执行：
 
 ```text
-3 failed in 0.10s
-WORKFLOW_ID is required for 1.9-C reliability validation
+Focused Runtime / Retry / Timeout suite:
+13 passed in 1.17s
+
+Real API Gate:
+23 passed in 37.61s
+[PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-随后通过正式 Real API Gate 自动 bootstrap context 后执行完整 suite：
+已通过的边界包括：
+
+- Workflow node timeout / workflow deadline timeout → HTTP 504。
+- `NODE_TIMEOUT` / `WORKFLOW_TIMEOUT` error code preservation。
+- node retry transition 与 attempt lineage。
+- workflow retry budget exhaustion。
+- retry backoff crossing workflow deadline。
+- retry policy / retryable error code boundary。
+- Real API node retry business loop。
+- `node.retry.scheduled` trace。
+- `workflow.node.retry`、`workflow.node.retry_exhausted`、`workflow.execution.failed` audit。
+- Circuit Breaker open / fast-fail boundary。
+- Real HTTP idempotency reliability 场景。
+
+本轮最后一个失败为 Real API retry business loop 缺少 `workflow.node.retry` audit。已修复并提交：
 
 ```text
-22 passed, 1 failed in 39.35s
+3a0ecfec47ab079b2ce284b56e20a88aa64efd0b
+fix: record workflow node retry audit event
 ```
 
-唯一失败：
+修复位于 `WorkflowRuntime` retry scheduling 路径：确认 retry 不因 node policy、workflow budget 或 deadline exhaustion 被截断后，在 backoff sleep 前记录 `workflow.node.retry` audit，并携带 node、next attempt、delay metadata。
 
-```text
-test_execution_idempotency_is_race_safe_over_real_http
-```
-
-实际一个并发请求返回 HTTP 500；测试随后解析纯文本 `Internal Server Error` 时产生 `JSONDecodeError`，已修正诊断逻辑以保留原始 HTTP body。
-
-#### 已修复的 Idempotency 并发边界
-
-Idempotency 创建路径已使用 `AsyncSession.begin_nested()` SAVEPOINT，并在竞争异常后使用保存的标量 ID 重新查询已经提交的 Execution，避免完整 rollback 后访问过期 ORM 对象造成异步隐式加载风险。
-
-错误记录：
-
-```text
-docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md
-```
-
-#### 本轮新增发现：Runtime Retry / Timeout Failure Semantics
-
-在继续验证 1.9-C 前置 Runtime boundary 时，开发者本地实际反馈：
-
-```text
-7 failed, 6 passed, 1 warning
-```
-
-失败集中在 workflow timeout、retry budget、retry transition 与 retry deadline；错误表现为原始 `HTTPException(503)` / `ConnectionError` / `TimeoutError` 被最终包装为 `HTTP 500 Workflow Runtime 执行失败`。
-
-Real API bootstrap 同时出现 retry deadline fixture 预期 `HTTP 504`、实际 `HTTP 404 Mock provider HTTP 404` 的边界失败。
-
-错误记录：
-
-```text
-docs/04-errors/ERR-0019-workflow-runtime-retry-failure-semantics.md
-```
-
-当前修复已提交到 `main`：
-
-- `WorkflowRuntime` 保存节点失败原始异常，在 retry policy / node attempts / retry budget 耗尽时保留 HTTP、transport、timeout 的类型语义。
-- `WorkflowExecutionService.run()` 对 `ConnectionError` / timeout 单独记录 failed/error_code 后重新抛出，不再统一包装为 500。
-- retry backoff 在 sleep 前重新计算 workflow remaining deadline，超过剩余 deadline 时直接返回 504 `WORKFLOW_TIMEOUT`。
-- 该修复不新增数据库结构，因此不产生 migration 变更。
-
-相关代码提交：
-
-```text
-c26db148d6a97b1a2ce908b39b6b00d517da8a4b
-fix: preserve workflow retry failure semantics
-
-bb0bcd9e91566bd47c5c2ebbaa5c7be216378971
-fix: preserve typed workflow runtime failures
-```
-
-**注意：上述修复尚未获得新的本地 PASS 证据，因此 1.9-C 仍不能标记 PASS。**
-
-下一步必须重新执行 Runtime focused tests 与完整 Real API Gate；通过后再继续跨 Tenant / stale completion 等专项场景。
+因此 1.9-C 不再存在当前已知的 Runtime retry / timeout / governance Real API failure；后续不得重复修改已通过的边界，除非新的 Gate 暴露回归。
 
 ### 1.9-D — Frontend / Browser Reliability Convergence
 
-验证已有 UI/API 的失败态、重复提交、Execution 状态刷新和 Trigger 生命周期，不新增产品范围。
+状态：**下一项任务，尚未完成。**
+
+目标：验证已有 UI/API 的失败态、重复提交、Execution 状态刷新和 Trigger 生命周期，不新增产品范围。
+
+必须保持 Backend、Frontend、Browser 三层 Gate 独立，并通过真实 Frontend + Backend HTTP 的 Browser E2E 验证跨层行为。
 
 ### 1.9-E — Final Acceptance
+
+状态：**未开始。**
 
 完成 Backend / Frontend / Browser 三层独立 Gate、Real API、Migration head、关键失败场景和文档同步后关闭 Phase 1.9。
 
@@ -215,8 +121,18 @@ fix: preserve typed workflow runtime failures
 
 必须遵守 `docs/01-governance/DEVELOPMENT.md`：Backend pytest、Alembic upgrade head、Real API Gate、Frontend test/build、Browser E2E、前后端联调。GitHub Actions 不作为本阶段本地验收依据。
 
+Backend、Frontend、Browser 三层 Gate 必须独立执行，不创建 Full Regression Gate。
+
 ## 6. 当前完成定义
 
-1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；1.9-C 已发现并修复 Idempotency 并发与 Runtime retry/timeout failure semantics 问题，但当前修复等待开发者本地重新验证。
+1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；**1.9-C 已通过当前开发者本地 focused Runtime / Retry / Timeout suite 与完整 Real API Gate**。
 
-Phase 1.9 只有在 1.9-C、1.9-D、1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
+Phase 1.9 只有在 1.9-D、1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
+
+## 7. 下一步
+
+1. 进入 1.9-D Frontend / Browser Reliability Convergence。
+2. 执行 Frontend Regression / Build。
+3. 执行独立 Browser / Frontend-Backend E2E，重点覆盖 Execution failure state、重复提交、状态刷新、Scheduled Trigger 生命周期。
+4. 发现新错误立即记录 `docs/04-errors/`，不提前关闭 Phase 1.9。
+5. 通过 1.9-D 后进入 1.9-E Final Acceptance，并同步 Acceptance 文档。
