@@ -12,6 +12,7 @@ from app.api.knowledge_ingestion import router as knowledge_ingestion_router
 from app.api.knowledge_retrieval import router as knowledge_retrieval_router
 from app.api.runtime import router as runtime_router
 from app.api.tools import router as tools_router
+from app.api.webhooks import router as webhooks_router
 from app.api.workflow_executions import router as workflow_executions_router
 from app.api.workflows import router as workflows_router
 from app.core.config import settings
@@ -52,6 +53,7 @@ app.include_router(knowledge_ingestion_router, prefix="/api/v1/knowledge", tags=
 app.include_router(knowledge_retrieval_router, prefix="/api/v1/knowledge", tags=["knowledge-retrieval"])
 app.include_router(workflows_router, prefix="/api/v1/workflows", tags=["workflows"])
 app.include_router(workflow_executions_router, prefix="/api/v1/workflows", tags=["workflow-executions"])
+app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"])
 
 
 @app.get("/health")
