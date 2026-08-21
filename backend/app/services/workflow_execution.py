@@ -236,7 +236,7 @@ class WorkflowExecutionService:
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以 Run")
         await self.transition(execution, "running", actor_id=actor_id)
-        runtime = WorkflowRuntime(self.db)
+        runtime = WorkflowRuntime(self.db, execution_service=self)
         try:
             await runtime.execute(execution, version, actor_id, admin)
         except CircuitOpenError:
