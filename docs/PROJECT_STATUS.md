@@ -149,7 +149,7 @@ AuditLog query failed TypeError: Cannot read properties of undefined (reading 'd
 - 原 error-state fixture 使用 rejected Promise，与 Vitest 当前 unhandled-rejection 调度产生时序耦合。
 - 最终测试边界改为 `mockResolvedValue(undefined)`，利用 malformed envelope 稳定进入组件 `catch/finally` 路径，不依赖 rejected Promise 的调度时序。
 - 生产 `AuditLogPanel.vue` 无需无关修改。
-- 工程错误已记录并关闭：`docs/04-errors/ERR-0019-frontend-audit-log-error-state-mock-rejection.md`。
+- 工程错误已记录并关闭：`docs/04-errors/ERR-0020-frontend-audit-log-error-state-mock-rejection.md`。
 
 ### 1.9-E Final Acceptance
 
@@ -228,7 +228,7 @@ Browser E2E: pending re-run after the final AuditLog test fix
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
-1. **Fronted Regression 已恢复，下一步先执行本轮修复后的 Browser E2E，不能直接沿用此前 3 个通过结果。**
+1. **Frontend Regression 已恢复，下一步先执行本轮修复后的 Browser E2E，不能直接沿用此前 3 个通过结果。**
 2. **Browser E2E 通过后进入 1.9-E Final Acceptance：重新执行 Backend default regression、Alembic migration/head、Real API Gate。**
 3. **同步复核关键失败场景与三层 Gate 独立性。**
 4. 发现新的工程错误立即记录到 `docs/04-errors/`，不提前关闭当前错误。
