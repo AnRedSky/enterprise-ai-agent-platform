@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { workflowApi, type ScheduledTriggerConfig, type Workflow, type WorkflowExecution, type WorkflowTrigger } from "@/api/workflows";
+import {
+  workflowApi,
+  type ScheduledTriggerConfig,
+  type WebhookTriggerConfig,
+  type Workflow,
+  type WorkflowExecution,
+  type WorkflowTrigger,
+  type WorkflowTriggerType,
+} from "@/api/workflows";
 
 const workflows = ref<Workflow[]>([]);
 const triggers = ref<WorkflowTrigger[]>([]);
@@ -9,25 +17,70 @@ const selectedWorkflowId = ref("");
 const loading = ref(false);
 const actionLoading = ref(false);
 const execution = ref<WorkflowExecution>();
-const form = ref({ name: "", triggerType: "manual" as "manual" | "scheduled", configText: "{}" });
+const webhookSecret = ref("");
+const form = ref({ name: "", triggerType: "manual" as WorkflowTriggerType, configText: "{}" });
 const inputText = ref("{}");
 
 const defaultSchedule = (): ScheduledTriggerConfig => ({ timezone: "UTC", interval_seconds: 60 });
+const defaultWebhook = (): Record<string, unknown> => ({ auth_mode: "secret", secret: "", event_id_field: "event_id" });
 
 function isScheduled(trigger: WorkflowTrigger) {
   return trigger.trigger_type === "scheduled";
 }
 
+function isWebhook(trigger: WorkflowTrigger) {
+  return trigger.trigger_type === "webhook";
+}
+
 function scheduleConfig(trigger: WorkflowTrigger): ScheduledTriggerConfig {
+  const config = trigger.config as Partial<ScheduledTriggerConfig>;
   return {
-    timezone: typeof trigger.config.timezone === "string" ? trigger.config.timezone : "UTC",
-    interval_seconds: typeof trigger.config.interval_seconds === "number" ? trigger.config.interval_seconds : 60,
+    timezone: typeof config.timezone === "string" ? config.timezone : "UTC",
+    interval_seconds: typeof config.interval_seconds === "number" ? config.interval_seconds : 60,
+  };
+}
+
+function webhookConfig(trigger: WorkflowTrigger): WebhookTriggerConfig {
+  const config = trigger.config as Partial<WebhookTriggerConfig>;
+  return {
+    auth_mode: config.auth_mode === "secret" ? "secret" : "secret",
+    event_id_field: typeof config.event_id_field === "string" ? config.event_id_field : "event_id",
+    secret_configured: config.secret_configured === true,
   };
 }
 
 function validateSchedule(config: Record<string, unknown>) {
   if (typeof config.timezone !== "string" || !config.timezone.trim()) throw new Error("Schedule timezone 必须是非空字符串");
   if (!Number.isInteger(config.interval_seconds) || Number(config.interval_seconds) < 1) throw new Error("Schedule interval_seconds 必须是大于 0 的整数");
+}
+
+function validateWebhook(config: Record<string, unknown>) {
+  if (typeof config.secret !== "string" || config.secret.length < 16 || config.secret.length > 256) {
+    throw new Error("Webhook secret 长度必须为 16-256 个字符");
+  }
+  if (typeof config.event_id_field !== "string" || !config.event_id_field.trim()) {
+    throw new Error("Webhook event_id_field 必须是非空字符串");
+  }
+}
+
+function webhookEndpoint(trigger: WorkflowTrigger) {
+  return `/api/v1/webhooks/${trigger.id}`;
+}
+
+function generateSecret() {
+  webhookSecret.value = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll("-", "")}`.slice(0, 64);
+  syncWebhookSecretToConfig();
+}
+
+function syncWebhookSecretToConfig() {
+  if (form.value.triggerType !== "webhook") return;
+  try {
+    const config = JSON.parse(form.value.configText) as Record<string, unknown>;
+    config.secret = webhookSecret.value;
+    form.value.configText = JSON.stringify(config, null, 2);
+  } catch {
+    // The create action reports malformed JSON through the normal form error path.
+  }
 }
 
 async function loadWorkflows() {
@@ -57,11 +110,15 @@ async function loadTriggers() {
 
 function resetForm() {
   form.value = { name: "", triggerType: "manual", configText: "{}" };
+  webhookSecret.value = "";
 }
 
-function selectTriggerType(type: "manual" | "scheduled") {
+function selectTriggerType(type: WorkflowTriggerType) {
   form.value.triggerType = type;
-  form.value.configText = type === "scheduled" ? JSON.stringify(defaultSchedule(), null, 2) : "{}";
+  webhookSecret.value = "";
+  if (type === "scheduled") form.value.configText = JSON.stringify(defaultSchedule(), null, 2);
+  else if (type === "webhook") form.value.configText = JSON.stringify(defaultWebhook(), null, 2);
+  else form.value.configText = "{}";
 }
 
 async function createTrigger() {
@@ -70,15 +127,18 @@ async function createTrigger() {
   try {
     const config = JSON.parse(form.value.configText) as Record<string, unknown>;
     if (form.value.triggerType === "scheduled") validateSchedule(config);
+    if (form.value.triggerType === "webhook") validateWebhook(config);
     actionLoading.value = true;
     await workflowApi.createTrigger(selectedWorkflowId.value, {
       name: form.value.name,
       trigger_type: form.value.triggerType,
       config,
     });
+    const createdSecret = form.value.triggerType === "webhook" ? String(config.secret || "") : "";
     resetForm();
+    if (createdSecret) ElMessage.success("Webhook Trigger 创建成功；Secret 仅在创建时可见，请立即保存");
+    else ElMessage.success("Trigger 创建成功");
     await loadTriggers();
-    ElMessage.success("Trigger 创建成功");
   } catch (error) {
     ElMessage.error(error instanceof SyntaxError ? "Trigger Config 不是合法 JSON" : error instanceof Error ? error.message : "Trigger 创建失败");
   } finally {
@@ -137,7 +197,7 @@ onMounted(loadWorkflows);
   <div class="trigger-page">
     <el-card v-loading="loading">
       <template #header><div class="header"><span>Workflow Trigger Governance</span><el-button size="small" @click="loadWorkflows">刷新</el-button></div></template>
-      <el-alert title="Trigger 只能作用于当前 Tenant 可访问的 Workflow；Tenant 不由前端提交。Scheduled Trigger 只使用后端已定义的 timezone + interval_seconds Contract。" type="info" :closable="false" />
+      <el-alert title="Trigger 只能作用于当前 Tenant 可访问的 Workflow；Tenant 不由前端提交。Scheduled Trigger 只使用后端已定义的 timezone + interval_seconds Contract。Webhook Secret 只以哈希形式持久化。" type="info" :closable="false" />
 
       <el-form label-position="top" class="selector">
         <el-form-item label="Workflow">
@@ -149,28 +209,50 @@ onMounted(loadWorkflows);
 
       <el-divider />
       <el-form label-position="top" inline @submit.prevent="createTrigger">
-        <el-form-item label="Trigger 名称"><el-input v-model="form.name" placeholder="例如：订单每分钟同步" /></el-form-item>
+        <el-form-item label="Trigger 名称"><el-input v-model="form.name" placeholder="例如：订单事件入口" /></el-form-item>
         <el-form-item label="类型">
           <el-select :model-value="form.triggerType" @update:model-value="selectTriggerType">
             <el-option label="manual" value="manual" />
             <el-option label="scheduled" value="scheduled" />
+            <el-option label="webhook" value="webhook" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
+        <el-form-item v-if="form.triggerType === 'webhook'" label="Webhook Secret">
+          <el-input v-model="webhookSecret" type="password" show-password placeholder="至少 16 个字符" @input="syncWebhookSecretToConfig" />
+          <el-button size="small" @click="generateSecret">生成 Secret</el-button>
+        </el-form-item>
+        <el-form-item v-if="form.triggerType === 'webhook'" label="Event ID 字段">
+          <el-input value="event_id" @input="(value: string) => {
+            try {
+              const config = JSON.parse(form.configText) as Record<string, unknown>;
+              config.event_id_field = value;
+              form.configText = JSON.stringify(config, null, 2);
+            } catch { /* create action handles invalid JSON */ }
+          }" />
+        </el-form-item>
+        <el-form-item v-if="form.triggerType !== 'webhook'" label="Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
+        <el-form-item v-else label="Webhook Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item>
         <el-form-item label=" "><el-button type="primary" :loading="actionLoading" native-type="submit">创建 Trigger</el-button></el-form-item>
       </el-form>
 
       <el-table :data="triggers" empty-text="暂无 Trigger">
         <el-table-column prop="name" label="名称" min-width="180" />
         <el-table-column prop="trigger_type" label="类型" width="110" />
-        <el-table-column label="Schedule" min-width="220">
+        <el-table-column label="Schedule / Webhook" min-width="300">
           <template #default="scope">
             <span v-if="isScheduled(scope.row as WorkflowTrigger)">{{ scheduleConfig(scope.row as WorkflowTrigger).timezone }} / 每 {{ scheduleConfig(scope.row as WorkflowTrigger).interval_seconds }} 秒</span>
+            <span v-else-if="isWebhook(scope.row as WorkflowTrigger)">POST {{ webhookEndpoint(scope.row as WorkflowTrigger) }} / event_id: {{ webhookConfig(scope.row as WorkflowTrigger).event_id_field }}</span>
             <span v-else>-</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="scope"><el-tag :type="scope.row.status === 'enabled' ? 'success' : 'info'">{{ scope.row.status }}</el-tag></template>
+        </el-table-column>
+        <el-table-column label="Secret" width="120">
+          <template #default="scope">
+            <el-tag v-if="isWebhook(scope.row as WorkflowTrigger)" type="success">{{ webhookConfig(scope.row as WorkflowTrigger).secret_configured ? '已配置' : '未配置' }}</el-tag>
+            <span v-else>-</span>
+          </template>
         </el-table-column>
         <el-table-column prop="updated_at" label="更新时间" min-width="180" />
         <el-table-column label="操作" width="250">
