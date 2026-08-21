@@ -81,7 +81,13 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     await page.keyboard.press("Enter");
 
     const scheduleConfigFormItem = page.locator(".el-form-item").filter({ hasText: "Config JSON" }).first();
-    await expect(scheduleConfigFormItem.locator("textarea")).toHaveValue('{"timezone":"UTC","interval_seconds":60}');
+    const scheduleConfigTextarea = scheduleConfigFormItem.locator("textarea");
+    await expect(scheduleConfigTextarea).toHaveValue(/\"timezone\"\s*:\s*\"UTC\"/);
+    await expect(scheduleConfigTextarea).toHaveValue(/\"interval_seconds\"\s*:\s*60/);
+    expect(JSON.parse(await scheduleConfigTextarea.inputValue())).toEqual({
+      timezone: "UTC",
+      interval_seconds: 60,
+    });
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
     const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` });
