@@ -48,3 +48,14 @@ def test_scheduler_rejects_non_positive_poll_interval():
 def test_scheduler_rejects_invalid_interval_slot():
     with pytest.raises(ValueError, match="interval_seconds"):
         ScheduledTriggerScheduler.interval_slot(datetime.now(UTC), 0)
+
+
+def test_scheduler_recovery_slots_remains_callable_after_constructor():
+    scheduler = ScheduledTriggerScheduler(recovery_slots=3)
+    now = datetime(2026, 8, 21, 0, 10, 37, tzinfo=UTC)
+    assert scheduler.max_recovery_slots == 3
+    assert scheduler.recovery_slots(now, 300) == [
+        ScheduledTriggerScheduler.interval_slot(now, 300) - 2,
+        ScheduledTriggerScheduler.interval_slot(now, 300) - 1,
+        ScheduledTriggerScheduler.interval_slot(now, 300),
+    ]
