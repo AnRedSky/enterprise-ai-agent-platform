@@ -34,7 +34,7 @@ describe("AuditLogPanel", () => {
   });
 
   it("renders error state", async () => {
-    auditLogs.mockResolvedValue({});
+    auditLogs.mockRejectedValue(new Error("Audit API unavailable"));
     const wrapper = mount(AuditLog, { global });
     await flushPromises();
     expect(auditLogs).toHaveBeenCalledTimes(1);
