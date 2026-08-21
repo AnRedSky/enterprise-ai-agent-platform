@@ -72,13 +72,21 @@ export type WorkflowTrace = {
   created_at: string;
 };
 
-export type WorkflowTriggerType = "manual" | "scheduled";
+export type WorkflowTriggerType = "manual" | "scheduled" | "webhook";
 export type WorkflowTriggerStatus = "enabled" | "disabled";
 
 export type ScheduledTriggerConfig = {
   timezone: string;
   interval_seconds: number;
 };
+
+export type WebhookTriggerConfig = {
+  auth_mode: "secret";
+  event_id_field: string;
+  secret_configured?: boolean;
+};
+
+export type WorkflowTriggerConfig = ScheduledTriggerConfig | WebhookTriggerConfig | Record<string, unknown>;
 
 export type WorkflowTrigger = {
   id: string;
@@ -87,10 +95,16 @@ export type WorkflowTrigger = {
   name: string;
   trigger_type: WorkflowTriggerType;
   status: WorkflowTriggerStatus;
-  config: Record<string, unknown>;
+  config: WorkflowTriggerConfig;
   created_by: string;
   created_at: string;
   updated_at: string;
+};
+
+export type CreateWebhookTriggerConfig = {
+  auth_mode?: "secret";
+  secret: string;
+  event_id_field?: string;
 };
 
 export const workflowApi = {
