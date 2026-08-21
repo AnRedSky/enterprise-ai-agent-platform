@@ -24,6 +24,7 @@
 | ERR-0016 | 012 | Retry node state / deadline |
 | ERR-0017 | 2026-08-21 | Scheduled multi-worker / MissingGreenlet |
 | ERR-0018 | 2026-08-21 | Real API Idempotency race / AsyncSession rollback |
+| ERR-0019 | 2026-08-21 | WorkflowRuntime 缺失 execute / Real API bootstrap 500 |
 
 ## 迁移规则
 
