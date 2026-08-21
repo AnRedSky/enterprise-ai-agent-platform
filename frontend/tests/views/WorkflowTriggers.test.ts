@@ -10,9 +10,15 @@ const api = vi.hoisted(() => ({
   invokeTrigger: vi.fn(),
 }));
 
+const messages = vi.hoisted(() => ({
+  error: vi.fn(),
+  success: vi.fn(),
+  warning: vi.fn(),
+}));
+
 vi.mock("../../src/api/workflows", () => ({ workflowApi: api }));
 vi.mock("element-plus", () => ({
-  ElMessage: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
+  ElMessage: messages,
   ElMessageBox: { confirm: vi.fn() },
 }));
 
@@ -65,6 +71,7 @@ const global = { stubs, directives: { loading: () => undefined } };
 describe("Workflow Trigger Governance view", () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
+    Object.values(messages).forEach((mock) => mock.mockReset());
     api.list.mockResolvedValue({ data: [workflow] });
     api.triggers.mockResolvedValue({ data: [trigger] });
     api.createTrigger.mockResolvedValue({ data: trigger });
@@ -79,6 +86,18 @@ describe("Workflow Trigger Governance view", () => {
     expect(wrapper.text()).toContain("Workflow Trigger Governance");
   });
 
+  it("renders the Workflow Governance UI contract and tenant boundary guidance", async () => {
+    const wrapper = mount(WorkflowTriggers, { global });
+    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const text = wrapper.text();
+    expect(text).toContain("Workflow");
+    expect(text).toContain("Trigger 名称");
+    expect(text).toContain("Config JSON");
+    expect(text).toContain("Invoke Input JSON");
+    expect(text).toContain("Trigger 只能作用于当前 Tenant 可访问的 Published Workflow");
+    expect(text).toContain("Tenant 不由前端提交");
+  });
+
   it("creates, toggles and deletes a trigger through the frontend contract", async () => {
     const wrapper = mount(WorkflowTriggers, { global });
     await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
@@ -91,6 +110,25 @@ describe("Workflow Trigger Governance view", () => {
     expect(api.deleteTrigger).toHaveBeenCalledWith("w1", "t1");
   });
 
+  it("rejects invalid Trigger Config before issuing an HTTP request", async () => {
+    const wrapper = mount(WorkflowTriggers, { global });
+    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    (wrapper.vm as any).form.name = "Invalid Config Trigger";
+    (wrapper.vm as any).form.configText = "{invalid-json";
+    await (wrapper.vm as any).createTrigger();
+    expect(api.createTrigger).not.toHaveBeenCalled();
+    expect(messages.error).toHaveBeenCalledWith("Trigger Config 不是合法 JSON");
+  });
+
+  it("rejects invalid Invoke Input before issuing an HTTP request", async () => {
+    const wrapper = mount(WorkflowTriggers, { global });
+    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    (wrapper.vm as any).inputText = "{invalid-json";
+    await (wrapper.vm as any).invokeTrigger(trigger);
+    expect(api.invokeTrigger).not.toHaveBeenCalled();
+    expect(messages.error).toHaveBeenCalledWith("Trigger Input 不是合法 JSON");
+  });
+
   it("invokes an enabled trigger and exposes the resulting execution", async () => {
     const wrapper = mount(WorkflowTriggers, { global });
     await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
@@ -98,5 +136,6 @@ describe("Workflow Trigger Governance view", () => {
     expect(api.invokeTrigger).toHaveBeenCalledWith("w1", "t1", {}, expect.any(String));
     expect((wrapper.vm as any).execution.id).toBe("e1");
     expect(wrapper.text()).toContain("e1");
+    expect(messages.success).toHaveBeenCalledWith("Trigger 已调用并进入 Workflow Execution");
   });
 });
