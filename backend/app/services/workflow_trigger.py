@@ -4,7 +4,7 @@ import uuid
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,7 +157,7 @@ class WorkflowTriggerService:
         recovery: bool = False,
         return_created: bool = False,
     ) -> WorkflowExecution | tuple[WorkflowExecution, bool]:
-        """Dispatch a scheduled Trigger with a transaction-serialized PostgreSQL idempotency claim."""
+        """Dispatch a scheduled Trigger using the database unique idempotency boundary."""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "scheduled":
@@ -168,26 +168,10 @@ class WorkflowTriggerService:
         version = await self._get_published_version(workflow)
         WorkflowRuntime.validate_definition(version.definition)
 
-        # Use a transaction-scoped advisory lock as a fast claim gate. A worker
-        # that arrives while another worker owns the same slot claim should not
-        # block an entire scheduler tick; its next poll will observe the durable
-        # execution. The unique constraint remains the final persistence boundary.
-        claim_acquired = (
-            await self.db.execute(
-                select(func.pg_try_advisory_xact_lock(func.hashtext(idempotency_key)))
-            )
-        ).scalar_one()
-        if not claim_acquired:
-            existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
-            if existing is not None:
-                return (existing, False) if return_created else existing
-            raise HTTPException(409, "Scheduled Trigger Idempotency claim contention")
-
-        existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
-        if existing is not None:
-            result: WorkflowExecution | tuple[WorkflowExecution, bool] = (existing, False) if return_created else existing
-            return result
-
+        # The unique (tenant_id, idempotency_key) constraint is the atomic claim.
+        # Do not perform a check-then-insert or advisory-lock gate: concurrent
+        # workers must race on the same INSERT and exactly one can receive a row
+        # from RETURNING. The losing worker then reads the durable winner.
         execution_id = uuid.uuid4()
         execution = WorkflowExecution(
             id=execution_id,
