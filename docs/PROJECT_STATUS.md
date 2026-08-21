@@ -28,7 +28,7 @@
 | Phase 1.6-C | **已完成** | Browser / Frontend-Backend E2E 第三独立测试层建立并通过；最终 Browser E2E 1 passed |
 | Phase 1.6 | **已正式关闭** | A～C 全部完成，三层 Gate 与实际联调完成 |
 | Phase 1.7-A | **基线审计完成** | A-01 Contract、A-02 Scheduler Runtime、A-03 bounded recovery、A-04 multi-worker slot convergence 已存在于最新 main；不重复实现 |
-| Phase 1.7-B | **开发中 / Gate 待重新执行** | Persistence contract 已收口；recovery persistence Real API 已加入；本轮发现并修复 Real API 测试进程内 AsyncEngine 跨 event loop 生命周期问题；Runtime failure 专项验收仍未完成 |
+| Phase 1.7-B | **开发中 / Gate 待重新执行** | Persistence contract 已收口；recovery persistence Real API 已加入；AsyncEngine event loop 生命周期问题已在测试层修复；本轮进一步修正 recovery 测试对全局 scheduler counters 的错误假设；Runtime failure 专项验收仍未完成 |
 
 ## 3. Phase 1.7-A 基线审计结论
 
@@ -82,11 +82,12 @@ Phase 1.7-B 不重新实现 Scheduler，而是验证并收口现有真实执行�
 - Real API 已直接查询 PostgreSQL `workflow_executions`，验证 current slot 的 `status / idempotency_key / input_data`。
 - 新增 recovery persistence Real API contract：验证 recovery slot 与 current slot 均落入同一 `workflow_executions` persistence boundary，并验证重复 tick / scheduler restart 不产生重复记录。
 - 修复 Real API 测试本身的 AsyncEngine event loop 生命周期问题：scheduler direct-call contract 现在在 module-scoped event loop 内执行，并在 loop 关闭前 dispose 测试进程中的 application AsyncEngine；未修改生产 Scheduler 并发模型。
+- 修正 recovery persistence Real API 对 `tick_once()` 全局 counters 的错误断言：Scheduler 会遍历所有当前可执行的 enabled scheduled triggers，因此测试改为以本测试 trigger 的 deterministic idempotency key / persistence rows 作为 per-trigger contract，不再假设 tenant 内只有一个 eligible trigger。
 
 ### 尚未完成的验收
 
-- 本轮代码修复后的 `uv run pytest -q` 尚未由开发者重新执行。
-- 本轮代码修复后的 Real API Gate 尚未由开发者重新执行。
+- 本轮测试断言修复后的 `uv run pytest -q` 尚未由开发者重新执行。
+- 本轮测试断言修复后的 Real API Gate 尚未由开发者重新执行。
 - Runtime failure 的 scheduled persistence 尚未通过专项真实失败 Workflow 完成验收。
 
 ## 5. Migration 决策
@@ -107,7 +108,7 @@ Phase 1.7-B 不重新实现 Scheduler，而是验证并收口现有真实执行�
 
 ```text
 Backend pytest:
-245 passed, 17 deselected in 4.17s
+245 passed, 17 deselected in 4.09s
 
 Migration:
 uv run alembic upgrade head -> success
@@ -116,9 +117,9 @@ Real API Gate:
 16 passed, 1 failed
 ```
 
-失败项为新增 recovery persistence Real API contract。失败栈并非 Scheduler 并发正确性问题，而是测试进程中重复 `asyncio.run()` 导致 SQLAlchemy `AsyncEngine` 池中的 asyncpg connection 绑定到已关闭 event loop，后续 scheduler direct-call 在新 loop 上复用连接，出现 `Event loop is closed` / `AttributeError: 'NoneType' object has no attribute 'send'`。
+本轮失败已经从 AsyncEngine event loop 生命周期问题收敛为 recovery persistence Real API 的测试断言问题：`tick_once()` 按设计遍历所有 enabled scheduled triggers，因此 `counters["recovered"]` 是本次 tick 的全局 scheduler counter；当前环境中存在 3 个 eligible scheduled triggers，故得到 `recovered == 3`，而测试错误地将其解释为当前测试 trigger 的 per-trigger 数量。
 
-该问题已通过测试层 module-scoped event loop 收口；生产 `ScheduledTriggerScheduler`、PostgreSQL advisory lock、idempotency boundary 均未做绕路修改。
+该问题不属于 Scheduler 并发正确性或 persistence 实现缺陷，也不修改生产 `ScheduledTriggerScheduler`。测试现改为通过当前 trigger 的 recovery/current deterministic idempotency keys 查询 PostgreSQL `workflow_executions`，验证唯一 Execution、metadata 和重复 tick 不重复创建；global counter 仅验证至少存在 recovery dispatch。
 
 另一次直接执行：
 
@@ -128,7 +129,7 @@ uv run pytest -q tests/api_real/test_scheduled_trigger_api.py -m real_api
 
 在未执行 Real API bootstrap、未注入 `TRIGGER_WORKFLOW_ID` 等上下文变量时得到 3 个 `TRIGGER_WORKFLOW_ID is required`，该结果属于测试入口使用方式不正确，不作为产品或测试 Gate 失败结论。应使用统一 Real API Gate 脚本准备上下文。
 
-**当前不能标记 Backend / Real API Gate PASS；必须在本次测试层修复后重新执行完整 Gate。**
+**当前不能标记 Backend / Real API Gate PASS；必须在本次测试断言修复后重新执行完整 Gate。**
 
 ## 7. Phase 1.7 下一阶段规划
 
