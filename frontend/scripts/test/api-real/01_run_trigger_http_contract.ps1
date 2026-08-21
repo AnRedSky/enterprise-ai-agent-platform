@@ -40,7 +40,7 @@ function Invoke-JsonApi {
     }
 
     if ($ExpectedStatus -notcontains $status) {
-        throw "$Method $Path -> expected HTTP $($ExpectedStatus -join ', '), got $status: $text"
+        throw "$Method $Path -> expected HTTP $($ExpectedStatus -join ', '), got ${status}: $text"
     }
 
     if ([string]::IsNullOrWhiteSpace($text)) { return $null }
@@ -58,7 +58,7 @@ $password = if ($env:API_TEST_PASSWORD) { $env:API_TEST_PASSWORD } else { "Front
 
 Write-Host "[1/8] Register/login isolated frontend integration user"
 if (-not $env:API_TEST_USERNAME) {
-    Invoke-JsonApi -Method POST -Path "/auth/register" -Headers @{} -Body @{ username=$username; password=$password } | Out-Null
+    Invoke-JsonApi -Method POST -Path "/auth/register" -Headers @{} -Body @{ username=$username; password=$password } -ExpectedStatus @(200,201) | Out-Null
 }
 $login = Invoke-JsonApi -Method POST -Path "/auth/login" -Headers @{} -Body @{ username=$username; password=$password }
 Assert-True (-not [string]::IsNullOrWhiteSpace([string]$login.access_token)) "login must return access_token"
@@ -102,7 +102,7 @@ Assert-True ($disabledInvoke.detail -match "禁用|disabled") "disabled Trigger 
 Write-Host "[7/8] Re-enable and delete Trigger through the same frontend API contract"
 $enabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="enabled" }
 Assert-True ($enabled.status -eq "enabled") "toggle action must persist enabled status"
-Invoke-JsonApi -Method DELETE -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers | Out-Null
+Invoke-JsonApi -Method DELETE -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -ExpectedStatus @(200,204) | Out-Null
 $afterDelete = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers" -Headers $headers
 Assert-True (@($afterDelete | Where-Object { $_.id -eq $trigger.id }).Count -eq 0) "deleted Trigger must disappear from inventory"
 
