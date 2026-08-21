@@ -62,7 +62,13 @@ test("Workflow Trigger Governance completes the real browser contract", async ({
     const workflowSelect = workflowFormItem.locator(".el-select");
     await expect(workflowSelect).toBeVisible();
     await workflowSelect.click();
-    await page.getByText(`${workflow.name} (published)`, { exact: true }).click();
+
+    const workflowOption = page
+      .locator(".el-select-dropdown:visible .el-select-dropdown__item")
+      .filter({ hasText: `${workflow.name} (published)` })
+      .first();
+    await expect(workflowOption).toBeVisible();
+    await workflowOption.click();
 
     await page.getByLabel("Trigger 名称").fill(`Browser Manual Trigger ${nonce}`);
     await page.getByLabel("Config JSON").fill('{"source":"browser-e2e"}');
