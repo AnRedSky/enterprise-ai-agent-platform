@@ -221,7 +221,7 @@ def create_circuit_breaker_fixtures(client):
         failing_agent_id,
         name="API Circuit Breaker Open Validation",
         circuit_key=circuit_key,
-        runtime_config={"timeout_ms": 30_000},
+        runtime_config={"timeout_ms": 30_000, "retry_budget": {"max_retries": 1}},
         retry_config={
             "max_attempts": 2,
             "backoff_ms": 0,
