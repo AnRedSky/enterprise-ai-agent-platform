@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.dependencies.db import SessionLocal
@@ -17,10 +18,9 @@ logger = logging.getLogger(__name__)
 class ScheduledTriggerScheduler:
     """DB-backed scheduler for interval-based Workflow Triggers.
 
-    Phase 1.7-A-03 adds bounded recovery: a worker restart may recover a small,
-    deterministic window of missed interval slots. Execution idempotency remains
-    the source of truth, so recovery never creates a duplicate for an already
-    completed/in-flight slot.
+    Phase 1.7-A-03 adds bounded recovery. Phase 1.7-A-04 treats the database
+    idempotency constraint as the cross-worker convergence boundary and treats a
+    concurrent Runtime claim as a skip rather than a scheduler failure.
     """
 
     DEFAULT_RECOVERY_SLOTS = 2
@@ -57,10 +57,14 @@ class ScheduledTriggerScheduler:
         current = cls.interval_slot(now, interval_seconds)
         return list(range(current - max_recovery_slots + 1, current + 1))
 
+    @staticmethod
+    def is_concurrent_runtime_claim(exc: BaseException) -> bool:
+        return isinstance(exc, HTTPException) and exc.status_code == 409 and "只有 pending Execution 可以启动 Runtime" in str(exc.detail)
+
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
         """Dispatch enabled scheduled triggers for the bounded recovery window."""
         now = now or datetime.now(UTC)
-        counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0, "recovered": 0}
+        counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0, "recovered": 0, "contention": 0}
 
         async with SessionLocal() as db:
             result = await db.execute(
@@ -90,14 +94,20 @@ class ScheduledTriggerScheduler:
                             counters["skipped"] += 1
                             continue
                         recovery = slot != current_slot
-                        await service.invoke_scheduled(
-                            workflow=workflow,
-                            trigger=trigger,
-                            actor_id=trigger.created_by,
-                            input_data={"scheduled_slot": slot, "recovery": recovery},
-                            idempotency_key=idempotency_key,
-                            recovery=recovery,
-                        )
+                        try:
+                            await service.invoke_scheduled(
+                                workflow=workflow,
+                                trigger=trigger,
+                                actor_id=trigger.created_by,
+                                input_data={"scheduled_slot": slot, "recovery": recovery},
+                                idempotency_key=idempotency_key,
+                                recovery=recovery,
+                            )
+                        except HTTPException as exc:
+                            if self.is_concurrent_runtime_claim(exc):
+                                counters["contention"] += 1
+                                continue
+                            raise
                         counters["dispatched"] += 1
                         if recovery:
                             counters["recovered"] += 1
