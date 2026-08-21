@@ -115,7 +115,7 @@ Standalone Real API → 20 passed in 31.38s
 
 ### 1.9-C — Real API Reliability Scenarios
 
-**状态：阻塞于新发现的 Idempotency 并发 500，修复已提交，等待本地重新验证。**
+**状态：专项修复已直接提交最新 `main`，等待开发者本地重新验证；当前不能标记 PASS。**
 
 新增专项测试文件：
 
@@ -131,7 +131,7 @@ backend/tests/api_real/test_phase_1_9c_reliability_api.py
 
 当前注册接口将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此第三项是**同 Tenant ownership isolation**，不能扩大解释为跨 Tenant isolation。跨 Tenant 专项仍待能够创建不同 Tenant 的真实 API 测试上下文后执行。
 
-#### 首轮本地验证结果
+#### 已有首轮失败证据
 
 直接运行专项测试时，三个测试因没有提前准备 `WORKFLOW_ID` context 而失败：
 
@@ -152,13 +152,11 @@ WORKFLOW_ID is required for 1.9-C reliability validation
 test_execution_idempotency_is_race_safe_over_real_http
 ```
 
-实际一个并发请求返回：
+实际一个并发请求返回 HTTP 500；测试随后解析纯文本 `Internal Server Error` 时产生 `JSONDecodeError`，已修正诊断逻辑以保留原始 HTTP body。
 
-```text
-HTTP 500 Internal Server Error
-```
+#### 已修复的 Idempotency 并发边界
 
-原测试的 `response.json()` 又因 body 为纯文本 `Internal Server Error` 产生 `JSONDecodeError`，已同时修正测试诊断逻辑，使非 JSON 响应保留原始 body。
+Idempotency 创建路径已使用 `AsyncSession.begin_nested()` SAVEPOINT，并在竞争异常后使用保存的标量 ID 重新查询已经提交的 Execution，避免完整 rollback 后访问过期 ORM 对象造成异步隐式加载风险。
 
 错误记录：
 
@@ -166,35 +164,44 @@ HTTP 500 Internal Server Error
 docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md
 ```
 
-#### 根因与修复
+#### 本轮新增发现：Runtime Retry / Timeout Failure Semantics
 
-原 `WorkflowExecutionService.create()` 在 idempotency 唯一约束并发竞争的 `IntegrityError` 路径使用完整 `AsyncSession.rollback()`，随后继续访问 rollback 后可能已过期的 ORM `workflow` / `version` 对象，存在 AsyncSession 隐式异步加载导致 500 的风险。
-
-当前已修复：
-
-- Idempotency 创建使用 `AsyncSession.begin_nested()` SAVEPOINT。
-- 唯一约束竞争只回滚 SAVEPOINT，不回滚整个业务事务。
-- flush 前保存 `tenant_id`、`workflow_id`、`workflow_version_id` 标量值。
-- IntegrityError 后使用保存的标量值重新查询已提交 Execution。
-- 非 idempotency 创建路径保持原有事务行为。
-
-代码提交：
+在继续验证 1.9-C 前置 Runtime boundary 时，开发者本地实际反馈：
 
 ```text
-bdecd76b7c186c48fc3b7afdd23cc5d7dff1ecb6
-fix: make idempotency race recovery transaction safe
+7 failed, 6 passed, 1 warning
 ```
 
-测试诊断提交：
+失败集中在 workflow timeout、retry budget、retry transition 与 retry deadline；错误表现为原始 `HTTPException(503)` / `ConnectionError` / `TimeoutError` 被最终包装为 `HTTP 500 Workflow Runtime 执行失败`。
+
+Real API bootstrap 同时出现 retry deadline fixture 预期 `HTTP 504`、实际 `HTTP 404 Mock provider HTTP 404` 的边界失败。
+
+错误记录：
 
 ```text
-7d7ff84d3c0449dd52c98882fbdb61ce8524d1d7
- test: improve Phase 1.9-C real API diagnostics
+docs/04-errors/ERR-0019-workflow-runtime-retry-failure-semantics.md
 ```
 
-**注意：修复尚未获得新的本地 PASS 证据，因此 1.9-C 不能标记 PASS。**
+当前修复已提交到 `main`：
 
-下一步必须重新执行完整 Real API Gate；通过后再继续跨 Tenant / stale completion 等专项场景。
+- `WorkflowRuntime` 保存节点失败原始异常，在 retry policy / node attempts / retry budget 耗尽时保留 HTTP、transport、timeout 的类型语义。
+- `WorkflowExecutionService.run()` 对 `ConnectionError` / timeout 单独记录 failed/error_code 后重新抛出，不再统一包装为 500。
+- retry backoff 在 sleep 前重新计算 workflow remaining deadline，超过剩余 deadline 时直接返回 504 `WORKFLOW_TIMEOUT`。
+- 该修复不新增数据库结构，因此不产生 migration 变更。
+
+相关代码提交：
+
+```text
+c26db148d6a97b1a2ce908b39b6b00d517da8a4b
+fix: preserve workflow retry failure semantics
+
+bb0bcd9e91566bd47c5c2ebbaa5c7be216378971
+fix: preserve typed workflow runtime failures
+```
+
+**注意：上述修复尚未获得新的本地 PASS 证据，因此 1.9-C 仍不能标记 PASS。**
+
+下一步必须重新执行 Runtime focused tests 与完整 Real API Gate；通过后再继续跨 Tenant / stale completion 等专项场景。
 
 ### 1.9-D — Frontend / Browser Reliability Convergence
 
@@ -210,6 +217,6 @@ fix: make idempotency race recovery transaction safe
 
 ## 6. 当前完成定义
 
-1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；1.9-C 已发现并记录真实 HTTP 并发 Idempotency 500，修复已提交但等待本地重新验证。
+1.9-A 已完成本地验证；1.9-B focused scope 已完成本地验证；1.9-C 已发现并修复 Idempotency 并发与 Runtime retry/timeout failure semantics 问题，但当前修复等待开发者本地重新验证。
 
 Phase 1.9 只有在 1.9-C、1.9-D、1.9-E 完成并通过实际本地 Backend / Real API / Frontend / Browser Gate 后才能标记正式关闭。
