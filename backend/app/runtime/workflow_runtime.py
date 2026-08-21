@@ -208,14 +208,20 @@ class WorkflowRuntime:
         if not isinstance(circuit_key, str) or not circuit_key or len(circuit_key) > 200:
             raise HTTPException(422, "circuit_breaker.key 必须为 1-200 字符字符串")
         circuit_tenant_id = tenant_id
+        circuit_state = "closed"
         if circuit_tenant_id is not None:
-            await self.circuit_breaker.before_call(circuit_tenant_id, circuit_key, config)
+            circuit_state = await self.circuit_breaker.before_call(circuit_tenant_id, circuit_key, config)
         messages = [{"role": "system", "content": version.system_prompt}, {"role": "user", "content": prompt}]
         try:
             result = await self.gateway.generate(version.model_id, messages, session_id)
         except Exception as exc:
             if circuit_tenant_id is not None and self.classify_error(exc) in self.CIRCUIT_FAILURE_CODES:
                 await self.circuit_breaker.record_failure(circuit_tenant_id, circuit_key, config)
+                # A failed HALF_OPEN probe has already consumed the recovery quota
+                # and re-opened the circuit. Surface it as a circuit boundary failure
+                # so WorkflowExecutionService never spends a node retry on the probe.
+                if circuit_state == "half_open":
+                    raise CircuitOpenError(circuit_key) from exc
             raise
         if circuit_tenant_id is not None:
             await self.circuit_breaker.record_success(circuit_tenant_id, circuit_key, config)
