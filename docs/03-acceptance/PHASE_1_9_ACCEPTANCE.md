@@ -65,33 +65,91 @@ f7ef0c55810171cb70e5873a99cba82a01a64047
 
 ## 4. 1.9-C Acceptance — Real API Reliability Scenarios
 
-状态：**进行中，尚未 Acceptance。**
+状态：**阻塞，尚未 Acceptance。**
 
-已新增真实 HTTP API 专项测试：
+### 新增测试
 
 ```text
 backend/tests/api_real/test_phase_1_9c_reliability_api.py
 ```
 
-新增覆盖：
+覆盖：
 
 - Workflow Execution `Idempotency-Key` 顺序重放返回同一 Execution。
 - 两个并发真实 HTTP 请求使用相同 `Idempotency-Key` 时收敛到同一个 Execution。
 - 同一 Tenant 下其他用户不能读取目标用户创建的 Execution（ownership isolation）。
 
-当前明确不能将上述场景标记 PASS，因为新增测试尚未获得开发者本地实际执行结果。
+### 首轮实际结果
 
-另外，当前注册接口把新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此 ownership isolation **不等价于跨 Tenant isolation**。跨 Tenant 场景需要独立 Tenant 创建/切换的真实 API 测试上下文后才能验收。
+直接运行专项文件时未准备 `WORKFLOW_ID` context：
 
-现有 20 个 Real API Gate 测试的历史 PASS 仍然保留为证据，但不扩大解释为 1.9-C 全部 PASS。
+```text
+3 failed in 0.10s
+WORKFLOW_ID is required for 1.9-C reliability validation
+```
+
+随后正式 Real API Gate 自动 bootstrap context 后：
+
+```text
+22 passed, 1 failed in 39.35s
+```
+
+失败项：
+
+```text
+test_execution_idempotency_is_race_safe_over_real_http
+```
+
+实际返回：
+
+```text
+HTTP 500 Internal Server Error
+```
+
+原测试随后因为对纯文本 500 body 调用 `response.json()` 产生 `JSONDecodeError`；测试诊断逻辑已修复为保留非 JSON body。
+
+### 根因与修复状态
+
+原实现的 idempotency `IntegrityError` 路径执行完整 `AsyncSession.rollback()` 后继续使用可能已过期的 ORM `workflow` / `version` 对象，存在 AsyncSession 隐式加载导致 HTTP 500 的风险。
+
+已提交修复：
+
+```text
+bdecd76b7c186c48fc3b7afdd23cc5d7dff1ecb6
+fix: make idempotency race recovery transaction safe
+```
+
+修复采用 `begin_nested()` SAVEPOINT，并在 flush 前保存必要的标量 ID，避免竞争失败路径回滚整个业务事务并触发过期 ORM 对象加载。
+
+错误正式记录：
+
+```text
+docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md
+```
+
+### 当前 Acceptance 判断
+
+**不能标记 PASS。** 修复代码尚未获得新的开发者本地实际验证证据。
+
+### 下一步
+
+重新执行完整 Real API Gate：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```
+
+通过后再继续跨 Tenant / stale completion 等 1.9-C 专项场景。
+
+当前注册接口仍将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此 ownership isolation 不等价于跨 Tenant isolation。
 
 ## 5. 下一验收顺序
 
-1. 在本地执行新增 1.9-C 专项 Real API 测试。
-2. 执行完整 Real API Gate，确认新增场景与历史场景共同通过。
-3. 如发现跨 worker、retry、idempotency 或 tenant isolation 问题，记录 `docs/04-errors/` 并修复后重新验收。
-4. 完成 Frontend / Browser Reliability Convergence。
-5. 最终执行 Phase 1.9 Acceptance。
+1. 重新验证 1.9-C Idempotency race 修复。
+2. 完成 1.9-C 剩余 Real API Reliability 场景。
+3. 完成 Frontend / Browser Reliability Convergence。
+4. 最终执行 Phase 1.9 Acceptance。
 
 ## 6. Phase 1.9 关闭条件
 
