@@ -115,16 +115,13 @@ fix: record workflow node retry audit event
 
 ## 5. 1.9-D Acceptance — Frontend / Browser Reliability Convergence
 
-状态：**Frontend Regression 本地复验通过；Browser E2E 待本轮修复后重新复核。**
+状态：**本轮 Frontend / Browser Gate 均已实际通过。**
 
 ### Frontend 本地实际结果
 
 开发者在最新 `main` 实际执行：
 
 ```text
-AuditLog focused:
-2 passed / 0 failed
-
 Frontend full Vitest:
 13 test files passed
 52 tests passed
@@ -134,6 +131,12 @@ passed
 
 Frontend Regression Gate:
 [PASS] Frontend regression gate completed. Backend remains an independent gate.
+```
+
+AuditLog focused regression 同时为：
+
+```text
+2 passed / 0 failed
 ```
 
 测试输出中的：
@@ -150,38 +153,40 @@ AuditLog query failed TypeError: Cannot read properties of undefined (reading 'd
 docs/04-errors/ERR-0020-frontend-audit-log-error-state-mock-rejection.md
 ```
 
-### Browser E2E
+### Browser E2E 本轮实际结果
 
-此前已有 3 个 Desktop Chrome tests 通过，但该结果发生在本轮 AuditLog 测试修复之前。
+开发者在最新 `main` 实际执行 Desktop Chrome Browser Gate：
 
-**当前不能沿用此前结果作为本轮 1.9-D Browser Gate 的通过证据。** 必须重新执行：
+```text
+3 tests passed in 10.5s
 
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+1. Scheduled Trigger real browser contract: PASS
+2. Webhook Trigger real browser contract: PASS
+3. Webhook duplicate-event convergence and lifecycle security: PASS
+
+[PASS] Phase 1.7-D browser E2E gate completed.
 ```
 
-只有取得新的本地执行结果后，才能将 1.9-D Browser Gate 标记为 PASS。
+因此本轮 1.9-D 的 Browser Gate 已取得新的本地实际通过证据，不再沿用 AuditLog 修复前的历史结果。
 
 ## 6. 1.9-E Final Acceptance
 
-状态：**待执行。**
+状态：**进行中，等待本轮 Migration / head 实际复核后关闭。**
 
-进入条件：1.9-D Browser E2E 本轮复核通过。
+### 本轮已取得的独立 Gate 结果
 
-必须依次执行：
-
-### Backend default regression
-
-```powershell
-cd backend
-uv run pytest -q
-```
+| Gate | 实际结果 | 状态 |
+|---|---:|---|
+| Browser E2E | 3 passed / 10.5s | PASS |
+| Frontend Vitest | 13 files / 52 tests passed | PASS |
+| Frontend production build | passed | PASS |
+| Frontend Regression Gate | PASS | PASS |
+| Backend default regression | 264 passed, 23 deselected / 4.80s | PASS |
+| Real API Gate | 23 passed / 39.47s | PASS |
 
 ### Migration / head
 
-必须实际执行：
+本轮 Final Acceptance 还需要开发者实际执行并记录：
 
 ```powershell
 cd backend
@@ -190,23 +195,17 @@ uv run alembic current
 uv run alembic heads
 ```
 
-### Real API Gate
+预期 head：
 
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```text
+0022_workflow_trigger (head)
 ```
 
-### Frontend Gate
+本轮未收到上述三条命令的完整新输出，因此这里不提前标记 Migration PASS，也不关闭 Phase 1.9。
 
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass `
-  -File .\scripts\test\release\01_frontend_regression_gate.ps1
-```
+### 关键失败场景复核
 
-Frontend 本轮已实际通过；Final Acceptance 时仍需把该独立 Gate 结果与同轮 Backend / Browser 结果一起记录，不得用旧结果替代。
+本轮 Backend Regression 与 Real API Gate 已重新通过，覆盖 1.9-C 的 Runtime / Retry / Timeout / Idempotency / Circuit Breaker reliability 范围；Browser E2E 同时重新验证 Scheduled Trigger、Webhook Trigger、duplicate convergence 与 lifecycle security。
 
 ## 7. Phase 1.9 关闭条件
 
@@ -217,8 +216,8 @@ Frontend 本轮已实际通过；Final Acceptance 时仍需把该独立 Gate 结
 - 1.9-C Real API Reliability PASS；
 - 1.9-D Frontend / Browser Reliability PASS；
 - Backend / Frontend / Browser 独立 Gate 均来自本地实际执行；
-- Migration head 正确；
-- PROJECT_STATUS 与 Phase 文档同步；
+- Migration head 正确并有本轮实际命令输出；
+- PROJECT_STATUS 与 Phase / Acceptance 文档同步；
 - 无未记录的阻塞错误。
 
-当前唯一尚未取得本轮实际证据的主要 Gate 是 **Browser E2E**；因此现在仍不能关闭 Phase 1.9。
+当前只剩 **Migration / head 的本轮实际复核及最终文档同步**，因此暂不关闭 Phase 1.9。
