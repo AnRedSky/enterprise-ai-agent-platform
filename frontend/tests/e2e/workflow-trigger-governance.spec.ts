@@ -11,6 +11,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const username = `frontend_e2e_${nonce}`;
   const password = `FrontendE2E!${nonce}`;
+  const triggerName = `Browser Scheduled Trigger ${nonce}`;
   const api: APIRequestContext = await playwright.request.newContext({ baseURL: apiOrigin });
 
   try {
@@ -70,7 +71,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     await expect(workflowOption).toBeVisible();
     await workflowOption.click();
 
-    await page.getByLabel("Trigger 名称").fill(`Browser Scheduled Trigger ${nonce}`);
+    await page.getByLabel("Trigger 名称").fill(triggerName);
 
     // Element Plus renders options in a teleported dropdown and animates them.
     // Use the select's keyboard contract instead of racing the transient option DOM.
@@ -98,15 +99,21 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     });
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
-    const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` });
+    // createTrigger is asynchronous: wait for the UI success contract before querying the table.
+    // This avoids racing Vue's loadTriggers refresh after the POST completes.
+    await expect(page.getByText("Trigger 创建成功")).toBeVisible();
+    const triggerRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: triggerName });
+    await expect(triggerRow).toBeVisible();
     await expect(triggerRow).toContainText("scheduled");
     await expect(triggerRow).toContainText("UTC / 每 5 秒");
     await expect(triggerRow.getByRole("button", { name: "Invoke" })).toHaveCount(0);
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
+    await expect(page.getByText("Trigger 已禁用")).toBeVisible();
     await expect(triggerRow).toContainText("disabled");
 
     await triggerRow.getByRole("button", { name: "启用" }).click();
+    await expect(page.getByText("Trigger 已启用")).toBeVisible();
     await expect(triggerRow).toContainText("enabled");
 
     const persisted = await api.get(apiPath(`/workflows/${workflow.id}/triggers`), { headers });
@@ -114,7 +121,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     const persistedTriggers = await persisted.json();
     const persistedItems = Array.isArray(persistedTriggers) ? persistedTriggers : persistedTriggers.items;
     expect(persistedItems).toBeInstanceOf(Array);
-    const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === `Browser Scheduled Trigger ${nonce}`);
+    const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === triggerName);
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
     expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 5 });
 
@@ -140,9 +147,10 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     await triggerRow.getByRole("button", { name: "删除" }).click();
     const deleteDialog = page.locator(".el-message-box:visible");
     await expect(deleteDialog).toBeVisible();
-    await expect(deleteDialog).toContainText(`确认删除 Trigger「Browser Scheduled Trigger ${nonce}」？`);
+    await expect(deleteDialog).toContainText(`确认删除 Trigger「${triggerName}」？`);
     await deleteDialog.locator(".el-message-box__btns .el-button--primary").click();
-    await expect(page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: `Browser Scheduled Trigger ${nonce}` })).toHaveCount(0);
+    await expect(page.getByText("Trigger 已删除")).toBeVisible();
+    await expect(page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: triggerName })).toHaveCount(0);
   } finally {
     await api.dispose();
   }
