@@ -77,8 +77,6 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert trigger["status"] == "enabled"
         assert trigger["config"] == config
 
-        # Capture the current interval slot immediately after creation. The
-        # scheduler is allowed to dispatch the current slot on its first tick.
         runtime_key = ScheduledTriggerScheduler.idempotency_key(
             trigger_id, datetime.now(UTC), config["interval_seconds"]
         )
@@ -109,9 +107,6 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
 
-        # Scheduler dispatch is automatic; the first tick may dispatch the
-        # current interval slot immediately. The deterministic key is the
-        # runtime's idempotency contract and is safe across multiple workers.
         rows = _wait_for_scheduled_execution(runtime_key)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
@@ -119,8 +114,6 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http()
         assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
         assert rows[0]["input_data"]["recovery"] is False
 
-        # A second scheduler poll in the same interval slot must not create a
-        # second Workflow Execution.
         time.sleep(6)
         rows_after_duplicate_poll = asyncio.run(_execution_rows(runtime_key))
         assert len(rows_after_duplicate_poll) == 1, rows_after_duplicate_poll
@@ -154,9 +147,6 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
         )
         assert created.status_code == 201, created.text
         trigger_id = created.json()["id"]
-        # Use a historical slot so the application's background scheduler
-        # cannot independently claim the same slot while this contract test
-        # runs two scheduler workers concurrently.
         now = datetime(2020, 1, 1, 0, 0, 37, tzinfo=UTC)
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, now, config["interval_seconds"])
 
@@ -176,6 +166,63 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
             assert rows[0]["input_data"]["recovery"] is False
             assert sum(item["dispatched"] for item in counters) == 1
             assert sum(item["contention"] for item in counters) <= 1
+        finally:
+            deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
+            assert deleted.status_code == 204, deleted.text
+
+
+def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http():
+    if not TRIGGER_WORKFLOW_ID:
+        pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled recovery validation")
+
+    name = f"api-real-scheduled-recovery-{uuid.uuid4().hex[:8]}"
+    config = {"timezone": "UTC", "interval_seconds": 60}
+    trigger_id = None
+
+    with _client() as client:
+        created = client.post(
+            f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers",
+            json={"name": name, "trigger_type": "scheduled", "config": config},
+        )
+        assert created.status_code == 201, created.text
+        trigger_id = created.json()["id"]
+
+        # Use a historical current slot so the application background scheduler
+        # cannot claim the same slot while this test explicitly validates the
+        # bounded recovery persistence contract.
+        now = datetime(2020, 1, 1, 0, 0, 37, tzinfo=UTC)
+        scheduler = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
+        current_slot = scheduler.interval_slot(now, config["interval_seconds"])
+        recovery_slot = current_slot - 1
+        recovery_key = scheduler.slot_idempotency_key(trigger_id, recovery_slot)
+        current_key = scheduler.slot_idempotency_key(trigger_id, current_slot)
+
+        try:
+            counters = asyncio.run(scheduler.tick_once(now))
+            recovery_rows = _wait_for_scheduled_execution(recovery_key)
+            current_rows = _wait_for_scheduled_execution(current_key)
+
+            assert counters["recovered"] == 1, counters
+            assert len(recovery_rows) == 1, recovery_rows
+            assert len(current_rows) == 1, current_rows
+            assert recovery_rows[0]["status"] == "completed", recovery_rows
+            assert current_rows[0]["status"] == "completed", current_rows
+            assert recovery_rows[0]["input_data"] == {
+                "scheduled_slot": recovery_slot,
+                "recovery": True,
+            }
+            assert current_rows[0]["input_data"] == {
+                "scheduled_slot": current_slot,
+                "recovery": False,
+            }
+
+            # A scheduler restart/re-poll over the same historical window must
+            # reuse the persisted idempotency boundary rather than create new rows.
+            restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
+            second_counters = asyncio.run(restarted.tick_once(now))
+            assert second_counters["dispatched"] == 0, second_counters
+            assert len(asyncio.run(_execution_rows(recovery_key))) == 1
+            assert len(asyncio.run(_execution_rows(current_key))) == 1
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
             assert deleted.status_code == 204, deleted.text
