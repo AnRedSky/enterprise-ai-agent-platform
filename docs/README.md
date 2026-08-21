@@ -12,6 +12,12 @@
 6. `04-errors/`：工程错误。
 7. `00-architecture/`：长期架构。
 
+## 当前开发阶段
+
+**Phase 1.9 — Runtime Reliability / Production Hardening，进行中。**
+
+当前第一项任务为 `1.9-A Circuit Breaker HALF_OPEN Concurrent Recovery`；代码修复和单元测试已提交，尚待开发者本地实际执行 Gate 后记录结果。
+
 ## 目录
 
 ```text
@@ -58,8 +64,8 @@ PHASE_x_y_ACCEPTANCE
 
 ## 命名规则
 
-- Phase：`PHASE_1_8.md`
-- Acceptance：`PHASE_1_8_ACCEPTANCE.md`
+- Phase：`PHASE_1_9.md`
+- Acceptance：`PHASE_1_9_ACCEPTANCE.md`
 - Error：`ERR-0001-description.md`
 - Architecture：描述职责，例如 `SYSTEM_ARCHITECTURE.md`、`RUNTIME_ARCHITECTURE.md`
 - Governance：`DEVELOPMENT.md`、`DOCUMENTATION.md`、必要的稳定治理专题文档
