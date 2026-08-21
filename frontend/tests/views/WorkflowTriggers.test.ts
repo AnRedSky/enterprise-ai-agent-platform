@@ -29,7 +29,10 @@ const stubs = {
   "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" },
   "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
   "el-form": { template: "<form><slot /></form>" },
-  "el-form-item": { template: "<div><slot /></div>" },
+  "el-form-item": {
+    props: ["label"],
+    template: "<div><div v-if=\"label\">{{ label }}</div><slot /></div>",
+  },
   "el-select": { template: "<select><slot /></select>" },
   "el-option": { template: "<option><slot /></option>" },
   "el-input": { template: "<input />" },
