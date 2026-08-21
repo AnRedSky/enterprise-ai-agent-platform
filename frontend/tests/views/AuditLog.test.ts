@@ -34,7 +34,12 @@ describe("AuditLogPanel", () => {
   });
 
   it("renders error state", async () => {
-    auditLogs.mockRejectedValue(new Error("Audit API unavailable"));
+    // Throw synchronously from the mocked transport boundary so the test
+    // deterministically exercises the component's catch path without relying
+    // on Vitest's unhandled-rejection scheduling.
+    auditLogs.mockImplementation(() => {
+      throw new Error("Audit API unavailable");
+    });
     const wrapper = mount(AuditLog, { global });
     await flushPromises();
     expect(auditLogs).toHaveBeenCalledTimes(1);
