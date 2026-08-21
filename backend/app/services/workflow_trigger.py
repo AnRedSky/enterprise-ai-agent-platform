@@ -168,11 +168,20 @@ class WorkflowTriggerService:
         version = await self._get_published_version(workflow)
         WorkflowRuntime.validate_definition(version.definition)
 
-        # Serialize the check + claim for the same slot at the PostgreSQL
-        # transaction boundary. The unique constraint remains the final
-        # persistence safety net, while the advisory lock makes the scheduler
-        # convergence deterministic for concurrent workers.
-        await self.db.execute(select(func.pg_advisory_xact_lock(func.hashtext(idempotency_key))))
+        # Use a transaction-scoped advisory lock as a fast claim gate. A worker
+        # that arrives while another worker owns the same slot claim should not
+        # block an entire scheduler tick; its next poll will observe the durable
+        # execution. The unique constraint remains the final persistence boundary.
+        claim_acquired = (
+            await self.db.execute(
+                select(func.pg_try_advisory_xact_lock(func.hashtext(idempotency_key)))
+            )
+        ).scalar_one()
+        if not claim_acquired:
+            existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
+            if existing is not None:
+                return (existing, False) if return_created else existing
+            raise HTTPException(409, "Scheduled Trigger Idempotency claim contention")
 
         existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
         if existing is not None:
