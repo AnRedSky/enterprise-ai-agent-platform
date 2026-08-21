@@ -11,7 +11,7 @@
 - Phase 1.6：**已完成并正式关闭**
 - Phase 1.7：**已完成并正式关闭**
 - 当前阶段：**Phase 1.8 Event / Webhook Trigger Expansion**
-- 当前任务：**Phase 1.8-C Frontend API Types + Governance UI 已实现，正在进入本地 Frontend Build / Gate 与 1.8-D Runtime Boundary 验收**
+- 当前任务：**Phase 1.8-C Frontend API Types + Governance UI 已实现；Backend Gate 已重新通过，当前等待本地 Frontend Build / Regression Gate 后进入 1.8-D Runtime Boundary**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立；不使用 GitHub Actions workflow run
 
@@ -28,27 +28,27 @@
 | Phase 1.7 | **已正式关闭** | Scheduled Trigger A～D 全部完成；Backend、Frontend、Browser 三层 Gate 通过 |
 | **Phase 1.8-A** | **已完成** | Event / Webhook Trigger 需求、领域边界、Security / Idempotency、三层 Gate 已确认 |
 | **Phase 1.8-B** | **已完成** | Trigger Model / Schema / Service 审计、Migration 判定、Webhook API / authentication / durable idempotency 完成；本地 Backend Gate 与 Real API 已通过 |
-| **Phase 1.8-C** | **实现完成，验收中** | Frontend API Types、Webhook Governance UI、Vitest 与 Browser Contract 已补齐；本次 `npm test` 已由开发者本地执行并通过 |
-| **Phase 1.8-D** | **下一步** | Real Webhook HTTP / Runtime Boundary、duplicate convergence、authentication failure、disable/delete 行为验证 |
+| **Phase 1.8-C** | **实现完成，验收中** | Frontend API Types、Webhook Governance UI、Vitest 与 Browser Contract 已补齐；`npm test` 已通过 |
+| **Phase 1.8-D** | **待 1.8-C Gate** | Real Webhook HTTP / Runtime Boundary、duplicate convergence、authentication failure、disable/delete 行为验证 |
 | **Phase 1.8-E** | 待 1.8-D | Browser E2E 完整 Webhook → Execution observable contract |
 | **Phase 1.8-F** | 待 1.8-E | Final Acceptance / Phase 1.8 正式关闭 |
 
 ## 3. Phase 1.8-B 本地验收结果
 
-开发者已实际反馈：
+开发者最新实际反馈：
 
 ```text
 uv run pytest -q
-→ 255 passed, 18 deselected
-
-uv run alembic upgrade head
-→ PASS
+→ 257 passed, 18 deselected in 4.11s
 
 scripts/test/api-real/01_run_real_api_tests.ps1
-→ 18 passed
+→ 18 passed in 30.47s
+→ [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-因此 Phase 1.8-B Backend Contract 已具备进入 Frontend / Runtime Boundary 的条件。
+此前 `uv run alembic upgrade head` 已实际通过；本轮反馈未重复执行 Migration，因此不将本轮 Migration 标记为新执行结果。
+
+Phase 1.8-B Backend Contract 已完成，具备继续推进 Phase 1.8-C 验收的条件。
 
 ## 4. Phase 1.8-C 当前结果
 
@@ -63,11 +63,12 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 - Webhook Browser Contract 测试基础；
 - Frontend Vitest。
 
-开发者本次实际反馈：
+开发者此前实际反馈：
 
 ```text
 npm test
-→ 无异常
+→ 13 test files passed
+→ 52 tests passed
 ```
 
 尚未将 `npm run build`、Frontend Regression Gate、完整 Webhook Browser E2E 结果标记为通过，必须等待本地实际执行反馈。
@@ -76,7 +77,7 @@ npm test
 
 本项目不提交、不触发、不依赖 GitHub Actions workflow run。所有测试命令和验收 Gate 必须由开发者在本地执行，实际结果反馈后才能写入本状态文档。
 
-本地 Frontend 下一步：
+### Phase 1.8-C 当前本地 Gate
 
 ```powershell
 cd frontend
@@ -84,21 +85,20 @@ npm run build
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
-本地 Webhook Browser E2E：
+### Phase 1.8-E Browser E2E
 
 ```powershell
 cd frontend
+npx playwright test --list --project="Desktop Chrome"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-若 1.8-C 本地 Gate 通过，再进入 1.8-D Real Webhook HTTP / Runtime Boundary。
+Browser E2E 作为独立 Gate，不复制 Backend / Frontend regression。
 
 ## 6. 下一步
 
 ```text
-1.8-C Frontend API Types + Governance UI
-        ↓
-本地 Frontend Build / Regression Gate
+1.8-C Frontend Build / Regression Gate
         ↓
 1.8-D Real Webhook HTTP / Runtime Boundary
         ↓
