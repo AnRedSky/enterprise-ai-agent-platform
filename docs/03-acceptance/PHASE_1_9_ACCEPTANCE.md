@@ -88,29 +88,31 @@ backend/tests/api_real/test_phase_1_9c_reliability_api.py
 WORKFLOW_ID is required for 1.9-C reliability validation
 ```
 
-随后正式 Real API Gate 自动 bootstrap context 后：
+随后正式 Real API Gate 自动 bootstrap context 后，Idempotency race 场景首先暴露 HTTP 500：
 
 ```text
 22 passed, 1 failed in 39.35s
 ```
 
-失败项：
+随后开发者重新执行 Gate 时，bootstrap 在准备 Retry boundary fixture 阶段即失败：
 
 ```text
-test_execution_idempotency_is_race_safe_over_real_http
+POST /workflows/executions/{execution_id}/run
+expected HTTP 404, got 500
+{"detail":"Workflow Runtime 执行失败"}
 ```
 
-实际返回：
+后端日志明确给出：
 
 ```text
-HTTP 500 Internal Server Error
+AttributeError: 'WorkflowRuntime' object has no attribute 'execute'
 ```
 
-原测试随后因为对纯文本 500 body 调用 `response.json()` 产生 `JSONDecodeError`；测试诊断逻辑已修复为保留非 JSON body。
+该错误同时影响 Scheduled Trigger dispatch。
 
-### 根因与修复状态
+### ERR-0018：Idempotency race
 
-原实现的 idempotency `IntegrityError` 路径执行完整 `AsyncSession.rollback()` 后继续使用可能已过期的 ORM `workflow` / `version` 对象，存在 AsyncSession 隐式加载导致 HTTP 500 的风险。
+原实现的 idempotency `IntegrityError` 路径存在完整 `AsyncSession.rollback()` 后 ORM 对象过期风险。
 
 已提交修复：
 
@@ -119,37 +121,74 @@ bdecd76b7c186c48fc3b7afdd23cc5d7dff1ecb6
 fix: make idempotency race recovery transaction safe
 ```
 
-修复采用 `begin_nested()` SAVEPOINT，并在 flush 前保存必要的标量 ID，避免竞争失败路径回滚整个业务事务并触发过期 ORM 对象加载。
-
-错误正式记录：
+对应错误：
 
 ```text
 docs/04-errors/ERR-0018-idempotency-race-missinggreenlet.md
 ```
 
+该修复**尚未取得新的本地验证结果**，因此 ERR-0018 不能关闭。
+
+### ERR-0019：WorkflowRuntime orchestration regression
+
+发现根因：`WorkflowExecutionService.run()` 调用 `WorkflowRuntime.execute()`，但当前 `WorkflowRuntime` 仅存在 `execute_node()`，缺少 Runtime orchestration 方法。
+
+已提交修复：
+
+```text
+0cb983f979962d182a519a380511284cc11e2cda
+fix: restore workflow runtime execution orchestration
+```
+
+对应错误：
+
+```text
+docs/04-errors/ERR-0019-workflow-runtime-execute-missing.md
+```
+
+修复范围包括：
+
+- sequential node orchestration；
+- node timeout；
+- workflow deadline；
+- retry policy；
+- workflow retry budget；
+- node state transition；
+- retry backoff deadline boundary；
+- `CIRCUIT_OPEN` / `WORKFLOW_TIMEOUT` 不进入 retry。
+
+**ERR-0019 当前仍为 Open：代码已修复，尚无新的开发者本地验证证据。**
+
 ### 当前 Acceptance 判断
 
-**不能标记 PASS。** 修复代码尚未获得新的开发者本地实际验证证据。
+**不能标记 PASS。** 当前存在至少一个明确的 Real API bootstrap blocking issue（ERR-0019），同时 ERR-0018 也尚未获得修复后的本地验证证据。
 
 ### 下一步
 
-重新执行完整 Real API Gate：
+必须先重新执行 Workflow Runtime / Retry / Timeout 相关专项测试，然后执行完整 Real API Gate：
 
 ```powershell
+uv run pytest -q `
+  tests/unit/test_workflow_runtime_timeout.py `
+  tests/unit/test_workflow_execution_retry_transition.py `
+  tests/unit/test_workflow_retry_budget.py `
+  tests/unit/test_workflow_retry_policy.py
+
 powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-通过后再继续跨 Tenant / stale completion 等 1.9-C 专项场景。
+只有 bootstrap 成功并完成全量 Real API 后，才能继续剩余 1.9-C 场景。
 
 当前注册接口仍将新用户绑定到 canonical `DEFAULT_TENANT_ID`，因此 ownership isolation 不等价于跨 Tenant isolation。
 
 ## 5. 下一验收顺序
 
-1. 重新验证 1.9-C Idempotency race 修复。
-2. 完成 1.9-C 剩余 Real API Reliability 场景。
-3. 完成 Frontend / Browser Reliability Convergence。
-4. 最终执行 Phase 1.9 Acceptance。
+1. 验证 ERR-0019 WorkflowRuntime orchestration 修复。
+2. 同时重新验证 ERR-0018 Idempotency race 修复。
+3. 完成 1.9-C 剩余 Real API Reliability 场景。
+4. 完成 Frontend / Browser Reliability Convergence。
+5. 最终执行 Phase 1.9 Acceptance。
 
 ## 6. Phase 1.9 关闭条件
 
