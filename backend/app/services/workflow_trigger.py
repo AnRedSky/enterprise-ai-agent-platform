@@ -18,7 +18,7 @@ from app.services.workflow_trigger_schedule import validate_trigger_config
 
 
 class WorkflowTriggerService:
-    ALLOWED_TYPES = {"manual", "scheduled"}
+    ALLOWED_TYPES = {"manual", "scheduled", "webhook"}
     ALLOWED_STATUSES = {"enabled", "disabled"}
 
     def __init__(self, db: AsyncSession):
@@ -60,7 +60,7 @@ class WorkflowTriggerService:
     @classmethod
     def validate_type(cls, trigger_type: str) -> str:
         if trigger_type not in cls.ALLOWED_TYPES:
-            raise HTTPException(422, "Trigger type 必须为 manual 或 scheduled")
+            raise HTTPException(422, "Trigger type 必须为 manual、scheduled 或 webhook")
         return trigger_type
 
     @classmethod
@@ -167,11 +167,6 @@ class WorkflowTriggerService:
             raise HTTPException(422, "Scheduled Trigger 必须提供调度 Idempotency-Key")
         version = await self._get_published_version(workflow)
         WorkflowRuntime.validate_definition(version.definition)
-
-        # The unique (tenant_id, idempotency_key) constraint is the atomic claim.
-        # Do not perform a check-then-insert or advisory-lock gate: concurrent
-        # workers must race on the same INSERT and exactly one can receive a row
-        # from RETURNING. The losing worker then reads the durable winner.
         execution_id = uuid.uuid4()
         execution = WorkflowExecution(
             id=execution_id,
@@ -204,39 +199,19 @@ class WorkflowTriggerService:
             if existing is None:
                 raise HTTPException(409, "Scheduled Trigger Idempotency claim 未收敛")
             return (existing, False) if return_created else existing
-
-        execution = (await self.db.execute(
-            select(WorkflowExecution).where(WorkflowExecution.id == claimed_id)
-        )).scalar_one()
+        execution = (await self.db.execute(select(WorkflowExecution).where(WorkflowExecution.id == claimed_id))).scalar_one()
         audit_action = "workflow.trigger.scheduled_recovery" if recovery else "workflow.trigger.scheduled"
         trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
-        await self.governance.audit(
-            execution,
-            actor_id,
-            audit_action,
-            "success",
-            metadata={
-                "trigger_id": str(trigger.id),
-                "trigger_type": trigger.trigger_type,
-                "timezone": config["timezone"],
-                "interval_seconds": config["interval_seconds"],
-                "idempotency_key": idempotency_key,
-                "recovery": recovery,
-            },
-        )
-        await self.governance.trace(
-            execution,
-            actor_id,
-            trace_event,
-            "pending",
-            data={
-                "trigger_id": str(trigger.id),
-                "trigger_type": trigger.trigger_type,
-                "timezone": config["timezone"],
-                "interval_seconds": config["interval_seconds"],
-                "recovery": recovery,
-            },
-        )
+        await self.governance.audit(execution, actor_id, audit_action, "success", metadata={
+            "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type,
+            "timezone": config["timezone"], "interval_seconds": config["interval_seconds"],
+            "idempotency_key": idempotency_key, "recovery": recovery,
+        })
+        await self.governance.trace(execution, actor_id, trace_event, "pending", data={
+            "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type,
+            "timezone": config["timezone"], "interval_seconds": config["interval_seconds"],
+            "recovery": recovery,
+        })
         await self.db.commit()
         result_execution = await WorkflowExecutionService(self.db).run(execution, version, actor_id)
         return (result_execution, True) if return_created else result_execution
@@ -256,13 +231,9 @@ class WorkflowTriggerService:
                 return existing
         execution_service = WorkflowExecutionService(self.db)
         execution = await execution_service.create(workflow, version, actor_id, input_data, idempotency_key=idempotency_key)
-        await self.governance.audit(
-            execution,
-            actor_id,
-            "workflow.trigger.invoked",
-            "success",
-            metadata={"trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type},
-        )
+        await self.governance.audit(execution, actor_id, "workflow.trigger.invoked", "success", metadata={
+            "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type,
+        })
         await self.governance.trace(execution, actor_id, "trigger.invoked", "pending", data={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type,
         })
