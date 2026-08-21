@@ -14,22 +14,7 @@ from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 
 
 class WorkflowRuntime:
-    """Execute the stable Phase 1.5-D sequential workflow contract.
-
-    Definition contract:
-    {"nodes": [{"id": "...", "type": "input|agent|output", "config": {...}},
-     "config": {"timeout_ms": 30000}}
-    Nodes execute in declaration order. Branching and parallel scheduling remain
-    outside this phase and must not be inferred from arbitrary definition data.
-
-    Node retry is opt-in. By default every node has exactly one attempt. When a
-    retry policy is configured, only explicitly classified transient failures are
-    retried, with bounded exponential backoff and jitter.
-
-    Circuit breaking is opt-in and database-backed. It protects an agent/model
-    capability from repeated transient failures while keeping Runtime workers
-    stateless across replicas.
-    """
+    """Execute the stable Phase 1.5-D sequential workflow contract."""
 
     NODE_TYPES = {"input", "agent", "output"}
     DEFAULT_TIMEOUT_MS = 30_000
@@ -40,12 +25,7 @@ class WorkflowRuntime:
         "max_backoff_ms": 5_000,
         "jitter_ms": 250,
         "retryable_error_codes": [
-            "NODE_TIMEOUT",
-            "HTTP_429",
-            "HTTP_502",
-            "HTTP_503",
-            "HTTP_504",
-            "CONNECTION_ERROR",
+            "NODE_TIMEOUT", "HTTP_429", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR",
         ],
     }
     CIRCUIT_FAILURE_CODES = {"NODE_TIMEOUT", "HTTP_429", "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR"}
@@ -67,8 +47,7 @@ class WorkflowRuntime:
     @classmethod
     def resolve_timeout_ms(cls, config: dict | None, *, field: str = "timeout_ms") -> int:
         config = config or {}
-        value = config.get(field, cls.DEFAULT_TIMEOUT_MS)
-        return cls.validate_timeout_ms(value, field=field)
+        return cls.validate_timeout_ms(config.get(field, cls.DEFAULT_TIMEOUT_MS), field=field)
 
     @classmethod
     def resolve_retry_policy(cls, config: dict | None) -> dict:
@@ -158,14 +137,8 @@ class WorkflowRuntime:
             normalized.append({"id": node_id, "type": node_type, "config": config})
         return normalized
 
-    async def execute(
-        self,
-        execution,
-        version,
-        actor_id: UUID,
-        is_admin: bool = False,
-    ) -> dict:
-        """Run a workflow sequentially with node timeout, retry and deadline semantics."""
+    async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False) -> dict:
+        """Run a workflow with bounded node retry and a single workflow deadline."""
         from app.services.workflow_execution import WorkflowExecutionService
 
         nodes = self.validate_definition(version.definition)
@@ -188,13 +161,10 @@ class WorkflowRuntime:
             attempt = 0
             while True:
                 attempt += 1
-                elapsed = asyncio.get_running_loop().time() - started
-                remaining = workflow_timeout / 1000 - elapsed
+                remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
                 if remaining <= 0:
-                    await service.transition_node(
-                        execution, node["id"], "failed", input_data=current_data,
-                        error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded",
-                    )
+                    await service.transition_node(execution, node["id"], "failed", input_data=current_data,
+                                                  error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded")
                     await service.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
                                                    error_code="WORKFLOW_TIMEOUT")
                     await service.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
@@ -203,62 +173,48 @@ class WorkflowRuntime:
                     raise HTTPException(504, "Workflow deadline exceeded")
 
                 await service.transition_node(execution, node["id"], "running", input_data=current_data)
-
                 node_timeout = self.resolve_timeout_ms(node["config"])
                 timeout_seconds = min(node_timeout / 1000, remaining)
                 deadline_limited = remaining <= node_timeout / 1000
+                failure: BaseException | None = None
                 try:
                     output = await asyncio.wait_for(
-                        self.execute_node(
-                            node,
-                            current_data,
-                            actor_id,
-                            is_admin,
-                            execution.id,
-                            execution.tenant_id,
-                        ),
+                        self.execute_node(node, current_data, actor_id, is_admin, execution.id, execution.tenant_id),
                         timeout=timeout_seconds,
                     )
                     current_data = output
-                    await service.transition_node(
-                        execution, node["id"], "completed", output_data=output,
-                    )
+                    await service.transition_node(execution, node["id"], "completed", output_data=output)
                     break
                 except asyncio.TimeoutError as exc:
+                    failure = exc
                     error_code = self.classify_error(exc, workflow_timeout=deadline_limited)
                     error_message = "Workflow deadline exceeded" if deadline_limited else "Workflow node timeout"
                 except Exception as exc:
+                    failure = exc
                     error_code = self.classify_error(exc)
                     error_message = str(exc)
 
-                await service.transition_node(
-                    execution, node["id"], "failed", input_data=current_data,
-                    error_code=error_code, error_message=error_message,
-                )
-
-                retryable = error_code in policy["retryable_error_codes"]
-                if error_code in {"CIRCUIT_OPEN", "WORKFLOW_TIMEOUT"}:
-                    retryable = False
+                await service.transition_node(execution, node["id"], "failed", input_data=current_data,
+                                              error_code=error_code, error_message=error_message)
+                retryable = error_code in policy["retryable_error_codes"] and error_code not in {"CIRCUIT_OPEN", "WORKFLOW_TIMEOUT"}
 
                 if not retryable or attempt >= policy["max_attempts"]:
-                    reason = "retry_policy" if not retryable else "node_attempts"
                     await service.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
                                                    error_code=error_code)
                     await service.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
                                                    node_id=node["id"], error_code=error_code,
                                                    error_message=error_message,
-                                                   data={"reason": reason, "attempt": attempt})
-                    if isinstance(error_code, str) and error_code == "WORKFLOW_TIMEOUT":
+                                                   data={"reason": "retry_policy" if not retryable else "node_attempts", "attempt": attempt})
+                    if error_code == "WORKFLOW_TIMEOUT":
                         raise HTTPException(504, error_message)
-                    if isinstance(error_code, str) and error_code.startswith("HTTP_"):
-                        status_code = int(error_code.split("_", 1)[1])
-                        raise HTTPException(status_code, error_message)
+                    if error_code.startswith("HTTP_"):
+                        raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
                     if error_code == "CIRCUIT_OPEN":
                         raise CircuitOpenError(node["id"])
                     if error_code == "NODE_TIMEOUT":
-                        raise asyncio.TimeoutError(error_message)
+                        raise failure if isinstance(failure, (asyncio.TimeoutError, TimeoutError)) else asyncio.TimeoutError(error_message)
                     if error_code == "CONNECTION_ERROR":
-                        raise ConnectionError(error_message)
+                        raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
                     raise HTTPException(500, error_message)
 
                 if workflow_retries >= max_retries:
@@ -269,11 +225,11 @@ class WorkflowRuntime:
                                                    error_message=error_message,
                                                    data={"reason": "retry_budget", "attempt": attempt})
                     if error_code.startswith("HTTP_"):
-                        raise HTTPException(int(error_code.split("_", 1)[1]), error_message)
+                        raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
                     if error_code == "NODE_TIMEOUT":
-                        raise asyncio.TimeoutError(error_message)
+                        raise failure if isinstance(failure, (asyncio.TimeoutError, TimeoutError)) else asyncio.TimeoutError(error_message)
                     if error_code == "CONNECTION_ERROR":
-                        raise ConnectionError(error_message)
+                        raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
                     raise HTTPException(500, error_message)
 
                 delay = self.retry_delay_seconds(policy, attempt, random.random())
@@ -292,15 +248,8 @@ class WorkflowRuntime:
         await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
         return current_data
 
-    async def execute_node(
-        self,
-        node: dict,
-        input_data: dict,
-        actor_id: UUID,
-        is_admin: bool,
-        session_id: UUID,
-        tenant_id: UUID | None = None,
-    ) -> dict:
+    async def execute_node(self, node: dict, input_data: dict, actor_id: UUID, is_admin: bool,
+                           session_id: UUID, tenant_id: UUID | None = None) -> dict:
         node_type = node["type"]
         config = node["config"]
         if node_type in {"input", "output"}:
@@ -322,14 +271,9 @@ class WorkflowRuntime:
             raise HTTPException(403, "无权执行 Workflow Agent")
         if agent.status != "published" or not agent.published_version_id:
             raise HTTPException(409, "Workflow Agent 尚未发布可运行版本")
-        version = (
-            await self.db.execute(
-                select(AgentVersion).where(
-                    AgentVersion.id == agent.published_version_id,
-                    AgentVersion.agent_id == agent.id,
-                )
-            )
-        ).scalar_one_or_none()
+        version = (await self.db.execute(select(AgentVersion).where(
+            AgentVersion.id == agent.published_version_id, AgentVersion.agent_id == agent.id
+        ))).scalar_one_or_none()
         if version is None:
             raise HTTPException(409, "Workflow Agent 发布版本不存在")
 
@@ -363,7 +307,7 @@ class WorkflowRuntime:
             "content": result.content,
             "model_id": version.model_id,
             "agent_id": str(agent.id),
-            "agent_version": version.version,
+            "agent_version": agent.published_version_id and version.version,
             "usage": {
                 "prompt_tokens": usage.prompt_tokens if usage else None,
                 "completion_tokens": usage.completion_tokens if usage else None,
