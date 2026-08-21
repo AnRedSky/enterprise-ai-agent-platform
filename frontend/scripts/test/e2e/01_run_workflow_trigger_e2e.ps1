@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "============================================================"
-Write-Host "Enterprise AI Agent Platform - Phase 1.6-C Browser E2E Gate"
+Write-Host "Enterprise AI Agent Platform - Phase 1.7-D Browser E2E Gate"
 Write-Host "Scope: real Browser -> Vue UI -> Backend HTTP -> Workflow Trigger Governance"
 Write-Host "Backend and Frontend regression gates are intentionally NOT executed here."
 Write-Host "============================================================"
@@ -18,6 +18,7 @@ if ([string]::IsNullOrWhiteSpace($env:API_BASE_URL)) {
     }
 }
 
+Write-Host "FRONTEND_BASE_URL: $env:FRONTEND_BASE_URL"
 Write-Host "API_BASE_URL: $env:API_BASE_URL"
 Write-Host "[1/2] Run browser E2E contract"
 npm run test:e2e -- --project="Desktop Chrome"
@@ -27,6 +28,6 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "[2/2] Browser E2E contract completed"
 Write-Host "============================================================"
-Write-Host "[PASS] Phase 1.6-C browser E2E gate completed."
+Write-Host "[PASS] Phase 1.7-D browser E2E gate completed."
 Write-Host "Backend and Frontend regression gates remain independent."
 Write-Host "============================================================"
