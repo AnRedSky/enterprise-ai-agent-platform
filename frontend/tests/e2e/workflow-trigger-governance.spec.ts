@@ -122,10 +122,9 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     await expect.poll(
       async () => {
-        const executions = await api.get(apiPath("/runtime/executions?page=1&page_size=100"), { headers });
+        const executions = await api.get(apiPath(`/workflows/${workflow.id}/executions`), { headers });
         expect(executions.ok()).toBeTruthy();
-        const payload = await executions.json();
-        const items = Array.isArray(payload) ? payload : payload.items;
+        const items = await executions.json();
         const execution = items.find(
           (item: { workflow_id: string; idempotency_key?: string }) =>
             item.workflow_id === workflow.id && item.idempotency_key?.startsWith(`scheduled:${persistedTrigger.id}:`),
