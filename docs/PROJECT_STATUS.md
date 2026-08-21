@@ -1,6 +1,6 @@
 # 项目开发进度
 
-> 本文只记录项目任务进度、实际验收结果、阻塞项和下一步任务。工程开发规则统一维护在 `docs/DEVELOPMENT.md`、`docs/DEVELOPMENT_GUIDELINES.md` 及当前补充规则文档中。阶段计划维护在对应 `docs/PHASE_*.md`。
+> 本文只记录当前项目基线、阶段状态、实际验收结果、阻塞项和下一步任务。工程开发规则统一维护在 `docs/01-governance/DEVELOPMENT.md`；文档治理统一维护在 `docs/01-governance/DOCUMENTATION.md`；阶段计划位于 `docs/02-phases/`；阶段验收位于 `docs/03-acceptance/`；工程错误位于 `docs/04-errors/`。
 
 ## 1. 当前主线
 
@@ -11,7 +11,7 @@
 - Phase 1.6：**已完成并正式关闭**
 - Phase 1.7：**已完成并正式关闭**
 - 当前阶段：**Phase 1.8 Event / Webhook Trigger Expansion 已正式关闭**
-- 当前任务：**Phase 1.8-F Final Acceptance 已完成**
+- 当前任务：**Docs Governance Refactor：文档迁移矩阵已建立，新目录与正式入口已开始迁移**
 - 当前角色：开发执行
 - 测试 Gate 治理：Backend、Frontend、Browser/E2E 三层独立；不使用 GitHub Actions workflow run
 
@@ -26,12 +26,7 @@
 | Phase 1.5 | **已完成** | Workflow / Governance A～G 全部完成；Circuit Breaker 最终验收通过 |
 | Phase 1.6 | **已正式关闭** | Trigger CRUD、Governance、Real HTTP、Browser E2E 全部完成 |
 | Phase 1.7 | **已正式关闭** | Scheduled Trigger A～D 全部完成；Backend、Frontend、Browser 三层 Gate 通过 |
-| **Phase 1.8-A** | **已完成** | Event / Webhook Trigger 需求、领域边界、Security / Idempotency、三层 Gate 已确认 |
-| **Phase 1.8-B** | **已完成** | Trigger Model / Schema / Service 审计、无需 Migration、Webhook API / authentication / durable idempotency 完成 |
-| **Phase 1.8-C** | **已完成** | Frontend API Types、Webhook Governance UI、Vitest、production build、Frontend Regression Gate 已通过 |
-| **Phase 1.8-D** | **已完成** | Real Webhook HTTP / Runtime Boundary；accepted / duplicate / authentication / lifecycle / bounded key 全部通过 |
-| **Phase 1.8-E** | **已完成** | Browser E2E 三条测试全部通过，真实 Webhook → Execution observable contract 完成 |
-| **Phase 1.8-F** | **已正式关闭** | Backend / Frontend / Browser 三层 Gate 通过，验收文档与状态文档已收口 |
+| Phase 1.8 | **已正式关闭** | Webhook Trigger A～F 全部完成；Backend、Frontend、Browser 三层 Gate 通过 |
 
 ## 3. Phase 1.8 最终验收结果
 
@@ -82,50 +77,49 @@ scripts/test/e2e/01_run_workflow_trigger_e2e.ps1
 → webhook Trigger governance: passed
 → webhook runtime convergence / lifecycle security: passed
 → 3 passed
-→ [PASS] Phase 1.7-D browser E2E gate completed.
 ```
 
-Browser Gate 为独立 Gate，不重复 Backend / Frontend regression。
+## 4. Docs Governance Refactor
 
-## 4. Phase 1.8 核心交付
+### 已完成
 
-- Webhook Trigger Domain Contract。
-- Webhook Trigger CRUD / enable / disable / delete。
-- `POST /api/v1/webhooks/{trigger_id}` 外部事件入口。
-- Secret authentication 与安全 response contract。
-- 缺失事件身份 `422`。
-- durable idempotency claim 与 duplicate convergence。
-- bounded durable key，满足 Execution schema 100 字符边界。
-- Webhook → Workflow Execution 的真实 HTTP / persistence contract。
-- Frontend Webhook Governance UI / API Types。
-- Browser Webhook Governance + Runtime E2E。
+1. 从最新 `main` 盘点 `docs/` 根目录及现有子目录。
+2. 建立 `docs/DOCS_MIGRATION_MATRIX.md`，先定义旧文档 → 新文档映射。
+3. 创建统一入口 `docs/README.md`。
+4. 创建 `docs/00-architecture/`、`docs/01-governance/`、`docs/02-phases/`、`docs/03-acceptance/`、`docs/04-errors/` 的正式文档入口。
+5. 新增 `01-governance/DOCUMENTATION.md`，废止新的连续 `00/01/02/...` 文档命名方式。
+6. 将工程规则迁移到 `01-governance/DEVELOPMENT.md`，并以当前 `DEVELOPMENT.md` 的规则为准解决旧 `DEVELOPMENT_GUIDELINES.md` 冲突。
+7. 建立 Phase 1.2～1.8 的统一 Phase 目录入口及 Phase Acceptance 入口。
+8. 建立历史 Phase 23 / 24 的明确历史入口，避免旧阶段状态覆盖当前状态。
+9. 建立 `04-errors/README.md`，准备迁移旧 `error-tracking/`。
 
-## 5. Database / Migration 结论
+### 尚未完成
 
-Phase 1.8 不新增数据库表或字段。
+- 旧根级文档尚未全部删除。
+- 旧 `docs/error-tracking/` 尚未全部迁移并重新编号。
+- 旧 `docs/phase-1-5-f/` 尚未全部合并。
+- 全仓旧路径引用尚未最终清理。
+- 新旧文档内容的逐项一致性校验尚未完成。
 
-现有 `workflow_triggers` 的 `trigger_type + config + tenant/workflow/status` 已足够表达 Webhook Trigger；现有 `workflow_executions` 的 `(tenant_id, idempotency_key)` 唯一持久化边界已足够表达 Webhook durable claim。
+因此当前 Docs Governance Refactor **尚未宣称完成**。
 
-不创建 `webhook_events` 表，不修改现有 `0022_workflow_trigger` migration。
+## 5. 当前下一步
 
-## 6. 测试与开发治理
+继续严格按照 `docs/DOCS_MIGRATION_MATRIX.md`：
 
-本项目：
+1. 逐份完成剩余历史文档内容迁移。
+2. 迁移并重新编号 `error-tracking/`。
+3. 合并 `phase-1-5-f/`。
+4. 全仓搜索旧 `docs/` 路径并修正引用。
+5. 删除旧根级入口，完成目录收口。
+6. 做文档静态结构 / 引用 / 命名检查。
+7. 再次更新本文件，确认 Docs Governance Refactor 完成后，恢复下一 Phase 开发。
+
+## 6. 开发治理
 
 1. 不提交、不触发、不依赖 GitHub Actions workflow run。
-2. 所有测试由开发者在本地执行。
+2. 所有测试由开发者本地执行。
 3. 实际测试结果只能在开发者反馈后写入状态文档。
 4. Backend、Frontend、Browser/E2E 三层 Gate 独立。
 5. 不提交 secret、Real API context、Playwright trace/screenshot 等本地运行产物。
 6. 所有开发工作以最新 `main` 为唯一基线，禁止创建开发分支、临时分支或任务分支。
-
-Phase 1.8 最终验收文档：`docs/PHASE_1_8_ACCEPTANCE.md`。
-Phase 1.8 阶段计划：`docs/PHASE_1_8.md`。
-
-## 7. 最终结论
-
-**Phase 1.8 Event / Webhook Trigger Expansion 正式关闭。**
-
-1.8-A ～ 1.8-F 全部完成，Backend / Frontend / Browser 三层本地 Gate 均已通过。
-
-下一阶段：从最新 `main` 基线开始，先完成需求 / 架构确认与任务拆解，再进入实现；不得跳过需求确认直接扩展代码。
