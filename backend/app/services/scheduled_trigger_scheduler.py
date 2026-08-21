@@ -5,7 +5,7 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.dependencies.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - register legacy execution table for AuditLog FK metadata
@@ -102,7 +102,19 @@ class ScheduledTriggerScheduler:
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in slots:
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
-                        existing = await service.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
+
+                        # The pre-check above is only an optimization. Two workers can
+                        # observe the same missing execution concurrently, so serialize
+                        # the check+dispatch for this slot at the database boundary.
+                        # pg_advisory_xact_lock is transaction-scoped and is released
+                        # automatically when invoke_scheduled commits or the tick rolls
+                        # back, without relying on ORM rollback/reload behavior.
+                        await db.execute(
+                            select(func.pg_advisory_xact_lock(func.hashtext(idempotency_key)))
+                        )
+                        existing = await service.find_execution_by_idempotency_key(
+                            workflow.tenant_id, idempotency_key
+                        )
                         if existing is not None:
                             counters["skipped"] += 1
                             continue
