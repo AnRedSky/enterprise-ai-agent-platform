@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 class ScheduledTriggerScheduler:
     """DB-backed scheduler for interval-based Workflow Triggers.
 
-    Cross-worker convergence is owned by a PostgreSQL transaction advisory lock
-    around the idempotency check/claim, with the unique constraint remaining as
-    the final persistence correctness boundary.
+    Cross-worker convergence is owned by the database unique constraint on
+    (tenant_id, idempotency_key). Each worker attempts the same durable claim,
+    and only the worker whose INSERT returns a row is counted as dispatched.
     """
 
     DEFAULT_RECOVERY_SLOTS = 2
@@ -74,6 +74,30 @@ class ScheduledTriggerScheduler:
     def is_scheduled_claim_contention(exc: BaseException) -> bool:
         return isinstance(exc, HTTPException) and exc.status_code == 409 and "Scheduled Trigger Idempotency claim contention" in str(exc.detail)
 
+    @classmethod
+    def is_recovery_slot(
+        cls,
+        now: datetime,
+        slot: int,
+        interval_seconds: int,
+        trigger_created_at: datetime | None,
+    ) -> bool:
+        current_slot = cls.interval_slot(now, interval_seconds)
+        if slot == current_slot:
+            return False
+
+        # A newly-created trigger owns the slot in which it was created. If the
+        # scheduler crosses the interval boundary before its first poll, that
+        # creation slot must still be treated as a normal scheduled dispatch,
+        # not as recovery. Historical test clocks are intentionally ignored when
+        # they are earlier than the persisted creation timestamp.
+        if trigger_created_at is not None:
+            created_at = trigger_created_at.replace(tzinfo=UTC) if trigger_created_at.tzinfo is None else trigger_created_at.astimezone(UTC)
+            if now.astimezone(UTC) >= created_at and slot == cls.interval_slot(created_at, interval_seconds):
+                return False
+
+        return True
+
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
         """Dispatch enabled scheduled triggers for the bounded recovery window."""
         now = now or datetime.now(UTC)
@@ -125,14 +149,20 @@ class ScheduledTriggerScheduler:
                     current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in self.recovery_slots(now, config["interval_seconds"]):
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
+                        recovery = self.is_recovery_slot(
+                            now,
+                            slot,
+                            config["interval_seconds"],
+                            trigger.created_at,
+                        )
                         try:
                             _, created = await service.invoke_scheduled(
                                 workflow=workflow,
                                 trigger=trigger,
                                 actor_id=trigger.created_by,
-                                input_data={"scheduled_slot": slot, "recovery": slot != current_slot},
+                                input_data={"scheduled_slot": slot, "recovery": recovery},
                                 idempotency_key=idempotency_key,
-                                recovery=slot != current_slot,
+                                recovery=recovery,
                                 return_created=True,
                             )
                         except HTTPException as exc:
@@ -147,7 +177,7 @@ class ScheduledTriggerScheduler:
                             counters["skipped"] += 1
                             continue
                         counters["dispatched"] += 1
-                        if slot != current_slot:
+                        if recovery:
                             counters["recovered"] += 1
                 except Exception:
                     await db.rollback()
