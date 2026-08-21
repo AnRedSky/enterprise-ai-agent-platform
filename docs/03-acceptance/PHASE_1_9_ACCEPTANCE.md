@@ -26,7 +26,7 @@
 
 ### 当前实现
 
-已完成第一项 Runtime Failure / Retry / Circuit Boundary 修复：
+已完成 Runtime Failure / Retry / Circuit Boundary 的 stale Probe completion 修复：
 
 - HALF_OPEN Probe reservation 继续受 PostgreSQL 行锁保护。
 - Probe completion 绑定当前 Recovery Window。
@@ -49,28 +49,31 @@ f7ef0c55810171cb70e5873a99cba82a01a64047
  test: cover stale half-open probe completion
 ```
 
-### 本地验证
+### 本地实际验证
 
-**尚未重新执行。**
+开发者在最新 `main` 实际执行：
 
-因此当前：
+| Gate | 实际结果 | 状态 |
+|---|---:|---|
+| Focused 1.9-B runtime tests | 35 passed / 0.97s | PASS |
+| Backend Regression | 264 passed, 20 deselected / 4.79s | PASS |
+| Alembic upgrade/head | `0022_workflow_trigger` | PASS |
+| Mandatory Real API | 20 passed / 40.74s | PASS |
+| Standalone Real API | 20 passed / 31.38s | PASS |
 
-```text
-Code      = Implemented
-Unit Test = Pending local execution
-Backend   = Pending local execution
-Real API  = Pending local execution
-Acceptance = OPEN
-```
+结论：**1.9-B 当前 focused scope 已通过本地 Backend / PostgreSQL / Real API 验证。**
+
+### 1.9-B 当前边界
+
+本次 Acceptance 已覆盖 stale Probe completion、Circuit Breaker 与 Retry/Timeout/Deadline 现有边界测试。当前没有发现需要继续修改代码的 1.9-B blocking issue。
+
+后续可靠性专项进入 1.9-C。若 Real API 专项场景发现新的跨 worker、retry、idempotency 或 tenant isolation 问题，应新增错误记录并回到相应修复任务。
 
 ## 4. 下一验收顺序
 
-1. 本地执行 Circuit Breaker + Runtime Retry 专项 Unit Test。
-2. Backend Regression Gate。
-3. Alembic migration/head verification。
-4. Real API Gate。
-5. 专项多 worker / PostgreSQL recovery-window 场景。
-6. 完成 1.9-B 后进入 1.9-C。
+1. 1.9-C Real API Reliability Scenarios。
+2. 1.9-D Frontend / Browser Reliability Convergence。
+3. 1.9-E Final Acceptance。
 
 ## 5. Phase 1.9 关闭条件
 
