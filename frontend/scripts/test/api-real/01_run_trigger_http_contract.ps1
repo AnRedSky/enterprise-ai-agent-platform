@@ -70,13 +70,13 @@ $definition = @{ nodes=@(
     @{ id="input"; type="input"; config=@{} },
     @{ id="output"; type="output"; config=@{} }
 ); edges=@() }
-$version = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/versions" -Headers $headers -Body @{ definition=$definition }
-Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/versions/$($version.id)/publish" -Headers $headers | Out-Null
+$version = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/versions" -Headers $headers -Body @{ definition=$definition } -ExpectedStatus @(201)
+Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/versions/$($version.id)/publish" -Headers $headers -ExpectedStatus @(200) | Out-Null
 
 Write-Host "[3/8] Create/list/detail Trigger exactly as the frontend page does"
-$trigger = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers" -Headers $headers -Body @{ name="Frontend Manual Trigger $nonce"; trigger_type="manual"; config=@{ source="frontend-real-http" } }
-$list = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers" -Headers $headers
-$detail = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers
+$trigger = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers" -Headers $headers -Body @{ name="Frontend Manual Trigger $nonce"; trigger_type="manual"; config=@{ source="frontend-real-http" } } -ExpectedStatus @(201)
+$list = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers" -Headers $headers -ExpectedStatus @(200)
+$detail = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -ExpectedStatus @(200)
 Assert-True (@($list | Where-Object { $_.id -eq $trigger.id }).Count -eq 1) "created Trigger must appear in list"
 Assert-True ($detail.workflow_id -eq $workflow.id) "Trigger detail must belong to selected workflow"
 Assert-True ($detail.trigger_type -eq "manual") "Trigger type must be manual"
@@ -85,25 +85,25 @@ Assert-True ($detail.status -eq "enabled") "new Trigger must be enabled"
 Write-Host "[4/8] Invoke Trigger with Idempotency-Key and verify completed execution"
 $idempotencyKey = "frontend-trigger-$nonce"
 $invokeBody = @{ input_data=@{ source="frontend-real-http" } }
-$first = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)/invoke" -Headers ($headers + @{ "Idempotency-Key"=$idempotencyKey }) -Body $invokeBody
+$first = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)/invoke" -Headers ($headers + @{ "Idempotency-Key"=$idempotencyKey }) -Body $invokeBody -ExpectedStatus @(200)
 Assert-True ($first.workflow_id -eq $workflow.id) "invoke response must contain workflow_id"
 Assert-True ($first.status -eq "completed") "invoke response must be completed for executable fixture"
 
 Write-Host "[5/8] Repeat the exact Trigger invocation and verify idempotency"
-$second = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)/invoke" -Headers ($headers + @{ "Idempotency-Key"=$idempotencyKey }) -Body @{ input_data=@{ source="frontend-real-http-repeated" } }
+$second = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)/invoke" -Headers ($headers + @{ "Idempotency-Key"=$idempotencyKey }) -Body @{ input_data=@{ source="frontend-real-http-repeated" } } -ExpectedStatus @(200)
 Assert-True ($second.id -eq $first.id) "same Idempotency-Key must return the same execution"
 
 Write-Host "[6/8] Disable Trigger and verify UI action contract fast-fails"
-$disabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="disabled" }
+$disabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="disabled" } -ExpectedStatus @(200)
 Assert-True ($disabled.status -eq "disabled") "toggle action must persist disabled status"
 $disabledInvoke = Invoke-JsonApi -Method POST -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)/invoke" -Headers $headers -Body @{ input_data=@{ source="frontend-disabled-trigger" } } -ExpectedStatus @(409)
 Assert-True ($disabledInvoke.detail -match "禁用|disabled") "disabled Trigger must reject invocation"
 
 Write-Host "[7/8] Re-enable and delete Trigger through the same frontend API contract"
-$enabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="enabled" }
+$enabled = Invoke-JsonApi -Method PATCH -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -Body @{ status="enabled" } -ExpectedStatus @(200)
 Assert-True ($enabled.status -eq "enabled") "toggle action must persist enabled status"
-Invoke-JsonApi -Method DELETE -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -ExpectedStatus @(200,204) | Out-Null
-$afterDelete = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers" -Headers $headers
+Invoke-JsonApi -Method DELETE -Path "/workflows/$($workflow.id)/triggers/$($trigger.id)" -Headers $headers -ExpectedStatus @(204) | Out-Null
+$afterDelete = Invoke-JsonApi -Method GET -Path "/workflows/$($workflow.id)/triggers" -Headers $headers -ExpectedStatus @(200)
 Assert-True (@($afterDelete | Where-Object { $_.id -eq $trigger.id }).Count -eq 0) "deleted Trigger must disappear from inventory"
 
 Write-Host "[8/8] Frontend Trigger real HTTP contract passed"
