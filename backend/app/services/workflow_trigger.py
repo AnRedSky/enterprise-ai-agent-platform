@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import uuid
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -156,7 +157,7 @@ class WorkflowTriggerService:
         recovery: bool = False,
         return_created: bool = False,
     ) -> WorkflowExecution | tuple[WorkflowExecution, bool]:
-        """Dispatch a scheduled Trigger with an atomic PostgreSQL idempotency claim."""
+        """Dispatch a scheduled Trigger with a transaction-serialized PostgreSQL idempotency claim."""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "scheduled":
@@ -167,12 +168,20 @@ class WorkflowTriggerService:
         version = await self._get_published_version(workflow)
         WorkflowRuntime.validate_definition(version.definition)
 
+        # Serialize the check + claim for the same slot at the PostgreSQL
+        # transaction boundary. The unique constraint remains the final
+        # persistence safety net, while the advisory lock makes the scheduler
+        # convergence deterministic for concurrent workers.
+        await self.db.execute(select(func.pg_advisory_xact_lock(func.hashtext(idempotency_key))))
+
         existing = await self.find_execution_by_idempotency_key(workflow.tenant_id, idempotency_key)
         if existing is not None:
             result: WorkflowExecution | tuple[WorkflowExecution, bool] = (existing, False) if return_created else existing
             return result
 
+        execution_id = uuid.uuid4()
         execution = WorkflowExecution(
+            id=execution_id,
             tenant_id=workflow.tenant_id,
             workflow_id=workflow.id,
             workflow_version_id=version.id,
@@ -184,7 +193,7 @@ class WorkflowTriggerService:
         stmt = (
             pg_insert(WorkflowExecution)
             .values(
-                id=execution.id,
+                id=execution_id,
                 tenant_id=execution.tenant_id,
                 workflow_id=execution.workflow_id,
                 workflow_version_id=execution.workflow_version_id,
