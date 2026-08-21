@@ -27,8 +27,8 @@ describe("AuditLogPanel", () => {
   it("renders empty state", async () => {
     auditLogs.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
     const wrapper = mount(AuditLog, { global });
+    await vi.waitFor(() => expect(auditLogs).toHaveBeenCalledTimes(1));
     await flushPromises();
-    expect(auditLogs).toHaveBeenCalledTimes(1);
     expect(wrapper.find(".empty").exists()).toBe(true);
     expect(wrapper.text()).toContain("empty");
   });
@@ -43,11 +43,11 @@ describe("AuditLogPanel", () => {
     );
 
     const wrapper = mount(AuditLog, { global });
-    expect(auditLogs).toHaveBeenCalledTimes(1);
 
-    // Reject only after the component has attached its await/catch handler.
-    // This models an HTTP failure without creating an already-rejected promise
-    // or synchronous throw that Vitest may report as an unhandled test error.
+    // Vue mount/onMounted and the mocked transport can cross an async boundary.
+    // Wait for the invocation before rejecting the deferred request so the test
+    // exercises the component's real await/catch path without a race.
+    await vi.waitFor(() => expect(auditLogs).toHaveBeenCalledTimes(1));
     rejectAuditLogs?.(new Error("Audit API unavailable"));
     await flushPromises();
 
