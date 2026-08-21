@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -16,12 +17,24 @@ class CircuitOpenError(HTTPException):
         self.circuit_key = circuit_key
 
 
+# A probe completion must only mutate the recovery window that reserved it.
+# ContextVar keeps the reservation token local to the async execution context,
+# including when several Runtime calls share one CircuitBreakerService instance.
+_probe_context: ContextVar[tuple[UUID, str, datetime] | None] = ContextVar(
+    "workflow_circuit_probe_context", default=None
+)
+
+
 class CircuitBreakerService:
     """Database-backed CLOSED/OPEN/HALF_OPEN state machine.
 
     State and the policy that governs that state are persisted in PostgreSQL so
     Runtime workers remain stateless and every caller sharing a circuit key
     observes the same recovery and probe-quota contract.
+
+    HALF_OPEN completions are additionally bound to the recovery-window
+    timestamp captured when the probe was reserved. A delayed completion from
+    an older window therefore cannot close or reopen a newer recovery window.
     """
 
     STATES = {"closed", "open", "half_open"}
@@ -78,12 +91,7 @@ class CircuitBreakerService:
 
     @staticmethod
     def _new_state(tenant_id: UUID, circuit_key: str, policy: dict) -> WorkflowCircuitState:
-        """Build a fully initialized state instead of relying on ORM defaults.
-
-        SQLAlchemy ``default=`` values are applied as INSERT defaults; a newly
-        constructed object can still expose ``None`` before the flush. Runtime
-        state transitions must never depend on that pre-flush value.
-        """
+        """Build a fully initialized state instead of relying on ORM defaults."""
         return WorkflowCircuitState(
             tenant_id=tenant_id,
             circuit_key=circuit_key,
@@ -95,8 +103,32 @@ class CircuitBreakerService:
             success_count=0,
         )
 
+    @staticmethod
+    def _clear_probe_context() -> None:
+        _probe_context.set(None)
+
+    @staticmethod
+    def _probe_matches(
+        tenant_id: UUID,
+        circuit_key: str,
+        state: WorkflowCircuitState,
+    ) -> bool:
+        token = _probe_context.get()
+        if token is None:
+            # Preserve direct service callers that do not explicitly reserve a
+            # probe through before_call; Runtime calls always have a token.
+            return True
+        token_tenant, token_key, token_window = token
+        return (
+            token_tenant == tenant_id
+            and token_key == circuit_key
+            and state.state == "half_open"
+            and state.half_opened_at == token_window
+        )
+
     async def before_call(self, tenant_id: UUID, circuit_key: str, config: dict | None = None) -> str:
         policy = self.validate_config(config)
+        self._clear_probe_context()
         if not policy["enabled"]:
             return "closed"
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -123,21 +155,16 @@ class CircuitBreakerService:
                 state.half_opened_at = now
                 state.success_count = 1
                 await self.db.flush()
-                # Release the row lock after atomically reserving the first probe.
-                # Concurrent callers now observe the consumed HALF_OPEN quota.
+                _probe_context.set((tenant_id, circuit_key, now))
                 await self.db.commit()
                 return "half_open"
             raise CircuitOpenError(circuit_key)
         if state.state == "half_open":
             if state.success_count >= state.half_open_max_calls:
                 raise CircuitOpenError(circuit_key)
-            # ``success_count`` represents active HALF_OPEN probe reservations.
-            # A completed successful probe releases one reservation; the circuit
-            # closes only after all reservations from the current recovery window
-            # have completed successfully. This prevents a fast success from
-            # closing the circuit while another concurrent probe is still running.
             state.success_count += 1
             await self.db.flush()
+            _probe_context.set((tenant_id, circuit_key, state.half_opened_at))
             await self.db.commit()
             return "half_open"
         return "closed"
@@ -145,6 +172,7 @@ class CircuitBreakerService:
     async def record_success(self, tenant_id: UUID, circuit_key: str, config: dict | None = None) -> None:
         policy = self.validate_config(config)
         if not policy["enabled"]:
+            self._clear_probe_context()
             return
         result = await self.db.execute(
             select(WorkflowCircuitState)
@@ -156,12 +184,14 @@ class CircuitBreakerService:
         )
         state = result.scalar_one_or_none()
         if state is None:
+            self._clear_probe_context()
             return
         self._assert_policy_matches(state, policy)
         if state.state == "half_open":
-            # The persisted counter is the number of in-flight HALF_OPEN probes,
-            # not the number of successful probes. A success releases its slot.
-            # Close only when the recovery window has no outstanding probes.
+            if not self._probe_matches(tenant_id, circuit_key, state):
+                await self.db.flush()
+                self._clear_probe_context()
+                return
             state.success_count = max(state.success_count - 1, 0)
             if state.success_count == 0:
                 state.state = "closed"
@@ -169,12 +199,17 @@ class CircuitBreakerService:
                 state.opened_at = None
                 state.half_opened_at = None
         elif state.state == "closed":
-            state.failure_count = 0
+            # A stale HALF_OPEN success must never reset a newer CLOSED window.
+            token = _probe_context.get()
+            if token is None:
+                state.failure_count = 0
         await self.db.flush()
+        self._clear_probe_context()
 
     async def record_failure(self, tenant_id: UUID, circuit_key: str, config: dict | None = None) -> str:
         policy = self.validate_config(config)
         if not policy["enabled"]:
+            self._clear_probe_context()
             return "closed"
         now = datetime.now(UTC).replace(tzinfo=None)
         result = await self.db.execute(
@@ -192,6 +227,10 @@ class CircuitBreakerService:
             await self.db.flush()
         else:
             self._assert_policy_matches(state, policy)
+        if state.state == "half_open" and not self._probe_matches(tenant_id, circuit_key, state):
+            await self.db.flush()
+            self._clear_probe_context()
+            return state.state
         state.last_failure_at = now
         state.success_count = 0
         if state.state == "half_open" or state.failure_count + 1 >= state.failure_threshold:
@@ -203,6 +242,7 @@ class CircuitBreakerService:
             state.state = "closed"
             state.failure_count += 1
         await self.db.flush()
+        self._clear_probe_context()
         return state.state
 
     def __init__(self, db: AsyncSession):
