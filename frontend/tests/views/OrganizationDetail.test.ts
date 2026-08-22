@@ -25,7 +25,13 @@ const admin = { id: "m2", organization_id: "o1", user_id: "u2", status: "active"
 const member = { id: "m3", organization_id: "o1", user_id: "u3", status: "active" as const, role: "member" as const };
 
 describe("OrganizationDetail management UI", () => {
-  beforeEach(() => { vi.clearAllMocks(); api.getOrganization.mockResolvedValue(organization); api.listMembers.mockResolvedValue({ items: [owner, admin, member], total: 3 }); });
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { getUserId } = await import("../../src/api/auth");
+    vi.mocked(getUserId).mockReturnValue("u1");
+    api.getOrganization.mockResolvedValue(organization);
+    api.listMembers.mockResolvedValue({ items: [owner, admin, member], total: 3 });
+  });
 
   it("loads organization and membership state", async () => {
     const wrapper = mount(OrganizationDetail, { global });
@@ -71,11 +77,17 @@ describe("OrganizationDetail management UI", () => {
 
   it("keeps owner transfer exclusive to the owner after transfer", async () => {
     const { getUserId } = await import("../../src/api/auth");
-    vi.mocked(getUserId).mockReturnValue("u2");
-    api.listMembers.mockResolvedValue({ items: [admin, { ...owner, user_id: "u1", role: "admin" }, { ...member, user_id: "u3" }], total: 3 });
-    const wrapper = mount(OrganizationDetail, { global });
+    vi.mocked(getUserId).mockReturnValue("u1");
+    api.listMembers.mockResolvedValue({ items: [{ ...owner, role: "admin" }, { ...admin, role: "owner" }, member], total: 3 });
+    const previousOwner = mount(OrganizationDetail, { global });
     await vi.waitFor(() => expect(api.listMembers).toHaveBeenCalled());
-    expect((wrapper.vm as any).canManage).toBe(true);
-    expect((wrapper.vm as any).canTransferOwner).toBe(true);
+    expect((previousOwner.vm as any).canManage).toBe(true);
+    expect((previousOwner.vm as any).canTransferOwner).toBe(false);
+
+    vi.mocked(getUserId).mockReturnValue("u2");
+    const newOwner = mount(OrganizationDetail, { global });
+    await vi.waitFor(() => expect(api.listMembers).toHaveBeenCalledTimes(2));
+    expect((newOwner.vm as any).canManage).toBe(true);
+    expect((newOwner.vm as any).canTransferOwner).toBe(true);
   });
 });
