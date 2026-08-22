@@ -19,10 +19,10 @@ def _load_real_api_context() -> None:
     context_file = Path(__file__).parents[2] / "scripts" / "test" / "api-real" / ".real_api_context.json"
     if context_file.exists():
         context = json.loads(context_file.read_text(encoding="utf-8"))
-        # Retrieval evaluation trace is intentionally admin-only. The bootstrap
-        # creates a dedicated organization-admin member token for privileged
-        # real-API validation; prefer it over the default fixture owner's token.
-        admin_token = context.get("ORGANIZATION_MEMBER_ACCESS_TOKEN")
+        # Retrieval evaluation trace is intentionally global-admin-only. The
+        # real-API bootstrap provisions an explicit admin-role token; do not
+        # confuse organization membership role with the global RBAC role claim.
+        admin_token = context.get("ADMIN_ACCESS_TOKEN")
         if admin_token:
             TOKEN = admin_token
     if not TOKEN:
