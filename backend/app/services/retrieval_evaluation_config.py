@@ -7,12 +7,7 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class RetrievalEvaluationConfig:
-    """Explicit evaluation-time retrieval configuration.
-
-    Runtime application settings remain the default source of configuration,
-    while evaluation runs can override provider/model and quality parameters
-    without changing application code or the frozen regression baseline.
-    """
+    """Explicit evaluation-time retrieval configuration."""
 
     embedding_provider: str
     embedding_base_url: str | None
@@ -20,6 +15,7 @@ class RetrievalEvaluationConfig:
     embedding_model: str
     embedding_timeout_seconds: float
     embedding_dimension: int
+    embedding_dimensions_parameter_enabled: bool
     dataset_path: Path
     fixture_path: Path
     baseline_path: Path
@@ -51,12 +47,7 @@ def validate_config(config: RetrievalEvaluationConfig) -> None:
         raise ValueError("min_score must be greater than or equal to zero")
     if not 0 <= config.max_error_rate <= 1:
         raise ValueError("max_error_rate must be between 0 and 1")
-    for name in (
-        "min_recall_at_k",
-        "min_precision_at_k",
-        "min_mrr",
-        "min_citation_correctness",
-    ):
+    for name in ("min_recall_at_k", "min_precision_at_k", "min_mrr", "min_citation_correctness"):
         value = getattr(config, name)
         if value is not None and not 0 <= value <= 1:
             raise ValueError(f"{name} must be between 0 and 1")
@@ -70,6 +61,7 @@ def config_from_settings(*, backend_root: Path, settings) -> RetrievalEvaluation
         embedding_model=settings.embedding_model or "",
         embedding_timeout_seconds=settings.embedding_timeout_seconds,
         embedding_dimension=settings.embedding_dimension,
+        embedding_dimensions_parameter_enabled=settings.embedding_dimensions_parameter_enabled,
         dataset_path=backend_root / "evaluation" / "knowledge_retrieval_dataset.jsonl",
         fixture_path=backend_root / "evaluation" / "knowledge_retrieval_fixture.jsonl",
         baseline_path=backend_root / "evaluation" / "knowledge_retrieval_real_baseline.json",

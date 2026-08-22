@@ -49,18 +49,22 @@ def _build_embedding_provider(config: RetrievalEvaluationConfig):
     }
     if config.embedding_provider == "ollama":
         return OllamaEmbeddingProvider(base_url=config.embedding_base_url, **common)
-    return OpenAICompatibleEmbeddingProvider(base_url=config.embedding_base_url, api_key=config.embedding_api_key or "", **common)
+    return OpenAICompatibleEmbeddingProvider(
+        base_url=config.embedding_base_url,
+        api_key=config.embedding_api_key or "",
+        dimensions=config.embedding_dimension if config.embedding_dimensions_parameter_enabled else None,
+        **common,
+    )
 
 
 def _configured_threshold_failures(config: RetrievalEvaluationConfig, metrics: dict[str, float | int]) -> list[str]:
     failures: list[str] = []
-    checks = (
+    for metric, minimum in (
         ("recall_at_k", config.min_recall_at_k),
         ("precision_at_k", config.min_precision_at_k),
         ("mrr", config.min_mrr),
         ("citation_correctness", config.min_citation_correctness),
-    )
-    for metric, minimum in checks:
+    ):
         if minimum is not None and float(metrics[metric]) < minimum:
             failures.append(f"{metric} below configured minimum: {metrics[metric]} < {minimum}")
     if float(metrics["error_rate"]) > config.max_error_rate:
@@ -87,6 +91,7 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
         "min_mrr": config.min_mrr,
         "min_citation_correctness": config.min_citation_correctness,
         "max_error_rate": config.max_error_rate,
+        "embedding_dimensions_parameter_enabled": config.embedding_dimensions_parameter_enabled,
     }
     metadata = {
         "evaluation_run_id": evaluation_run_id,
@@ -188,6 +193,7 @@ def _build_config(args: argparse.Namespace) -> RetrievalEvaluationConfig:
         embedding_model=args.embedding_model or defaults.embedding_model,
         embedding_timeout_seconds=args.embedding_timeout_seconds if args.embedding_timeout_seconds is not None else defaults.embedding_timeout_seconds,
         embedding_dimension=args.embedding_dimension if args.embedding_dimension is not None else defaults.embedding_dimension,
+        embedding_dimensions_parameter_enabled=args.embedding_dimensions_parameter_enabled if args.embedding_dimensions_parameter_enabled is not None else defaults.embedding_dimensions_parameter_enabled,
         dataset_path=args.dataset or defaults.dataset_path,
         fixture_path=args.fixture or defaults.fixture_path,
         baseline_path=args.baseline,
@@ -209,6 +215,7 @@ def main() -> int:
     parser.add_argument("--embedding-model")
     parser.add_argument("--embedding-timeout-seconds", type=float)
     parser.add_argument("--embedding-dimension", type=int)
+    parser.add_argument("--embedding-dimensions-parameter-enabled", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--baseline", type=Path, default=BASELINE)

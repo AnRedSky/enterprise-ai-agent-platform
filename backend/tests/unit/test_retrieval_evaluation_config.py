@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.services.retrieval_evaluation_config import RetrievalEvaluationConfig, validate_config
 
 
@@ -9,9 +11,10 @@ def base_config(**overrides):
         "embedding_model": "nomic-embed-text:latest",
         "embedding_timeout_seconds": 30.0,
         "embedding_dimension": 768,
-        "dataset_path": __import__("pathlib").Path("dataset.jsonl"),
-        "fixture_path": __import__("pathlib").Path("fixture.jsonl"),
-        "baseline_path": __import__("pathlib").Path("baseline.json"),
+        "embedding_dimensions_parameter_enabled": False,
+        "dataset_path": Path("dataset.jsonl"),
+        "fixture_path": Path("fixture.jsonl"),
+        "baseline_path": Path("baseline.json"),
         "top_k": 3,
         "min_score": 0.0,
     }
@@ -26,6 +29,7 @@ def test_evaluation_config_accepts_custom_provider_and_quality_parameters():
         embedding_api_key="secret",
         embedding_model="custom-embedding",
         embedding_dimension=1024,
+        embedding_dimensions_parameter_enabled=True,
         top_k=7,
         min_score=0.25,
         min_recall_at_k=0.8,
