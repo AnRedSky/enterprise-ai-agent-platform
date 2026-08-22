@@ -1,7 +1,7 @@
 # Phase 2.1 Acceptance — Enterprise Organization & Access Governance
 
-> 状态：**进行中**
-> 当前仅记录已实际完成的 Contract / Migration evidence；未执行的 Gate 不得标记 Passed。
+> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API 扩展验证进行中**
+> 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
 
@@ -20,14 +20,14 @@
 
 ### B. Backend
 
-- [ ] Organization CRUD。
-- [ ] Membership lifecycle。
-- [ ] Role assignment。
-- [ ] Resource scope authorization。
-- [ ] AuditLog。
-- [ ] Unit / Integration / API Contract tests。
+- [x] Organization CRUD。
+- [x] Membership lifecycle。
+- [x] Role assignment。
+- [x] Resource scope authorization 基础边界。
+- [x] AuditLog。
+- [x] Unit / Integration / API Contract tests。
 
-2.1-C API implementation 已提交，但本轮代码变更后的本地 regression 尚未重新执行，因此本节保持未通过状态。
+2.1-C Backend API + Contract / Real API Gate 已由用户本地实际结果验证。
 
 ### C. Database
 
@@ -47,33 +47,49 @@ Running upgrade 0022_workflow_trigger -> 0023_organization_membership
 ```
 
 - [x] Migration 实际成功。
-- [ ] `current == heads` 在本轮 API 提交后重新核验。
-- [ ] 现有数据兼容性计数 / tenant scope 验证完成。
+- [x] 当前 migration head 为 `0023_organization_membership`。
+- [x] Existing Tenant/User 兼容映射已覆盖。
 
 ### D. Real API
 
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+2.1-C 基线 Gate：
+
+```text
+23 passed in 37.45s
+[PASS] Real API gate completed.
 ```
 
-- [ ] 真实 PostgreSQL/Redis 链路通过。
-- [ ] 管理员可以管理成员。
+2.1-E 新增 Organization / Membership governance real HTTP suite：
+
+```text
+backend/tests/api_real/test_organization_governance_api.py
+```
+
+- [ ] Organization lifecycle real HTTP regression。
+- [ ] Membership role/status lifecycle real HTTP regression。
 - [ ] 普通成员不能执行管理员操作。
-- [ ] suspended/removed member 无法访问受保护资源。
-- [ ] AuditLog 可查询。
+- [ ] suspended member 无法访问 Organization。
+- [ ] Owner Transfer 单 Owner 不变量。
+- [ ] Transfer 后新 Owner / 原 Owner 权限边界。
+- [ ] Organization AuditLog。
+
+**2.1-E 扩展后的 Gate 尚未由开发者本地重新执行，因此当前保持未通过状态。**
 
 ### E. Frontend
 
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+用户本地实际验证：
+
+```text
+Targeted organization tests: 15 passed
+Full frontend regression: 67 passed
+Production build: passed
 ```
 
-- [ ] Organization 管理 UI。
-- [ ] Members / Role / Status UI。
-- [ ] 后端权限结果正确展示。
-- [ ] production build 通过。
+- [x] Organization 管理 UI。
+- [x] Members / Role / Status UI。
+- [x] Owner Transfer UI。
+- [x] Frontend Contract tests。
+- [x] production build。
 
 ### F. Browser E2E
 
@@ -82,17 +98,16 @@ Phase 2.1 需要新增独立 Browser E2E 场景；不得仅依赖现有 Trigger 
 - [ ] Admin 管理组织成员完整链路。
 - [ ] Member 权限边界。
 - [ ] Suspended member 阻断。
+- [ ] Owner Transfer。
 - [ ] Audit 可追踪。
 
 ## 3. 当前执行顺序
 
 ```text
-2.1-C API Contract implementation
- → Backend regression
- → API Contract / Real API
- → Frontend Contract + UI
- → Frontend regression/build
- → Phase 2.1 Browser E2E
+2.1-D Frontend Gate 已通过
+ → 2.1-E Organization Real API / Regression
+ → 根据实际 Gate 修复问题
+ → 2.1-F Organization Browser E2E
  → Final Acceptance
 ```
 
