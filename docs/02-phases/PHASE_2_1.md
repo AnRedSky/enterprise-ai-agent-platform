@@ -1,7 +1,7 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Domain + Migration 实现完成，待本地 Gate 验证**
-> 基线：`main` @ `355ac34c5f91ce4bc243cfcb6b8deb31729974bb`
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C API Contract Implementation 进行中**
+> 当前基线：`main` @ `0b9ea8014a585e6433c25f1747732c7343378759`
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -92,6 +92,14 @@ PATCH  /api/v1/organizations/{organization_id}/members/{membership_id}
 DELETE /api/v1/organizations/{organization_id}/members/{membership_id}
 ```
 
+2.1-C 同时提供显式 owner transfer mutation：
+
+```text
+POST /api/v1/organizations/{organization_id}/members/{membership_id}/transfer-owner
+```
+
+该接口用于满足 Contract 中“Owner 转移必须是显式操作”的约束；普通 membership PATCH 不允许直接写入 `owner`。
+
 具体 request/response schema、分页、排序、错误码实现必须遵守 `docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
 
 ### 安全规则
@@ -101,6 +109,7 @@ DELETE /api/v1/organizations/{organization_id}/members/{membership_id}
 - 被 suspended/removed 的 membership 不得继续访问受保护资源。
 - Owner 不允许被普通 Admin 删除或降级。
 - 所有成员、角色、组织状态变更必须产生 AuditLog。
+- Organization 被 suspended 后，普通资源访问被阻断，但 owner/admin 必须仍可进入管理路径以恢复 Organization。
 
 ## 5. 数据与迁移原则
 
@@ -139,9 +148,7 @@ Migration 必须验证：
 
 详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
 
-### 2.1-B Database Migration + Domain — **实现完成，待本地验证**
-
-Issue：`#33`
+### 2.1-B Database Migration + Domain — **Migration Gate 已验证，Backend regression 需在本轮 API 变更后重新执行**
 
 已实现：
 
@@ -153,33 +160,44 @@ Issue：`#33`
 - Owner/Admin/Member role 约束。
 - Owner transfer 事务锁定与唯一 Owner 防护。
 - membership `(organization_id, user_id)` 数据库唯一约束。
-- Backend unit tests 覆盖核心 domain rule。
 
-待验证：
+用户本地已实际验证：
+
+```text
+uv run alembic upgrade head
+Running upgrade 0022_workflow_trigger -> 0023_organization_membership
+
+uv run alembic heads
+0023_organization_membership (head)
+```
+
+此前 Backend regression：`269 passed, 23 deselected`；该结果发生在本轮 2.1-C API 代码变更之前，因此本轮不得复用为 2.1-C 完成证据。
+
+### 2.1-C API Contract Implementation — **进行中**
+
+已实现：
+
+- `backend/app/schemas/organization.py`。
+- `backend/app/api/organizations.py`。
+- Organization CRUD API。
+- Membership list/create/update/remove API。
+- 显式 owner transfer API。
+- active membership / management authorization。
+- suspended Organization 的管理恢复路径。
+- Organization / Membership AuditLog 写入。
+- API Contract route/authentication tests。
+
+待本地验证：
 
 - `uv run pytest -q`。
-- `uv run alembic upgrade head`。
-- `uv run alembic current` / `uv run alembic heads`。
-- PostgreSQL 实际迁移数据计数与 tenant scope 一致性。
-- Real API / API Contract 仍属于后续 2.1-C / 2.1-E。
-
-**2.1-B 在本地 Gate 未实际执行前，不标记为 Passed，也不进入 Frontend 实现。**
-
-### 2.1-C API Contract Implementation
-
-- API router。
-- schema。
-- authorization dependency/service。
-- audit integration。
-- API contract tests。
+- API Contract tests。
+- PostgreSQL + Redis Real API。
+- Organization / Membership 真实数据生命周期。
+- AuditLog 查询与 request/trace context。
 
 ### 2.1-D Frontend Contract + UI
 
-- API types。
-- Organization 管理页面。
-- Members / role / status 管理。
-- 后端错误与权限结果展示。
-- Vitest。
+尚未开始。必须等 2.1-C Backend Contract 本地 Gate 通过后进入。
 
 ### 2.1-E Real API / Regression
 
@@ -223,4 +241,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 9. 当前执行结论
 
-**2.1-A 已完成；2.1-B 代码实现已落地，下一步必须先执行本地 Backend regression + Migration Gate，再决定是否进入 2.1-C API implementation。**
+**2.1-A 已完成；2.1-B Migration Gate 已由本地实际结果验证；当前继续推进 2.1-C API Contract Implementation。2.1-C 本轮代码提交后必须重新执行 Backend regression，再进入 Real API；在这些 Gate 通过前不得进入 Frontend。**
