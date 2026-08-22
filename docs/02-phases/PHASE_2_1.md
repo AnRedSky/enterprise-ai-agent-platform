@@ -1,6 +1,6 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F Browser E2E 已开始**
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B Browser E2E 已通过 / F-C Governance Acceptance 实施中**
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -71,8 +71,6 @@ Production build: passed
 
 ### 2.1-E Real API / Regression — **Gate 已通过**
 
-此前 `/runtime/audit-logs` PostgreSQL UUID/VARCHAR 类型边界与 transferred-owner 固定名称冲突已修复。
-
 用户最新有效 Gate：
 
 ```text
@@ -84,23 +82,29 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-直接执行 Organization Real API 测试时出现的 7 个 fixture context missing 属于未执行 bootstrap 的测试入口问题，不计为产品 Gate 失败；正式 Gate 已完成 context preparation 后全量通过。
+### 2.1-F Browser E2E + Acceptance — **F-A/F-B 已通过，F-C 实施中**
 
-### 2.1-F Browser E2E + Acceptance — **实施中**
+本阶段不复用既有 Workflow Trigger E2E 作为 Organization 验收证据，新增独立 Browser E2E。
 
-本阶段不复用既有 Workflow Trigger E2E 作为 Organization 验收证据，新增独立 Browser E2E：
-
-#### 2.1-F-A Browser E2E 基础设施 — **已实现，待本地 Gate**
+#### 2.1-F-A Browser E2E 基础设施 — **Gate 已通过**
 
 - 保持现有 Playwright `Desktop Chrome` project 与 `FRONTEND_BASE_URL` / `API_BASE_URL` 约定。
-- 新增 `frontend/tests/e2e/organization-management.spec.ts`。
-- 新增 `frontend/scripts/test/e2e/02_run_organization_e2e.ps1`。
+- 使用 `frontend/tests/e2e/organization-management.spec.ts`。
+- 使用 `frontend/scripts/test/e2e/02_run_organization_e2e.ps1`。
 - Fixture 使用随机用户名、密码、Organization 名称，避免污染固定账号/固定组织状态。
 - 浏览器通过真实 Login 进入 Vue UI；fixture provisioning 使用真实 Backend HTTP API。
 
-#### 2.1-F-B Organization Management E2E — **已实现，待本地 Gate**
+用户最新实际结果：
 
-当前浏览器场景覆盖：
+```text
+scripts/test/e2e/02_run_organization_e2e.ps1
+1 passed (8.7s)
+[PASS] Phase 2.1-F organization browser E2E contract completed.
+```
+
+#### 2.1-F-B Organization Management E2E — **Gate 已通过**
+
+浏览器场景已实际执行并通过：
 
 1. 注册真实 E2E Owner 用户与第二测试用户。
 2. Login → `/organizations`。
@@ -113,24 +117,41 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 9. 显式 Owner Transfer。
 10. 通过真实 API 校验 transfer 后只有一个 Owner 且目标成员为 active Owner。
 
+#### 2.1-F-C Governance Browser Acceptance — **已实现，待 Gate**
+
+新增实现：
+
+1. Auth login response 返回 `user_id`，前端 Session 持久化当前用户身份。
+2. Organization Detail 根据当前 membership role 控制管理 UI：
+   - owner/admin 可管理；
+   - member 不显示管理操作；
+   - Owner Transfer 仅 owner 可见。
+3. 新增 Member 浏览器权限边界测试。
+4. 新增 suspended member 浏览器阻断测试。
+5. 新增 Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界测试。
+6. Organization owner E2E 增加 Audit UI `organization.owner.transferred` 可追踪证据。
+
+以上新增 F-C 场景尚未由本地真实浏览器执行，当前不得标记 Passed。
+
 测试文件：
 
 ```text
 frontend/tests/e2e/organization-management.spec.ts
-frontend/scripts/test/e2e/02_run_organization_e2e.ps1
+frontend/src/views/organizations/detail.vue
+frontend/src/api/auth.ts
+backend/app/api/auth.py
 ```
 
-当前尚未执行 Browser E2E，因此不得标记 2.1-F Passed。
+## 5. F-C 后续补充与最终验收
 
-## 5. 2.1-F 后续补充
+F-C Browser Acceptance Gate 通过后：
 
-Browser E2E Gate 通过后继续补充 Acceptance 证据，重点覆盖：
-
-- Member 权限边界。
-- Suspended member 阻断。
-- Owner Transfer 后原 Owner / 新 Owner 权限边界。
-- Organization / Membership Audit 可追踪。
-- Full frontend regression + production build 与 Browser E2E 联合验收。
+- Full frontend regression + production build。
+- Backend regression。
+- Real API Gate。
+- 汇总 Browser / API / Audit Evidence。
+- 更新 PROJECT_STATUS / Acceptance。
+- 满足 Definition of Done 后正式关闭 Phase 2.1。
 
 ## 6. 明确 Out of Scope
 
@@ -158,4 +179,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 8. 当前执行结论
 
-**2.1-E 已由完整 Real API Gate 验证通过；当前直接执行 2.1-F-A → 2.1-F-B 的 Browser E2E 实现。未完成 Browser E2E Gate 前不得关闭 Phase 2.1。**
+**2.1-E 已由完整 Real API Gate 验证通过；2.1-F-A/F-B 已由真实浏览器 Gate 验证通过；当前直接推进 F-C governance browser acceptance，完成后再执行最终 Full Regression / Real API 联合验收并关闭 Phase 2.1。**
