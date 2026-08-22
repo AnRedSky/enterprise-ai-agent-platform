@@ -23,17 +23,32 @@ class AgentCreate(BaseModel):
     description: str = ""
     system_prompt: str = "你是企业级 AI 助手。"
     model_id: str = "mock-model"
+    model_profile_id: UUID | None = None
     knowledge_config: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
 
 
 class VersionCreate(BaseModel):
     system_prompt: str = Field(min_length=1)
     model_id: str = Field(min_length=1)
+    model_profile_id: UUID | None = None
     knowledge_config: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
 
 
 class PublishRequest(BaseModel):
     version_id: UUID
+
+
+def _version_payload(version):
+    return {
+        "id": version.id,
+        "agent_id": version.agent_id,
+        "version": version.version,
+        "system_prompt": version.system_prompt,
+        "model_id": version.model_id,
+        "model_profile_id": version.model_profile_id,
+        "knowledge_config": version.knowledge_config,
+        "created_at": version.created_at,
+    }
 
 
 @router.post("")
@@ -44,6 +59,7 @@ async def create_agent(p: AgentCreate, claims=Depends(require_roles("user", "adm
         description=p.description,
         system_prompt=p.system_prompt,
         model_id=p.model_id,
+        model_profile_id=p.model_profile_id,
         knowledge_config=p.knowledge_config.model_dump(mode="json"),
     )
     return {
@@ -52,6 +68,7 @@ async def create_agent(p: AgentCreate, claims=Depends(require_roles("user", "adm
         "description": agent.description,
         "version": version.version,
         "model_id": version.model_id,
+        "model_profile_id": version.model_profile_id,
         "knowledge_config": version.knowledge_config,
         "status": agent.status,
         "published_version_id": agent.published_version_id,
@@ -78,6 +95,7 @@ async def list_agents(claims=Depends(current_claims), db: AsyncSession = Depends
             "name": agent.name,
             "description": agent.description,
             "model_id": selected.model_id if selected else None,
+            "model_profile_id": selected.model_profile_id if selected else None,
             "version": selected.version if selected else None,
             "knowledge_config": selected.knowledge_config if selected else {},
             "status": agent.status,
@@ -92,19 +110,7 @@ async def list_versions(agent_id: UUID, claims=Depends(current_claims), db: Asyn
     registry = AgentRegistry(db)
     agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
     published_id = agent.published_version_id
-    return [
-        {
-            "id": v.id,
-            "agent_id": v.agent_id,
-            "version": v.version,
-            "system_prompt": v.system_prompt,
-            "model_id": v.model_id,
-            "knowledge_config": v.knowledge_config,
-            "created_at": v.created_at,
-            "is_published": v.id == published_id,
-        }
-        for v in await registry.versions(agent_id)
-    ]
+    return [{**_version_payload(v), "is_published": v.id == published_id} for v in await registry.versions(agent_id)]
 
 
 @router.get("/{agent_id}/published-version")
@@ -115,16 +121,7 @@ async def get_published_version(agent_id: UUID, claims=Depends(current_claims), 
     if not version:
         from fastapi import HTTPException
         raise HTTPException(404, "Agent 尚未发布版本")
-    return {
-        "id": version.id,
-        "agent_id": version.agent_id,
-        "version": version.version,
-        "system_prompt": version.system_prompt,
-        "model_id": version.model_id,
-        "knowledge_config": version.knowledge_config,
-        "created_at": version.created_at,
-        "is_published": True,
-    }
+    return {**_version_payload(version), "is_published": True}
 
 
 @router.post("/{agent_id}/versions")
@@ -135,18 +132,10 @@ async def create_version(agent_id: UUID, p: VersionCreate, claims=Depends(requir
         agent,
         p.system_prompt,
         p.model_id,
-        p.knowledge_config.model_dump(mode="json"),
+        model_profile_id=p.model_profile_id,
+        knowledge_config=p.knowledge_config.model_dump(mode="json"),
     )
-    return {
-        "id": version.id,
-        "agent_id": version.agent_id,
-        "version": version.version,
-        "system_prompt": version.system_prompt,
-        "model_id": version.model_id,
-        "knowledge_config": version.knowledge_config,
-        "created_at": version.created_at,
-        "is_published": version.id == agent.published_version_id,
-    }
+    return {**_version_payload(version), "is_published": version.id == agent.published_version_id}
 
 
 @router.post("/{agent_id}/publish")
@@ -154,7 +143,7 @@ async def publish_agent(agent_id: UUID, p: PublishRequest, claims=Depends(requir
     registry = AgentRegistry(db)
     agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
     agent, version = await registry.publish(agent, p.version_id)
-    return {"id": agent.id, "status": agent.status, "published_version_id": agent.published_version_id, "version": version.version, "model_id": version.model_id, "knowledge_config": version.knowledge_config}
+    return {"id": agent.id, "status": agent.status, "published_version_id": agent.published_version_id, "version": version.version, "model_id": version.model_id, "model_profile_id": version.model_profile_id, "knowledge_config": version.knowledge_config}
 
 
 @router.post("/{agent_id}/archive")

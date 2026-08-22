@@ -1,8 +1,12 @@
 from uuid import UUID
+
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import HTTPException
-from app.models.core import Agent, AgentVersion, Message, Session
+
+from app.models.core import Agent, AgentVersion, Message, Session, User
+from app.models.model_provider import ModelProfile, ModelProvider
+from app.models.organization import Organization, OrganizationMembership
 
 
 class SessionService:
@@ -34,6 +38,29 @@ class SessionService:
         await self.db.flush()
         return message
 
+    async def resolve_model_profile(self, profile_id: UUID, user_id: UUID) -> tuple[ModelProfile, ModelProvider]:
+        result = await self.db.execute(
+            select(ModelProfile, ModelProvider)
+            .join(ModelProvider, ModelProvider.id == ModelProfile.provider_id)
+            .join(Organization, Organization.id == ModelProvider.organization_id)
+            .join(User, User.tenant_id == Organization.tenant_id)
+            .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+            .where(
+                ModelProfile.id == profile_id,
+                ModelProfile.model_type == "chat",
+                ModelProfile.enabled.is_(True),
+                ModelProvider.enabled.is_(True),
+                User.id == user_id,
+                Organization.status == "active",
+                OrganizationMembership.user_id == user_id,
+                OrganizationMembership.status == "active",
+            )
+        )
+        row = result.first()
+        if row is None:
+            raise HTTPException(409, "Model Profile 不存在、未启用或当前用户无权使用")
+        return row
+
     async def load_runtime(self, agent_id: UUID):
         result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
         agent = result.scalar_one_or_none()
@@ -50,4 +77,8 @@ class SessionService:
         version = version_result.scalar_one_or_none()
         if not version:
             raise HTTPException(409, "Agent 发布版本不存在")
-        return agent, version
+        profile = None
+        provider = None
+        if version.model_profile_id:
+            profile, provider = await self.resolve_model_profile(version.model_profile_id, agent.owner_id)
+        return agent, version, profile, provider

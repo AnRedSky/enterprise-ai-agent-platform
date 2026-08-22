@@ -64,6 +64,7 @@ class AgentVersion(Base):
     version: Mapped[str] = mapped_column(String(32))
     system_prompt: Mapped[str] = mapped_column(Text)
     model_id: Mapped[str] = mapped_column(String(100))
+    model_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("model_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     knowledge_config: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     __table_args__ = (UniqueConstraint("agent_id", "version", name="uq_agent_version"),)

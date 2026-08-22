@@ -14,7 +14,6 @@ class ObservabilityService:
         self.db = db
 
     async def _add(self, instance: Any) -> None:
-        """Add an ORM instance while supporting both real and async test doubles."""
         result = self.db.add(instance)
         if inspect.isawaitable(result):
             await result
@@ -35,6 +34,7 @@ class ObservabilityService:
         agent_id: UUID | None,
         agent_version: str | None,
         model_id: str | None,
+        model_profile_id: UUID | None = None,
     ) -> Execution:
         execution = Execution(
             request_id=request_id,
@@ -43,19 +43,14 @@ class ObservabilityService:
             agent_id=agent_id,
             agent_version=agent_version,
             model_id=model_id,
+            model_profile_id=model_profile_id,
             status="running",
         )
         await self._add(execution)
         await self.db.flush()
         return execution
 
-    async def finish_execution(
-        self,
-        execution: Execution,
-        status: str = "completed",
-        error_code: str | None = None,
-        error_message: str | None = None,
-    ) -> None:
+    async def finish_execution(self, execution: Execution, status: str = "completed", error_code: str | None = None, error_message: str | None = None) -> None:
         ended = datetime.now(UTC)
         started = execution.started_at
         if started.tzinfo is None:
@@ -74,6 +69,8 @@ class ObservabilityService:
         started_at: datetime,
         status: str = "completed",
         model_id: str | None = None,
+        model_profile_id: UUID | None = None,
+        provider_id: UUID | None = None,
         tool_id: UUID | None = None,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
@@ -94,6 +91,8 @@ class ObservabilityService:
             ended_at=self._utc_naive(ended),
             duration_ms=max(0, int((ended - started_at).total_seconds() * 1000)),
             model_id=model_id,
+            model_profile_id=model_profile_id,
+            provider_id=provider_id,
             tool_id=tool_id,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,

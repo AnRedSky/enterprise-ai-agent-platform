@@ -16,6 +16,7 @@ class AgentRegistry:
         description: str,
         system_prompt: str,
         model_id: str,
+        model_profile_id: UUID | None = None,
         knowledge_config: dict | None = None,
     ):
         agent = Agent(owner_id=owner_id, name=name, description=description)
@@ -26,6 +27,7 @@ class AgentRegistry:
             version="1.0.0",
             system_prompt=system_prompt,
             model_id=model_id,
+            model_profile_id=model_profile_id,
             knowledge_config=knowledge_config or {},
         )
         self.db.add(version)
@@ -64,6 +66,7 @@ class AgentRegistry:
         agent: Agent,
         system_prompt: str,
         model_id: str,
+        model_profile_id: UUID | None = None,
         knowledge_config: dict | None = None,
     ):
         if agent.status == "archived":
@@ -82,6 +85,7 @@ class AgentRegistry:
             version=f"1.{max_minor + 1}.0",
             system_prompt=system_prompt,
             model_id=model_id,
+            model_profile_id=model_profile_id,
             knowledge_config=knowledge_config or {},
         )
         self.db.add(version)

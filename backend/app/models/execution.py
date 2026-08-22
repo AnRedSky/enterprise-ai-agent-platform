@@ -8,9 +8,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.core import Base, utcnow_naive
 
-
-# Keep PostgreSQL storage as JSONB while using portable JSON for SQLite-based
-# backend unit tests and local model metadata construction.
 EVENT_METADATA_TYPE = JSON().with_variant(JSONB, "postgresql")
 
 
@@ -28,6 +25,7 @@ class Execution(Base):
     agent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
     agent_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("model_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default="started", index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -50,26 +48,22 @@ class ExecutionEvent(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    model_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("model_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("model_providers.id", ondelete="SET NULL"), nullable=True, index=True)
     tool_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tools.id", ondelete="SET NULL"), nullable=True)
     prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # PostgreSQL column remains `metadata` for schema compatibility, while the
-    # Python attribute avoids SQLAlchemy Declarative API's reserved name.
     event_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", EVENT_METADATA_TYPE, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
 
     def __init__(self, **kwargs: Any) -> None:
-        # Keep the G-02 application/test contract (`metadata=...`) without
-        # declaring a mapped attribute named `metadata` on the Declarative class.
         metadata = kwargs.pop("metadata", None)
         super().__init__(**kwargs)
         if metadata is not None:
             self.event_metadata = metadata
 
 
-# Pydantic's runtime trace schema intentionally exposes the public field as
-# `metadata`; this compatibility property keeps `from_attributes=True` working.
 ExecutionEvent.metadata = property(lambda self: self.event_metadata)

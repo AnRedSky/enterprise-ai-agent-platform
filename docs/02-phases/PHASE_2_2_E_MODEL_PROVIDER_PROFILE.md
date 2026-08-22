@@ -70,19 +70,32 @@ Provider / Profile 管理要求 Organization active membership；写操作要求
 
 本任务建立治理对象和 API，不提前引入 Reranker、Hybrid、Fallback 或路由策略。
 
-短期运行原则：
+运行时选择原则：
 
 ```text
-Model Profile
-    ↓
-Provider-neutral identity
-    ↓
-Runtime / Evaluation explicit selection
+AgentVersion.model_profile_id
+        ↓
+Organization-scoped Model Profile
+        ↓
+Provider endpoint / credential_ref / model_name / parameters
+        ↓
+Model Gateway
+        ↓
+Execution / ExecutionEvent 固化 Profile + Provider identity
 ```
 
-现有环境变量仍可作为开发/兼容默认值，但新业务代码不得新增具体模型名称硬编码。
+`model_profile_id` 为兼容性可选字段；未配置时继续沿用既有 `model_id` / 环境变量默认行为。配置 Profile 后，Profile 的 `model_name` 与 `parameters` 成为本次 Chat 调用的实际模型配置，不再由后端新增具体模型名称硬编码。
 
-后续 Runtime 接入必须使用 `model_profile_id`，并在 execution / evaluation trace 中记录 Profile、Provider、model、dimension 等不可变身份信息。
+当前 E-1 已实现：
+
+- AgentCreate / VersionCreate 支持 `model_profile_id`。
+- AgentVersion 持久化 `model_profile_id`。
+- Chat Runtime 解析当前用户可使用的启用 Chat Profile 与 Provider。
+- OpenAI-compatible / Ollama adapter 使用 Profile 的 `model_name`、Provider endpoint、credential reference 与 Profile parameters。
+- Execution / ExecutionEvent 持久化 `model_profile_id`、`provider_id` 与模型 identity。
+- 未选择 Profile 时保持旧 `model_id` 兼容路径。
+
+Credential resolution 仅在进程环境中根据 `credential_ref` 读取 Secret，不将 Secret 写入数据库或 trace。
 
 ## 6. Migration
 
@@ -90,9 +103,7 @@ Runtime / Evaluation explicit selection
 
 - `model_providers`
 - `model_profiles`
-
-Revision：`0025_model_provider_governance`
-Parent：`0024_embedding_dimension_contract`
+- `0026_model_profile_runtime_identity`：为 AgentVersion / Execution / ExecutionEvent 增加 governed Profile identity。
 
 ## 7. 自动化验证
 
@@ -101,6 +112,7 @@ Parent：`0024_embedding_dimension_contract`
 ```powershell
 cd backend
 uv run pytest -q tests/api_contract/test_model_provider_contract.py
+uv run pytest -q tests/api_contract/test_api_agents_endpoints.py tests/api_contract/test_model_provider_contract.py tests/api_contract/test_model_profile_runtime_contract.py
 ```
 
 数据库迁移：
@@ -124,14 +136,20 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
+Runtime Profile Real API 验证要求：
+
+1. 创建 Organization-scoped Provider。
+2. 创建 enabled Chat Profile，并配置真实可用的 endpoint / credential_ref / model_name。
+3. 将 `model_profile_id` 写入 AgentVersion 并发布 Agent。
+4. Chat 请求实际调用该 Profile，而不是 `MODEL_DEFAULT_NAME`。
+5. Runtime trace 能查询到 `model_profile_id`、`provider_id`、model identity。
+6. Secret 不出现在 trace / audit / response。
+
 ## 8. 后续拆分
 
 ### 2.2-E-1 — Runtime Profile Resolution
 
-- AgentVersion / Chat 请求支持 `model_profile_id`。
-- Runtime 根据 Profile 解析 Provider。
-- Execution trace 固化 Provider/Profile/model identity。
-- 不改变既有默认模型兼容行为。
+**代码已实现，待本地 Gate / Real API 验证闭环。**
 
 ### 2.2-E-2 — Retrieval Evaluation Profile Selection
 

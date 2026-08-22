@@ -20,6 +20,7 @@ class ExecutionItem(BaseModel):
     agent_id: UUID | None = None
     agent_version: str | None = None
     model_id: str | None = None
+    model_profile_id: UUID | None = None
     status: str
     started_at: datetime
     ended_at: datetime | None = None
@@ -42,6 +43,8 @@ class ExecutionEventItem(BaseModel):
     ended_at: datetime | None = None
     duration_ms: int | None = None
     model_id: str | None = None
+    model_profile_id: UUID | None = None
+    provider_id: UUID | None = None
     tool_id: UUID | None = None
     error_code: str | None = None
     metadata: dict[str, Any] | None = None
@@ -66,12 +69,7 @@ class AuditLogItem(BaseModel):
     action: str
     status: str
     error_code: str | None = None
-    # Keep the persistence/API contract name explicit for governance consumers.
-    # Accept the historical "metadata" attribute as an input alias for compatibility.
-    metadata_json: dict[str, Any] | None = Field(
-        default=None,
-        validation_alias=AliasChoices("metadata_json", "metadata"),
-    )
+    metadata_json: dict[str, Any] | None = Field(default=None, validation_alias=AliasChoices("metadata_json", "metadata"))
     created_at: datetime
 
 
