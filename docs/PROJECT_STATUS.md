@@ -8,7 +8,7 @@
 - Branch: `main`
 - 最新产品基线：Phase 2.1-E Real API Gate 已通过；当前进入 Phase 2.1-F Browser E2E + Acceptance。
 - 开发原则：所有任务直接基于最新 `main`，禁止把临时分支作为长期开发基线。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E 已完成对应 Gate；2.1-F-A / 2.1-F-B 已实现，Browser E2E 连续发现并修复两个测试实现问题，当前等待第三次真实 Gate。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E 已完成对应 Gate；2.1-F-A / 2.1-F-B 已实现，Browser E2E 已连续发现并修复三个测试实现问题，当前等待第四次真实 Gate。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -48,11 +48,11 @@ Production build: passed
 
 首次本地 Gate 因 `getByText('成员')` strict mode 失败，已修复为唯一 heading locator。
 
-修复后第二次 Gate 继续执行至添加成员步骤，发现真实 Auth API 注册响应字段为 `user_id`，而 E2E 错误读取为 `memberUser.id`，导致 Playwright `fill()` 收到 `undefined`。
+第二次 Gate 继续执行至添加成员步骤，发现真实 Auth API 注册响应字段为 `user_id`，而 E2E 错误读取为 `memberUser.id`，导致 Playwright `fill()` 收到 `undefined`；该问题已记录并修复为 `memberUser.user_id`。
 
-该错误已记录于 `docs/04-errors/2026-08-22-phase-2-1-f-browser-e2e-registration-user-id.md`，并已修复为 `memberUser.user_id`。
+第三次 Gate 继续执行至 Organization suspend，发现 MessageBox 确认按钮使用 `getByRole('button', { name: '确定' })` 在真实浏览器环境下无法稳定匹配，最终 60 秒超时；该问题已记录于 `docs/04-errors/2026-08-22-phase-2-1-f-browser-e2e-messagebox-confirm.md`，并已修复为当前可见 MessageBox 内的 primary confirmation button 定位。
 
-第二次失败后的 Frontend Regression / production build 仍实际通过：67 tests passed，production build passed；但 Browser E2E 修复后尚未重新执行，因此 **2.1-F 仍不得标记 Passed**。
+修复后的 Browser E2E 尚未由本地重新执行，因此 **2.1-F 仍不得标记 Passed**。
 
 ## 3. Phase 状态
 
@@ -118,7 +118,7 @@ frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 - Owner Transfer。
 - 真实 API 校验单 Owner 不变量与目标 Owner 状态。
 
-当前第二次 Gate 已发现并修复 Auth registration response 字段误用；修复后等待真实 Browser Gate。
+当前第三次 Gate 已发现并修复 MessageBox confirmation locator 问题；修复后等待真实 Browser Gate。
 
 ## 5. 下一步推进原则
 
