@@ -58,7 +58,8 @@ def upgrade() -> None:
 
     # Preserve existing RBAC semantics during migration. The first existing admin
     # in a tenant becomes owner; additional admins remain organization admins.
-    # All other users become members. Ordering is deterministic for repeatable audit.
+    # All other users become members. User.status remains the source of truth for
+    # account access; every existing user receives an active membership record.
     op.execute(sa.text("""
         WITH admin_candidates AS (
             SELECT
@@ -80,7 +81,7 @@ def upgrade() -> None:
             gen_random_uuid(),
             o.id,
             u.id,
-            CASE WHEN u.status = 'active' THEN 'active' ELSE 'suspended' END,
+            'active',
             CASE
                 WHEN ac.admin_rank = 1 THEN 'owner'
                 WHEN ac.admin_rank IS NOT NULL THEN 'admin'
