@@ -144,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 9. **禁止创建任何功能分支、临时分支、开发分支或长期分支；所有开发、修复、文档与测试变更均直接基于并提交 `main`。**
 10. 开发前必须以远端 `main` 为当前基线，先同步 / 拉取 `main` 最新代码。
 11. Backend 的 Python 包安装、测试、脚本与服务运行统一使用 `uv run ...`。
-12. 真实 Provider 的 endpoint、API key、model 等配置只能写入未提交的 `backend/.env`。
+12. **真实 Provider 的 endpoint、API key、model 等运行配置原则上只能写入未提交的 `backend/.env` / `backend/.env.local`；允许提交 `backend/.env.dev` 作为统一本地开发 profile，但该文件只能包含无 Secret 的本地服务地址、兼容占位值和已确认可用的开发默认值，禁止写入真实远程凭据、Token、密码或其他 Secret。`.env.dev` 不得被当作 Real Provider baseline 或验收结果。**
 13. Secret 禁止提交到 Git 仓库。
 14. 代码、数据库 migration、API contract、配置、技术设计和文档之间必须建立可追溯关系。
 15. 复杂业务规则、降级策略、兼容逻辑和 provider 替换策略必须通过代码注释与设计文档记录设计意图。
