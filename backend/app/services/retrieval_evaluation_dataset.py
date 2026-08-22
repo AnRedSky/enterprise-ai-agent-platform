@@ -25,6 +25,12 @@ class RetrievalEvaluationDataset:
     schema_version: str = DATASET_SCHEMA_VERSION
 
 
+def _validate_targets(value: Any, case_id: str, field_name: str) -> frozenset[str]:
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
+        raise ValueError(f"dataset case {case_id!r} requires a non-empty {field_name} list")
+    return frozenset(value)
+
+
 def _validate_case(row: dict[str, Any], line_number: int) -> RetrievalEvaluationCase:
     if not isinstance(row, dict):
         raise ValueError(f"dataset line {line_number} must be a JSON object")
@@ -32,14 +38,23 @@ def _validate_case(row: dict[str, Any], line_number: int) -> RetrievalEvaluation
     case_id = row.get("id")
     query = row.get("query")
     relevant = row.get("relevant_chunk_ids")
+    expected_citations = row.get("expected_citation_targets", relevant)
     if not isinstance(case_id, str) or not case_id.strip():
         raise ValueError(f"dataset line {line_number} requires a non-empty string id")
     if not isinstance(query, str) or not query.strip():
         raise ValueError(f"dataset case {case_id!r} requires a non-empty string query")
-    if not isinstance(relevant, list) or not relevant or not all(isinstance(item, str) and item.strip() for item in relevant):
-        raise ValueError(f"dataset case {case_id!r} requires a non-empty relevant_chunk_ids list")
+    relevant_ids = _validate_targets(relevant, case_id, "relevant_chunk_ids")
+    citation_targets = _validate_targets(expected_citations, case_id, "expected_citation_targets")
+    if not citation_targets.issubset(relevant_ids):
+        raise ValueError(
+            f"dataset case {case_id!r} expected_citation_targets must be a subset of relevant_chunk_ids"
+        )
 
-    return RetrievalEvaluationCase(query=query, relevant_chunk_ids=frozenset(relevant))
+    return RetrievalEvaluationCase(
+        query=query,
+        relevant_chunk_ids=relevant_ids,
+        expected_citation_targets=citation_targets,
+    )
 
 
 def load_retrieval_evaluation_dataset(path: Path) -> RetrievalEvaluationDataset:

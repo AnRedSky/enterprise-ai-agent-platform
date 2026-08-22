@@ -8,6 +8,7 @@ from typing import Sequence
 class RetrievalEvaluationCase:
     query: str
     relevant_chunk_ids: frozenset[str]
+    expected_citation_targets: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -45,12 +46,46 @@ def reciprocal_rank(retrieved: Sequence[str], relevant: set[str]) -> float:
     return 0.0
 
 
-def evaluate_case(case: RetrievalEvaluationCase, retrieved: Sequence[str], k: int = 3) -> dict[str, float]:
+def citation_correctness(
+    cited_targets: Sequence[str],
+    retrieved: Sequence[str],
+    expected_targets: set[str],
+) -> float:
+    """Score whether emitted citation targets are traceable and expected.
+
+    A citation is correct only when its target was actually retrieved and is
+    explicitly marked as an expected citation target for the evaluation case.
+    This intentionally does not reward a citation merely because the target is
+    relevant; provenance must be present in the retrieval result as well.
+    """
+
+    if not cited_targets:
+        return 0.0
+    retrieved_set = set(retrieved)
+    correct = sum(
+        1
+        for target in cited_targets
+        if target in retrieved_set and target in expected_targets
+    )
+    return correct / len(cited_targets)
+
+
+def evaluate_case(
+    case: RetrievalEvaluationCase,
+    retrieved: Sequence[str],
+    k: int = 3,
+    cited_targets: Sequence[str] | None = None,
+) -> dict[str, float]:
     relevant = set(case.relevant_chunk_ids)
+    citations = list(retrieved if cited_targets is None else cited_targets)
+    expected_targets = set(case.expected_citation_targets or case.relevant_chunk_ids)
     return {
         "recall_at_k": round(recall_at_k(retrieved, relevant, k), 6),
         "precision_at_k": round(precision_at_k(retrieved, relevant, k), 6),
         "mrr": round(reciprocal_rank(retrieved, relevant), 6),
+        "citation_correctness": round(
+            citation_correctness(citations, retrieved, expected_targets), 6
+        ),
     }
 
 
@@ -62,7 +97,13 @@ def aggregate_evaluation(
     if len(cases) != len(rankings):
         raise ValueError("cases and rankings must have the same length")
     if not cases:
-        return {"cases": 0, "recall_at_k": 0.0, "precision_at_k": 0.0, "mrr": 0.0}
+        return {
+            "cases": 0,
+            "recall_at_k": 0.0,
+            "precision_at_k": 0.0,
+            "mrr": 0.0,
+            "citation_correctness": 0.0,
+        }
 
     metrics = [evaluate_case(case, ranking, k) for case, ranking in zip(cases, rankings)]
     count = len(metrics)
@@ -71,6 +112,9 @@ def aggregate_evaluation(
         "recall_at_k": round(sum(item["recall_at_k"] for item in metrics) / count, 6),
         "precision_at_k": round(sum(item["precision_at_k"] for item in metrics) / count, 6),
         "mrr": round(sum(item["mrr"] for item in metrics) / count, 6),
+        "citation_correctness": round(
+            sum(item["citation_correctness"] for item in metrics) / count, 6
+        ),
     }
 
 
@@ -98,6 +142,7 @@ def aggregate_observations(
             "recall_at_k": 0.0,
             "precision_at_k": 0.0,
             "mrr": 0.0,
+            "citation_correctness": 0.0,
             "avg_latency_ms": 0.0,
         }
 
@@ -122,5 +167,8 @@ def aggregate_observations(
         "recall_at_k": round(sum(item["recall_at_k"] for item in metrics) / success_count, 6) if metrics else 0.0,
         "precision_at_k": round(sum(item["precision_at_k"] for item in metrics) / success_count, 6) if metrics else 0.0,
         "mrr": round(sum(item["mrr"] for item in metrics) / success_count, 6) if metrics else 0.0,
+        "citation_correctness": round(
+            sum(item["citation_correctness"] for item in metrics) / success_count, 6
+        ) if metrics else 0.0,
         "avg_latency_ms": round(sum(item.latency_ms for _, item in zip(cases, observations)) / count, 3),
     }

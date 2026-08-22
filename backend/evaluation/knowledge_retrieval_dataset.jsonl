@@ -1,5 +1,5 @@
-{"id":"kr-001","query":"FastAPI Agent Runtime","relevant_chunk_ids":["chunk-fastapi-runtime"]}
-{"id":"kr-002","query":"报销规则","relevant_chunk_ids":["chunk-expense-policy"]}
-{"id":"kr-003","query":"PostgreSQL 知识库","relevant_chunk_ids":["chunk-postgres-knowledge"]}
-{"id":"kr-004","query":"审批流程","relevant_chunk_ids":["chunk-expense-policy","chunk-approval-process"]}
-{"id":"kr-005","query":"citation retrieval","relevant_chunk_ids":["chunk-fastapi-runtime","chunk-citation"]}
+{"id":"kr-001","query":"FastAPI Agent Runtime","relevant_chunk_ids":["chunk-fastapi-runtime"],"expected_citation_targets":["chunk-fastapi-runtime"]}
+{"id":"kr-002","query":"报销规则","relevant_chunk_ids":["chunk-expense-policy"],"expected_citation_targets":["chunk-expense-policy"]}
+{"id":"kr-003","query":"PostgreSQL 知识库","relevant_chunk_ids":["chunk-postgres-knowledge"],"expected_citation_targets":["chunk-postgres-knowledge"]}
+{"id":"kr-004","query":"审批流程","relevant_chunk_ids":["chunk-expense-policy","chunk-approval-process"],"expected_citation_targets":["chunk-expense-policy","chunk-approval-process"]}
+{"id":"kr-005","query":"citation retrieval","relevant_chunk_ids":["chunk-fastapi-runtime","chunk-citation"],"expected_citation_targets":["chunk-citation","chunk-fastapi-runtime"]}
