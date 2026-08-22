@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D baseline regression 已完成既有交付范围；最新 main 的 Scheduled Trigger Real API 与 Real Provider runner 暴露回归问题，本轮已完成代码修复，待本地 Gate 重新验证；Citation correctness Contract 已实现，真实 Runtime citation 与 Debug/Audit/Observability traceability 仍在推进**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D baseline regression 已完成既有交付范围；最新 main 的 Scheduled Trigger Real API 与 Real Provider runner 暴露回归问题，本轮已完成代码修复并由开发者本地验证；Citation correctness Contract 与 Runtime citation evidence bridge 已实现，evaluation trace persistence / API contract 自动化覆盖已加入，待本地 Gate 重新验证。**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -10,13 +10,13 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 2.2-A 已形成真实 Provider、Dataset、Recall@K、Precision@K、MRR、Citation correctness、latency、provider error rate、regression identity 与 failure/fallback 的质量契约。
 
-2.2-B 已完成 Dataset Loader 与 PostgreSQL/pgvector evaluation runner。最新 main 暴露 evaluation fixture 与 Runtime hydration contract 不一致问题，已修复，待重新本地验证。
+2.2-B 已完成 Dataset Loader 与 PostgreSQL/pgvector evaluation runner。evaluation fixture 与 Runtime hydration contract 不一致问题已修复，并由开发者本地验证。
 
-2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate，并冻结真实 baseline；最新 main 的 runtime bridge 重跑曾因 fixture hydration 状态不一致得到 0 recall / 0 MRR，本轮已修复 fixture 生命周期。
+2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate，并冻结真实 baseline；Runtime bridge 重跑曾因 fixture hydration 状态不一致得到 0 recall / 0 MRR，本轮已修复并恢复 baseline。
 
 当前 baseline 仅代表真实 Provider / Dataset / Retrieval 配置的可重复回归基线，不代表绝对语义质量已达生产目标。禁止通过修改指标、fallback、截断或补零提高结果。
 
-2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。
+2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。Evaluation run / case / regression summary 已持久化到现有 Runtime Observability / Audit 模型；trace API contract 与 Real API traceability 自动化测试已加入，等待本地 Gate 验证。
 
 ## 3. 现有 Phase 1.4 能力边界
 

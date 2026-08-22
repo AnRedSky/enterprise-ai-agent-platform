@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B、2.2-C 已由开发者本地重新验证通过；2.2-D 的 Runtime evidence bridge 已完成，本轮开始接入持久化 Traceability。**
+> 状态：**进行中 / 2.2-B、2.2-C 已由开发者本地重新验证通过；2.2-D 的 Runtime evidence bridge 与持久化 Traceability 代码已完成，本轮已增加 trace persistence / API contract 自动化覆盖，新增测试尚待开发者本地执行。**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -80,7 +80,9 @@ quality_gate=passed
 - [x] Evaluation run / case / regression summary 已持久化到现有 `executions` / `execution_events` Observability 模型。
 - [x] Evaluation completion 已写入现有 `audit_logs`。
 - [x] 新增 admin-only Retrieval Evaluation Trace 查询入口，复用 Runtime Observability timeline。
-- [ ] Trace persistence / API contract 尚未由开发者本地重新执行验证。
+- [x] 新增 Runtime Trace API contract 测试，覆盖 route registration 与 bearer authentication。
+- [x] 新增 Real API traceability 测试，覆盖真实 runner → execution/case/summary → audit 查询链路。
+- [ ] 上述新增 trace persistence / API contract 测试尚未由开发者本地重新执行验证。
 
 ## 3. 已解决的最新 main 问题
 
@@ -112,18 +114,18 @@ quality_gate=passed
 
 ## 4. 2.2-D 当前结论
 
-真实 Runtime citation evidence bridge 与 Real Provider Quality Gate 已完成。当前独立任务是验证新增 evaluation trace persistence：runner 生成的 `evaluation_run_id` 必须能从数据库 / Runtime Observability 查询到 run、case、summary，并在 Audit Log 中存在对应记录。
+真实 Runtime citation evidence bridge 与 Real Provider Quality Gate 已完成。当前独立任务是验证新增 evaluation trace persistence：runner 生成的 `evaluation_run_id` 必须能从数据库 / Runtime Observability 查询到 run、case、summary，并在 Audit Log 中存在对应记录；自动化覆盖已加入，待本地执行确认。
 
 ## 5. 本轮 Traceability Persistence 本地验证流程
 
 ```powershell
 cd backend
 
-# 1. 单元 / 回归
-uv run pytest -q tests/unit/test_vector_knowledge_retrieval.py tests/unit/test_retrieval_evaluation.py
-uv run pytest -q
+# 1. 新增 Trace contract / real traceability 测试
+uv run pytest -q tests/api_contract/test_api_runtime_endpoints.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 
-# 2. migration + Real HTTP API
+# 2. 完整 Backend regression + migration + Real API Gate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
 
 # 3. Real Provider Quality Gate；已有 baseline 时禁止 --freeze-baseline
@@ -131,6 +133,7 @@ uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provid
 
 # 4. 从 runner 输出中取得 evaluation_run_id，然后使用管理员 Token 查询
 # GET /api/v1/runtime/retrieval-evaluations/{evaluation_run_id}
+# GET /api/v1/runtime/audit-logs?status=success&page=1&page_size=100
 ```
 
-验收要求：查询结果应包含一个 `ExecutionTimelineResponse`，其中 execution 的 `trace_id` 等于 `evaluation_run_id`，events 至少包含 `retrieval_evaluation_case` 与 `retrieval_evaluation_summary`；Audit Log 应存在 `action=retrieval_evaluation.completed` 的记录。
+自动化验收要求：真实 runner 必须返回 0；Trace API 返回 200，且 execution 的 `trace_id` 等于 `evaluation_run_id`，events 至少包含 `retrieval_evaluation_case` 与 `retrieval_evaluation_summary`；Audit Log 应存在 `action=retrieval_evaluation.completed` 且 `execution_id` 对应该 evaluation execution 的记录。
