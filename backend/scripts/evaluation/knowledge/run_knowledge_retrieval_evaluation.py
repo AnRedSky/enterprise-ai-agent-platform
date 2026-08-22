@@ -98,6 +98,10 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
 
 
 async def cleanup_fixture(db) -> None:
+    # A failed pgvector write can abort the current PostgreSQL transaction. Always
+    # clear that transaction state before issuing cleanup SQL so the original
+    # provider/schema error is not masked by InFailedSQLTransactionError.
+    await db.rollback()
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
