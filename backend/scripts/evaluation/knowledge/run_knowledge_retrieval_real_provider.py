@@ -45,9 +45,7 @@ BASELINE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_real_baseline.json
 
 def _require_real_provider() -> None:
     if settings.embedding_provider not in {"openai-compatible", "ollama"}:
-        raise SystemExit(
-            "Real Provider Quality Gate requires EMBEDDING_PROVIDER=openai-compatible or ollama"
-        )
+        raise SystemExit("Real Provider Quality Gate requires EMBEDDING_PROVIDER=openai-compatible or ollama")
     if not settings.embedding_base_url:
         raise SystemExit("Real Provider Quality Gate requires EMBEDDING_BASE_URL")
     if settings.embedding_provider == "openai-compatible" and not settings.embedding_api_key:
@@ -68,11 +66,7 @@ def _build_embedding_provider():
     common = {
         "model": settings.embedding_model,
         "timeout_seconds": settings.embedding_timeout_seconds,
-        "dimensions": (
-            settings.embedding_dimension
-            if settings.embedding_dimensions_parameter_enabled
-            else None
-        ),
+        "dimensions": settings.embedding_dimension if settings.embedding_dimensions_parameter_enabled else None,
         "expected_dimension": settings.embedding_dimension,
     }
     if settings.embedding_provider == "ollama":
@@ -89,14 +83,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
     dataset = load_retrieval_evaluation_dataset(DATASET)
     fixtures = load_jsonl(FIXTURE)
     fixture_by_id = {row["chunk_id"]: row for row in fixtures}
-    missing = sorted(
-        {
-            chunk_id
-            for case in dataset.cases
-            for chunk_id in case.relevant_chunk_ids
-            if chunk_id not in fixture_by_id
-        }
-    )
+    missing = sorted({chunk_id for case in dataset.cases for chunk_id in case.relevant_chunk_ids if chunk_id not in fixture_by_id})
     if missing:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
 
@@ -109,7 +96,10 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
         "embedding_dimension": settings.embedding_dimension,
         "dataset_version": dataset.schema_version,
         "dataset_sha256": _dataset_sha256(DATASET),
-        "retrieval_mode": "real-provider-pgvector-runtime",
+        # Keep the baseline identity stable: the execution path is an implementation
+        # detail, while retrieval_mode describes the evaluated retrieval contract.
+        "retrieval_mode": "real-provider-pgvector",
+        "retrieval_execution_path": "runtime-service",
         "top_k": k,
         "citation_source": "runtime-retrieval-result",
     }
@@ -166,9 +156,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 await db.commit()
 
                 evaluation_service = VectorKnowledgeRetrievalService(db)
-                actual_to_evaluation = {
-                    str(actual_chunk_id(row["chunk_id"])): row["chunk_id"] for row in fixtures
-                }
+                actual_to_evaluation = {str(actual_chunk_id(row["chunk_id"])): row["chunk_id"] for row in fixtures}
 
                 for case in dataset.cases:
                     started = time.perf_counter()
@@ -202,14 +190,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                     except Exception as exc:
                         error = f"{type(exc).__name__}: {exc}"
                     latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                    observations.append(
-                        RetrievalEvaluationObservation(
-                            tuple(ranking),
-                            latency_ms,
-                            error,
-                            tuple(cited_chunk_ids),
-                        )
-                    )
+                    observations.append(RetrievalEvaluationObservation(tuple(ranking), latency_ms, error, tuple(cited_chunk_ids)))
                     case_reports.append(
                         {
                             "query": case.query,
@@ -258,9 +239,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 "regression": regression,
                 **metrics,
                 "cases_detail": case_reports,
-                "quality_gate": "passed" if baseline_status == "checked" and not failures else (
-                    "baseline_created" if baseline_status == "created" and not failures else "failed"
-                ),
+                "quality_gate": "passed" if baseline_status == "checked" and not failures else ("baseline_created" if baseline_status == "created" and not failures else "failed"),
                 "failures": failures,
             }
             print(json.dumps(report, ensure_ascii=False, indent=2))
