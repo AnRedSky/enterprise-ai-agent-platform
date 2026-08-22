@@ -6,11 +6,12 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：`6d6a208b7dac4811db53f42ecdbbe6f496fafd83`
+- 当前远端基线：`f1758e0a76ad18ad607e6adaa764bc8b017a58bf`
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；新 Phase 尚未立项。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项，当前执行 2.1-A Product / Backend Contract。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
+- 产品整体路线：`docs/PRODUCT_ROADMAP.md`
 
 ## 2. Phase 1.9 最终状态
 
@@ -80,6 +81,8 @@ Desktop Chrome:
 
 覆盖 Scheduled Trigger、Webhook Trigger、Webhook duplicate-event convergence 与 lifecycle security。
 
+> 上述结果是 Phase 1.9 已记录的实际本地证据，不代表本次文档整理重新执行。
+
 ## 4. Phase 状态
 
 | Phase | 状态 | 说明 |
@@ -93,7 +96,8 @@ Desktop Chrome:
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| 新 Phase | **尚未立项** | 必须先完成产品需求、架构基线与范围决策，不得自行假定 Phase 2 |
+| **Phase 2.1** | **已立项 / 待开发** | Enterprise Organization & Access Governance；当前执行 2.1-A Contract |
+| Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
 
@@ -121,70 +125,66 @@ Vue Management + Browser E2E
 
 - `docs/PRODUCT_CAPABILITY_BASELINE.md`
 - `docs/PRODUCT_DEVELOPMENT_MATRIX.md`
+- `docs/PRODUCT_ROADMAP.md`
 
-## 6. 当前已确认的产品 / 工程差距
+## 6. 当前确认的产品 / 工程差距与路线
 
-以下内容是基于现有 Phase 文档确认的能力边界，不自动等同下一阶段任务：
+| 缺口 | 企业价值 | 路线 | 当前状态 |
+|---|---|---|---|
+| Organization / Membership / Enterprise Access | 让企业可以真正管理成员与资源边界 | Phase 2.1 | **当前优先级 P0** |
+| Retrieval 真实 Provider 质量 | 保证知识问答业务质量可量化 | Phase 2.2 | P0，待质量 Contract |
+| Model Provider Governance | 控制模型选择、故障切换和成本 | Phase 2.3 | P1，待产品决策 |
+| Durable Scheduler | 支撑长期任务、故障恢复和多实例语义 | Phase 2.4 | P1，待产品决策 |
+| Advanced Workflow | 支撑复杂业务流程编排 | Phase 2.5 | P1，待执行语义决策 |
+| Event Infrastructure | 支撑高吞吐异步业务集成 | Phase 2.6 | P2，仅需求成立后 |
+| Multi-Agent | 支撑复杂任务的 Agent 协作 | Phase 2.7 | P2，尚无 Contract |
+| Agent Asset / Marketplace | 企业内部复用、发布和治理 Agent 资产 | Phase 2.8 | P2，尚无 Contract |
 
-1. 真实 Embedding Provider 语义质量仍需按实际 Provider 场景验证；Phase 1.4 的 Mock 只证明工程链路。
-2. Scheduler 当前没有 `next_run_at`、lease、misfire policy、独立 scheduler state。
-3. Workflow 当前没有复杂 DAG、Saga、复杂 Policy DSL 或完整 Workflow Designer。
-4. 当前没有通用 MQ/Kafka/Event Bus，也没有分布式 Workflow Engine。
-5. Multi-Agent orchestration 尚未形成当前 Product Contract。
-6. 当前 Auth/RBAC/Tenant 不等同完整 Enterprise IAM / Organization 产品。
+上述路线详见 `docs/PRODUCT_ROADMAP.md`；只有当前 Phase 2.1 是已正式进入开发的阶段。
 
-这些能力必须先有明确产品需求与架构决策，才能进入新的 Phase。
+## 7. Phase 2.1 当前任务
 
-## 7. 文档基线一致性修复
+**2.1-A Product / Backend Contract：Enterprise Organization & Access Governance**
 
-本轮重新评估发现根 `README.md` 仍保留“当前推进 Phase 1.7”的历史描述，而 `PROJECT_STATUS.md` 已关闭 Phase 1.9。该文档漂移已修正，并新增：
+本任务只冻结产品与后端 Contract，不直接实现业务代码：
 
-- `docs/PRODUCT_CAPABILITY_BASELINE.md`
-- `docs/PRODUCT_DEVELOPMENT_MATRIX.md`
+1. Organization ↔ Tenant 关系。
+2. Membership 生命周期。
+3. Owner/Admin/Member 权限矩阵。
+4. 多组织归属策略。
+5. User/Tenant/Role 兼容迁移策略。
+6. API schema / error / pagination / idempotency Contract。
+7. Resource scope 与 Audit 规则。
 
-后续产品状态以本文件为准，产品能力以能力基线与开发矩阵为准。
+Contract 冻结后，才进入 2.1-B Database Migration + Domain。
 
-## 8. 下一步推进原则
+## 8. Phase 2.1 验收入口
 
-### 阶段 0：需求与产品基线决策（当前）
+- Phase：`docs/02-phases/PHASE_2_1.md`
+- Acceptance：`docs/03-acceptance/PHASE_2_1_ACCEPTANCE.md`
+- Product Roadmap：`docs/PRODUCT_ROADMAP.md`
 
-暂不创建新的 Phase。先从产品真实使用场景确认：
+Phase 2.1 完成前不得声称 Organization / Enterprise IAM 已实现或验收通过。
 
-- 当前平台服务的首要企业用户角色；
-- 核心业务场景与关键 KPI；
-- 当前能力无法满足的业务需求；
-- 上述 G-03～G-06 哪些真正具有产品优先级。
+## 9. 下一步推进原则
 
-### 阶段 1：形成正式新 Phase
-
-只有需求确认后才创建：
-
-```text
-`docs/02-phases/PHASE_x_y.md`
-`docs/03-acceptance/PHASE_x_y_ACCEPTANCE.md`
-```
-
-并在本文件登记 Phase、范围、完成定义和当前任务。
-
-### 阶段 2：按开发准则拆解
+严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-需求 / 架构 Contract
- → Backend Domain + API Contract
- → Migration + Backend Tests
- → Frontend API Types + Vitest
- → Frontend UI
- → Real API
- → Backend Gate
- → Frontend Gate
- → Browser E2E
+2.1-A Product / Backend Contract
+ → 2.1-B Backend Domain + API Contract
+ → 2.1-C Database Migration + Backend Tests
+ → 2.1-D Real API
+ → 2.1-E Frontend API Types + Vitest + UI
+ → 2.1-F Backend / Frontend Regression
+ → 2.1-G Browser E2E
  → Acceptance / Status / Error Record
  → 直接提交 main
 ```
 
-不涉及数据库、Frontend 或 Browser 的任务可以裁剪对应步骤，但必须明确裁剪理由和验收边界。
+不涉及某层时可以裁剪，但必须在 Phase 文档说明原因。所有开发、修复、文档与测试变更直接基于 `main`。
 
-## 9. 维护规则
+## 10. 维护规则
 
 后续任何功能完成、延期、阻塞、范围变化或新的工程错误，都必须同步：
 
