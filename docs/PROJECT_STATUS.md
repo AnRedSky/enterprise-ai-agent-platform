@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：Phase 2.1-D Frontend implementation commits on latest `main`。
+- 当前远端基线：Phase 2.1-D Frontend implementation / build fix commits on latest `main`。
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A Contract 已完成；2.1-B Migration Gate 已验证；2.1-C Backend API + Real API Gate 已由本地实际结果验证；2.1-D Organization / Membership Frontend UI + Contract Tests 已实现，等待本地 Frontend Regression / Build Gate。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A Contract 已完成；2.1-B Migration Gate 已验证；2.1-C Backend API + Real API Gate 已由本地实际结果验证；2.1-D Organization / Membership Frontend UI + Contract Tests 已实现，首次 Frontend Regression 的 production build 已发现并修复 `DefaultRow` / `Membership` 类型错误，等待本地重新 Gate。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -50,7 +50,7 @@ uv run alembic heads
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-上述结果用于确认 2.1-C Backend/API 基线，不代表后续 Frontend 代码的本地 Gate 已执行。
+上述结果用于确认 2.1-C Backend/API 基线，不代表后续 Frontend 代码的本地 Gate 已通过。
 
 ## 4. Phase 状态
 
@@ -65,7 +65,7 @@ uv run alembic heads
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A/2.1-B/2.1-C 已完成对应 Gate；2.1-D Frontend UI + Contract Tests 已实现，等待本地 Gate |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A/2.1-B/2.1-C 已完成对应 Gate；2.1-D Frontend UI + Contract Tests 已实现，首次 production build 类型错误已修复，等待本地重新 Gate |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
@@ -115,7 +115,7 @@ Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization /
 - API Contract tests。
 - Real HTTP API gate。
 
-### 2.1-D Organization / Membership Frontend — 实现完成，Gate 待执行
+### 2.1-D Organization / Membership Frontend — 实现完成 / Gate 修复后待重新验证
 
 已提交：
 
@@ -127,26 +127,34 @@ Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization /
 - `frontend/tests/views/Organizations.test.ts`：Organization list UI contract tests。
 - `frontend/tests/views/OrganizationDetail.test.ts`：Membership lifecycle / Owner Transfer UI contract tests。
 
-前端 UI 不将 Owner 通过普通 role update 暴露；所有高风险操作仍通过 Backend authorization 作为最终安全边界。
+首次本地 Frontend Gate 实际结果：
 
-**注意：上述 Frontend 代码提交后尚未由本地重新执行 Frontend Regression / production build，因此不能标记 2.1-D Passed。**
+```text
+Targeted tests: 15 passed
+Full frontend tests: 67 passed
+Production build: FAILED
+```
+
+失败原因：Element Plus table slot 的 `DefaultRow` 无法直接传给 `Membership` handlers，产生 5 个 `TS2345 / TS2739`。该工程错误已记录为 `ERR-0020`，并在 `detail.vue` 增加 `asMembership()` 类型边界；同时为 Organization list test 增加 `el-tag` stub，消除测试 warning。
+
+**修复后的代码尚未由开发者重新执行 Frontend Gate，因此当前仍不能标记 2.1-D Passed。**
 
 ### 2.1-E / 2.1-F
 
-2.1-D Frontend Regression / Build 通过后，再执行 Real API + Browser E2E acceptance，随后决定 Phase 2.1 Final Acceptance。
+2.1-D Frontend Regression / Build 实际通过后，再执行 Real API + Browser E2E acceptance，随后决定 Phase 2.1 Final Acceptance。
 
 ## 7. 下一步推进原则
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-2.1-D Frontend Contract + UI
- → 本地 Frontend targeted tests
+修复 ERR-0020
+ → 本地 targeted tests
  → Frontend regression
  → production build
- → 修复实际失败
- → Real API / Browser E2E
- → Acceptance / Status / Error Record
+ → Gate 通过后进入 2.1-E Real API / Regression
+ → 再进入 Browser E2E / Acceptance
+ → 更新 Status / Error Record
  → 直接提交 main
 ```
 
