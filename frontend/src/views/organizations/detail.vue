@@ -20,6 +20,10 @@ const editRole = ref<"admin" | "member">("member");
 const transferTarget = ref<Membership | null>(null);
 const canManage = computed(() => true);
 
+function asMembership(row: unknown): Membership {
+  return row as Membership;
+}
+
 async function load() {
   loading.value = true; error.value = "";
   try {
@@ -85,7 +89,7 @@ onMounted(load);
         <el-table-column prop="user_id" label="User ID" min-width="280" />
         <el-table-column label="角色" width="130"><template #default="{ row }"><el-tag>{{ row.role }}</el-tag></template></el-table-column>
         <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'warning'">{{ row.status }}</el-tag></template></el-table-column>
-        <el-table-column v-if="canManage" label="操作" min-width="430"><template #default="{ row }"><el-button v-if="row.role !== 'owner'" link type="primary" @click="openEdit(row)">编辑</el-button><el-button v-if="row.role !== 'owner'" link type="warning" @click="toggleMember(row)">{{ row.status === 'active' ? '暂停' : '恢复' }}</el-button><el-button v-if="row.role !== 'owner'" link type="success" @click="transferTarget = row; transfer(row)">转移 Owner</el-button><el-button v-if="row.role !== 'owner'" link type="danger" @click="remove(row)">移除</el-button></template></el-table-column>
+        <el-table-column v-if="canManage" label="操作" min-width="430"><template #default="{ row }"><el-button v-if="row.role !== 'owner'" link type="primary" @click="openEdit(asMembership(row))">编辑</el-button><el-button v-if="row.role !== 'owner'" link type="warning" @click="toggleMember(asMembership(row))">{{ row.status === 'active' ? '暂停' : '恢复' }}</el-button><el-button v-if="row.role !== 'owner'" link type="success" @click="transferTarget = asMembership(row); transfer(asMembership(row))">转移 Owner</el-button><el-button v-if="row.role !== 'owner'" link type="danger" @click="remove(asMembership(row))">移除</el-button></template></el-table-column>
       </el-table>
       <el-empty v-if="!members.length" description="暂无成员。" />
     </el-card>
