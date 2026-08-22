@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.dependencies.db import SessionLocal
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
+from app.models.user import User
 
 RUNNER = BACKEND_ROOT / "scripts" / "evaluation" / "knowledge" / "run_knowledge_retrieval_real_provider.py"
 
@@ -58,10 +59,22 @@ def _assert_model_exists(base_url: str, model: str) -> None:
 
 async def _create_fixture(model_a: str, model_b: str, endpoint: str) -> tuple[str, str, str]:
     async with SessionLocal() as db:
-        owner_row = (await db.execute(select(OrganizationMembership).where(OrganizationMembership.status == "active").order_by(OrganizationMembership.user_id))).scalars().first()
-        if owner_row is None:
-            raise SystemExit("governed evaluation smoke test requires an active organization membership")
-        organization = (await db.execute(select(Organization).where(Organization.id == owner_row.organization_id))).scalar_one_or_none()
+        user = (await db.execute(select(User).order_by(User.id))).scalars().first()
+        if user is None:
+            raise SystemExit("governed evaluation smoke test requires at least one user")
+        membership = (
+            await db.execute(
+                select(OrganizationMembership)
+                .where(
+                    OrganizationMembership.user_id == user.id,
+                    OrganizationMembership.status == "active",
+                )
+                .order_by(OrganizationMembership.organization_id)
+            )
+        ).scalars().first()
+        if membership is None:
+            raise SystemExit("the first evaluation actor must have an active organization membership")
+        organization = (await db.execute(select(Organization).where(Organization.id == membership.organization_id))).scalar_one_or_none()
         if organization is None or organization.status != "active":
             raise SystemExit("governed evaluation smoke test requires an active organization")
 
