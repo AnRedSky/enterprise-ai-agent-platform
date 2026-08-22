@@ -36,12 +36,7 @@ class ModelGateway:
         )
 
     def _provider_for_model(self, model: str):
-        """Route explicit mock models to the deterministic local provider.
-
-        This keeps the local smoke-test contract stable even when a developer's
-        .env enables an OpenAI-compatible provider for other agents.
-        An explicitly injected provider is still always honored by tests/callers.
-        """
+        """Route explicit mock models to the deterministic local provider."""
         if isinstance(self.provider, OpenAICompatibleProvider) and model.startswith("mock-"):
             return MockProvider()
         return self.provider
@@ -52,7 +47,15 @@ class ModelGateway:
         messages: list[dict],
         session_id: UUID | None = None,
     ) -> ModelResult:
-        return await self._provider_for_model(model).complete(model, messages)
+        provider = self._provider_for_model(model)
+        try:
+            return await provider.complete(model, messages)
+        except Exception:
+            if not settings.model_fallback_to_mock or isinstance(provider, MockProvider):
+                raise
+            # Local development resilience only: never hide provider failures
+            # in a real-provider quality gate unless this flag is explicitly on.
+            return await MockProvider().complete(settings.model_default_name, messages)
 
     async def stream(
         self,
@@ -60,6 +63,14 @@ class ModelGateway:
         messages: list[dict],
         session_id: UUID | None = None,
     ) -> AsyncIterator[str]:
-        async for chunk in self._provider_for_model(model).stream(model, messages):
-            if chunk:
-                yield chunk
+        provider = self._provider_for_model(model)
+        try:
+            async for chunk in provider.stream(model, messages):
+                if chunk:
+                    yield chunk
+        except Exception:
+            if not settings.model_fallback_to_mock or isinstance(provider, MockProvider):
+                raise
+            async for chunk in MockProvider().stream(settings.model_default_name, messages):
+                if chunk:
+                    yield chunk

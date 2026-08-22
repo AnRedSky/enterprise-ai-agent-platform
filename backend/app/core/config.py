@@ -55,7 +55,9 @@ class Settings(BaseSettings):
     model_provider: str = "mock"
     model_base_url: str | None = None
     model_api_key: str | None = None
+    model_default_name: str = "mock-model"
     model_timeout_seconds: float = 60.0
+    model_fallback_to_mock: bool = False
 
     # `mock` is a deterministic offline fixture for local retrieval validation;
     # it does not represent real model semantic quality.
