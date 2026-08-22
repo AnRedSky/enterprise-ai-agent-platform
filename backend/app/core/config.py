@@ -8,21 +8,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _env_files() -> tuple[str, ...]:
-    """Return environment files from lowest to highest file precedence.
-
-    `.env.example` is the lowest-precedence fallback so a fresh checkout can
-    start without creating a local `.env`. It is intentionally a safe,
-    non-secret configuration template. Real `.env` files and environment-
-    specific overrides take precedence, and process environment variables
-    always have the highest precedence.
-
-    `APP_ENV` may be supplied by the process environment to select an
-    environment-specific file; otherwise development is used as the default.
-    `ENV_FILE` can explicitly add a deployment-specific file without changing
-    the application code. Absolute explicit paths are preserved verbatim so
-    Unix container paths such as `/run/secrets/agent.env` remain portable when
-    configuration selection is tested on Windows.
-    """
+    """Return environment files from lowest to highest file precedence."""
     app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
     files = [
         ".env.example",
@@ -35,13 +21,10 @@ def _env_files() -> tuple[str, ...]:
     if explicit:
         explicit_path = Path(explicit)
         files.append(
-            explicit
-            if os.path.isabs(explicit)
-            else str(BACKEND_ROOT / explicit_path)
+            explicit if os.path.isabs(explicit) else str(BACKEND_ROOT / explicit_path)
         )
     return tuple(
-        path if os.path.isabs(path) else str(BACKEND_ROOT / path)
-        for path in files
+        path if os.path.isabs(path) else str(BACKEND_ROOT / path) for path in files
     )
 
 
@@ -52,35 +35,41 @@ class Settings(BaseSettings):
     app_port: int = 8000
     cors_origins: str = "http://localhost:5173"
 
+    # Provider type selects an adapter; provider name is deployment metadata and
+    # may be any operator-defined value (for example, "company-ollama").
     model_provider: str = "mock"
+    model_provider_name: str = "default-chat-provider"
     model_base_url: str | None = None
     model_api_key: str | None = None
     model_default_name: str = "mock-model"
     model_timeout_seconds: float = 60.0
     model_fallback_to_mock: bool = False
 
-    # `mock` is a deterministic offline fixture for local retrieval validation;
-    # it does not represent real model semantic quality.
     embedding_provider: str = "none"
+    embedding_provider_name: str = "default-embedding-provider"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
     embedding_model: str | None = None
     embedding_timeout_seconds: float = 30.0
-    # The default development profile uses the installed nomic-embed-text model.
-    # The value is a provider/schema contract, not a request-time transformation.
     embedding_dimension: int = 768
     embedding_batch_size: int = 32
-    # Some OpenAI-compatible local providers accept an explicit output dimension.
-    # Keep this opt-in because the provider must actually honor the parameter.
     embedding_dimensions_parameter_enabled: bool = False
 
-    # Vector retrieval is provider-neutral. Keep `none` until PostgreSQL + pgvector
-    # is enabled locally; the in-memory implementation remains test-only.
     vector_provider: str = "none"
     vector_db_url: str | None = None
     vector_db_collection: str = "knowledge_chunks"
     vector_top_k: int = 5
     vector_min_score: float = 0.0
+
+    # Retrieval evaluation defaults are application configuration, not runner
+    # constants. CLI arguments are explicit per-run overrides.
+    retrieval_evaluation_top_k: int = 3
+    retrieval_evaluation_min_score: float = 0.0
+    retrieval_evaluation_min_recall_at_k: float | None = None
+    retrieval_evaluation_min_precision_at_k: float | None = None
+    retrieval_evaluation_min_mrr: float | None = None
+    retrieval_evaluation_min_citation_correctness: float | None = None
+    retrieval_evaluation_max_error_rate: float = 0.0
 
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent_platform"
     redis_url: str = "redis://localhost:6379/0"
