@@ -19,10 +19,10 @@ from app.core.config import settings
 from app.dependencies.db import SessionLocal
 from app.services.mock_embedding_provider import MockEmbeddingProvider
 from app.services.retrieval_evaluation import (
-    RetrievalEvaluationCase,
     RetrievalEvaluationObservation,
     aggregate_observations,
 )
+from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
 
 DATASET = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_dataset.jsonl"
@@ -42,13 +42,6 @@ def actual_chunk_id(evaluation_chunk_id: str) -> uuid.UUID:
     return uuid.uuid5(FIXTURE_NAMESPACE, evaluation_chunk_id)
 
 
-def load_cases() -> list[RetrievalEvaluationCase]:
-    return [
-        RetrievalEvaluationCase(item["query"], frozenset(item["relevant_chunk_ids"]))
-        for item in load_jsonl(DATASET)
-    ]
-
-
 def quality_gate(metrics: dict[str, float | int], baseline: dict) -> list[str]:
     failures: list[str] = []
     for metric in ("recall_at_k", "mrr"):
@@ -62,70 +55,48 @@ def quality_gate(metrics: dict[str, float | int], baseline: dict) -> list[str]:
 
 
 async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
-    """Materialize deterministic evaluation content into the real DB tables.
-
-    The JSON fixture is only test-data input. Retrieval never reads it: after
-    this step, chunks and vectors are persisted in PostgreSQL/pgvector and all
-    evaluation queries execute through PgVectorRetrievalProvider.
-    """
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_documents WHERE id = :doc"), {"doc": str(DOC_ID)})
     await db.execute(text("DELETE FROM knowledge_bases WHERE id = :kb"), {"kb": str(KB_ID)})
 
-    await db.execute(
-        text("""
-            INSERT INTO knowledge_bases
-                (id, name, description, owner_id, status, created_at, updated_at)
-            VALUES
-                (:id, 'Phase 1.4-E Evaluation Fixture',
-                 'Ephemeral deterministic retrieval evaluation data',
-                 :owner, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """),
-        {"id": str(KB_ID), "owner": str(user_id)},
-    )
-    await db.execute(
-        text("""
-            INSERT INTO knowledge_documents
-                (id, knowledge_base_id, title, source_type, status, created_at, updated_at)
-            VALUES
-                (:id, :kb, 'Phase 1.4-E Evaluation Fixture', 'evaluation', 'active',
-                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        """),
-        {"id": str(DOC_ID), "kb": str(KB_ID)},
-    )
-    await db.execute(
-        text("""
-            INSERT INTO knowledge_document_versions
-                (id, document_id, version, status, ingestion_status, vector_index_status, created_by, created_at)
-            VALUES
-                (:id, :doc, 'evaluation', 'published', 'completed', 'processing', :user, CURRENT_TIMESTAMP)
-        """),
-        {"id": str(VERSION_ID), "doc": str(DOC_ID), "user": str(user_id)},
-    )
+    await db.execute(text("""
+        INSERT INTO knowledge_bases
+            (id, name, description, owner_id, status, created_at, updated_at)
+        VALUES
+            (:id, 'Phase 2.2-B Evaluation Fixture',
+             'Ephemeral deterministic retrieval evaluation data',
+             :owner, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    """), {"id": str(KB_ID), "owner": str(user_id)})
+    await db.execute(text("""
+        INSERT INTO knowledge_documents
+            (id, knowledge_base_id, title, source_type, status, created_at, updated_at)
+        VALUES
+            (:id, :kb, 'Phase 2.2-B Evaluation Fixture', 'evaluation', 'active',
+             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    """), {"id": str(DOC_ID), "kb": str(KB_ID)})
+    await db.execute(text("""
+        INSERT INTO knowledge_document_versions
+            (id, document_id, version, status, ingestion_status, vector_index_status, created_by, created_at)
+        VALUES
+            (:id, :doc, 'evaluation', 'published', 'completed', 'processing', :user, CURRENT_TIMESTAMP)
+    """), {"id": str(VERSION_ID), "doc": str(DOC_ID), "user": str(user_id)})
     for index, row in enumerate(rows):
         chunk_id = actual_chunk_id(row["chunk_id"])
         content = row["content"]
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        await db.execute(
-            text("""
-                INSERT INTO knowledge_document_chunks
-                    (id, document_version_id, chunk_index, content, char_start, char_end,
-                     content_hash, token_count, created_at)
-                VALUES
-                    (:id, :version, :index, :content, 0, :char_end, :hash, :tokens, CURRENT_TIMESTAMP)
-            """),
-            {
-                "id": str(chunk_id),
-                "version": str(VERSION_ID),
-                "index": index,
-                "content": content,
-                "char_end": len(content),
-                "hash": digest,
-                "tokens": len(content.split()),
-            },
-        )
+        await db.execute(text("""
+            INSERT INTO knowledge_document_chunks
+                (id, document_version_id, chunk_index, content, char_start, char_end,
+                 content_hash, token_count, created_at)
+            VALUES
+                (:id, :version, :index, :content, 0, :char_end, :hash, :tokens, CURRENT_TIMESTAMP)
+        """), {
+            "id": str(chunk_id), "version": str(VERSION_ID), "index": index,
+            "content": content, "char_end": len(content), "hash": digest,
+            "tokens": len(content.split()),
+        })
     await db.execute(
         text("UPDATE knowledge_documents SET current_version_id = :version WHERE id = :doc"),
         {"version": str(VERSION_ID), "doc": str(DOC_ID)},
@@ -148,10 +119,10 @@ async def run(k: int) -> int:
     if settings.vector_provider != "pgvector":
         raise SystemExit("Evaluation runner requires VECTOR_PROVIDER=pgvector")
 
-    cases = load_cases()
+    dataset = load_retrieval_evaluation_dataset(DATASET)
     fixtures = load_jsonl(FIXTURE)
     fixture_by_id = {row["chunk_id"]: row for row in fixtures}
-    missing = sorted({chunk_id for case in cases for chunk_id in case.relevant_chunk_ids if chunk_id not in fixture_by_id})
+    missing = sorted({chunk_id for case in dataset.cases for chunk_id in case.relevant_chunk_ids if chunk_id not in fixture_by_id})
     if missing:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
 
@@ -179,9 +150,10 @@ async def run(k: int) -> int:
             vector_provider = PgVectorRetrievalProvider(db, settings.embedding_dimension)
             await vector_provider.upsert(records)
 
-            query_embeddings = await provider.embed([case.query for case in cases])
+            query_embeddings = await provider.embed([case.query for case in dataset.cases])
             observations: list[RetrievalEvaluationObservation] = []
-            for case, query_embedding in zip(cases, query_embeddings, strict=True):
+            case_reports: list[dict[str, object]] = []
+            for case, query_embedding in zip(dataset.cases, query_embeddings, strict=True):
                 started = time.perf_counter()
                 error = None
                 ranking: list[str] = []
@@ -193,26 +165,31 @@ async def run(k: int) -> int:
                         knowledge_base_id=str(KB_ID),
                     )
                     ranking = [result.metadata.get("evaluation_chunk_id", result.chunk_id) for result in results]
-                except Exception as exc:  # evaluation output must record provider failures
+                except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}"
                 latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                observations.append(
-                    RetrievalEvaluationObservation(
-                        retrieved_chunk_ids=tuple(ranking),
-                        latency_ms=latency_ms,
-                        error=error,
-                    )
-                )
+                observations.append(RetrievalEvaluationObservation(
+                    retrieved_chunk_ids=tuple(ranking), latency_ms=latency_ms, error=error
+                ))
+                case_reports.append({
+                    "query": case.query,
+                    "relevant_chunk_ids": sorted(case.relevant_chunk_ids),
+                    "retrieved_chunk_ids": ranking,
+                    "latency_ms": latency_ms,
+                    "error": error,
+                })
 
-            metrics = aggregate_observations(cases, observations, k=k)
+            metrics = aggregate_observations(dataset.cases, observations, k=k)
             baseline_all = json.loads(BASELINE.read_text(encoding="utf-8"))
             baseline = baseline_all.get("mock-pgvector", {})
             failures = quality_gate(metrics, baseline)
             report = {
+                "dataset": {"path": str(dataset.source), "schema_version": dataset.schema_version},
                 "mode": "mock-pgvector",
                 "source": "postgresql/pgvector",
                 "k": k,
                 **metrics,
+                "cases_detail": case_reports,
                 "quality_gate": "failed" if failures else "passed",
                 "failures": failures,
             }
