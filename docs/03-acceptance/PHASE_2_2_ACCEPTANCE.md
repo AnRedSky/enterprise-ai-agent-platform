@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B、2.2-C 已由开发者本地重新验证通过；2.2-D 的 Runtime evidence bridge 与持久化 Traceability 代码已完成，本轮已增加 trace persistence / API contract 自动化覆盖，新增测试尚待开发者本地执行。**
+> 状态：**进行中 / 2.2-B、2.2-C、2.2-D 当前定义范围已由开发者本轮本地重新验证通过。**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -31,7 +31,7 @@
 - [x] Recall@K / Precision@K / MRR / error rate / latency 自动化计算接入现有 evaluation service。
 - [x] Citation correctness Contract 与单元测试已实现；观察结果现在可显式携带真实 runtime citation targets。
 - [x] 失败 case 可通过 case detail 定位。
-- [x] 最新 main fixture hydration 修复后的真实 runner 已由开发者本地重新执行。
+- [x] 当前 main 的真实 runner 已由开发者本轮实际重新执行并通过。
 
 ### C. Real Provider Quality Gate — **已验证**
 
@@ -41,10 +41,9 @@
 - [x] 显式 fallback 字段进入结果；本轮实际 `fallback_used=false`、`fallback_count=0`。
 - [x] Mock 结果不作为真实质量证据。
 - [x] Provider / model / dimension / dataset / retrieval mode / top-k identity 纳入 baseline。
-- [x] 首次真实运行使用 `--freeze-baseline` 冻结真实 baseline。
 - [x] 使用冻结 baseline 重跑并确认 regression Gate。
 
-既有冻结 baseline：
+当前冻结 baseline：
 
 ```text
 provider=ollama
@@ -67,7 +66,7 @@ provider_error_rate=0
 quality_gate=passed
 ```
 
-### D. Regression / Traceability — **部分完成**
+### D. Regression / Traceability — **已验证当前定义范围**
 
 - [x] Provider / model / dataset identity 可进入 baseline 对比。
 - [x] Dimension / retrieval mode / top-k identity 可进入 baseline 对比。
@@ -82,58 +81,46 @@ quality_gate=passed
 - [x] 新增 admin-only Retrieval Evaluation Trace 查询入口，复用 Runtime Observability timeline。
 - [x] 新增 Runtime Trace API contract 测试，覆盖 route registration 与 bearer authentication。
 - [x] 新增 Real API traceability 测试，覆盖真实 runner → execution/case/summary → audit 查询链路。
-- [ ] 上述新增 trace persistence / API contract 测试尚未由开发者本地重新执行验证。
+- [x] 本轮完整 Real API gate 已实际执行并通过 31 个测试。
 
-## 3. 已解决的最新 main 问题
-
-### Scheduled Trigger Real API
-
-开发者本地最终验证为：
+## 3. 本轮实际 Gate 结果
 
 ```text
-Real HTTP API: 30 passed
+API Runtime Contract: 2 passed
+Real HTTP API: 31 passed
+Backend regression: 309 passed, 31 deselected
+Migration head: 0024_embedding_dimension_contract
+Backend Release / Regression Gate: passed
 ```
 
-修复了 execution terminal-state 等待竞态，并将双 worker test 限制到同一个 slot。
+## 4. 当前 Acceptance 结论
 
-### Real Provider Retrieval
+2.2-D 当前定义的 traceability persistence / API contract / Real API 覆盖已具备实际通过证据。此前的 baseline 缺失阻塞已通过仓库固化冻结 baseline 修复，并在本轮完整 Real API 与 Backend Release / Regression Gate 中得到验证。
 
-开发者本地最终验证为：
+但当前真实 Provider 指标仍为 Recall@3=0.6、Precision@3=0.333333、Citation correctness=0.333333。它们是冻结 baseline 的实际质量表现，而不是“语义质量已经达到最终产品目标”的证明。因此 Phase 2.2 是否关闭，需要产品侧明确质量目标后再做结论；不得通过修改 baseline 掩盖当前指标。
 
-```text
-cases=5
-provider_error_rate=0
-recall@3=0.6
-precision@3=0.333333
-mrr=0.6
-citation_correctness=0.333333
-quality_gate=passed
-```
-
-说明 Runtime Retrieval hydration contract 已恢复，且没有修改冻结 baseline。
-
-## 4. 2.2-D 当前结论
-
-真实 Runtime citation evidence bridge 与 Real Provider Quality Gate 已完成。当前独立任务是验证新增 evaluation trace persistence：runner 生成的 `evaluation_run_id` 必须能从数据库 / Runtime Observability 查询到 run、case、summary，并在 Audit Log 中存在对应记录；自动化覆盖已加入，待本地执行确认。
-
-## 5. 本轮 Traceability Persistence 本地验证流程
+## 5. 本轮完整自动化测试流程
 
 ```powershell
 cd backend
 
-# 1. 新增 Trace contract / real traceability 测试
+# 1. API Contract
 uv run pytest -q tests/api_contract/test_api_runtime_endpoints.py
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 
-# 2. 完整 Backend regression + migration + Real API Gate
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+# 2. 完整 Real HTTP API Gate（包含 Retrieval traceability）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 
 # 3. Real Provider Quality Gate；已有 baseline 时禁止 --freeze-baseline
 uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py --k 3
 
-# 4. 从 runner 输出中取得 evaluation_run_id，然后使用管理员 Token 查询
-# GET /api/v1/runtime/retrieval-evaluations/{evaluation_run_id}
-# GET /api/v1/runtime/audit-logs?status=success&page=1&page_size=100
+# 4. 完整 Backend Release / Regression Gate
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
 ```
 
-自动化验收要求：真实 runner 必须返回 0；Trace API 返回 200，且 execution 的 `trace_id` 等于 `evaluation_run_id`，events 至少包含 `retrieval_evaluation_case` 与 `retrieval_evaluation_summary`；Audit Log 应存在 `action=retrieval_evaluation.completed` 且 `execution_id` 对应该 evaluation execution 的记录。
+自动化验收要求：真实 runner 返回 0 且 `quality_gate=passed`；Real API gate 全部通过；Backend regression / migration / Real API 三层 Gate 全部通过。Trace API 的 `evaluation_run_id` 必须能够查询到 execution、case、summary 与对应 Audit Log。
+
+## 6. 下一步
+
+1. 先形成当前 Recall@3 / Precision@3 / Citation correctness 是否满足产品目标的明确结论。
+2. 若不满足，先形成质量提升方案与架构决策，再实施检索质量优化；不得通过降低 gate 或修改 baseline 解决。
+3. 若满足，则完成 Phase 2.2 关闭文档与最终 Acceptance 记录；在正式立项前不得创建新的 Phase。

@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D baseline regression 已完成既有交付范围；最新 main 的 Scheduled Trigger Real API 与 Real Provider runner 暴露回归问题，代码修复已完成；本轮发现并修复 Real Provider baseline 未随 main 固化导致的 Real API trace gate 阻塞，待最新提交重新执行本地 Gate。**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过本轮开发者本地验证；Phase 尚未关闭。**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -10,13 +10,13 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 2.2-A 已形成真实 Provider、Dataset、Recall@K、Precision@K、MRR、Citation correctness、latency、provider error rate、regression identity 与 failure/fallback 的质量契约。
 
-2.2-B 已完成 Dataset Loader 与 PostgreSQL/pgvector evaluation runner。evaluation fixture 与 Runtime hydration contract 不一致问题已修复并已有开发者本地验证证据。
+2.2-B 已完成 Dataset Loader 与 PostgreSQL/pgvector evaluation runner。evaluation fixture 与 Runtime hydration contract 不一致问题已修复，并已有开发者实际执行验证证据。
 
-2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate，并冻结真实 baseline。最新 main 曾因 baseline 文件缺失导致 runner quality gate failed；本轮已根据开发者实际输出将冻结 baseline 固化到仓库，尚待重新执行验证。
+2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate，并冻结真实 baseline。当前 main 的 baseline regression 已通过，未修改冻结指标掩盖回归。
+
+2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。Evaluation run / case / regression summary 已持久化到现有 Runtime Observability / Audit 模型；trace API contract 与 Real API traceability 自动化测试已完成并通过本轮本地验证。
 
 当前 baseline 仅代表真实 Provider / Dataset / Retrieval 配置的可重复回归基线，不代表绝对语义质量已达生产目标。禁止通过修改指标、fallback、截断或补零提高结果。
-
-2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。Evaluation run / case / regression summary 已持久化到现有 Runtime Observability / Audit 模型；trace API contract 与 Real API traceability 自动化测试已加入，待最新 baseline 固化后重新验证。
 
 ## 3. 现有 Phase 1.4 能力边界
 
@@ -90,7 +90,30 @@ Citation correctness + Debug / Audit / Observability traceability
 Acceptance
 ```
 
-## 8. Definition of Done
+## 8. 本轮实际验证证据
+
+```text
+API Runtime Contract: 2 passed
+Real HTTP API: 31 passed
+Backend regression: 309 passed, 31 deselected
+Migration head: 0024_embedding_dimension_contract
+Real Provider:
+  provider=ollama
+  model=nomic-embed-text:latest
+  embedding_dimension=768
+  cases=5
+  provider_error_rate=0
+  recall@3=0.6
+  precision@3=0.333333
+  mrr=0.6
+  citation_correctness=0.333333
+  quality_gate=passed
+Backend Release / Regression Gate: passed
+```
+
+以上均来自开发者本轮实际反馈；未执行的 Frontend / Browser Gate 不在本轮结论中。
+
+## 9. Definition of Done
 
 Phase 2.2 关闭前至少必须满足：
 
@@ -102,3 +125,5 @@ Phase 2.2 关闭前至少必须满足：
 6. Provider failure / fallback semantics 有自动化证据。
 7. Retrieval quality 结果与现有 Citation / Audit / Observability 可追踪。
 8. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
+
+当前 1-8 的工程实现与本轮 Gate 证据已形成；是否关闭 Phase 还需要对当前真实语义质量指标是否满足产品目标做明确结论，不能把 baseline 通过等同于最终质量达标。

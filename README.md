@@ -1,6 +1,6 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环、Phase 1.4 Knowledge / RAG、Phase 1.5 Workflow / Governance、Phase 1.6 Trigger Contract、Phase 1.7 Scheduling、Phase 1.8 Webhook / Event Trigger 与 Phase 1.9 Runtime Reliability / Production Hardening 均已完成当前定义范围；**Phase 1.9 已正式关闭，新 Phase 尚未立项**。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进。Phase 1.x 与 Phase 2.1 已完成既有范围；当前 **Phase 2.2 Retrieval Production Quality 正在进行**，2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate、2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过本轮本地验证。
 
 ## 项目文档
 
@@ -19,42 +19,47 @@
 - [Phase 1.7 Scheduling](docs/02-phases/PHASE_1_7.md)
 - [Phase 1.8 Webhook / Event Trigger](docs/02-phases/PHASE_1_8.md)
 - [Phase 1.9 Runtime Reliability](docs/02-phases/PHASE_1_9.md)
+- [Phase 2.1 Organization](docs/02-phases/PHASE_2_1.md)
+- [Phase 2.2 Retrieval Production Quality](docs/02-phases/PHASE_2_2.md)
+- [Phase 2.2 Acceptance](docs/03-acceptance/PHASE_2_2_ACCEPTANCE.md)
 - [错误记录](docs/04-errors/)
 
 ## 当前开发状态
 
-实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/01-governance/DEVELOPMENT.md`。当前状态为 **Phase 1.9 已完成 / 正式关闭**，后续新阶段必须先经过产品需求与架构决策，不得凭空创建 Phase 2。
+实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/01-governance/DEVELOPMENT.md`。当前状态为 **Phase 2.2 进行中**。新阶段必须先经过产品需求与架构决策，不得凭空创建新的 Phase。
 
-### Phase 1.x 产品闭环
+### 当前 Phase 2.2 产品闭环
 
 ```text
-Identity / RBAC
-      ↓
-Agent / Session / Runtime
-      ↓
-Model Gateway ── Tool Runtime ── Memory ── Observability
-      ↓
 Knowledge / RAG / Retrieval
       ↓
-Workflow / Governance
+Real Embedding Provider
       ↓
-Trigger Contract
-   ┌──┴─────────────┐
-Scheduled        Webhook
-   └──┬─────────────┘
+PostgreSQL / pgvector
       ↓
-Runtime Reliability / Production Hardening
+Evaluation Dataset / Metrics
+      ↓
+Baseline Regression
+      ↓
+Runtime Citation Evidence
+      ↓
+Observability / Audit Traceability
+      ↓
+Acceptance
 ```
 
-### 最新 Phase 1.9 本地验收基线
+### 最新本地验收证据
 
-- Backend：264 passed，23 deselected。
-- Migration：`0022_workflow_trigger` 为 head。
-- Real API：23 passed。
-- Frontend：13 test files / 52 tests passed，production build passed。
-- Browser：Desktop Chrome 3 passed。
+以下均为开发者当前 main 实际执行结果：
 
-这些是 Phase 1.9 Acceptance 已记录的实际本地证据；新任务不得将其描述成当前重新执行的测试。
+- API Runtime Contract：2 passed。
+- Real HTTP API：31 passed。
+- Backend regression：309 passed，31 deselected。
+- Migration：`0024_embedding_dimension_contract` 为 head。
+- Real Provider：5 cases，provider error rate 0，Recall@3=0.6，Precision@3=0.333333，MRR=0.6，citation correctness=0.333333，`quality_gate=passed`。
+- Backend Release / Regression Gate：passed。
+
+这些是本轮实际本地证据；Frontend / Browser Gate 未在本轮执行，不得描述为本轮通过。
 
 ## 当前明确产品边界
 
@@ -66,7 +71,7 @@ Runtime Reliability / Production Hardening
 - Multi-Agent orchestration；
 - 可视化拖拽 Workflow Designer；
 - 任意代码执行；
-- 完整企业 IAM / Organization；
+- 完整企业 IAM / Organization 的进一步扩展能力；
 - 完整分布式 Scheduler（lease、misfire、独立 scheduler state 等）；
 - 真实 Embedding Provider 语义质量的最终产品结论。
 
