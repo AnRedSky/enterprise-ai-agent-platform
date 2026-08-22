@@ -8,52 +8,14 @@
 - Branch: `main`
 - 最新产品基线：Phase 2.1 Enterprise Organization & Access Governance 已完成最终联合验收并正式关闭。
 - 开发原则：所有任务直接基于最新 `main`；禁止创建功能分支、临时分支或长期分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已完成 / 正式关闭；Phase 2.2 进行中，2.2-A Contract 已形成，2.2-B 已通过本地 Gate，当前执行 2.2-C Real Provider Quality Gate。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已完成 / 正式关闭；Phase 2.2 进行中，2.2-A Contract 已形成，2.2-B 已通过本地 Gate，2.2-C Real Provider Quality Gate 已实现但受当前本地 embedding 模型维度阻塞。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
 
 ## 2. Phase 2.1 最终联合验收证据
 
-### Frontend Regression / Build
-
-```text
-16 test files passed
-69 tests passed
-Production build passed
-[PASS] Frontend regression gate completed.
-```
-
-### Backend Regression
-
-```text
-275 passed, 30 deselected in 6.92s
-```
-
-### Real API
-
-```text
-[1/2] Prepare real API test context
-Real API context prepared: .real_api_context_39ad1c1c1d55
-[2/2] Execute all real HTTP API tests
-30 passed in 39.91s
-[PASS] Real API gate completed. Frontend/backend integration may proceed.
-```
-
-### Browser E2E
-
-```text
-scripts/test/e2e/02_run_organization_e2e.ps1
-3 passed (14.2s)
-[PASS] Phase 2.1-F organization browser E2E contract completed.
-
-npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop Chrome"
-3 passed (12.8s)
-```
-
-### Phase 2.1 结论
-
-以上证据共同满足 Phase 2.1 Definition of Done：Contract、Migration、Backend、Real API、Frontend、Browser E2E、成员生命周期、权限边界和 Audit 均已验证。
+历史最终联合验收证据保持不变：Frontend 16 files / 69 tests + build、Backend 275 passed、Real API 30 passed、Organization Browser E2E 3 passed。
 
 **Phase 2.1 正式关闭。**
 
@@ -71,7 +33,7 @@ npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | Phase 1.9 | 已完成 / 正式关闭 | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
 | **Phase 2.1** | **已完成 / 正式关闭** | Enterprise Organization & Access Governance；A～F-C 全部 Gate 与最终联合验收通过 |
-| **Phase 2.2** | **进行中** | Retrieval Production Quality；2.2-A 已形成，2.2-B 本地 Gate 已通过，当前为 2.2-C Real Provider Quality Gate |
+| **Phase 2.2** | **进行中** | Retrieval Production Quality；2.2-A 已形成，2.2-B 本地 Gate 已通过，2.2-C runner 已实现但当前本地 embedding 模型无法满足 vector(1536) 契约 |
 | Phase 2.3～2.8 | 路线候选 | Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 4. Phase 2.2 当前任务
@@ -82,15 +44,7 @@ npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop
 
 ### 2.2-B Evaluation Dataset / Runner — **本地 Gate 已通过**
 
-本次实现直接复用现有 `retrieval_evaluation.py`、`knowledge_retrieval_dataset.jsonl`、PostgreSQL/pgvector fixture 与 baseline：
-
-- 新增严格 JSONL Dataset Loader：校验 JSON、case id、query、relevant chunk IDs、重复 case ID、空数据集。
-- Runner 改为通过 Dataset Loader 消费现有评测数据，不再重复解析 Dataset。
-- Runner 输出 dataset schema version、case 级 ranking / latency / error、聚合 Recall@K / Precision@K / MRR / error rate / average latency。
-- Runner 仍通过真实 PostgreSQL/pgvector 执行 Retrieval；评测 JSONL 仅是评测输入，不是生产 Retrieval 数据源。
-- Runner 修正 `backend/scripts/evaluation/knowledge` 到 `backend` 的路径解析，并保证 evaluation fixture cleanup 参数正确。
-
-开发者本地实际证据：
+本地实际证据：
 
 ```text
 Dataset Loader: 4 passed
@@ -101,27 +55,68 @@ Real API: 30 passed
 2.2-B runner --k 3: 5/5 cases successful, error_rate=0, recall@3=1.0, precision@3=0.466667, MRR=0.9, quality_gate=passed
 ```
 
-### 2.2-C Real Provider Quality Gate — **实现完成，待本地 Gate**
+### 2.2-C Real Provider Quality Gate — **实现完成，当前本地环境阻塞**
 
-新增真实 Provider evaluation runner：
+Runner 已实现真实 Provider、真实 PostgreSQL/pgvector、baseline freeze、identity comparison、provider failure / fallback evidence。
 
-- 复用 `OpenAICompatibleEmbeddingProvider`，明确要求 `EMBEDDING_PROVIDER=openai-compatible`。
-- 复用现有 PostgreSQL/pgvector fixture 与 `PgVectorRetrievalProvider`。
-- 不提供静默 lexical fallback；`fallback_used=false` 与 `fallback_count=0` 明确进入报告。
-- Provider failure 保留在 case observation / error 中，并使 Gate failure。
-- 输出 provider、model、embedding dimension、dataset version、retrieval mode、top-k、latency、error、fallback 与 baseline status。
-- 新增 real baseline helper，支持显式 `--freeze-baseline`；第一次冻结不会被错误标记为 Passed。
-- 后续执行比较 provider/model/dimension/dataset/retrieval mode/top-k identity，以及 Recall@K / MRR 和 provider error rate。
-- 不提交真实 Provider API key，也不预置虚假 baseline 指标。
+当前开发者本地 Ollama 已确认：
 
-当前未执行真实 Provider Gate，因此 **不得标记 2.2-C Passed**。
+```text
+qwen3:0.6b              Chat
+nomic-embed-text        768 维 embedding
+bge-m3                  1024 维 embedding
+```
 
-下一步：
+数据库当前契约：
 
-1. 使用未提交的 `backend/.env` 配置真实 OpenAI-compatible Embedding Provider 与 pgvector。
-2. 执行 `run_knowledge_retrieval_real_provider.py --k 3 --freeze-baseline` 并人工审阅真实结果。
-3. 冻结 baseline 后重新执行相同 runner，确认 regression Gate。
-4. 若出现真实 Provider failure / dimension mismatch / quality regression，先记录 `docs/04-errors/`，再修复后重新 Gate。
+```text
+knowledge_chunks -> vector(1536)
+```
+
+因此现有 embedding 模型不能直接执行 2.2-C Real Provider Quality Gate。当前资源约束禁止下载其他模型，所以不能通过增加模型解决问题，也不能截断、补零或修改指标绕过维度检查。
+
+当前处理方式：
+
+- `.env.example` 保持 Retrieval Embedding Mock，保证开发/测试零配置。
+- Chat 使用 Ollama `qwen3:0.6b`，不可用时允许 Chat Mock fallback。
+- 2.2-C 不冻结虚假 baseline。
+- 待出现实际可产生 1536 维 embedding 的已部署 Provider，或项目明确批准修改 pgvector 维度后，再执行 Real Provider Quality Gate。
+
+### 本轮本地验证
+
+开发者实际反馈：
+
+```text
+Ollama /api/tags: 3 models available
+Model Gateway unit: 5 passed
+Backend regression: 287 passed, 30 deselected
+Migration head: 0023_organization_membership
+Real API: 30 passed
+```
+
+PowerShell 手工 `/v1/chat/completions` 曾因 JSON quoting 返回：
+
+```text
+invalid character 'm' looking for beginning of object key string
+```
+
+已新增 `backend/scripts/dev/ollama_chat_smoke.ps1`，使用 `ConvertTo-Json` + `Invoke-RestMethod`，避免 shell quoting 差异。该问题已记录到 `docs/04-errors/`，不认定为 Ollama 服务故障。
+
+Frontend 命令反馈中的：
+
+```text
+-File .\scripts\test\release\01_frontend_regression_gate.
+```
+
+缺少 `.ps1` 扩展名，属于命令输入错误。正确入口见 `docs/01-governance/DEVELOPMENT.md`。
+
+### 下一步
+
+1. 使用新增 Ollama smoke test 确认 `qwen3:0.6b` Chat endpoint。
+2. 继续保持 Backend / Frontend Gate 独立。
+3. 不下载其他模型、不伪造 embedding baseline。
+4. 在真实 1536 维 embedding Provider 可用后执行 2.2-C `--freeze-baseline`，再进入 2.2-D Retrieval Quality Regression。
+5. 2.2-D 可以准备比较/报告基础设施，但最终 regression Gate 必须依赖真实 2.2-C baseline。
 
 ## 5. 维护规则
 
