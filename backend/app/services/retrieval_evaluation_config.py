@@ -7,9 +7,15 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class RetrievalEvaluationConfig:
-    """Explicit evaluation-time retrieval configuration."""
+    """Explicit evaluation-time retrieval configuration.
+
+    Application settings provide the defaults. A single evaluation run may
+    override any field without mutating global settings or the regression
+    baseline.
+    """
 
     embedding_provider: str
+    embedding_provider_name: str
     embedding_base_url: str | None
     embedding_api_key: str | None
     embedding_model: str
@@ -31,6 +37,8 @@ class RetrievalEvaluationConfig:
 def validate_config(config: RetrievalEvaluationConfig) -> None:
     if config.embedding_provider not in {"openai-compatible", "ollama"}:
         raise ValueError("embedding_provider must be openai-compatible or ollama")
+    if not config.embedding_provider_name:
+        raise ValueError("embedding_provider_name is required")
     if not config.embedding_base_url:
         raise ValueError("embedding_base_url is required")
     if not config.embedding_model:
@@ -56,6 +64,7 @@ def validate_config(config: RetrievalEvaluationConfig) -> None:
 def config_from_settings(*, backend_root: Path, settings) -> RetrievalEvaluationConfig:
     return RetrievalEvaluationConfig(
         embedding_provider=settings.embedding_provider,
+        embedding_provider_name=settings.embedding_provider_name,
         embedding_base_url=settings.embedding_base_url,
         embedding_api_key=settings.embedding_api_key,
         embedding_model=settings.embedding_model or "",
@@ -65,8 +74,13 @@ def config_from_settings(*, backend_root: Path, settings) -> RetrievalEvaluation
         dataset_path=backend_root / "evaluation" / "knowledge_retrieval_dataset.jsonl",
         fixture_path=backend_root / "evaluation" / "knowledge_retrieval_fixture.jsonl",
         baseline_path=backend_root / "evaluation" / "knowledge_retrieval_real_baseline.json",
-        top_k=3,
-        min_score=0.0,
+        top_k=settings.retrieval_evaluation_top_k,
+        min_score=settings.retrieval_evaluation_min_score,
+        min_recall_at_k=settings.retrieval_evaluation_min_recall_at_k,
+        min_precision_at_k=settings.retrieval_evaluation_min_precision_at_k,
+        min_mrr=settings.retrieval_evaluation_min_mrr,
+        min_citation_correctness=settings.retrieval_evaluation_min_citation_correctness,
+        max_error_rate=settings.retrieval_evaluation_max_error_rate,
     )
 
 
