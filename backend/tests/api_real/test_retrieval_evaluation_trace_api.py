@@ -16,12 +16,17 @@ pytestmark = pytest.mark.real_api
 
 def _load_real_api_context() -> None:
     global TOKEN
-    if TOKEN:
-        return
     context_file = Path(__file__).parents[2] / "scripts" / "test" / "api-real" / ".real_api_context.json"
     if context_file.exists():
         context = json.loads(context_file.read_text(encoding="utf-8"))
-        TOKEN = context.get("ACCESS_TOKEN")
+        # Retrieval evaluation trace is intentionally admin-only. The bootstrap
+        # creates a dedicated organization-admin member token for privileged
+        # real-API validation; prefer it over the default fixture owner's token.
+        admin_token = context.get("ORGANIZATION_MEMBER_ACCESS_TOKEN")
+        if admin_token:
+            TOKEN = admin_token
+    if not TOKEN:
+        TOKEN = os.getenv("ADMIN_ACCESS_TOKEN")
 
 
 _load_real_api_context()
@@ -29,7 +34,7 @@ _load_real_api_context()
 
 def _client() -> httpx.Client:
     if not TOKEN:
-        pytest.fail("ACCESS_TOKEN is required for real API validation; run 01_run_real_api_tests.ps1 first")
+        pytest.fail("ADMIN_ACCESS_TOKEN or ACCESS_TOKEN is required for real API validation; run 01_run_real_api_tests.ps1 first")
     return httpx.Client(
         base_url=BASE_URL,
         headers={"Authorization": f"Bearer {TOKEN}"},
