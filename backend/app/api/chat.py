@@ -1,6 +1,5 @@
 import asyncio
 import json
-import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -49,7 +48,7 @@ async def stream(p: ChatRequest, claims=Depends(current_claims), db: AsyncSessio
     memory_service = MemoryService(db)
     observability = ObservabilityService(db)
     retrieval = KnowledgeRetrievalService(db)
-    agent, version, model_profile, model_provider = await service.load_runtime(p.agent_id)
+    agent, version, model_profile, model_provider = await service.load_runtime(p.agent_id, user_id)
 
     if not is_admin and agent.owner_id != user_id:
         raise HTTPException(403, "无权访问该 Agent")

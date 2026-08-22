@@ -43,14 +43,12 @@ class SessionService:
             select(ModelProfile, ModelProvider)
             .join(ModelProvider, ModelProvider.id == ModelProfile.provider_id)
             .join(Organization, Organization.id == ModelProvider.organization_id)
-            .join(User, User.tenant_id == Organization.tenant_id)
             .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
             .where(
                 ModelProfile.id == profile_id,
                 ModelProfile.model_type == "chat",
                 ModelProfile.enabled.is_(True),
                 ModelProvider.enabled.is_(True),
-                User.id == user_id,
                 Organization.status == "active",
                 OrganizationMembership.user_id == user_id,
                 OrganizationMembership.status == "active",
@@ -61,7 +59,7 @@ class SessionService:
             raise HTTPException(409, "Model Profile 不存在、未启用或当前用户无权使用")
         return row
 
-    async def load_runtime(self, agent_id: UUID):
+    async def load_runtime(self, agent_id: UUID, user_id: UUID):
         result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
         agent = result.scalar_one_or_none()
         if not agent:
@@ -69,10 +67,7 @@ class SessionService:
         if agent.status != "published" or not agent.published_version_id:
             raise HTTPException(409, "Agent 尚未发布可运行版本")
         version_result = await self.db.execute(
-            select(AgentVersion).where(
-                AgentVersion.id == agent.published_version_id,
-                AgentVersion.agent_id == agent.id,
-            )
+            select(AgentVersion).where(AgentVersion.id == agent.published_version_id, AgentVersion.agent_id == agent.id)
         )
         version = version_result.scalar_one_or_none()
         if not version:
@@ -80,5 +75,5 @@ class SessionService:
         profile = None
         provider = None
         if version.model_profile_id:
-            profile, provider = await self.resolve_model_profile(version.model_profile_id, agent.owner_id)
+            profile, provider = await self.resolve_model_profile(version.model_profile_id, user_id)
         return agent, version, profile, provider
