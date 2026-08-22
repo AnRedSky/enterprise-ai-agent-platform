@@ -11,6 +11,8 @@ const router = createRouter({
     },
     { path: "/", redirect: "/dashboard" },
     { path: "/dashboard", component: () => import("../views/dashboard/index.vue") },
+    { path: "/organizations", component: () => import("../views/organizations/index.vue") },
+    { path: "/organizations/:id", component: () => import("../views/organizations/detail.vue") },
     { path: "/agents", component: () => import("../views/agents/index.vue") },
     { path: "/tools", component: () => import("../views/tools/index.vue") },
     { path: "/knowledge", component: () => import("../views/knowledge/index.vue") },
