@@ -27,6 +27,7 @@
 | ERR-0019 | 2026-08-21 | WorkflowRuntime 缺失 execute / Real API bootstrap 500 |
 | ERR-0020 | 2026-08-22 | Organization Membership table row type / vue-tsc |
 | ERR-0021 | 2026-08-22 | Scheduled Trigger 与 Real Retrieval Gate 回归失败 |
+| ERR-0022 | 2026-08-22 | Real Provider baseline 缺失导致 Real API trace gate 阻塞 |
 
 ## 迁移规则
 

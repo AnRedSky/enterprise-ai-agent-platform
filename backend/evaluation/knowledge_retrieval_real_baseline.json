@@ -1,0 +1,14 @@
+{
+  "provider": "ollama",
+  "model": "nomic-embed-text:latest",
+  "embedding_dimension": 768,
+  "dataset_version": "1",
+  "dataset_sha256": "7bedbe95e2dc122994d42a7c9c29bc0eb7263d895ab5633fc81fc808a0e3cb35",
+  "retrieval_mode": "real-provider-pgvector",
+  "top_k": 3,
+  "metrics": {
+    "recall_at_k": 0.6,
+    "precision_at_k": 0.333333,
+    "mrr": 0.6
+  }
+}
