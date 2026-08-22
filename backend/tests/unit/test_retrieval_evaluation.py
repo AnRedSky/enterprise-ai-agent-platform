@@ -3,6 +3,7 @@ from app.services.retrieval_evaluation import (
     RetrievalEvaluationObservation,
     aggregate_evaluation,
     aggregate_observations,
+    citation_correctness,
     evaluate_case,
     precision_at_k,
     recall_at_k,
@@ -21,7 +22,29 @@ def test_recall_precision_and_mrr_are_deterministic():
 def test_evaluate_case_returns_bounded_metrics():
     case = RetrievalEvaluationCase("报销规则", frozenset({"expense-1"}))
     metrics = evaluate_case(case, ["noise", "expense-1"], k=3)
-    assert metrics == {"recall_at_k": 1.0, "precision_at_k": 0.5, "mrr": 0.5}
+    assert metrics == {
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.5,
+        "mrr": 0.5,
+        "citation_correctness": 0.5,
+    }
+
+
+def test_evaluate_case_supports_explicit_citation_targets():
+    case = RetrievalEvaluationCase(
+        "q",
+        frozenset({"a", "b"}),
+        frozenset({"a"}),
+    )
+    metrics = evaluate_case(case, ["a", "b"], k=2, cited_targets=["a"])
+    assert metrics["citation_correctness"] == 1.0
+
+
+def test_citation_correctness_requires_retrieved_and_expected_target():
+    assert citation_correctness(["a"], ["a", "noise"], {"a"}) == 1.0
+    assert citation_correctness(["a"], ["noise"], {"a"}) == 0.0
+    assert citation_correctness(["noise"], ["noise"], {"a"}) == 0.0
+    assert citation_correctness([], ["a"], {"a"}) == 0.0
 
 
 def test_aggregate_evaluation_averages_cases():
@@ -31,7 +54,13 @@ def test_aggregate_evaluation_averages_cases():
     ]
     rankings = [["a"], ["noise", "b"]]
     result = aggregate_evaluation(cases, rankings, k=2)
-    assert result == {"cases": 2, "recall_at_k": 1.0, "precision_at_k": 0.75, "mrr": 0.75}
+    assert result == {
+        "cases": 2,
+        "recall_at_k": 1.0,
+        "precision_at_k": 0.75,
+        "mrr": 0.75,
+        "citation_correctness": 0.75,
+    }
 
 
 def test_aggregate_evaluation_rejects_mismatched_inputs():
@@ -64,6 +93,7 @@ def test_aggregate_observations_reports_quality_latency_and_errors():
         "recall_at_k": 1.0,
         "precision_at_k": 0.75,
         "mrr": 0.75,
+        "citation_correctness": 0.75,
         "avg_latency_ms": 20.0,
     }
 
