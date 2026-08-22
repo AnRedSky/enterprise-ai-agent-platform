@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -73,14 +73,16 @@ class RuntimeQueryService:
             # their resource ids point to an Organization or Membership, so an active
             # organization member must be able to see mutations for organizations they
             # can access without exposing another organization's audit trail.
-            organization_ids = select(Organization.id).join(
+            # AuditLog.resource_id is persisted as VARCHAR, therefore UUID subqueries
+            # must be cast to String before comparison on PostgreSQL.
+            organization_ids = select(cast(Organization.id, String)).join(
                 OrganizationMembership,
                 OrganizationMembership.organization_id == Organization.id,
             ).where(
                 OrganizationMembership.user_id == actor_id,
                 OrganizationMembership.status == "active",
             )
-            membership_ids = select(OrganizationMembership.id).where(
+            membership_ids = select(cast(OrganizationMembership.id, String)).where(
                 OrganizationMembership.user_id == actor_id,
                 OrganizationMembership.status == "active",
             )
