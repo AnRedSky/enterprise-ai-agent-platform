@@ -1,7 +1,7 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 下一任务 2.1-B**
-> 基线：`main` @ `8253f049555c24fc703655b73a9a499e1974f995`
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Domain + Migration 实现完成，待本地 Gate 验证**
+> 基线：`main` @ `355ac34c5f91ce4bc243cfcb6b8deb31729974bb`
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -139,19 +139,31 @@ Migration 必须验证：
 
 详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
 
-### 2.1-B Database Migration + Domain — **下一任务**
+### 2.1-B Database Migration + Domain — **实现完成，待本地验证**
 
 Issue：`#33`
 
-- SQLAlchemy Organization / Membership model。
-- Alembic migration。
-- Existing Tenant/User 数据兼容映射。
-- Organization/Membership Service。
-- Membership authorization service/dependency。
-- Owner/Admin/Member 权限测试。
-- 并发 membership 唯一性与 owner transfer 事务测试。
+已实现：
 
-完成 2.1-B 后才进入 2.1-C API implementation。
+- SQLAlchemy `Organization` / `OrganizationMembership` model。
+- Alembic `0023_organization_membership` migration。
+- Existing Tenant/User 数据兼容映射。
+- `OrganizationService`。
+- active membership / management authorization 基础规则。
+- Owner/Admin/Member role 约束。
+- Owner transfer 事务锁定与唯一 Owner 防护。
+- membership `(organization_id, user_id)` 数据库唯一约束。
+- Backend unit tests 覆盖核心 domain rule。
+
+待验证：
+
+- `uv run pytest -q`。
+- `uv run alembic upgrade head`。
+- `uv run alembic current` / `uv run alembic heads`。
+- PostgreSQL 实际迁移数据计数与 tenant scope 一致性。
+- Real API / API Contract 仍属于后续 2.1-C / 2.1-E。
+
+**2.1-B 在本地 Gate 未实际执行前，不标记为 Passed，也不进入 Frontend 实现。**
 
 ### 2.1-C API Contract Implementation
 
@@ -211,4 +223,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 9. 当前执行结论
 
-**2.1-A 已完成，下一步立即进入 2.1-B Database Migration + Domain。**
+**2.1-A 已完成；2.1-B 代码实现已落地，下一步必须先执行本地 Backend regression + Migration Gate，再决定是否进入 2.1-C API implementation。**
