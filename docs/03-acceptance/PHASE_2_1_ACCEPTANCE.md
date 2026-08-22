@@ -1,6 +1,6 @@
 # Phase 2.1 Acceptance — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F Browser E2E 实施中**
+> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B Browser E2E 已通过 / 2.1-F-C Governance Browser Acceptance 实施中**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -81,18 +81,26 @@ Production build: passed
 - [x] Frontend Contract tests。
 - [x] production build。
 
-### F. Browser E2E — **实施中**
+### F. Browser E2E
 
-#### F-A 基础设施 — 已实现，待 Gate
+#### F-A 基础设施 — **Gate 已通过**
 
 - [x] 独立 Organization Playwright spec。
 - [x] 独立 Phase 2.1-F PowerShell Gate script。
 - [x] 复用 Desktop Chrome project。
 - [x] 使用 `FRONTEND_BASE_URL` / `API_BASE_URL`。
 - [x] 使用随机 fixture，避免固定测试账号和组织状态污染。
-- [ ] 本地 Browser E2E 实际执行。
+- [x] 本地 Browser E2E 实际执行。
 
-#### F-B Organization Management — 已实现，待 Gate
+用户最新实际结果：
+
+```text
+scripts/test/e2e/02_run_organization_e2e.ps1
+1 passed (8.7s)
+[PASS] Phase 2.1-F organization browser E2E contract completed.
+```
+
+#### F-B Organization Management — **Gate 已通过**
 
 - [x] Login → Organization list。
 - [x] 创建 Organization。
@@ -103,25 +111,31 @@ Production build: passed
 - [x] Organization suspend/recovery。
 - [x] Owner Transfer。
 - [x] API 校验单 Owner 不变量。
-- [ ] 浏览器实际执行通过。
+- [x] 浏览器实际执行通过。
 
-#### F-C 后续 Browser Acceptance — 未开始
+#### F-C Governance Browser Acceptance — **已实现，待 Gate**
 
-- [ ] Member UI 权限边界。
-- [ ] Suspended member 阻断。
-- [ ] Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界。
-- [ ] Audit UI 可追踪。
+- [x] Auth session 持久化当前 user id。
+- [x] Member 不显示 Organization / Membership 管理控件。
+- [x] Owner Transfer 仅当前 owner 显示。
+- [x] Member 权限边界 Browser E2E。
+- [x] Suspended member 阻断 Browser E2E。
+- [x] Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界 Browser E2E。
+- [x] Owner E2E 增加 Audit UI 可追踪证据。
+- [ ] F-C 新增场景本地真实 Browser Gate。
 
 ## 3. 当前执行顺序
 
 ```text
 2.1-E Real API Gate 已通过
- → 2.1-F-A Browser E2E infrastructure
- → 2.1-F-B Organization Management browser contract
- → 本地 Browser E2E Gate
+ → 2.1-F-A Browser E2E infrastructure 已通过
+ → 2.1-F-B Organization Management browser contract 已通过
+ → F-C governance browser acceptance implementation
+ → 本地执行 F-C Browser E2E
  → 根据实际结果修复
- → F-C governance browser acceptance
- → Full regression + final acceptance
+ → Full frontend regression + production build
+ → Backend regression + Real API Gate
+ → final acceptance
 ```
 
 ## 4. Close Conditions
