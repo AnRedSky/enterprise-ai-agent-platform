@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：Phase 2.1-D Frontend Gate 已验证；2.1-E Real API / Regression 正在修复 Gate 阻塞问题。
-- 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D 已完成对应 Gate；2.1-E 已执行 Real API Gate，当前因 AuditLog 查询 PostgreSQL 类型错误失败，已修复并等待本地复验。**
+- 最新产品基线：Phase 2.1-E Real API Gate 已通过；当前进入 Phase 2.1-F Browser E2E + Acceptance。
+- 开发原则：所有任务直接基于最新 `main`，禁止把临时分支作为长期开发基线。
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E 已完成对应 Gate；2.1-F-A / 2.1-F-B 已实现，待本地 Browser E2E Gate。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -32,40 +32,32 @@
 
 ```text
 uv run pytest -q
-275 passed, 23 deselected in 5.02s
-
-uv run pytest -q tests/api_contract/test_api_organization_endpoints.py
-4 passed in 1.23s
+275 passed, 30 deselected
 
 uv run alembic heads
 0023_organization_membership (head)
 ```
 
-### 2.1-C Real API
-
-```text
-23 passed in 37.45s
-[PASS] Real API gate completed.
-```
-
 ### 2.1-D Frontend
 
-用户本地实际结果：
-
 ```text
-Targeted organization tests
-3 test files
-15 passed
-
-Frontend Regression
-16 test files
-67 passed
-
-Production build
-✓ built successfully
+Targeted organization tests: 15 passed
+Full Frontend Regression: 67 passed
+Production build: passed
 ```
 
-首次 production build 的 `DefaultRow` / `Membership` 类型错误已记录为 `ERR-0020` 并修复；修复后以上三个结果均由用户实际执行通过，因此 2.1-D Gate 已验证。
+### 2.1-E Real API
+
+用户最新有效完整 Gate：
+
+```text
+[1/2] Prepare real API test context
+[2/2] Execute all real HTTP API tests
+30 passed in 47.60s
+[PASS] Real API gate completed. Frontend/backend integration may proceed.
+```
+
+此前 `/runtime/audit-logs` PostgreSQL UUID/VARCHAR 类型错误与固定 Organization 名称冲突已修复；直接运行 Organization Real API 测试而未先准备 context 所产生的 7 个 `fixture context is missing` 不计为产品 Gate 失败。
 
 ## 4. Phase 状态
 
@@ -80,12 +72,12 @@ Production build
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A/2.1-B/2.1-C/2.1-D 已完成；2.1-E Real API Gate 已执行但当前失败，正在修复 |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A～2.1-E 已完成；2.1-F-A / F-B 已实现，待 Browser E2E Gate |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
 
-当前第一阶段已经形成以下完整产品链路：
+当前产品链路：
 
 ```text
 Identity / RBAC
@@ -103,6 +95,8 @@ Manual / Scheduled / Webhook Trigger
 Runtime Reliability / Audit / Trace
       ↓
 Vue Management + Browser E2E
+      ↓
+Organization / Membership / Access Governance
 ```
 
 Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization / Membership / Access Governance 产品能力。
@@ -119,66 +113,63 @@ Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization /
 
 ### 2.1-C API Contract Implementation — 已完成 Gate
 
-已实现并由用户本地实际验证：
-
-- Organization CRUD。
-- Membership list/create/update/remove。
-- 显式 owner transfer mutation。
-- active membership / management authorization。
-- suspended Organization 管理恢复路径。
-- Organization / Membership AuditLog。
-- API Contract tests。
-- Real HTTP API gate。
+Organization CRUD、Membership lifecycle、Owner transfer、management authorization、suspended Organization recovery、AuditLog 与 API Contract / Real API 基线已验证。
 
 ### 2.1-D Organization / Membership Frontend — 已完成 Gate
 
-已提交：
+Organization list/detail、成员管理、role/status、suspend/recovery、Owner Transfer 与 frontend contract tests 已完成。
 
-- `frontend/src/api/organizations.ts`
-- `frontend/src/views/organizations/index.vue`
-- `frontend/src/views/organizations/detail.vue`
-- `frontend/src/router/index.ts`
-- `frontend/tests/api/organizations.test.ts`
-- `frontend/tests/views/Organizations.test.ts`
-- `frontend/tests/views/OrganizationDetail.test.ts`
-
-实际结果：15 个定向测试通过、完整 Frontend Regression 67 个测试通过、production build 通过。
-
-### 2.1-E Real API / Regression — **Gate 已执行但失败，修复后待复验**
-
-当前用户实际执行结果：
+### 2.1-E Real API / Regression — **已完成 Gate**
 
 ```text
-10 failed, 20 passed in 41.32s
+Backend regression: 275 passed, 30 deselected
+Full Real API: 30 passed
 ```
 
-主要失败集中在 `/runtime/audit-logs` 返回 500，导致 Organization audit 与既有 Workflow governance 的多个 Real API 场景同时失败；另有 transferred-owner 场景使用固定组织名称导致 409。
+### 2.1-F-A Browser E2E 基础设施 — **已实现，待 Gate**
 
-根因与修复已记录：`docs/04-errors/ERR-0021-real-api-audit-resource-id-type-mismatch.md`。
+保持现有 Playwright Desktop Chrome、`FRONTEND_BASE_URL`、`API_BASE_URL` 约定，新增：
 
-已直接提交 main 的修复：
+```text
+frontend/tests/e2e/organization-management.spec.ts
+frontend/scripts/test/e2e/02_run_organization_e2e.ps1
+```
 
-- `RuntimeQueryService.audit_logs()` 将 Organization / Membership UUID scope 子查询显式 cast 为 String，以匹配 `audit_logs.resource_id` 的 VARCHAR 存储类型。
-- transferred-owner Real API 测试改为每次使用唯一 Organization 名称，消除跨次真实数据库状态造成的固定名称冲突。
+测试数据采用随机用户名、密码、Organization 名称，真实 API provisioning 后由浏览器完成 Login 与 UI 操作。
 
-**当前不能标记 2.1-E Passed。下一步不是进入 2.1-F，而是重新执行 Real API Gate；只有 2.1-E 全部通过后才能进入 Browser E2E。**
+### 2.1-F-B Organization Management E2E — **已实现，待 Gate**
+
+当前覆盖：
+
+- Login → Organization list。
+- 创建 Organization。
+- Organization Detail。
+- 添加成员。
+- member → admin。
+- member active/suspended/recovery。
+- Organization suspend/recovery。
+- Owner Transfer。
+- 真实 API 校验单 Owner 不变量与目标 Owner 状态。
+
+尚未由开发者本地执行，因此不能标记 Passed。
 
 ## 7. 下一步推进原则
 
-严格遵守 `docs/01-governance/DEVELOPMENT.md`：
+严格遵守项目开发准则：
 
 ```text
-2.1-E Gate 已发现真实失败
- → 修复 AuditLog PostgreSQL 类型边界
- → 修复 Real API fixture 的固定名称冲突
- → 本地执行 targeted + full backend + Real API Gate
- → 根据实际结果继续修复
- → Real API 全部通过后进入 Browser E2E
+2.1-E Real API Gate 已通过
+ → 2.1-F-A E2E infrastructure
+ → 2.1-F-B Organization management browser contract
+ → 本地执行 targeted Browser E2E
+ → 若失败，按实际失败栈修复
+ → 若通过，再执行 Full Frontend Regression + Browser Acceptance
+ → 补齐 Member boundary / Suspended member / Audit evidence
  → 更新 Status / Acceptance / Error Record
- → 直接提交 main
+ → 最终关闭 Phase 2.1
 ```
 
-未实际执行的测试不得标记为 Passed；所有开发、修复、文档与测试变更直接基于 `main`。
+未实际执行的测试不得标记为 Passed。
 
 ## 8. 维护规则
 
@@ -188,5 +179,3 @@ Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization /
 - 对应 `docs/02-phases/PHASE_x_y.md`
 - 对应 `docs/03-acceptance/PHASE_x_y_ACCEPTANCE.md`
 - 已分析完成的工程错误写入 `docs/04-errors/`
-
-不得通过聊天、Issue 或 Commit 信息单独作为项目状态记录。
