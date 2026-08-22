@@ -2,16 +2,17 @@
 param(
     [ValidateSet("ollama", "openai-compatible")]
     [string]$EmbeddingProvider,
+    [string]$EmbeddingProviderName,
     [string]$EmbeddingBaseUrl,
     [string]$EmbeddingModel,
     [int]$EmbeddingDimension = 0,
-    [int]$K = 3,
-    [double]$MinScore = 0.0,
+    [int]$K = 0,
+    [double]$MinScore,
     [double]$MinRecallAtK,
     [double]$MinPrecisionAtK,
     [double]$MinMrr,
     [double]$MinCitationCorrectness,
-    [double]$MaxErrorRate = 0.0
+    [double]$MaxErrorRate
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,20 +30,21 @@ function Invoke-Gate([string]$Title, [scriptblock]$Command) {
 }
 
 $runnerArgs = @(
-    ".\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py",
-    "--k", $K,
-    "--min-score", $MinScore,
-    "--max-error-rate", $MaxErrorRate
+    ".\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py"
 )
 
 if ($EmbeddingProvider) { $runnerArgs += @("--embedding-provider", $EmbeddingProvider) }
+if ($EmbeddingProviderName) { $runnerArgs += @("--embedding-provider-name", $EmbeddingProviderName) }
 if ($EmbeddingBaseUrl) { $runnerArgs += @("--embedding-base-url", $EmbeddingBaseUrl) }
 if ($EmbeddingModel) { $runnerArgs += @("--embedding-model", $EmbeddingModel) }
 if ($EmbeddingDimension -gt 0) { $runnerArgs += @("--embedding-dimension", $EmbeddingDimension) }
+if ($K -gt 0) { $runnerArgs += @("--k", $K) }
+if ($PSBoundParameters.ContainsKey("MinScore")) { $runnerArgs += @("--min-score", $MinScore) }
 if ($PSBoundParameters.ContainsKey("MinRecallAtK")) { $runnerArgs += @("--min-recall-at-k", $MinRecallAtK) }
 if ($PSBoundParameters.ContainsKey("MinPrecisionAtK")) { $runnerArgs += @("--min-precision-at-k", $MinPrecisionAtK) }
 if ($PSBoundParameters.ContainsKey("MinMrr")) { $runnerArgs += @("--min-mrr", $MinMrr) }
 if ($PSBoundParameters.ContainsKey("MinCitationCorrectness")) { $runnerArgs += @("--min-citation-correctness", $MinCitationCorrectness) }
+if ($PSBoundParameters.ContainsKey("MaxErrorRate")) { $runnerArgs += @("--max-error-rate", $MaxErrorRate) }
 
 Invoke-Gate "[1/4] Retrieval evaluation configuration unit tests" {
     uv run pytest -q tests/unit/test_retrieval_evaluation_config.py tests/unit/test_retrieval_evaluation.py
