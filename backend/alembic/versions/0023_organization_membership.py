@@ -49,10 +49,12 @@ def upgrade() -> None:
     op.create_index("ix_organization_membership_status", "organization_memberships", ["status"])
     op.create_index("ix_organization_membership_role", "organization_memberships", ["role"])
 
-    # Organization is a product-level 1:1 projection of the existing tenant boundary.
+    # Use PostgreSQL's built-in md5 rather than an extension-specific UUID function.
+    # The mapping is deterministic: rerunning the data statement cannot create a
+    # different Organization ID for the same existing Tenant.
     op.execute(sa.text("""
         INSERT INTO organizations (id, tenant_id, name, status, created_at, updated_at)
-        SELECT gen_random_uuid(), t.id, t.name, t.status, t.created_at, t.created_at
+        SELECT md5(t.id::text)::uuid, t.id, t.name, t.status, t.created_at, t.created_at
         FROM tenants AS t
     """))
 
@@ -78,7 +80,7 @@ def upgrade() -> None:
             id, organization_id, user_id, status, role, created_at, updated_at
         )
         SELECT
-            gen_random_uuid(),
+            md5(u.id::text || ':organization-membership')::uuid,
             o.id,
             u.id,
             'active',
