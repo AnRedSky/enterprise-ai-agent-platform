@@ -157,21 +157,59 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-E-2 governed evaluation 手动验证：
+### E-2 governed evaluation 自动化 Smoke
+
+为避免手工复制 UUID、避免测试污染正式治理数据，提供：
+
+```powershell
+uv run python .\scripts\evaluation\knowledge\run_governed_embedding_profile_smoke.py
+```
+
+脚本行为：
+
+1. 检查 `VECTOR_PROVIDER=pgvector`。
+2. 通过 Ollama `/api/tags` 确认两个模型已经安装；**不会下载任何模型**。
+3. 通过 Ollama `/api/embed` 获取两个现有模型的实际 embedding dimension，不在脚本中硬编码 dimension。
+4. 在现有 active Organization 下创建临时 Ollama Provider 与两个 Embedding Profiles。
+5. 使用 Profile A 冻结临时 baseline。
+6. 使用 Profile B 复用 Profile A baseline，要求 quality gate 因 governed Profile identity 变化而失败。
+7. 检查 evaluation report 中的 `model_profile_id` / `provider_id` 与选中的 Profile/Provider 一致。
+8. 删除临时 Provider/Profile。
+
+默认使用当前本地已安装的：
+
+```text
+nomic-embed-text:latest
+bge-m3:latest
+```
+
+也可以显式指定现有模型：
+
+```powershell
+uv run python .\scripts\evaluation\knowledge\run_governed_embedding_profile_smoke.py `
+  --profile-a-model nomic-embed-text:latest `
+  --profile-b-model bge-m3:latest
+```
+
+脚本不会执行 `ollama pull`。如果指定模型不存在，测试直接失败并打印 `/api/tags` 中的可用模型。
+
+### E-2 手动验证
+
+如果需要手工验证，必须先把示例中的 `<EMBEDDING_PROFILE_UUID>` 替换为数据库中真实存在、当前 evaluation actor 有权访问的 Embedding Profile UUID；**不要把尖括号占位符原样复制到 PowerShell**。
 
 1. 创建 Organization-scoped Provider，并确认 `provider_type` / `provider_name` / endpoint / credential reference 正确。
-2. 在同一 Provider 下创建两个 enabled Embedding Profiles，例如不同 `model_name` / dimension，至少保证实际 endpoint 可以调用。
+2. 在同一 Provider 下创建两个 enabled Embedding Profiles，使用当前 Ollama 已安装的模型，不下载新模型。
 3. 使用 active Organization member 的 actor 执行 evaluation。
-4. 使用 `--model-profile-id <profile-A>` 运行 Real Provider evaluation；确认输出中的 provider/model/dimension 与数据库 Profile 一致。
+4. 使用 `--model-profile-id <真实 UUID>` 运行 Real Provider evaluation；确认 provider/model/dimension 与数据库 Profile 一致。
 5. 使用 `--freeze-baseline` 为 Profile A 建立独立 baseline。
-6. 使用 `--model-profile-id <profile-B>` 对同一 dataset 运行 evaluation；若复用 Profile A baseline，quality gate 必须因为 `model_profile_id` / Provider identity 变化而失败，而不是静默复用 A 的 baseline。
+6. 使用 Profile B 对同一 dataset 运行 evaluation；若复用 Profile A baseline，quality gate 必须因为 `model_profile_id` / Provider identity 变化而失败，而不是静默复用 A 的 baseline。
 7. 查询 evaluation trace，确认 `model_profile_id` / `provider_id` 可追踪，且 credential secret 不出现。
 
 示例：
 
 ```powershell
 uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py `
-  --model-profile-id <EMBEDDING_PROFILE_UUID> `
+  --model-profile-id <真实的_EMBEDDING_PROFILE_UUID> `
   --k 3
 ```
 
@@ -179,7 +217,7 @@ uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provid
 
 ```powershell
 uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py `
-  --model-profile-id <EMBEDDING_PROFILE_UUID> `
+  --model-profile-id <真实的_EMBEDDING_PROFILE_UUID> `
   --baseline .\evaluation\knowledge_retrieval_profile_a_baseline.json `
   --freeze-baseline
 ```
@@ -201,7 +239,7 @@ Runtime Profile Real API 验证要求：
 
 ### 2.2-E-2 — Retrieval Evaluation Profile Selection
 
-**代码已实现，待本地 Real Provider / baseline identity 验证闭环。**
+**代码已实现，自动化 Smoke 已补齐，待开发者本地执行 Real Provider / baseline identity 验证闭环。**
 
 - Evaluation runner 支持 `model_profile_id`。
 - Evaluation report 固化 Profile identity。

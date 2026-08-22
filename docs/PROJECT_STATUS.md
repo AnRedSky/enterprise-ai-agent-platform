@@ -77,6 +77,7 @@ Real Provider regression 与冻结 baseline 一致：Recall@3=0.6、Precision@3=
 - Legacy baseline 在未选择 governed Profile 时保持兼容，不要求重新冻结既有 baseline。
 - Model Provider OpenAPI contract 测试改为验证语义约束（integer + minimum=1 + nullable），避免绑定 Pydantic union schema 的具体输出顺序。
 - Standalone evaluation trace runner 显式注册 Model Profile / Provider ORM mapper，避免 `Execution.model_profile_id` 在独立脚本上下文中触发 SQLAlchemy metadata 缺失。
+- 新增 `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py`：使用本地已安装 Ollama 模型创建临时 governed Embedding Profiles，自动获取实际 dimension，执行 Profile A baseline freeze 与 Profile B identity regression 验证；测试不会下载模型并在结束时清理临时治理数据。
 
 ## 当前待验证
 
@@ -90,14 +91,16 @@ Real Provider regression 与冻结 baseline 一致：Recall@3=0.6、Precision@3=
 6. 不同 Embedding Profile 的 baseline identity / regression 行为。
 7. Execution / Evaluation trace 的 Profile / Provider identity 查询。
 8. Secret 不进入 response / trace / audit 的验证。
+9. 新增 governed evaluation smoke script 的本地真实 Provider 执行结果。
 
 ## 下一步
 
-1. 本地执行 E-1/E-2 API contract + migration/head + Backend Gate + Real API Gate。
-2. 使用两个不同的 Organization-scoped Embedding Profiles，分别运行 Real Provider evaluation，确认 runner 不再依赖后端固定 embedding model/provider/dimension。
-3. 冻结 governed Profile baseline 后，再执行第二个 Profile 的回归测试，确认 Profile identity change 被质量门禁识别，而不会通过修改 baseline 掩盖变化。
-4. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
-5. 只有 Runtime / Evaluation Profile 接入及其 Real API evidence 完成后，才评估是否关闭 2.2。
+1. 本地执行 API contract + migration/head + Backend Gate + Real API Gate。
+2. 执行 `run_governed_embedding_profile_smoke.py`，使用当前已安装的 `nomic-embed-text:latest` 与 `bge-m3:latest`，确认无需下载模型即可完成 Profile A/B evaluation identity regression。
+3. 使用两个不同的 Organization-scoped Embedding Profiles，分别运行 Real Provider evaluation，确认 runner 不再依赖后端固定 embedding model/provider/dimension。
+4. 冻结 governed Profile baseline 后，再执行第二个 Profile 的回归测试，确认 Profile identity change 被质量门禁识别，而不会通过修改 baseline 掩盖变化。
+5. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
+6. 只有 Runtime / Evaluation Profile 接入及其 Real API evidence 完成后，才评估是否关闭 2.2。
 
 ## 开发纪律
 
@@ -108,3 +111,4 @@ Real Provider regression 与冻结 baseline 一致：Recall@3=0.6、Precision@3=
 - 新增数据库表或字段必须先有 Migration。
 - Secret 不进入数据库明文、CLI、报告或 Git。
 - Phase 2.3 的完整 Provider Governance（路由/Fallback/成本/用量治理）仍保持产品路线候选，不因 2.2-E 提前实施。
+- 当前已记录的 PowerShell `<PROFILE_UUID>` 占位符误用见 `docs/04-errors/2026-08-22-phase-2-2-e-governed-evaluation-placeholder-command.md`；后续手工验证必须替换为真实 UUID，或优先使用自动化 smoke script。
