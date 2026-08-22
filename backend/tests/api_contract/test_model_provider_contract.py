@@ -15,7 +15,11 @@ def test_model_provider_openapi_exposes_chat_and_embedding_profiles():
     assert provider_schema["properties"]["model_type"]["pattern"] == "^(chat|embedding)$"
 
     # Pydantic v2 represents an optional integer as a nullable union in OpenAPI.
+    # Keep the contract focused on the semantic constraints rather than the exact
+    # ordering/shape of union branches emitted by a particular Pydantic version.
     dimension_schema = provider_schema["properties"]["dimension"]
-    assert dimension_schema["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+    integer_schema = next(branch for branch in dimension_schema["anyOf"] if branch.get("type") == "integer")
+    assert integer_schema["minimum"] == 1.0
+    assert {branch.get("type") for branch in dimension_schema["anyOf"]} == {"integer", "null"}
 
     assert "credential_ref" in schema["components"]["schemas"]["ModelProviderCreate"]["properties"]
