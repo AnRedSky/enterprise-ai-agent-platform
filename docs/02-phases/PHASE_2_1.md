@@ -1,7 +1,7 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**已立项 / 待开发**
-> 基线：`main` @ `0150ce83fa36b407b2f4d01b603b524fa3d05977`
+> 状态：**进行中 / 2.1-A Contract 已完成 / 下一任务 2.1-B**
+> 基线：`main` @ `8253f049555c24fc703655b73a9a499e1974f995`
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -14,13 +14,13 @@
   ↓
 创建/管理 Organization
   ↓
-邀请成员 → 激活/停用
+管理成员 → 激活/停用
   ↓
 分配 Organization Role
   ↓
 成员访问 Agent / Workflow / Knowledge
   ↓
-Backend 强制 Organization + Resource Scope
+Backend 强制 Organization + Tenant + Resource Scope
   ↓
 Audit / Trace
 ```
@@ -33,7 +33,7 @@ Audit / Trace
 
 - 一个企业组织下的成员关系与生命周期；
 - 组织管理员与普通成员的职责边界；
-- 未来组织级资源授权的稳定扩展点；
+- 多 Organization membership；
 - 成员被停用后统一阻断资源操作；
 - 组织管理动作的审计闭环。
 
@@ -43,26 +43,26 @@ Phase 2.1 必须优先解决模型 Contract，而不是直接在现有 RBAC 代�
 
 ### 3.1 Organization
 
-- `Organization` 标识、名称、状态、创建时间。
-- Organization 与现有 Tenant 的兼容关系必须在 Contract 中明确。
-- 生命周期：active / suspended。
+- 产品层 `Organization` 与现有 `Tenant` 采用 1:1 映射。
+- Tenant 继续承担数据库隔离和 Runtime scope。
+- Organization 生命周期：active / suspended。
 
 ### 3.2 Membership
 
 - `OrganizationMembership`：user ↔ organization。
+- 一个 User 允许属于多个 Organization。
 - 状态：invited / active / suspended / removed。
-- 角色归属在 Organization scope 内定义。
-- 一个用户是否允许加入多个 Organization 必须在 Contract 中明确；若暂不支持，应通过数据约束固定，而不是隐含实现。
+- 每次请求只有一个有效 Organization scope，必须由 Backend 验证 membership 后转换为 tenant scope。
 
 ### 3.3 Organization Role
 
-Phase 2.1 最小角色：
+最小角色：
 
 - `owner`：组织最高管理权限。
 - `admin`：成员、角色和组织级配置管理。
 - `member`：使用被授权资源。
 
-资源级细粒度权限继续复用现有 Backend authorization 能力；本阶段不实现 ABAC / Policy DSL。
+资源级细粒度权限继续复用现有 Backend authorization；本阶段不实现 ABAC / Policy DSL。
 
 ### 3.4 Resource Scope
 
@@ -78,7 +78,7 @@ Phase 2.1 最小角色：
 
 ## 4. Backend Contract
 
-建议 API：
+Phase 2.1-A 已冻结以下逻辑资源，最终实现沿用当前 `/api/v1` 版本边界：
 
 ```text
 GET    /api/v1/organizations
@@ -90,55 +90,70 @@ GET    /api/v1/organizations/{organization_id}/members
 POST   /api/v1/organizations/{organization_id}/members
 PATCH  /api/v1/organizations/{organization_id}/members/{membership_id}
 DELETE /api/v1/organizations/{organization_id}/members/{membership_id}
-
-GET    /api/v1/organizations/{organization_id}/roles
 ```
 
-最终路径、请求/响应 schema、错误码、分页、排序、幂等性和权限矩阵由 Phase 2.1-A Contract 任务冻结后再实现。
+具体 request/response schema、分页、排序、错误码实现必须遵守 `docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
 
 ### 安全规则
 
 - 当前认证用户只能操作自己有 Organization 管理权限的组织。
 - Organization ID 不是授权依据，必须经过 Backend scope 校验。
 - 被 suspended/removed 的 membership 不得继续访问受保护资源。
-- Owner 不允许被普通 Admin 删除或降级；具体 Owner 转移规则由 Contract 冻结。
+- Owner 不允许被普通 Admin 删除或降级。
 - 所有成员、角色、组织状态变更必须产生 AuditLog。
 
 ## 5. 数据与迁移原则
 
-Phase 2.1 必须先完成数据模型设计，再写 Alembic Migration。
+Phase 2.1-B 必须先完成数据模型设计，再写 Alembic Migration。
 
-预期新增实体：
+预期核心实体：
 
 ```text
 organizations
 organization_memberships
-organization_roles（若最终决定不复用现有 Role）
-organization_role_bindings（若需要）
 ```
 
-是否直接复用现有 `tenants` / `roles`，必须在 Phase 2.1-A 通过兼容迁移方案决定。禁止在没有数据迁移策略的情况下直接修改既有 `tenant_id` 语义。
+现有 `tenants` 保持技术隔离边界；现有 `roles/user_roles` 暂时保留以兼容历史权限语义。新 Organization role 与旧资源级 owner/admin 检查不得形成绕过路径。
+
+Migration 必须验证：
+
+- 每个 active Tenant 恰有一个 Organization。
+- 每个现有 User 至少有一个 active membership。
+- User 默认 `tenant_id` 与默认 Organization 对应 Tenant 一致。
+- membership 不重复。
+- 迁移后资源 tenant scope 不发生漂移。
 
 ## 6. 任务拆解
 
-### 2.1-A Product / Backend Contract
+### 2.1-A Product / Backend Contract — **已完成**
 
-- 冻结 Organization ↔ Tenant 关系。
-- 冻结 Membership 生命周期。
-- 冻结 Owner/Admin/Member 权限矩阵。
-- 冻结多组织归属策略。
-- 冻结现有 User/Tenant/Role 数据迁移策略。
-- 冻结 API schema / error contract。
+已冻结：
 
-### 2.1-B Database Migration + Domain
+- Organization ↔ Tenant 1:1 关系。
+- Membership 生命周期。
+- Owner/Admin/Member 权限矩阵。
+- 多组织归属策略。
+- User/Tenant/Role 兼容迁移策略。
+- API schema / error / pagination / idempotency Contract。
+- Resource scope 与 Audit 规则。
 
+详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
+
+### 2.1-B Database Migration + Domain — **下一任务**
+
+Issue：`#33`
+
+- SQLAlchemy Organization / Membership model。
 - Alembic migration。
-- SQLAlchemy model。
+- Existing Tenant/User 数据兼容映射。
 - Organization/Membership Service。
-- 兼容现有 Tenant/RBAC。
-- Backend unit/integration tests。
+- Membership authorization service/dependency。
+- Owner/Admin/Member 权限测试。
+- 并发 membership 唯一性与 owner transfer 事务测试。
 
-### 2.1-C API Contract
+完成 2.1-B 后才进入 2.1-C API implementation。
+
+### 2.1-C API Contract Implementation
 
 - API router。
 - schema。
@@ -176,8 +191,9 @@ organization_role_bindings（若需要）
 - SCIM。
 - LDAP / Active Directory。
 - HR 同步。
+- 外部邮件邀请服务。
 - ABAC / Policy DSL。
-- 跨组织资源共享。
+- 跨 Organization 资源共享。
 - 完整 IAM 管理平台。
 
 ## 8. Definition of Done
@@ -193,6 +209,6 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 7. 成员生命周期、权限边界、Audit 均有自动化证据。
 8. `PROJECT_STATUS.md`、Acceptance、错误记录同步。
 
-## 9. 下一步
+## 9. 当前执行结论
 
-当前只执行 **2.1-A Product / Backend Contract**。在该 Contract 未冻结前，不创建数据库 Migration 和业务实现代码。
+**2.1-A 已完成，下一步立即进入 2.1-B Database Migration + Domain。**
