@@ -66,6 +66,34 @@ def test_ollama_embedding_provider_default_retry_budget_covers_slow_runner_start
     assert provider.retry_backoff_seconds == 1.0
 
 
+def test_ollama_embedding_provider_disables_environment_proxy_for_local_endpoint() -> None:
+    provider = OllamaEmbeddingProvider(
+        base_url="http://localhost:11434",
+        model="nomic-embed-text:latest",
+    )
+    client = provider._create_client()
+    try:
+        assert client._trust_env is False
+    finally:
+        import asyncio
+
+        asyncio.run(client.aclose())
+
+
+def test_ollama_embedding_provider_keeps_environment_proxy_for_remote_endpoint() -> None:
+    provider = OllamaEmbeddingProvider(
+        base_url="https://ollama.example.com",
+        model="nomic-embed-text:latest",
+    )
+    client = provider._create_client()
+    try:
+        assert client._trust_env is True
+    finally:
+        import asyncio
+
+        asyncio.run(client.aclose())
+
+
 @pytest.mark.asyncio
 async def test_ollama_embedding_provider_retries_until_runner_is_ready() -> None:
     attempts = 0

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Sequence
+from urllib.parse import urlparse
 
 import httpx
 
@@ -53,7 +54,7 @@ class OllamaEmbeddingProvider:
             payload["dimensions"] = self.dimensions
 
         owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
+        client = self._client or self._create_client()
         try:
             response = await self._post_with_retry(client, payload)
             body = response.json()
@@ -100,6 +101,16 @@ class OllamaEmbeddingProvider:
             )
         self.dimension = actual_dimension
         return vectors
+
+    def _create_client(self) -> httpx.AsyncClient:
+        # Local Docker Ollama should not inherit a machine-wide HTTP(S) proxy.
+        # A proxy can return a synthetic 503 before the request reaches Ollama;
+        # this is especially misleading because the Ollama container then has no
+        # corresponding request in its logs. Remote Ollama endpoints retain the
+        # normal httpx environment-proxy behavior.
+        hostname = urlparse(self.base_url).hostname
+        trust_env = hostname not in {"localhost", "127.0.0.1", "::1"}
+        return httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=trust_env)
 
     async def _post_with_retry(
         self,
