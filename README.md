@@ -1,57 +1,76 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环已完成，Phase 1.4 Knowledge / RAG 核心闭环已完成，Phase 1.5 Workflow / Governance 已完成，Phase 1.6 Workflow Production Hardening 已正式关闭，当前推进 Phase 1.7 Workflow Trigger Expansion / Scheduling Contract。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进，Phase 1.3 核心执行闭环、Phase 1.4 Knowledge / RAG、Phase 1.5 Workflow / Governance、Phase 1.6 Trigger Contract、Phase 1.7 Scheduling、Phase 1.8 Webhook / Event Trigger 与 Phase 1.9 Runtime Reliability / Production Hardening 均已完成当前定义范围；**Phase 1.9 已正式关闭，新 Phase 尚未立项**。
 
 ## 项目文档
 
+- [产品能力基线](docs/PRODUCT_CAPABILITY_BASELINE.md)
+- [产品与功能开发对比矩阵](docs/PRODUCT_DEVELOPMENT_MATRIX.md)
 - [完整架构与实施流程](docs/00-企业级应用%20AI%20智能体系统完整开发架构与实施流程.md)
-- [开发准则](docs/DEVELOPMENT.md)
+- [开发准则](docs/01-governance/DEVELOPMENT.md)
 - [项目开发进度](docs/PROJECT_STATUS.md)
-- [系统架构](docs/ARCHITECTURE.md)
-- [项目开发规划](docs/07-project-development-plan.md)
-- [Phase 1.4 Knowledge / RAG](docs/11-phase-1.4-knowledge-rag-plan.md)
-- [Phase 1.4-E Vector Retrieval Provider](docs/12-phase-1.4-e-vector-retrieval-provider.md)
-- [Phase 1.5 Workflow / Governance](docs/13-phase-1.5-workflow-governance-plan.md)
-- [Phase 1.6 Workflow Production Hardening](docs/15-phase-1.6-workflow-production-hardening-plan.md)
-- [Phase 1.6-B Frontend Workflow Governance UI](docs/16-phase-1.6-b-frontend-workflow-governance-ui-contract.md)
-- [Phase 1.6-C Frontend / Backend E2E](docs/17-phase-1.6-c-frontend-backend-e2e-contract.md)
-- [Phase 1.7 Workflow Trigger Scheduling Contract](docs/18-phase-1.7-workflow-trigger-scheduling-contract.md)
-- [Phase 1.7-C Schedule Governance / Frontend Integration](docs/19-phase-1.7-c-schedule-governance-frontend-integration.md)
-- [Phase 1.7-D Browser / Frontend-Backend E2E](docs/20-phase-1.7-d-browser-frontend-backend-e2e.md)
-- [错误跟踪记录](docs/error-tracking/README.md)
-- [本地功能测试与验收](docs/LOCAL_TESTING.md)
-- [提交规范](docs/CONTRIBUTING.md)
+- [系统架构](docs/00-architecture/SYSTEM_ARCHITECTURE.md)
+- [Observability 架构](docs/00-architecture/OBSERVABILITY_ARCHITECTURE.md)
+- [文档治理](docs/01-governance/DOCUMENTATION.md)
+- [Phase 1.3 Model Gateway / Tool Runtime / Memory / Observability](docs/02-phases/PHASE_1_3.md)
+- [Phase 1.4 Knowledge / RAG / Retrieval](docs/02-phases/PHASE_1_4.md)
+- [Phase 1.5 Workflow / Governance](docs/02-phases/PHASE_1_5.md)
+- [Phase 1.6 Trigger Contract](docs/02-phases/PHASE_1_6.md)
+- [Phase 1.7 Scheduling](docs/02-phases/PHASE_1_7.md)
+- [Phase 1.8 Webhook / Event Trigger](docs/02-phases/PHASE_1_8.md)
+- [Phase 1.9 Runtime Reliability](docs/02-phases/PHASE_1_9.md)
+- [错误记录](docs/04-errors/)
 
 ## 当前开发状态
 
-实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/DEVELOPMENT.md`。
+实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/01-governance/DEVELOPMENT.md`。当前状态为 **Phase 1.9 已完成 / 正式关闭**，后续新阶段必须先经过产品需求与架构决策，不得凭空创建 Phase 2。
 
-### Phase 1.5
+### Phase 1.x 产品闭环
 
-Workflow / Governance 基础闭环已完成：Workflow Definition、Publish Governance、Tenant Contract、Execution State Machine、Runtime Integration、Audit / Trace、Retry / Timeout / Deadline / Circuit Breaker 均已完成并通过相应本地验收。
+```text
+Identity / RBAC
+      ↓
+Agent / Session / Runtime
+      ↓
+Model Gateway ── Tool Runtime ── Memory ── Observability
+      ↓
+Knowledge / RAG / Retrieval
+      ↓
+Workflow / Governance
+      ↓
+Trigger Contract
+   ┌──┴─────────────┐
+Scheduled        Webhook
+   └──┬─────────────┘
+      ↓
+Runtime Reliability / Production Hardening
+```
 
-### Phase 1.6
+### 最新 Phase 1.9 本地验收基线
 
-Workflow Production Hardening 已正式关闭：
+- Backend：264 passed，23 deselected。
+- Migration：`0022_workflow_trigger` 为 head。
+- Real API：23 passed。
+- Frontend：13 test files / 52 tests passed，production build passed。
+- Browser：Desktop Chrome 3 passed。
 
-- Phase 1.6-A Backend Trigger Contract 已关闭。
-- Phase 1.6-B Frontend Workflow Governance UI Contract 已关闭。
-- Phase 1.6-C Browser / Frontend-Backend E2E Contract 已关闭。
-- Backend Real API：14 passed。
-- Frontend Vitest：50 passed。
-- Frontend production build：PASS。
-- Browser E2E：1 passed。
+这些是 Phase 1.9 Acceptance 已记录的实际本地证据；新任务不得将其描述成当前重新执行的测试。
 
-### Phase 1.7
+## 当前明确产品边界
 
-当前推进 Workflow Trigger Expansion / Scheduling Contract：
+当前 Phase 文档明确未覆盖、且未正式立项的能力包括：
 
-- Phase 1.7-A：Scheduled Trigger Backend / Scheduler / Recovery 基线审计完成，确认已有实现，不重复建设。
-- Phase 1.7-B：Scheduler execution / persistence integration 的 current/recovery persistence Real API Gate 已通过；Runtime failure persistence 专项仍待完成。
-- Phase 1.7-C：Schedule Governance / Frontend Integration 已完成并关闭；Frontend Gate 已通过。
-- Phase 1.7-D：Browser / Frontend-Backend E2E scheduling contract 已启动，正在扩展既有 Browser Trigger E2E。
+- MQ / Kafka / 通用 Event Bus；
+- Temporal / Airflow 等分布式 Workflow Engine；
+- 复杂 DAG、Saga、复杂 Policy DSL；
+- Multi-Agent orchestration；
+- 可视化拖拽 Workflow Designer；
+- 任意代码执行；
+- 完整企业 IAM / Organization；
+- 完整分布式 Scheduler（lease、misfire、独立 scheduler state 等）；
+- 真实 Embedding Provider 语义质量的最终产品结论。
 
-Scheduled Trigger 当前前后端统一使用 `timezone + interval_seconds` Contract；前端不实现 scheduler slot、recovery、lease、worker coordination 或 next-run 计算。
+这些属于产品决策候选项，不自动等同下一阶段开发任务。
 
 ## 前端测试目录约束
 
@@ -70,8 +89,8 @@ Frontend 单元 / UI 测试统一位于 `frontend/tests/`；`frontend/src/` 禁�
 Backend、Frontend、Browser/E2E 三层 Gate 完全独立：
 
 ```text
-backend/scripts/test/   # Backend Gate
-frontend/scripts/test/  # Frontend Gate
+backend/scripts/test/       # Backend Gate
+frontend/scripts/test/      # Frontend Gate
 frontend/scripts/test/e2e/  # Browser / Frontend-Backend E2E Gate
 ```
 
@@ -86,7 +105,7 @@ Copy-Item backend/.env.example backend/.env
 Copy-Item frontend/.env.example frontend/.env
 ```
 
-Backend 使用 **uv** 管理依赖与虚拟环境；后端测试、脚本和服务运行统一使用项目 `.venv` 中的 `uv run`。
+Backend 使用 **uv** 管理依赖与虚拟环境；后端测试、脚本和服务运行统一使用 `uv run`。
 
 ## 本地启动
 
@@ -108,7 +127,7 @@ npm install
 npm run dev
 ```
 
-## 本地验收
+## 本地验收固定入口
 
 Backend：
 
@@ -125,12 +144,6 @@ Frontend：
 cd frontend
 npm test
 npm run build
-```
-
-Frontend 独立 Regression Gate：
-
-```powershell
-cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
@@ -141,3 +154,5 @@ cd frontend
 npx playwright test --list --project="Desktop Chrome"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
+
+以上 Gate 必须按 `docs/01-governance/DEVELOPMENT.md` 保持独立；未实际执行的测试不得写成通过。
