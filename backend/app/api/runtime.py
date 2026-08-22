@@ -3,10 +3,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
 from app.core.auth import bearer, current_claims
+from app.models.execution import Execution
 from app.schemas.runtime import AuditLogListResponse, ExecutionListResponse, ExecutionTimelineResponse, WorkflowTraceResponse
 from app.services.runtime_query import RuntimeQueryService
 from app.services.workflow_execution import WorkflowExecutionService
@@ -78,15 +80,11 @@ async def workflow_execution_trace(execution_id: UUID, claims: dict = Depends(_r
 
 
 @router.get("/retrieval-evaluations/{evaluation_run_id}", response_model=ExecutionTimelineResponse)
-async def retrieval_evaluation_trace(evaluation_run_id: str, claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db)):
+async def retrieval_evaluation_trace(evaluation_run_id: UUID, claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db)):
     _, is_admin = _identity(claims)
     if not is_admin:
         raise HTTPException(status_code=403, detail="retrieval evaluation trace requires admin role")
-    execution = await RuntimeQueryService(db).execution(UUID(claims["sub"]), True, UUID(evaluation_run_id))
-    if execution is None:
-        from sqlalchemy import select
-        from app.models.execution import Execution
-        execution = (await db.execute(select(Execution).where(Execution.trace_id == evaluation_run_id))).scalar_one_or_none()
+    execution = (await db.execute(select(Execution).where(Execution.trace_id == str(evaluation_run_id)))).scalar_one_or_none()
     if execution is None:
         raise HTTPException(status_code=404, detail="retrieval evaluation not found")
     _, events = await RuntimeQueryService(db).events(UUID(claims["sub"]), True, execution.id)
