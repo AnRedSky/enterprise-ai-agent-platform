@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 最新产品基线：Phase 2.1-E Real API Gate 已通过；Phase 2.1-F-A / F-B Browser E2E 已通过；当前进入 F-C Browser Acceptance。
+- 最新产品基线：Phase 2.1-E Real API Gate 已通过；Phase 2.1-F-A / F-B / F-C Browser E2E 已通过；当前进入最终联合验收。
 - 开发原则：所有任务直接基于最新 `main`，禁止把临时分支作为长期开发基线。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E/2.1-F-A/2.1-F-B 已完成对应 Gate；当前推进 2.1-F-C governance browser acceptance。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E/2.1-F-A/2.1-F-B/2.1-F-C 已完成对应 Gate；当前执行最终联合验收。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -46,55 +46,25 @@ Production build: passed
 
 ### 2.1-F Browser E2E
 
-此前用户本地 F-A/F-B Gate：
+F-A/F-B/F-C 已全部通过。最新用户本地执行：
 
 ```text
 scripts/test/e2e/02_run_organization_e2e.ps1
-1 passed (8.7s)
+3 passed (14.2s)
 [PASS] Phase 2.1-F organization browser E2E contract completed.
-```
 
-此前 Playwright targeted command：
-
-```text
 npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop Chrome"
-1 passed (8.5s)
+3 passed (12.8s)
 ```
 
-此前 Browser E2E 连续发现的三个测试实现问题均已记录并修复：
+F-C 本次验证覆盖：
 
-- `getByText('成员')` strict mode：改为唯一 heading locator。
-- Auth register 实际字段为 `user_id`：E2E 改为 `memberUser.user_id`。
-- Element Plus MessageBox confirmation：改为当前可见 MessageBox 内的 primary confirmation button。
+- Member 浏览器权限边界。
+- suspended member 浏览器阻断。
+- Owner Transfer 后原 Owner / 新 Owner 权限边界。
+- Owner Audit UI 可追踪证据。
 
-因此 **2.1-F-A / 2.1-F-B 保持 Passed**。
-
-### 2.1-F-C 最新执行反馈
-
-用户最新本地执行：
-
-```text
-Organization management: passed
-Organization browser governance boundaries: failed
-Owner transfer browser controls: passed
-2 passed, 1 failed
-```
-
-失败发生在 suspended member 场景：Backend 正确返回 403，但前端原先把 Axios 默认 `Request failed with status code 403` 直接展示为 alert，导致业务文案断言失败。
-
-已完成分析并记录：
-
-```text
-docs/04-errors/2026-08-22-phase-2-1-f-c-suspended-member-403-error-message.md
-```
-
-已修复并直接提交 `main`：
-
-```text
-frontend/src/views/organizations/detail.vue
-```
-
-现在 403 / 404 / fallback 错误均归一化为稳定的 Organization Detail 业务文案。**修复尚未由用户本地真实 Browser Gate 重新验证，因此 F-C 仍不得标记 Passed。**
+此前 suspended member 场景的 403 UI error contract 已修复，并由上述真实 Browser Gate 验证通过。
 
 ## 3. Phase 状态
 
@@ -109,7 +79,7 @@ frontend/src/views/organizations/detail.vue
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A～2.1-E、2.1-F-A/F-B 已完成；当前推进 F-C Acceptance |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A～2.1-E、2.1-F-A/F-B/F-C 已完成；当前执行最终联合验收 |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 4. Phase 2.1 当前任务
@@ -160,9 +130,9 @@ frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 - Owner Transfer。
 - 真实 API 校验单 Owner 不变量与目标 Owner 状态。
 
-### 2.1-F-C Governance Browser Acceptance — **已实现，待 Gate**
+### 2.1-F-C Governance Browser Acceptance — **已完成 Gate**
 
-已补充实现：
+已补充并验证：
 
 - 登录响应持久化 `user_id`，前端根据当前 Organization membership role 决定管理 UI 是否可见。
 - Member 不显示 Organization 管理、成员编辑、Owner Transfer 控件。
@@ -170,9 +140,7 @@ frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 - Browser E2E 新增 Member 权限边界与 suspended member 阻断场景。
 - Browser E2E 新增 Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界场景。
 - 现有 Organization owner E2E 增加 Audit UI `organization.owner.transferred` 可追踪证据。
-- suspended member 403 UI error contract 已修复，但尚未由本地真实 Browser Gate 复验。
-
-当前这些新增 F-C 场景尚未全部由用户本地实际执行通过，因此 **F-C 不得标记 Passed**。
+- suspended member 403 UI error contract 已修复并通过真实 Browser Gate。
 
 ## 5. 下一步推进原则
 
@@ -180,14 +148,13 @@ frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 2.1-E Real API Gate 已通过
  → 2.1-F-A E2E infrastructure 已通过
  → 2.1-F-B Organization management browser contract 已通过
- → 修复 F-C suspended member 403 UI error contract（已完成）
- → 本地重新执行 F-C Browser E2E
- → 若失败，按实际失败栈继续修复并记录 docs/04-errors
- → 修复后重新执行 Browser E2E
+ → 2.1-F-C Governance Browser Acceptance 已通过
  → Full Frontend Regression + production build
- → Backend regression + Real API Gate
+ → Backend regression
+ → Real API Gate
+ → 汇总 Browser / API / Audit Evidence
  → 更新 Status / Acceptance
- → 最终关闭 Phase 2.1
+ → Definition of Done 全部满足后正式关闭 Phase 2.1
 ```
 
 未实际执行的测试不得标记为 Passed。
