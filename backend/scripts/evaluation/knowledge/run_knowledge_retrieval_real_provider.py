@@ -9,7 +9,6 @@ import time
 import uuid
 from pathlib import Path
 
-# backend/scripts/evaluation/knowledge/<runner>.py -> backend
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -19,6 +18,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.dependencies.db import SessionLocal
 from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
+from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
 from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
 from app.services.retrieval_evaluation_baseline import build_baseline, compare_baseline, write_baseline
 from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
@@ -38,14 +38,14 @@ BASELINE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_real_baseline.json
 
 
 def _require_real_provider() -> None:
-    if settings.embedding_provider != "openai-compatible":
+    if settings.embedding_provider not in {"openai-compatible", "ollama"}:
         raise SystemExit(
-            "Real Provider Quality Gate requires EMBEDDING_PROVIDER=openai-compatible"
+            "Real Provider Quality Gate requires EMBEDDING_PROVIDER=openai-compatible or ollama"
         )
     if not settings.embedding_base_url:
         raise SystemExit("Real Provider Quality Gate requires EMBEDDING_BASE_URL")
-    if not settings.embedding_api_key:
-        raise SystemExit("Real Provider Quality Gate requires EMBEDDING_API_KEY")
+    if settings.embedding_provider == "openai-compatible" and not settings.embedding_api_key:
+        raise SystemExit("Real Provider Quality Gate requires EMBEDDING_API_KEY for openai-compatible")
     if not settings.embedding_model:
         raise SystemExit("Real Provider Quality Gate requires EMBEDDING_MODEL")
     if settings.vector_provider != "pgvector":
@@ -56,6 +56,26 @@ def _require_real_provider() -> None:
 
 def _dataset_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _build_embedding_provider():
+    common = {
+        "model": settings.embedding_model,
+        "timeout_seconds": settings.embedding_timeout_seconds,
+        "dimensions": (
+            settings.embedding_dimension
+            if settings.embedding_dimensions_parameter_enabled
+            else None
+        ),
+        "expected_dimension": settings.embedding_dimension,
+    }
+    if settings.embedding_provider == "ollama":
+        return OllamaEmbeddingProvider(base_url=settings.embedding_base_url, **common)
+    return OpenAICompatibleEmbeddingProvider(
+        base_url=settings.embedding_base_url,
+        api_key=settings.embedding_api_key,
+        **common,
+    )
 
 
 async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
@@ -74,18 +94,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
     if missing:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
 
-    provider = OpenAICompatibleEmbeddingProvider(
-        base_url=settings.embedding_base_url,
-        api_key=settings.embedding_api_key,
-        model=settings.embedding_model,
-        timeout_seconds=settings.embedding_timeout_seconds,
-        dimensions=(
-            settings.embedding_dimension
-            if settings.embedding_dimensions_parameter_enabled
-            else None
-        ),
-        expected_dimension=settings.embedding_dimension,
-    )
+    provider = _build_embedding_provider()
     metadata = {
         "provider": settings.embedding_provider,
         "model": settings.embedding_model,
@@ -113,10 +122,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             except EmbeddingProviderError as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                observations = [
-                    RetrievalEvaluationObservation((), latency_ms, error)
-                    for _ in dataset.cases
-                ]
+                observations = [RetrievalEvaluationObservation((), latency_ms, error) for _ in dataset.cases]
                 case_reports = [
                     {
                         "query": case.query,
@@ -154,16 +160,11 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                             min_score=0.0,
                             knowledge_base_id=str(KB_ID),
                         )
-                        ranking = [
-                            result.metadata.get("evaluation_chunk_id", result.chunk_id)
-                            for result in results
-                        ]
-                    except Exception as exc:  # provider failures remain visible in observations
+                        ranking = [result.metadata.get("evaluation_chunk_id", result.chunk_id) for result in results]
+                    except Exception as exc:
                         error = f"{type(exc).__name__}: {exc}"
                     latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                    observations.append(
-                        RetrievalEvaluationObservation(tuple(ranking), latency_ms, error)
-                    )
+                    observations.append(RetrievalEvaluationObservation(tuple(ranking), latency_ms, error))
                     case_reports.append(
                         {
                             "query": case.query,
@@ -179,13 +180,9 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             failures: list[str] = []
             if freeze_baseline:
                 if metrics["error_rate"] > 0:
-                    failures.append(
-                        f"cannot freeze baseline with provider error rate {metrics['error_rate']}"
-                    )
+                    failures.append(f"cannot freeze baseline with provider error rate {metrics['error_rate']}")
                 elif baseline_path.exists():
-                    failures.append(
-                        f"baseline already exists: {baseline_path}; review the existing baseline before replacing it"
-                    )
+                    failures.append(f"baseline already exists: {baseline_path}; review the existing baseline before replacing it")
                 else:
                     write_baseline(baseline_path, build_baseline(metadata, metrics))
                     baseline_status = "created"
@@ -207,10 +204,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 "source": "postgresql/pgvector",
                 "fallback_count": 0,
                 "fallback_used": False,
-                "baseline": {
-                    "path": str(baseline_path),
-                    "status": baseline_status,
-                },
+                "baseline": {"path": str(baseline_path), "status": baseline_status},
                 **metrics,
                 "cases_detail": case_reports,
                 "quality_gate": "passed" if baseline_status == "checked" and not failures else (
@@ -225,16 +219,10 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Run Retrieval Quality Gate with a real OpenAI-compatible embedding provider and PostgreSQL/pgvector"
-    )
+    parser = argparse.ArgumentParser(description="Run Retrieval Quality Gate with a real embedding provider and PostgreSQL/pgvector")
     parser.add_argument("--k", type=int, default=3)
     parser.add_argument("--baseline", type=Path, default=BASELINE)
-    parser.add_argument(
-        "--freeze-baseline",
-        action="store_true",
-        help="Create the real-provider baseline from this run; the result is not marked as a quality-gate pass",
-    )
+    parser.add_argument("--freeze-baseline", action="store_true")
     args = parser.parse_args()
     if args.k < 1:
         raise SystemExit("--k must be greater than zero")
