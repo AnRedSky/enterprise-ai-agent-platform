@@ -20,9 +20,9 @@ from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.dependencies.db import SessionLocal
+from app.models.core import User
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
-from app.models.user import User
 
 RUNNER = BACKEND_ROOT / "scripts" / "evaluation" / "knowledge" / "run_knowledge_retrieval_real_provider.py"
 
