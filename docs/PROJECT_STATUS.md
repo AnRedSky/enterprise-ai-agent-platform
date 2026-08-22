@@ -14,7 +14,7 @@
 
 ## 当前 main 基线
 
-开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建长期开发分支。临时修复分支只用于形成可审查提交，验证后合并回 `main`。
+开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建长期开发分支。
 
 ## 已验证基线
 
@@ -79,24 +79,28 @@ Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=
 - Standalone evaluation trace runner 显式注册 Model Profile / Provider ORM mapper，避免 `Execution.model_profile_id` 在独立脚本上下文中触发 SQLAlchemy metadata 缺失。
 - `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py` 使用本地已安装 Ollama 模型创建临时 governed Embedding Profiles，自动获取实际 dimension，执行 Profile A baseline freeze 与 Profile B identity regression 验证；测试不会下载模型并在结束时清理临时治理数据。
 - Governed evaluation smoke 的 dimension probe 已改为复用生产 `OllamaEmbeddingProvider`，不再在 smoke 脚本内维护第二套 Ollama embedding HTTP 协议；新增 unit test 覆盖该适配器复用。
+- Retrieval evaluation fixture cleanup 已增加显式 transaction rollback，避免 pgvector 写入失败后 cleanup 再次使用 aborted transaction，掩盖原始错误。
 
-## 当前待验证
+## 当前待验证 / 阻塞
 
-本轮 smoke adapter 修复尚未由开发者本地重新执行，因此以下保持“待验证”：
+本轮已实际发现：`nomic-embed-text:latest` 为 768 维，而当前本地另一个可用 Embedding 模型 `qwen3-embedding:0.6b` 的实际维度与当前 pgvector dimension contract 不一致。原 smoke 因此在 `knowledge_chunks` 写入后进入 `InFailedSQLTransactionError`；该错误已经记录在 `docs/04-errors/2026-08-22-phase-2-2-e-governed-evaluation-pgvector-dimension-transaction.md`，并已修复 cleanup 的 transaction masking。
 
-1. Governed evaluation smoke 在当前 Docker Ollama 环境中完整执行。
-2. Profile A 使用 `nomic-embed-text:latest` 冻结 baseline，Profile B 使用 `bge-m3:latest` 触发 identity regression。
-3. Smoke 全流程不下载任何模型。
-4. E-2 Real API evidence 与上述 smoke evidence 汇总后进入 2.2-E-3 Frontend Provider/Profile Management。
+因此以下仍不得标记为 Passed：
+
+1. Governed evaluation smoke 的 Profile A/B 正向 identity regression。
+2. 使用两个不同且与当前 pgvector dimension contract 兼容的 Embedding Profiles 完成 Real Provider evaluation。
+3. E-2 Real API evidence 闭环。
+4. E-2 完成后进入 2.2-E-3 Frontend Provider/Profile Management。
+
+当前本地资源约束下禁止下载新模型；必须使用已安装模型验证。如果没有第二个兼容 dimension 的模型，应先完成 dimension governance/preflight，而不是通过修改 baseline、截断向量或下载模型强行通过。
 
 ## 下一步
 
-1. 在当前本地环境执行 API contract + migration/head + Backend Gate + Real API Gate，确认 `main` 基线不回归。
-2. 执行 governed embedding smoke，明确使用当前 Ollama 已存在的 `nomic-embed-text:latest` 与 `bge-m3:latest`，禁止 `ollama pull`。
-3. 若 smoke 仍报告 Ollama HTTP 错误，优先检查 `OLLAMA_BASE_URL` / Docker 端口映射与应用实际 endpoint，不修改模型或下载新模型；错误应来自生产 Ollama adapter，而不是 smoke 自己的协议实现。
-4. 使用两个不同的 Organization-scoped Embedding Profiles 分别运行 Real Provider evaluation，确认 runner 不再依赖后端固定 embedding model/provider/dimension。
-5. 冻结 governed Profile baseline 后，再执行第二个 Profile 的回归测试，确认 Profile identity change 被质量门禁识别，而不会通过修改 baseline 掩盖变化。
-6. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
+1. 在当前本地环境重新执行 API contract + migration/head + Backend Gate + Real API Gate，确认 cleanup 修复不产生回归。
+2. 执行 governed smoke；若第二个模型 dimension 与 pgvector contract 不一致，应得到明确、可定位的 dimension contract 错误，而不再出现 `InFailedSQLTransactionError` / event-loop cleanup 噪声。
+3. 完成 governed Embedding Profile dimension preflight：Profile dimension 必须与当前 pgvector storage contract 一致后才能进入 fixture / vector write。
+4. 只有存在第二个兼容 dimension 的已安装模型后，才执行 Profile A baseline freeze → Profile B identity regression 正向 evidence。
+5. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
 
 ## 开发纪律
 
