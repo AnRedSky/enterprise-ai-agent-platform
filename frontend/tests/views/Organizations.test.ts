@@ -13,7 +13,7 @@ const global = {
     "el-table": { template: "<div><slot/></div>" }, "el-table-column": { template: "<div/>" },
     "el-alert": { template: "<div class=\"alert\"><slot/></div>" }, "el-empty": { template: "<div>empty</div>" },
     "el-dialog": { template: "<div><slot/><slot name=\"footer\"/></div>" }, "el-form": { template: "<form><slot/></form>" },
-    "el-form-item": { template: "<div><slot/></div>" }, "el-input": { template: "<input/>" },
+    "el-form-item": { template: "<div><slot/></div>" }, "el-input": { template: "<input/>" }, "el-tag": { template: "<span><slot/></span>" },
     "router-link": { template: "<a><slot/></a>" },
   }, directives: { loading: () => undefined },
 };
