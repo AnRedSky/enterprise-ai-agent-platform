@@ -24,6 +24,10 @@ try{
   $env:CIRCUIT_OPEN_WORKFLOW_ID=[string]$context.CIRCUIT_OPEN_WORKFLOW_ID
   $env:CIRCUIT_OPEN_EXECUTION_ID=[string]$context.CIRCUIT_OPEN_EXECUTION_ID
   $env:CIRCUIT_RECOVERY_WORKFLOW_ID=[string]$context.CIRCUIT_RECOVERY_WORKFLOW_ID
+  $env:ORGANIZATION_ID=[string]$context.ORGANIZATION_ID
+  $env:ORGANIZATION_MEMBERSHIP_ID=[string]$context.ORGANIZATION_MEMBERSHIP_ID
+  $env:ORGANIZATION_MEMBER_USER_ID=[string]$context.ORGANIZATION_MEMBER_USER_ID
+  $env:ORGANIZATION_MEMBER_ACCESS_TOKEN=[string]$context.ORGANIZATION_MEMBER_ACCESS_TOKEN
   Write-Host "[2/2] Execute all real HTTP API tests"
   uv run pytest -q tests/api_real -m real_api
   if($LASTEXITCODE -ne 0){throw "Real API test suite failed."}
@@ -44,4 +48,8 @@ try{
   Remove-Item Env:CIRCUIT_OPEN_WORKFLOW_ID -ErrorAction SilentlyContinue
   Remove-Item Env:CIRCUIT_OPEN_EXECUTION_ID -ErrorAction SilentlyContinue
   Remove-Item Env:CIRCUIT_RECOVERY_WORKFLOW_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:ORGANIZATION_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:ORGANIZATION_MEMBERSHIP_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:ORGANIZATION_MEMBER_USER_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:ORGANIZATION_MEMBER_ACCESS_TOKEN -ErrorAction SilentlyContinue
 }
