@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID
 
 
 @dataclass(frozen=True)
@@ -21,6 +22,7 @@ class RetrievalEvaluationConfig:
     baseline_path: Path
     top_k: int
     min_score: float
+    model_profile_id: UUID | None = None
     min_recall_at_k: float | None = None
     min_precision_at_k: float | None = None
     min_mrr: float | None = None
