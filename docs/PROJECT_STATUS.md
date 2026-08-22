@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：`0b9ea8014a585e6433c25f1747732c7343378759`
+- 当前远端基线：Phase 2.1-D Frontend implementation commits on latest `main`。
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A Contract 已完成；2.1-B Migration Gate 已由本地实际结果验证；2.1-C API Contract Implementation 进行中。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A Contract 已完成；2.1-B Migration Gate 已验证；2.1-C Backend API + Real API Gate 已由本地实际结果验证；2.1-D Organization / Membership Frontend UI + Contract Tests 已实现，等待本地 Frontend Regression / Build Gate。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -26,58 +26,31 @@
 | Browser E2E | 1.9-D 独立 Gate 通过 |
 | Phase 1.9 Final Acceptance | **正式关闭** |
 
-## 3. Phase 1.9 最终本地 Gate 证据
+## 3. Phase 2.1 Gate 证据
 
-历史证据保持原记录，不代表本轮重新执行：
+### Backend / Migration
 
-### Backend
+用户本地实际结果：
 
 ```text
 uv run pytest -q
-264 passed, 23 deselected in 4.80s
-```
+275 passed, 23 deselected in 5.02s
 
-### Migration
-
-```text
-uv run alembic upgrade head
-completed
-
-uv run alembic current
-0022_workflow_trigger (head)
+uv run pytest -q tests/api_contract/test_api_organization_endpoints.py
+4 passed in 1.23s
 
 uv run alembic heads
-0022_workflow_trigger (head)
+0023_organization_membership (head)
 ```
 
 ### Real API
 
 ```text
-23 passed in 39.47s
-[PASS] Real API gate completed.
+23 passed in 37.45s
+[PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-### Frontend
-
-```text
-Frontend Vitest:
-13 test files passed
-52 tests passed
-
-Frontend production build:
-passed
-
-Frontend Regression Gate:
-[PASS]
-```
-
-### Browser E2E
-
-```text
-Desktop Chrome:
-3 passed in 10.5s
-[PASS] Browser E2E gate completed.
-```
+上述结果用于确认 2.1-C Backend/API 基线，不代表后续 Frontend 代码的本地 Gate 已执行。
 
 ## 4. Phase 状态
 
@@ -92,7 +65,7 @@ Desktop Chrome:
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A 完成；2.1-B Migration Gate 已验证；2.1-C API Contract Implementation 进行中 |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A/2.1-B/2.1-C 已完成对应 Gate；2.1-D Frontend UI + Contract Tests 已实现，等待本地 Gate |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
@@ -119,105 +92,67 @@ Vue Management + Browser E2E
 
 Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization / Membership / Access Governance 产品能力。
 
-## 6. 当前确认的产品 / 工程差距与路线
-
-| 缺口 | 企业价值 | 路线 | 当前状态 |
-|---|---|---|---|
-| Organization / Membership / Enterprise Access | 让企业可以真正管理成员与资源边界 | Phase 2.1 | **P0 / 正在开发** |
-| Retrieval 真实 Provider 质量 | 保证知识问答业务质量可量化 | Phase 2.2 | P0，待质量 Contract |
-| Model Provider Governance | 控制模型选择、故障切换和成本 | Phase 2.3 | P1，待产品决策 |
-| Durable Scheduler | 支撑长期任务、故障恢复和多实例语义 | Phase 2.4 | P1，待产品决策 |
-| Advanced Workflow | 支撑复杂业务流程编排 | Phase 2.5 | P1，待执行语义决策 |
-| Event Infrastructure | 支撑高吞吐异步业务集成 | Phase 2.6 | P2，仅需求成立后 |
-| Multi-Agent | 支撑复杂任务的 Agent 协作 | Phase 2.7 | P2，尚无 Contract |
-| Agent Asset / Marketplace | 企业内部复用、发布和治理 Agent 资产 | Phase 2.8 | P2，尚无 Contract |
-
-## 7. Phase 2.1 当前任务
+## 6. Phase 2.1 当前任务
 
 ### 2.1-A Product / Backend Contract — 已完成
 
-已冻结：
+已冻结 Organization / Membership / Owner/Admin/Member、迁移兼容、API、Resource Scope 与 Audit 规则。
 
-1. Organization ↔ Tenant 1:1 关系。
-2. Membership 生命周期与多组织归属。
-3. Owner/Admin/Member 权限矩阵。
-4. User/Tenant/Role 兼容迁移策略。
-5. API schema / error / pagination / idempotency Contract。
-6. Resource scope 与 Audit 规则。
+### 2.1-B Database Migration + Domain — 已完成
 
-详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
+已实现 Organization / OrganizationMembership model、Alembic `0023_organization_membership`、Tenant/User 兼容映射、OrganizationService、membership authorization、Owner transfer 与唯一 Owner 防护。
 
-### 2.1-B Database Migration + Domain — Migration Gate 已验证
+### 2.1-C API Contract Implementation — 已完成 Gate
 
-已实现并由用户本地 Migration 验证：
+已实现并由用户本地实际验证：
 
-- SQLAlchemy `Organization` / `OrganizationMembership` model。
-- Alembic `0023_organization_membership` migration。
-- Existing Tenant/User 数据兼容映射。
-- `OrganizationService`。
-- active membership / management authorization 基础规则。
-- Owner/Admin/Member role 约束。
-- Owner transfer 事务锁定与唯一 Owner 防护。
-- membership `(organization_id, user_id)` 数据库唯一约束。
-
-用户本地实际结果：
-
-```text
-uv run alembic upgrade head
-Running upgrade 0022_workflow_trigger -> 0023_organization_membership
-
-uv run alembic heads
-0023_organization_membership (head)
-```
-
-### 2.1-C API Contract Implementation — 进行中
-
-本轮已提交：
-
-- Organization API schema。
-- Organization / Membership router。
 - Organization CRUD。
 - Membership list/create/update/remove。
 - 显式 owner transfer mutation。
 - active membership / management authorization。
-- suspended Organization 的管理恢复路径。
-- Organization / Membership AuditLog 写入。
-- API Contract route/authentication tests。
+- suspended Organization 管理恢复路径。
+- Organization / Membership AuditLog。
+- API Contract tests。
+- Real HTTP API gate。
 
-**注意：本轮 API 代码提交后尚未由本地重新执行 Backend regression，因此不能标记 2.1-C Passed。**
+### 2.1-D Organization / Membership Frontend — 实现完成，Gate 待执行
 
-### 2.1-D～2.1-F
+已提交：
 
-暂不进入 Frontend；必须先完成 2.1-C Backend regression + API Contract + Real API 所需 Gate。
+- `frontend/src/api/organizations.ts`：完整 Organization / Membership API client。
+- `frontend/src/views/organizations/index.vue`：Organization 列表、创建、状态展示。
+- `frontend/src/views/organizations/detail.vue`：Organization 状态、成员列表、添加/编辑/暂停/恢复/移除成员、Owner Transfer。
+- `frontend/src/router/index.ts`：Organization management routes。
+- `frontend/tests/api/organizations.test.ts`：Frontend API Contract tests。
+- `frontend/tests/views/Organizations.test.ts`：Organization list UI contract tests。
+- `frontend/tests/views/OrganizationDetail.test.ts`：Membership lifecycle / Owner Transfer UI contract tests。
 
-## 8. Phase 2.1 验收入口
+前端 UI 不将 Owner 通过普通 role update 暴露；所有高风险操作仍通过 Backend authorization 作为最终安全边界。
 
-- Phase：`docs/02-phases/PHASE_2_1.md`
-- Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`
-- Acceptance：`docs/03-acceptance/PHASE_2_1_ACCEPTANCE.md`
-- Product Roadmap：`docs/PRODUCT_ROADMAP.md`
+**注意：上述 Frontend 代码提交后尚未由本地重新执行 Frontend Regression / production build，因此不能标记 2.1-D Passed。**
 
-Phase 2.1 完成前不得声称 Organization / Enterprise IAM 已完整实现或验收通过。
+### 2.1-E / 2.1-F
 
-## 9. 下一步推进原则
+2.1-D Frontend Regression / Build 通过后，再执行 Real API + Browser E2E acceptance，随后决定 Phase 2.1 Final Acceptance。
+
+## 7. 下一步推进原则
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-2.1-C API Contract Implementation
- → 本地 Backend regression
+2.1-D Frontend Contract + UI
+ → 本地 Frontend targeted tests
+ → Frontend regression
+ → production build
  → 修复实际失败
- → API Contract / Real API
- → 2.1-E Regression
- → 2.1-D Frontend Contract + UI
- → 2.1-F Browser E2E
+ → Real API / Browser E2E
  → Acceptance / Status / Error Record
  → 直接提交 main
 ```
 
-不涉及某层时必须在 Phase 文档说明原因。所有开发、修复、文档与测试变更直接基于 `main`。
+未实际执行的测试不得标记为 Passed；所有开发、修复、文档与测试变更直接基于 `main`。
 
-## 10. 维护规则
+## 8. 维护规则
 
 后续任何功能完成、延期、阻塞、范围变化或新的工程错误，都必须同步：
 
