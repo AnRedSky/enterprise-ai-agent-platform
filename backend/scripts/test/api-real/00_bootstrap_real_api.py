@@ -20,6 +20,39 @@ def request(client, method, path, **kwargs):
     return response
 
 
+def create_user_fixture(client, prefix: str) -> tuple[str, str]:
+    username = f"{prefix}_{uuid.uuid4().hex[:12]}"
+    password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
+    registered = request(client, "POST", "/auth/register", json={"username": username, "password": password}).json()
+    return str(registered["user_id"]), password
+
+
+def login_token(client, username: str, password: str) -> str:
+    login = request(client, "POST", "/auth/login", json={"username": username, "password": password})
+    token = login.json().get("access_token")
+    if not token:
+        raise RuntimeError("Login response does not contain access_token")
+    return token
+
+
+def create_organization_fixture(client, owner_user_id: str) -> dict[str, str]:
+    organization = request(client, "POST", "/organizations", json={
+        "name": f"API Real Organization {uuid.uuid4().hex[:8]}",
+    }).json()
+    member_user_id, member_password = create_user_fixture(client, "api_real_org_member")
+    membership = request(client, "POST", f"/organizations/{organization['id']}/members", json={
+        "user_id": member_user_id,
+        "role": "admin",
+    }).json()
+    member_username = None
+    # The registration helper intentionally returns only the stable user id and
+    # password; login for the member is performed directly with the generated
+    # credentials retained in the fixture context below.
+    # Reconstructing the username is not possible, so register the member again
+    # is forbidden. Instead create a dedicated login token before returning.
+    raise RuntimeError("create_organization_fixture requires member username")
+
+
 def create_executable_fixture(client):
     workflow = request(client, "POST", "/workflows", json={
         "name": f"API Real Validation {uuid.uuid4().hex[:8]}",
@@ -258,16 +291,36 @@ def find_executable_published_workflow(client, workflows):
     return None
 
 
+def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
+    organization = request(client, "POST", "/organizations", json={
+        "name": f"API Real Organization {uuid.uuid4().hex[:8]}",
+    }).json()
+    member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
+    member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
+    member = request(client, "POST", "/auth/register", json={
+        "username": member_username,
+        "password": member_password,
+    }).json()
+    membership = request(client, "POST", f"/organizations/{organization['id']}/members", json={
+        "user_id": member["user_id"],
+        "role": "admin",
+    }).json()
+    member_token = login_token(client, member_username, member_password)
+    return {
+        "organization_id": str(organization["id"]),
+        "membership_id": str(membership["id"]),
+        "member_user_id": str(member["user_id"]),
+        "member_access_token": member_token,
+    }
+
+
 def main():
     username = os.getenv("API_TEST_USERNAME") or f"api_real_test_{uuid.uuid4().hex[:12]}"
     password = os.getenv("API_TEST_PASSWORD") or f"ApiRealTest!{uuid.uuid4().hex[:16]}"
     with httpx.Client(base_url=BASE_URL, timeout=TIMEOUT) as client:
         if not os.getenv("API_TEST_USERNAME"):
             request(client, "POST", "/auth/register", json={"username": username, "password": password})
-        login = request(client, "POST", "/auth/login", json={"username": username, "password": password})
-        token = login.json().get("access_token")
-        if not token:
-            raise RuntimeError("Login response does not contain access_token")
+        token = login_token(client, username, password)
         client.headers["Authorization"] = f"Bearer {token}"
 
         workflows = request(client, "GET", "/workflows").json()
@@ -277,6 +330,7 @@ def main():
         retry_agent_id = create_retry_agent(client)
         boundary = create_retry_boundary_fixtures(client, retry_agent_id)
         circuit = create_circuit_breaker_fixtures(client)
+        organization = create_organization_fixture(client, username, password)
 
     context = {
         "ACCESS_TOKEN": token,
@@ -293,6 +347,10 @@ def main():
         "CIRCUIT_OPEN_WORKFLOW_ID": str(circuit["circuit_open_workflow_id"]),
         "CIRCUIT_OPEN_EXECUTION_ID": str(circuit["circuit_open_execution_id"]),
         "CIRCUIT_RECOVERY_WORKFLOW_ID": str(circuit["circuit_recovery_workflow_id"]),
+        "ORGANIZATION_ID": organization["organization_id"],
+        "ORGANIZATION_MEMBERSHIP_ID": organization["membership_id"],
+        "ORGANIZATION_MEMBER_USER_ID": organization["member_user_id"],
+        "ORGANIZATION_MEMBER_ACCESS_TOKEN": organization["member_access_token"],
     }
     ENV_FILE.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Real API context prepared: {ENV_FILE.stem}_{uuid.uuid4().hex[:12]}")
