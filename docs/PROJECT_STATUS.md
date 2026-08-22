@@ -43,6 +43,37 @@ Real Provider runner:
 
 Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=0.333333、MRR=0.6，identity 未发生变化，provider error rate=0%。
 
+## 本轮开发者实际验证
+
+基于远端 `main` 最新提交 `e1bcd3903025621b0ea8e059440512d3feafc3fe`，开发者本地实际执行：
+
+```text
+Governed embedding profile targeted tests:
+  10 passed in 0.88s
+
+Backend Regression Gate:
+  Backend regression: 320 passed, 31 deselected in 31.29s
+  Migration head: 0026_model_profile_runtime_identity
+  Real HTTP API: 31 passed in 51.75s
+  Backend Regression Gate: passed
+
+Standalone Real API Gate:
+  31 passed in 50.96s
+  Real API Gate: passed
+
+Governed Embedding Profile Smoke:
+  profile_a=nomic-embed-text:latest
+  profile_a_dimension=768
+  profile_b=qwen3-embedding:0.6b
+  profile_b_dimension=1024
+  pgvector storage dimension=768
+  result=expected preflight blocker
+```
+
+本轮 `httpx.ReadError / WinError 10054` 在后续完整 Backend Gate / Standalone Real API Gate 重跑中未复现，因此不再作为当前业务缺陷记录；不得通过修改 Real API 测试掩盖该类环境瞬时连接中断。
+
+Governed smoke 的 dimension preflight 已按预期在创建临时 Provider/Profile fixture 前拒绝 `1024 != 768`，没有产生 vector write、aborted transaction 或 cleanup event-loop 噪声。
+
 ## 当前 2.2-E 目标
 
 1. Provider 与实际供应商身份解耦：`provider_type` 表示技术适配器，`provider_name` 表示实际供应商/部署身份。
@@ -84,9 +115,9 @@ Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=
 
 ## 当前待验证 / 阻塞
 
-本轮已实际发现：`nomic-embed-text:latest` 为 768 维，而当前本地另一个可用 Embedding 模型 `qwen3-embedding:0.6b` 的实际维度与当前 pgvector dimension contract 不一致。原 smoke 因此在 `knowledge_chunks` 写入后进入 `InFailedSQLTransactionError`；该错误已经记录在 `docs/04-errors/2026-08-22-phase-2-2-e-governed-evaluation-pgvector-dimension-transaction.md`，并已修复 cleanup 的 transaction masking。
+本轮本地实际验证确认：`nomic-embed-text:latest` 为 768 维，而当前另一个已安装 Embedding 模型 `qwen3-embedding:0.6b` 为 1024 维；当前 pgvector storage contract 为 768 维。因此该模型组合不能用于 E-2 Profile A/B 正向 identity regression。
 
-本轮修复后，dimension mismatch 应在 fixture 创建前直接失败，并明确报告 Profile dimension 与 pgvector storage contract，不再产生 vector write、aborted transaction 或 Windows event-loop cleanup 噪声。
+本轮修复后，dimension mismatch 已在 fixture 创建前直接失败，并明确报告 Profile dimension 与 pgvector storage contract，不再产生 vector write、aborted transaction 或 Windows event-loop cleanup 噪声。
 
 因此以下仍不得标记为 Passed：
 
@@ -99,10 +130,11 @@ Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=
 
 ## 下一步
 
-1. 在当前本地环境重新执行 API contract + migration/head + Backend Gate + Real API Gate，确认 cleanup 修复不产生回归；其中 Real API 单次 `httpx.ReadError/WinError 10054` 需要完整 gate 重跑确认是否为环境瞬时连接中断，不能直接修改业务测试以掩盖。
-2. 执行 governed smoke；使用当前 `nomic-embed-text:latest` + `qwen3-embedding:0.6b` 时应在 fixture 创建前得到明确 dimension contract blocker。
-3. 只有存在第二个兼容 dimension 的已安装模型后，才执行 Profile A baseline freeze → Profile B identity regression 正向 evidence。
-4. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
+1. 保持当前 `e1bcd39` dimension preflight 修复，不再修改业务逻辑以绕过 768 维 pgvector contract。
+2. 在本地找到第二个**已安装且实际输出 768 维**的 Embedding 模型后，执行 Profile A baseline freeze → Profile B identity regression 正向 evidence。
+3. 完成 E-2 Real API evidence：Provider/Profile identity、Organization scope、Audit/Trace、credential secret 不泄露。
+4. E-2 Real API evidence 全部通过后，才进入 2.2-E-3 Frontend Provider/Profile Management。
+5. 进入 E-3 时按 DEVELOPMENT.md 的固定顺序先完成 Backend/API contract 与 Real API 约束确认，再开发 Frontend API Types、Vitest、UI，最后分别执行 Frontend Gate 与独立 Browser E2E Gate。
 
 ## 开发纪律
 
