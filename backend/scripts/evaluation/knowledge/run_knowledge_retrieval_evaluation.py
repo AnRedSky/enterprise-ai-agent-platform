@@ -11,7 +11,8 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+# backend/scripts/evaluation/knowledge/<runner>.py -> backend
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
@@ -108,7 +109,7 @@ async def cleanup_fixture(db) -> None:
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
-    await db.execute(text("DELETE FROM knowledge_documents WHERE id = :doc"), {"doc": str(DOC_ID)})
+    await db.execute(text("DELETE FROM knowledge_documents WHERE id = :doc"), {"id": str(DOC_ID)})
     await db.execute(text("DELETE FROM knowledge_bases WHERE id = :kb"), {"kb": str(KB_ID)})
     await db.commit()
 
