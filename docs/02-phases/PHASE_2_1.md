@@ -1,6 +1,6 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B Browser E2E 已通过 / F-C Governance Acceptance 实施中**
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B/F-C Browser E2E 已通过 / 最终联合验收待执行**
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -82,7 +82,7 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-### 2.1-F Browser E2E + Acceptance — **F-A/F-B 已通过，F-C 实施中**
+### 2.1-F Browser E2E + Acceptance — **F-A/F-B/F-C 已通过，最终联合验收待执行**
 
 本阶段不复用既有 Workflow Trigger E2E 作为 Organization 验收证据，新增独立 Browser E2E。
 
@@ -93,14 +93,6 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 - 使用 `frontend/scripts/test/e2e/02_run_organization_e2e.ps1`。
 - Fixture 使用随机用户名、密码、Organization 名称，避免污染固定账号/固定组织状态。
 - 浏览器通过真实 Login 进入 Vue UI；fixture provisioning 使用真实 Backend HTTP API。
-
-用户此前实际结果：
-
-```text
-scripts/test/e2e/02_run_organization_e2e.ps1
-1 passed (8.7s)
-[PASS] Phase 2.1-F organization browser E2E contract completed.
-```
 
 #### 2.1-F-B Organization Management E2E — **Gate 已通过**
 
@@ -117,42 +109,32 @@ scripts/test/e2e/02_run_organization_e2e.ps1
 9. 显式 Owner Transfer。
 10. 通过真实 API 校验 transfer 后只有一个 Owner 且目标成员为 active Owner。
 
-#### 2.1-F-C Governance Browser Acceptance — **已实现，待 Gate**
+#### 2.1-F-C Governance Browser Acceptance — **Gate 已通过**
 
-新增实现：
+已实现并由用户本地真实 Browser Gate 验证：
 
 1. Auth login response 返回 `user_id`，前端 Session 持久化当前用户身份。
 2. Organization Detail 根据当前 membership role 控制管理 UI：
    - owner/admin 可管理；
    - member 不显示管理操作；
    - Owner Transfer 仅 owner 可见。
-3. 新增 Member 浏览器权限边界测试。
-4. 新增 suspended member 浏览器阻断测试。
-5. 新增 Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界测试。
-6. Organization owner E2E 增加 Audit UI `organization.owner.transferred` 可追踪证据。
+3. Member 浏览器权限边界测试通过。
+4. suspended member 浏览器阻断测试通过；Backend 403 被前端归一化为稳定的 Organization Detail 业务错误文案。
+5. Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界测试通过。
+6. Organization owner E2E 包含 Audit UI `organization.owner.transferred` 可追踪证据。
 
-**最新用户本地执行反馈：**
-
-```text
-Organization management: passed
-Organization browser governance boundaries: failed
-Owner transfer browser controls: passed
-2 passed, 1 failed
-```
-
-失败发生在 suspended member 场景：Backend 正确返回 HTTP 403，但 `OrganizationDetail.load()` 原先直接展示 Axios 默认 `Request failed with status code 403`，导致 E2E 对 `Organization 详情加载失败` 的业务文案断言失败。错误已记录到：
+用户最新实际结果：
 
 ```text
-docs/04-errors/2026-08-22-phase-2-1-f-c-suspended-member-403-error-message.md
+scripts/test/e2e/02_run_organization_e2e.ps1
+3 passed (14.2s)
+[PASS] Phase 2.1-F organization browser E2E contract completed.
+
+npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop Chrome"
+3 passed (12.8s)
 ```
 
-已修复：
-
-```text
-frontend/src/views/organizations/detail.vue
-```
-
-新增 403 / 404 / fallback 错误文案归一化。**修复尚未由用户本地真实 Browser Gate 重新验证，因此 F-C 仍不得标记 Passed。**
+此前失败的 suspended member 403 UI error contract 已修复并经本次真实 Browser Gate 验证通过。
 
 ## 5. F-C 后续补充与最终验收
 
@@ -191,4 +173,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 8. 当前执行结论
 
-**2.1-E 已由完整 Real API Gate 验证通过；2.1-F-A/F-B 已由真实浏览器 Gate 验证通过；当前直接推进 F-C governance browser acceptance。针对 suspended member 403 UI error contract 的修复已提交 main，下一步必须由本地真实 Browser Gate 重新验证，之后再执行最终 Full Regression / Real API 联合验收并关闭 Phase 2.1。**
+**2.1-E 已由完整 Real API Gate 验证通过；2.1-F-A/F-B/F-C 已由真实浏览器 Gate 验证通过。当前不再修改 F-C 实现，下一步执行 Full Frontend Regression / Production Build、Backend Regression、Real API Gate 联合验收；全部通过后同步 Acceptance / PROJECT_STATUS 并正式关闭 Phase 2.1。**
