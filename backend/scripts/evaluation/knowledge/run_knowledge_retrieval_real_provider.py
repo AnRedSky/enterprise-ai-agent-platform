@@ -20,7 +20,12 @@ from app.dependencies.db import SessionLocal
 from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
 from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
-from app.services.retrieval_evaluation_baseline import build_baseline, compare_baseline, write_baseline
+from app.services.retrieval_evaluation_baseline import (
+    build_baseline,
+    build_regression_report,
+    compare_baseline,
+    write_baseline,
+)
 from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
 from scripts.evaluation.knowledge.run_knowledge_retrieval_evaluation import (
@@ -178,6 +183,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             metrics = aggregate_observations(dataset.cases, observations, k=k)
             baseline_status = "not_checked"
             failures: list[str] = []
+            regression = None
             if freeze_baseline:
                 if metrics["error_rate"] > 0:
                     failures.append(f"cannot freeze baseline with provider error rate {metrics['error_rate']}")
@@ -191,6 +197,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 failures.append(f"real provider baseline is missing: {baseline_path}")
             else:
                 baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+                regression = build_regression_report(metadata, metrics, baseline)
                 failures.extend(compare_baseline(metadata, metrics, baseline))
                 baseline_status = "checked"
 
@@ -205,6 +212,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 "fallback_count": 0,
                 "fallback_used": False,
                 "baseline": {"path": str(baseline_path), "status": baseline_status},
+                "regression": regression,
                 **metrics,
                 "cases_detail": case_reports,
                 "quality_gate": "passed" if baseline_status == "checked" and not failures else (

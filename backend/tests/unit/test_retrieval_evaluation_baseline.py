@@ -2,6 +2,7 @@ from pathlib import Path
 
 from app.services.retrieval_evaluation_baseline import (
     build_baseline,
+    build_regression_report,
     compare_baseline,
     write_baseline,
 )
@@ -27,6 +28,35 @@ def test_build_baseline_records_provider_identity_and_quality_metrics():
         **metadata(),
         "metrics": metrics,
     }
+
+
+def test_build_regression_report_exposes_identity_changes_and_metric_deltas():
+    report = build_regression_report(
+        metadata(model="new-model"),
+        {
+            "recall_at_k": 0.8,
+            "precision_at_k": 0.5,
+            "mrr": 1.0,
+            "error_rate": 0.0,
+        },
+        {
+            **metadata(model="old-model"),
+            "metrics": {"recall_at_k": 1.0, "precision_at_k": 0.4, "mrr": 0.9},
+        },
+    )
+
+    assert report["identity_changed"] is True
+    assert report["identity_changes"]["model"] == {
+        "baseline": "old-model",
+        "current": "new-model",
+    }
+    assert report["metric_deltas"] == {
+        "recall_at_k": -0.19999999999999996,
+        "precision_at_k": 0.09999999999999998,
+        "mrr": 0.09999999999999998,
+    }
+    assert report["quality_regressions"] == {"recall_at_k": -0.19999999999999996}
+    assert report["provider_error_rate"] == 0.0
 
 
 def test_compare_baseline_rejects_identity_change_and_quality_regression():
