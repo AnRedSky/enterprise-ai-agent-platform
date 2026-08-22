@@ -121,10 +121,10 @@ def test_owner_transfer_is_explicit_and_preserves_single_owner():
         assert owners[0]["id"] == MEMBERSHIP_ID
 
 
-def test_transferred_owner_can_manage_and_removed_member_is_blocked():
+def test_transferred_owner_can_manage_and_previous_owner_cannot_manage_current_owner():
     _require_context()
-    with _client(MEMBER_TOKEN) as member_client:
-        updated = member_client.patch(
+    with _client(MEMBER_TOKEN) as new_owner_client:
+        updated = new_owner_client.patch(
             f"/organizations/{ORGANIZATION_ID}",
             json={"name": "API Real Organization Updated"},
         )
@@ -143,4 +143,4 @@ def test_organization_audit_is_written_for_management_mutations():
         response = client.get("/runtime/audit-logs")
     assert response.status_code == 200, response.text
     actions = [item["action"] for item in response.json().get("items", [])]
-    assert "organization.created" in actions or "organization.owner.transferred" in actions
+    assert "organization.updated" in actions
