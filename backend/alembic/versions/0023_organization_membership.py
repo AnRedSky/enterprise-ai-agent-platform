@@ -62,6 +62,8 @@ def upgrade() -> None:
     # in a tenant becomes owner; additional admins remain organization admins.
     # All other users become members. User.status remains the source of truth for
     # account access; every existing user receives an active membership record.
+    # Avoid a colon-prefixed literal here: SQLAlchemy's text() treats :name as a
+    # bind parameter before PostgreSQL receives the SQL.
     op.execute(sa.text("""
         WITH admin_candidates AS (
             SELECT
@@ -80,7 +82,7 @@ def upgrade() -> None:
             id, organization_id, user_id, status, role, created_at, updated_at
         )
         SELECT
-            md5(u.id::text || ':organization-membership')::uuid,
+            md5(u.id::text || 'organization-membership')::uuid,
             o.id,
             u.id,
             'active',
