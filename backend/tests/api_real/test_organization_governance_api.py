@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import httpx
 import pytest
@@ -123,10 +124,11 @@ def test_owner_transfer_is_explicit_and_preserves_single_owner():
 
 def test_transferred_owner_can_manage_and_previous_owner_cannot_manage_current_owner():
     _require_context()
+    updated_name = f"API Real Organization Updated {uuid.uuid4().hex[:8]}"
     with _client(MEMBER_TOKEN) as new_owner_client:
         updated = new_owner_client.patch(
             f"/organizations/{ORGANIZATION_ID}",
-            json={"name": "API Real Organization Updated"},
+            json={"name": updated_name},
         )
         assert updated.status_code == 200, updated.text
 
