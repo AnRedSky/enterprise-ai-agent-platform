@@ -72,6 +72,23 @@ def _assert_model_exists(base_url: str, model: str) -> None:
         )
 
 
+def _assert_storage_dimension(dimensions: tuple[int, int]) -> None:
+    expected = int(settings.embedding_dimension)
+    incompatible = [
+        (model, dimension)
+        for model, dimension in zip(("profile_a", "profile_b"), dimensions, strict=True)
+        if dimension != expected
+    ]
+    if incompatible:
+        details = ", ".join(f"{profile}={dimension}" for profile, dimension in incompatible)
+        raise SystemExit(
+            "governed evaluation smoke preflight rejected the selected Embedding Profile dimensions: "
+            f"{details}; pgvector storage contract requires dimension={expected}. "
+            "No temporary Provider/Profile fixture or vector write was created. "
+            "Use an already-installed embedding model with the configured storage dimension."
+        )
+
+
 async def _create_fixture(model_a: str, model_b: str, dimensions: tuple[int, int], endpoint: str) -> tuple[str, str, str]:
     async with SessionLocal() as db:
         user = (await db.execute(select(User).order_by(User.id))).scalars().first()
@@ -177,6 +194,7 @@ def main() -> int:
     _assert_model_exists(args.ollama_base_url, args.profile_a_model)
     _assert_model_exists(args.ollama_base_url, args.profile_b_model)
     dimensions = asyncio.run(_model_dimensions(args.ollama_base_url, (args.profile_a_model, args.profile_b_model)))
+    _assert_storage_dimension(dimensions)
 
     provider_id = profile_a = profile_b = None
     with tempfile.TemporaryDirectory(prefix="governed-eval-") as tmp:

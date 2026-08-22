@@ -80,10 +80,13 @@ Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=
 - `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py` 使用本地已安装 Ollama 模型创建临时 governed Embedding Profiles，自动获取实际 dimension，执行 Profile A baseline freeze 与 Profile B identity regression 验证；测试不会下载模型并在结束时清理临时治理数据。
 - Governed evaluation smoke 的 dimension probe 已改为复用生产 `OllamaEmbeddingProvider`，不再在 smoke 脚本内维护第二套 Ollama embedding HTTP 协议；新增 unit test 覆盖该适配器复用。
 - Retrieval evaluation fixture cleanup 已增加显式 transaction rollback，避免 pgvector 写入失败后 cleanup 再次使用 aborted transaction，掩盖原始错误。
+- Governed evaluation smoke 已增加 storage-dimension preflight：在创建临时 Provider/Profile fixture 前，拒绝任何与当前 `settings.embedding_dimension` pgvector contract 不一致的实际模型维度，避免再次进入 `knowledge_chunks` 写入失败路径。
 
 ## 当前待验证 / 阻塞
 
 本轮已实际发现：`nomic-embed-text:latest` 为 768 维，而当前本地另一个可用 Embedding 模型 `qwen3-embedding:0.6b` 的实际维度与当前 pgvector dimension contract 不一致。原 smoke 因此在 `knowledge_chunks` 写入后进入 `InFailedSQLTransactionError`；该错误已经记录在 `docs/04-errors/2026-08-22-phase-2-2-e-governed-evaluation-pgvector-dimension-transaction.md`，并已修复 cleanup 的 transaction masking。
+
+本轮修复后，dimension mismatch 应在 fixture 创建前直接失败，并明确报告 Profile dimension 与 pgvector storage contract，不再产生 vector write、aborted transaction 或 Windows event-loop cleanup 噪声。
 
 因此以下仍不得标记为 Passed：
 
@@ -92,15 +95,14 @@ Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=
 3. E-2 Real API evidence 闭环。
 4. E-2 完成后进入 2.2-E-3 Frontend Provider/Profile Management。
 
-当前本地资源约束下禁止下载新模型；必须使用已安装模型验证。如果没有第二个兼容 dimension 的模型，应先完成 dimension governance/preflight，而不是通过修改 baseline、截断向量或下载模型强行通过。
+当前本地资源约束下禁止下载新模型；必须使用已安装模型验证。如果没有第二个兼容 dimension 的模型，应继续保持为环境能力阻塞，而不是通过修改 baseline、截断向量或下载模型强行通过。
 
 ## 下一步
 
-1. 在当前本地环境重新执行 API contract + migration/head + Backend Gate + Real API Gate，确认 cleanup 修复不产生回归。
-2. 执行 governed smoke；若第二个模型 dimension 与 pgvector contract 不一致，应得到明确、可定位的 dimension contract 错误，而不再出现 `InFailedSQLTransactionError` / event-loop cleanup 噪声。
-3. 完成 governed Embedding Profile dimension preflight：Profile dimension 必须与当前 pgvector storage contract 一致后才能进入 fixture / vector write。
-4. 只有存在第二个兼容 dimension 的已安装模型后，才执行 Profile A baseline freeze → Profile B identity regression 正向 evidence。
-5. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
+1. 在当前本地环境重新执行 API contract + migration/head + Backend Gate + Real API Gate，确认 cleanup 修复不产生回归；其中 Real API 单次 `httpx.ReadError/WinError 10054` 需要完整 gate 重跑确认是否为环境瞬时连接中断，不能直接修改业务测试以掩盖。
+2. 执行 governed smoke；使用当前 `nomic-embed-text:latest` + `qwen3-embedding:0.6b` 时应在 fixture 创建前得到明确 dimension contract blocker。
+3. 只有存在第二个兼容 dimension 的已安装模型后，才执行 Profile A baseline freeze → Profile B identity regression 正向 evidence。
+4. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
 
 ## 开发纪律
 
