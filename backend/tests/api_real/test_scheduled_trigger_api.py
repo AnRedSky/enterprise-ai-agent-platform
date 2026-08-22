@@ -78,9 +78,10 @@ def _wait_for_scheduled_execution(
     timeout_seconds: float = 15.0,
 ) -> list[dict]:
     deadline = time.monotonic() + timeout_seconds
+    terminal_states = {"completed", "failed", "cancelled"}
     while time.monotonic() < deadline:
         rows = _run_async(loop, _execution_rows(idempotency_key))
-        if rows:
+        if rows and all(row["status"] in terminal_states for row in rows):
             return rows
         time.sleep(1.0)
     return _run_async(loop, _execution_rows(idempotency_key))
@@ -193,8 +194,8 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
                 now, config["interval_seconds"]
             )
             assert rows[0]["input_data"]["recovery"] is False
-            # The scheduler must serialize the same slot across workers: one
-            # worker creates the durable execution and the other observes it.
+            # This test intentionally uses a one-slot recovery window so both workers
+            # contend for exactly the same durable scheduled slot.
             assert sum(item["dispatched"] for item in counters) == 1
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
@@ -232,11 +233,6 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
             recovery_rows = _wait_for_scheduled_execution(scheduler_event_loop, recovery_key)
             current_rows = _wait_for_scheduled_execution(scheduler_event_loop, current_key)
 
-            # tick_once intentionally evaluates every enabled scheduled trigger in
-            # the tenant. Other real-API fixtures/background-created triggers may be
-            # eligible at the same time, so global recovered/dispatched counters are
-            # not a per-trigger assertion. The persistence contract is asserted using
-            # this test's deterministic idempotency keys below.
             assert counters["recovered"] >= 1, counters
             assert len(recovery_rows) == 1, recovery_rows
             assert len(current_rows) == 1, current_rows
@@ -251,8 +247,6 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
                 "recovery": False,
             }
 
-            # A scheduler restart/re-poll over the same historical window must
-            # reuse the persisted idempotency boundary rather than create new rows.
             restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
             second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))
             assert second_counters["dispatched"] == 0, second_counters

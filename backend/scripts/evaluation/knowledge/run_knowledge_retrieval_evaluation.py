@@ -77,7 +77,7 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
         INSERT INTO knowledge_document_versions
             (id, document_id, version, status, ingestion_status, vector_index_status, created_by, created_at)
         VALUES
-            (:id, :doc, 'evaluation', 'published', 'completed', 'processing', :user, CURRENT_TIMESTAMP)
+            (:id, :doc, 'evaluation', 'ready', 'ready', 'processing', :user, CURRENT_TIMESTAMP)
     """), {"id": str(VERSION_ID), "doc": str(DOC_ID), "user": str(user_id)})
     for index, row in enumerate(rows):
         chunk_id = actual_chunk_id(row["chunk_id"])

@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者本地实际验证；本提交把真实 Provider runner 接入生产 Vector Retrieval Service，并形成真实 citation evidence bridge；最终 Debug/Audit/Observability 持久化追踪仍待完成。**
+> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者此前本地实际验证；最新 main 的 Scheduled Trigger Real API 与 Real Provider runner 暴露新的回归问题，本轮已修复但尚未重新验证。**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -22,7 +22,7 @@
 - [x] baseline 与 regression comparison 规则冻结。
 - [x] failure / fallback semantics 冻结。
 
-### B. Evaluation Dataset / Runner — **本地 Gate 已通过**
+### B. Evaluation Dataset / Runner — **待重新验证**
 
 - [x] Dataset Loader 对当前 JSONL 执行结构、ID、query、relevant chunk 校验。
 - [x] Dataset 支持 `expected_citation_targets`，并要求其属于 `relevant_chunk_ids`。
@@ -31,9 +31,9 @@
 - [x] Recall@K / Precision@K / MRR / error rate / latency 自动化计算接入现有 evaluation service。
 - [x] Citation correctness Contract 与单元测试已实现；观察结果现在可显式携带真实 runtime citation targets。
 - [x] 失败 case 可通过 case detail 定位。
-- [x] 开发者本地 unit / runner Gate 已实际执行并记录结果。
+- [ ] 最新 main fixture hydration 修复后的真实 runner 尚未由开发者本地重新执行。
 
-### C. Real Provider Quality Gate — **本地 Gate 已通过（基线沿用真实 Provider）**
+### C. Real Provider Quality Gate — **待重新验证**
 
 - [x] 使用真实 Embedding Provider 的 runner 已实现并实际执行。
 - [x] 使用真实 PostgreSQL / pgvector Retrieval 链路。
@@ -42,32 +42,19 @@
 - [x] Mock 结果不作为真实质量证据。
 - [x] Provider / model / dimension / dataset / retrieval mode / top-k identity 纳入 baseline。
 - [x] 首次真实运行使用 `--freeze-baseline` 冻结真实 baseline。
-- [x] 使用冻结 baseline 重跑并确认 regression Gate。
-- [x] 本提交将 real-provider runner 的查询阶段改为调用 `VectorKnowledgeRetrievalService`，而不是直接以底层 pgvector ranking 作为最终 citation 结果。
+- [x] 使用冻结 baseline 重跑并确认 regression Gate（此前验证；本轮修复后需重新执行）。
+- [ ] 最新 main fixture hydration 修复后的 Real Provider Gate 尚未重新执行。
 
-既有本地真实 Provider 证据：
+既有冻结 baseline：
 
 ```text
 provider=ollama
 model=nomic-embed-text:latest
 embedding_dimension=768
 cases=5
-successful_cases=5
-error_cases=0
-error_rate=0
 recall@3=0.6
 precision@3=0.333333
 mrr=0.6
-```
-
-重跑 regression：
-
-```text
-baseline.status=checked
-identity_changed=false
-metric deltas: recall=0, precision=0, mrr=0
-provider_error_rate=0
-quality_gate=passed
 ```
 
 ### D. Regression / Traceability — **部分完成**
@@ -78,29 +65,32 @@ quality_gate=passed
 - [x] Provider error rate 纳入 regression report。
 - [x] Citation correctness Contract、expected citation targets 与错误场景单元测试已实现。
 - [x] `RetrievalEvaluationObservation` 可显式记录 runtime `cited_chunk_ids`，聚合器据此计算 citation correctness。
-- [x] Real-provider runner 通过 `VectorKnowledgeRetrievalService` 取得带 `citation/source_document/source_uri/relevance_score` 的真实检索结果，并将其映射回 evaluation chunk id。
-- [x] 评测结果带 `evaluation_run_id`、provider/model/dimension/dataset/retrieval mode/top-k/citation source identity，便于 Debug / Audit / Observability 后续关联。
+- [x] Real-provider runner 通过 `VectorKnowledgeRetrievalService` 取得真实 citation/source metadata。
+- [x] 评测结果带 `evaluation_run_id`、provider/model/dimension/dataset/retrieval mode/top-k/citation source identity。
 - [ ] 评测结果持久化接入现有 Retrieval Debug / Audit / Observability 查询模型。
 
-## 3. 2.2-C 当前结论
+## 3. 最新 main 失败证据与修复
 
-2.2-C Real Provider Quality Gate 已由开发者本地实际完成。Ollama `nomic-embed-text:latest` 返回 768 维 embedding，5/5 evaluation cases 成功写入并从 PostgreSQL/pgvector 检索，error_rate=0、fallback=0。真实 baseline 已冻结并随后成功完成 regression check。
+### Scheduled Trigger Real API
 
-当前 baseline 的 Recall@3=0.6、Precision@3=0.333333、MRR=0.6 是真实、可重复的回归基线，不应被表述为绝对质量达标。当前没有依据在本地人为设置更高绝对门槛，也不得通过修改指标或 fallback 掩盖该结果。
+开发者最新反馈为 28 passed / 2 failed：
 
-此前 Ollama 503、slow runner startup 与本地环境代理导致的请求失败均已完成分析和修复，相关工程错误已记录。
+- execution row 已创建，但测试在 `pending` 中间态立即断言 `completed`；
+- 双 worker test 默认使用 `recovery_slots=2`，把 current 与 recovery dispatch 一起计数。
+
+修复后测试 helper 等待 terminal state，双 worker test 使用 `recovery_slots=1` 仅验证同一 slot。
+
+### Real Provider Retrieval
+
+开发者最新反馈为 5/5 provider calls 成功，但正式 Runtime Retrieval hydration 后 `retrieved_chunk_ids=[]`，Recall@3=0、MRR=0、provider error rate=0。根因为 evaluation fixture 写入的 document-version 状态与 Runtime Retrieval 的 `ready` contract 不一致。
+
+修复后 fixture 使用 `status='ready'`、`ingestion_status='ready'`，vector index 在写入 pgvector 后由 runner 设置为 `ready`。本轮尚未由开发者重新执行验证。
 
 ## 4. 2.2-D 当前结论
 
-本提交完成 Citation correctness 的真实 Runtime evidence bridge：评测 runner 继续使用真实 Ollama embedding 和 PostgreSQL/pgvector，但查询阶段通过 `VectorKnowledgeRetrievalService` 走与业务 API 相同的 provider selection、向量检索、权限 hydration 和 citation 构造路径。`cited_chunk_ids` 不再默认等同于底层 ranking，实际 citation 字段来自 runtime retrieval result。
+真实 Runtime citation evidence bridge 已完成，但完整 Traceability Gate 仍未完成。下一独立开发任务是把 evaluation run / case / regression result 持久化到现有 Retrieval Debug / Audit / Observability 查询模型；必须在本轮 Gate 恢复后继续。
 
-同时，Vector Retrieval Runtime 现在正式支持 `EMBEDDING_PROVIDER=ollama`，与真实 Provider Gate 使用的 provider 保持一致；仍保留 explicit lexical fallback，不因 provider 失败静默降级。
-
-当前尚未完成的是把 evaluation result 持久化接入线上 Retrieval Debug / Audit / Observability 查询模型。因此本阶段仍不能宣称完整 Traceability Gate Passed。
-
-## 5. 本轮代码变更后的本地验证
-
-请在同步最新 `main` 后执行：
+## 5. 本轮修复后的本地验证流程
 
 ```powershell
 cd backend
@@ -110,4 +100,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_ba
 uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py --k 3
 ```
 
-若 baseline 已存在，runner 应直接进入 `baseline.status=checked`；只有在确认 dataset/provider identity 发生合法变化并需要建立新 baseline 时，才执行一次 `--freeze-baseline`。真实 Provider / 数据库联调必须在开发者本地完成；未实际执行的结果不得写成 Passed。
+如 baseline 已存在，runner 必须保持 `baseline.status=checked`；不得因为本次修复而执行 `--freeze-baseline`。只有明确发生合法 Provider/model/dataset/retrieval identity 变化时才重新冻结 baseline。

@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D baseline regression 已完成当前交付范围；Citation correctness Contract 已实现，真实 Runtime citation 与 Debug/Audit/Observability traceability 仍在推进**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D baseline regression 已完成既有交付范围；最新 main 的 Scheduled Trigger Real API 与 Real Provider runner 暴露回归问题，本轮已完成代码修复，待本地 Gate 重新验证；Citation correctness Contract 已实现，真实 Runtime citation 与 Debug/Audit/Observability traceability 仍在推进**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -10,46 +10,13 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 2.2-A 已形成真实 Provider、Dataset、Recall@K、Precision@K、MRR、Citation correctness、latency、provider error rate、regression identity 与 failure/fallback 的质量契约。
 
-2.2-B 已完成 Dataset Loader 与 PostgreSQL/pgvector evaluation runner，并由开发者本地 Gate 验证。
+2.2-B 已完成 Dataset Loader 与 PostgreSQL/pgvector evaluation runner。最新 main 暴露 evaluation fixture 与 Runtime hydration contract 不一致问题，已修复，待重新本地验证。
 
-2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate：
-
-```text
-provider=ollama
-model=nomic-embed-text:latest
-embedding_dimension=768
-retrieval_mode=real-provider-pgvector
-top_k=3
-cases=5
-successful_cases=5
-error_cases=0
-error_rate=0.0
-fallback_count=0
-fallback_used=false
-recall@3=0.6
-precision@3=0.333333
-mrr=0.6
-```
-
-首次真实运行冻结 baseline，随后 regression check：
-
-```text
-baseline.status=checked
-identity_changed=false
-recall delta=0
-precision delta=0
-mrr delta=0
-provider_error_rate=0
-quality_gate=passed
-```
+2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate，并冻结真实 baseline；最新 main 的 runtime bridge 重跑曾因 fixture hydration 状态不一致得到 0 recall / 0 MRR，本轮已修复 fixture 生命周期。
 
 当前 baseline 仅代表真实 Provider / Dataset / Retrieval 配置的可重复回归基线，不代表绝对语义质量已达生产目标。禁止通过修改指标、fallback、截断或补零提高结果。
 
-2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison。
-
-本轮继续推进 Citation correctness：评测 Dataset 已显式加入 `expected_citation_targets`，Loader 强制其属于 `relevant_chunk_ids`，evaluation service 已提供 citation correctness Contract 与异常场景单元测试。该 Contract 的语义是：citation target 必须同时出现在实际 retrieval ranking 且属于 expected citation targets。
-
-**注意：该 Contract 尚不能替代真实 Runtime 最终 citation 的自动化 Gate。下一步必须把真实 Retrieval / Runtime 输出的 citation target 接入此 Contract，并继续建立 Debug / Audit / Observability traceability。**
+2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。
 
 ## 3. 现有 Phase 1.4 能力边界
 

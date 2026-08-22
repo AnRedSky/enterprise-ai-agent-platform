@@ -6,61 +6,52 @@
 - Branch: `main`
 - Phase 2.2 Retrieval Production Quality：进行中。
 - 2.2-A Contract：已形成。
-- 2.2-B Dataset / Runner：已通过本地 Gate。
-- 2.2-C Real Provider Quality Gate：已通过本地真实 Provider Gate，并已冻结 baseline。
-- 2.2-D Retrieval Quality Regression：回归比较已通过；Citation correctness 的真实 Runtime evidence bridge 已实现，当前继续推进 Retrieval Debug / Audit / Observability 持久化追踪。
+- 2.2-B Dataset / Runner：代码修复完成；此前本地 Gate 已通过，但最新 main 上真实 Runtime hydration contract 暴露 fixture 状态不一致问题，本轮修复后需重新执行。
+- 2.2-C Real Provider Quality Gate：baseline 已冻结；最新 main 的 runner 曾因 fixture hydration 状态不一致出现 Recall@3=0 / MRR=0，本轮已修复但尚未重新由开发者本地验证。
+- 2.2-D Retrieval Quality Regression：citation correctness 的真实 Runtime evidence bridge 已实现；当前继续推进 Retrieval Debug / Audit / Observability 持久化追踪。
 
 ## 本轮实际验证基线
 
 ```text
-Ollama embedding smoke: PASS
+Ollama embedding smoke: PASS（开发者此前实际执行）
   provider=ollama
   model=nomic-embed-text:latest
   dimension=768
   vector_count=1
 
-Backend regression: 301 passed, 30 deselected
+此前最新 main Gate 反馈：
+Backend default regression: 308 passed, 30 deselected
 Migration head: 0024_embedding_dimension_contract
-Real HTTP API: 30 passed
+Real HTTP API: 28 passed, 2 failed
+  - scheduled execution was observed in pending state before terminal completion
+  - two-worker scheduled test counted current + recovery dispatches together
 
-2.2-C real-provider-pgvector:
+此前最新 main Real Provider runner：
+  provider=ollama
+  model=nomic-embed-text:latest
+  embedding_dimension=768
   cases=5
-  successful_cases=5
-  error_cases=0
-  error_rate=0
-  fallback_count=0
-  fallback_used=false
-  recall@3=0.6
-  precision@3=0.333333
-  mrr=0.6
-  quality_gate=passed
-
-2.2-D baseline regression:
-  identity_changed=false
-  recall delta=0
-  precision delta=0
-  mrr delta=0
   provider_error_rate=0
-  quality_gate=passed
+  recall@3=0.0
+  precision@3=0.0
+  mrr=0.0
+  quality_gate=failed
+
+修复后的结果尚未由开发者本地实际执行，不得标记为 Passed。
 ```
 
-上述测试结果来自开发者此前实际执行反馈。本提交后的代码变更尚未由本次远程操作环境执行本地测试，因此不得把本提交后的结果标记为 Passed。
+此前冻结的真实 baseline 仍为：Recall@3=0.6、Precision@3=0.333333、MRR=0.6。该 baseline 不得因本次 fixture 修复而重写；修复后应验证当前结果是否恢复到 baseline contract。
 
-真实 Provider 使用本地 Ollama `nomic-embed-text:latest`，实际维度为 768；评测真实写入 PostgreSQL/pgvector，未使用 fallback。首次 `--freeze-baseline` 已由开发者本地实际执行，随后再次执行 runner，baseline status=checked 且 regression Gate=passed。
+## 本轮修复单元
 
-当前真实 baseline 的语义质量为 Recall@3=0.6、Precision@3=0.333333、MRR=0.6。这组数据是当前 Provider / model / dataset / retrieval-mode 的回归基线，不应被表述为绝对质量达标，也不得通过修改指标、fallback、截断或补零人为提高结果。
-
-## 本轮交付单元
-
-1. `VectorKnowledgeRetrievalService` 正式支持 Ollama real provider，与真实质量 Gate 使用的 provider 保持一致。
-2. Real Provider retrieval evaluation runner 的查询阶段改走业务 `VectorKnowledgeRetrievalService`，不再只把底层 pgvector ranking 当作最终 citation。
-3. `RetrievalEvaluationObservation` 增加可选 `cited_chunk_ids`，聚合器据真实 runtime citation targets 计算 citation correctness。
-4. Evaluation case report 记录 `evaluation_run_id`、citation source、runtime citation 文本及 source metadata，形成 Debug / Audit / Observability 后续关联所需的稳定身份。
-5. Acceptance 文档同步记录：真实 citation evidence bridge 已完成，但评测结果持久化接入 Debug / Audit / Observability 尚未完成。
+1. Scheduled Trigger Real API test 等待 execution terminal state，消除 durable claim 与 runtime completion 之间的时序竞态。
+2. Scheduled Trigger 双 worker convergence test 显式限制为一个 slot，避免把 recovery dispatch 混入单 slot idempotency 断言。
+3. Retrieval evaluation fixture 改为使用正式 Runtime Retrieval 所要求的 `ready` document-version / ingestion 状态，再由 runner 将 vector index 状态推进到 `ready`。
+4. 工程错误记录新增 `ERR-0021`，保留本轮真实失败证据与修复边界。
 
 ## 下一步
 
-1. 继续 Phase 2.2-D：把 evaluation run / case / provider / dataset / regression result 接入现有 Retrieval Debug / Audit / Observability 查询模型。
-2. 保持 Backend / Frontend / Browser Gate 独立。
-3. 对 Provider / model / dimension / dataset / retrieval mode / top-k 的变化继续执行 baseline regression。
-4. 当前 baseline 质量较低但稳定；在没有新的真实数据或明确质量目标前，不人为抬高绝对阈值，也不重写 baseline 来掩盖现状。
+1. 先由开发者本地重新执行 Backend default regression、Migration/head、Real HTTP API 与 Real Provider Quality Gate，确认本轮修复真实恢复。
+2. Gate 恢复后继续 Phase 2.2-D：把 evaluation run / case / provider / dataset / regression result 接入现有 Retrieval Debug / Audit / Observability 查询模型。
+3. 保持 Backend / Frontend / Browser Gate 独立；未实际执行的 Gate 不得标记 Passed。
+4. Provider / model / dimension / dataset / retrieval mode / top-k 变化继续执行 baseline regression；禁止通过修改 baseline 掩盖回归。
