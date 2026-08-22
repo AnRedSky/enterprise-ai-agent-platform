@@ -23,6 +23,7 @@ from app.dependencies.db import SessionLocal
 from app.models.core import User
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
+from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
 
 RUNNER = BACKEND_ROOT / "scripts" / "evaluation" / "knowledge" / "run_knowledge_retrieval_real_provider.py"
 
@@ -39,12 +40,26 @@ def _ollama_json(base_url: str, path: str, payload: dict | None = None) -> dict:
         raise SystemExit(f"Ollama provider is not reachable at {base_url}: {exc}") from exc
 
 
-def _model_dimension(base_url: str, model: str) -> int:
-    result = _ollama_json(base_url, "/api/embed", {"model": model, "input": "governed evaluation smoke test"})
-    embeddings = result.get("embeddings")
-    if not embeddings or not embeddings[0]:
+async def _model_dimension(base_url: str, model: str) -> int:
+    """Probe dimensions through the production Ollama adapter, not a second HTTP contract."""
+    provider = OllamaEmbeddingProvider(
+        base_url=base_url,
+        model=model,
+        timeout_seconds=settings.embedding_timeout_seconds,
+    )
+    try:
+        vectors = await provider.embed(["governed evaluation smoke test"])
+    except Exception as exc:
+        raise SystemExit(
+            f"Ollama model {model!r} failed the production embedding adapter probe at {base_url}: {exc}"
+        ) from exc
+    if not vectors or not vectors[0]:
         raise SystemExit(f"Ollama did not return an embedding for existing model {model}")
-    return len(embeddings[0])
+    return len(vectors[0])
+
+
+async def _model_dimensions(base_url: str, models: tuple[str, str]) -> tuple[int, int]:
+    return await asyncio.gather(*(_model_dimension(base_url, model) for model in models))
 
 
 def _assert_model_exists(base_url: str, model: str) -> None:
@@ -57,7 +72,7 @@ def _assert_model_exists(base_url: str, model: str) -> None:
         )
 
 
-async def _create_fixture(model_a: str, model_b: str, endpoint: str) -> tuple[str, str, str]:
+async def _create_fixture(model_a: str, model_b: str, dimensions: tuple[int, int], endpoint: str) -> tuple[str, str, str]:
     async with SessionLocal() as db:
         user = (await db.execute(select(User).order_by(User.id))).scalars().first()
         if user is None:
@@ -95,7 +110,7 @@ async def _create_fixture(model_a: str, model_b: str, endpoint: str) -> tuple[st
             name=f"embedding-a-{uuid4().hex[:8]}",
             model_type="embedding",
             model_name=model_a,
-            dimension=_model_dimension(endpoint, model_a),
+            dimension=dimensions[0],
             capabilities={},
             parameters={},
             enabled=True,
@@ -106,7 +121,7 @@ async def _create_fixture(model_a: str, model_b: str, endpoint: str) -> tuple[st
             name=f"embedding-b-{uuid4().hex[:8]}",
             model_type="embedding",
             model_name=model_b,
-            dimension=_model_dimension(endpoint, model_b),
+            dimension=dimensions[1],
             capabilities={},
             parameters={},
             enabled=True,
@@ -161,14 +176,15 @@ def main() -> int:
 
     _assert_model_exists(args.ollama_base_url, args.profile_a_model)
     _assert_model_exists(args.ollama_base_url, args.profile_b_model)
-    _model_dimension(args.ollama_base_url, args.profile_a_model)
-    _model_dimension(args.ollama_base_url, args.profile_b_model)
+    dimensions = asyncio.run(_model_dimensions(args.ollama_base_url, (args.profile_a_model, args.profile_b_model)))
 
     provider_id = profile_a = profile_b = None
     with tempfile.TemporaryDirectory(prefix="governed-eval-") as tmp:
         baseline = Path(tmp) / "profile-a-baseline.json"
         try:
-            provider_id, profile_a, profile_b = asyncio.run(_create_fixture(args.profile_a_model, args.profile_b_model, args.ollama_base_url))
+            provider_id, profile_a, profile_b = asyncio.run(
+                _create_fixture(args.profile_a_model, args.profile_b_model, dimensions, args.ollama_base_url)
+            )
             code_a, report_a = _run_runner(profile_a, baseline, freeze=True)
             if code_a != 0 or report_a.get("quality_gate") != "baseline_created":
                 raise SystemExit(f"Profile A baseline freeze failed:\n{json.dumps(report_a, ensure_ascii=False, indent=2)}")
