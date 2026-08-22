@@ -13,14 +13,24 @@ IDENTITY_FIELDS = (
     "dataset_sha256",
     "retrieval_mode",
     "top_k",
+    "model_profile_id",
+    "provider_id",
 )
 
 
-def build_baseline(metadata: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+def _identity(metadata: dict[str, Any]) -> dict[str, Any]:
+    # Governed identity fields are optional for backward-compatible legacy
+    # baselines. Once a profile is selected, its profile/provider IDs become
+    # part of the frozen baseline identity.
     return {
         field: metadata[field]
         for field in IDENTITY_FIELDS
-    } | {
+        if field in metadata and metadata[field] is not None
+    }
+
+
+def build_baseline(metadata: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
+    return _identity(metadata) | {
         "metrics": {
             metric: float(metrics[metric])
             for metric in QUALITY_METRICS
@@ -33,13 +43,14 @@ def build_regression_report(
     metrics: dict[str, Any],
     baseline: dict[str, Any],
 ) -> dict[str, Any]:
+    current_identity = _identity(metadata)
     identity_changes = {
         field: {
             "baseline": baseline.get(field),
-            "current": metadata.get(field),
+            "current": current_identity.get(field),
         }
         for field in IDENTITY_FIELDS
-        if baseline.get(field) != metadata.get(field)
+        if field in current_identity and baseline.get(field) != current_identity[field]
     }
     baseline_metrics = baseline.get("metrics", {})
     current_metrics = {
@@ -75,9 +86,9 @@ def compare_baseline(
     baseline: dict[str, Any],
 ) -> list[str]:
     failures: list[str] = []
-    for field in IDENTITY_FIELDS:
+    current_identity = _identity(metadata)
+    for field, actual in current_identity.items():
         expected = baseline.get(field)
-        actual = metadata.get(field)
         if expected != actual:
             failures.append(f"{field} changed: {actual!r} != baseline {expected!r}")
 
