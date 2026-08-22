@@ -9,8 +9,7 @@
 - 2.2-B Dataset / Runner：已完成既有交付范围，并已有开发者实际执行验证。
 - 2.2-C Real Provider Quality Gate：已通过当前 main 的真实 Provider baseline regression。
 - 2.2-D Retrieval Quality Regression / Traceability：代码、持久化、API contract 与 Real API traceability 已完成当前定义范围，并已有开发者实际验证通过。
-- 评估配置化：已完成 evaluation provider/model/dimension、dataset/fixture/baseline、top-k/min-score 与质量阈值的显式配置能力。
-- 2.2-E Model Provider / Model Profile Governance Foundation：Provider / Profile 数据模型、CRUD API、权限、Audit、Migration 已完成；Runtime Profile Resolution E-1 已实现；Retrieval Evaluation Profile Selection E-2 已实现，当前重点是完成本地真实 Provider evidence 闭环。
+- 2.2-E Model Provider / Model Profile Governance Foundation：Provider / Profile 数据模型、CRUD API、权限、Audit、Migration 已完成；Runtime Profile Resolution E-1 已实现；Retrieval Evaluation Profile Selection E-2 已实现，当前进行 cross-dimension Evaluation Vector Space 修正后的本地 Real Provider evidence 闭环。
 
 ## 当前 main 基线
 
@@ -18,123 +17,68 @@
 
 ## 已验证基线
 
-以下结果为此前开发者实际执行反馈，未将其错误标记为本轮 E-1/E-2 新增代码已重新执行：
+此前开发者实际执行结果：
 
 ```text
-API contract: 10 passed
-Unit retrieval evaluation baseline: 8 passed
-Backend regression gate:
-  Backend regression: 318 passed, 31 deselected
-  Migration head: 0026_model_profile_runtime_identity
-  Real HTTP API: 31 passed
-  Backend regression gate: passed
-Real Provider runner:
-  provider=ollama
-  model=nomic-embed-text:latest
-  embedding_dimension=768
-  cases=5
-  provider_error_rate=0
-  recall@3=0.6
-  precision@3=0.333333
-  mrr=0.6
-  citation_correctness=0.333333
-  quality_gate=passed
+Governed embedding profile targeted tests: 10 passed
+Backend regression gate: 320 passed, 31 deselected
+Migration head: 0026_model_profile_runtime_identity
+Real HTTP API: 31 passed
+Standalone Real API Gate: 31 passed
 ```
 
-Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=0.333333、MRR=0.6，identity 未发生变化，provider error rate=0%。
+上述结果证明本轮 dimension preflight 修复前后的基础 Backend / Real API regression 均稳定；本次 cross-dimension 修复仍需开发者重新执行 Gate，不能把此前结果标记为本轮代码已验证。
 
-## 本轮开发者实际验证
+## 本轮问题结论
 
-基于远端 `main` 最新提交 `e1bcd3903025621b0ea8e059440512d3feafc3fe`，开发者本地实际执行：
+此前 `settings.embedding_dimension=768` 被错误地同时当成生产 `knowledge_chunks` storage contract 和所有 Evaluation Profile 的合法维度上限，导致真实 1024 维 Embedding Profile 在 fixture 写入前被拒绝。
+
+正确 Contract：
 
 ```text
-Governed embedding profile targeted tests:
-  10 passed in 0.88s
+Production Vector Space
+  knowledge_chunks.embedding -> fixed configured production dimension (current 768)
 
-Backend Regression Gate:
-  Backend regression: 320 passed, 31 deselected in 31.29s
-  Migration head: 0026_model_profile_runtime_identity
-  Real HTTP API: 31 passed in 51.75s
-  Backend Regression Gate: passed
-
-Standalone Real API Gate:
-  31 passed in 50.96s
-  Real API Gate: passed
-
-Governed Embedding Profile Smoke:
-  profile_a=nomic-embed-text:latest
-  profile_a_dimension=768
-  profile_b=qwen3-embedding:0.6b
-  profile_b_dimension=1024
-  pgvector storage dimension=768
-  result=expected preflight blocker
+Evaluation Vector Space
+  retrieval_evaluation_vectors.embedding -> variable pgvector vector
+  + embedding_dimension -> actual governed Profile dimension
+  + knowledge_base_id -> evaluation scope
 ```
 
-本轮 `httpx.ReadError / WinError 10054` 在后续完整 Backend Gate / Standalone Real API Gate 重跑中未复现，因此不再作为当前业务缺陷记录；不得通过修改 Real API 测试掩盖该类环境瞬时连接中断。
+因此不同 Embedding Profile 不要求相同 dimension；每个 Profile 仍必须严格匹配自己的实际 embedding dimension，并在 Evaluation Vector Space 内按 dimension 隔离。生产向量表不修改、不降维、不截断。
 
-Governed smoke 的 dimension preflight 已按预期在创建临时 Provider/Profile fixture 前拒绝 `1024 != 768`，没有产生 vector write、aborted transaction 或 cleanup event-loop 噪声。
+## 本轮实现
 
-## 当前 2.2-E 目标
+- 新增 Migration `0027_retrieval_evaluation_vector_space`。
+- 新增 `retrieval_evaluation_vectors`，使用 pgvector variable-dimension `vector`，并保存 `embedding_dimension`。
+- `PgVectorRetrievalProvider` 对 evaluation record 识别 `evaluation_chunk_id`，将其写入独立 Evaluation Vector Space；搜索按 `knowledge_base_id + embedding_dimension` 隔离。
+- 生产 `knowledge_chunks` 仍保持原 fixed-dimension contract。
+- Evaluation provider 仍严格校验实际 embedding length 与当前 governed Profile dimension 一致；不允许通过截断、padding 或修改 baseline 绕过 mismatch。
+- Governed smoke 不再把全局 768 storage dimension 当作两个 Profile 的共同 dimension；仅拒绝非正 dimension。
+- 增加 cross-dimension unit tests，覆盖 1024 维 evaluation upsert/search 以及 768/1024 Profile smoke contract。
+- Evaluation fixture prepare/cleanup 显式清理 Evaluation Vector Space。
+- 更新 Phase 2.2-E Contract，明确 E-2 的 cross-dimension storage boundary。
 
-1. Provider 与实际供应商身份解耦：`provider_type` 表示技术适配器，`provider_name` 表示实际供应商/部署身份。
-2. Model Profile 支持 `chat` / `embedding` 两类模型。
-3. Embedding Profile 必须保存 dimension；Chat Profile 不保存 embedding dimension。
-4. Provider endpoint 可治理；credential 只能保存 reference，不保存实际 Secret。
-5. Provider / Profile 按 Organization scope 管理，写操作要求 owner/admin。
-6. Provider / Profile 变更写入 AuditLog。
-7. Provider 删除前必须确认不存在 Profile。
-8. 同一 Provider + model type 只能有一个 default Profile。
-9. Runtime / Evaluation 使用 `model_profile_id`，并将 identity 固化到 trace / evaluation trace。
-10. 不在本任务提前实现 Reranker、Hybrid、Fallback、Provider routing、成本/用量治理。
+## 当前待验证
 
-详细 Contract：`docs/02-phases/PHASE_2_2_E_MODEL_PROVIDER_PROFILE.md`。
+本轮代码提交后必须由开发者本地实际执行：
 
-## 当前实现
+1. Cross-dimension targeted tests。
+2. Backend Regression Gate。
+3. Migration head verification，确认 `0027_retrieval_evaluation_vector_space`。
+4. Standalone Real API Gate。
+5. Governed E-2 smoke，优先使用已安装的 `nomic-embed-text:latest` + `qwen3-embedding:0.6b` 验证 768 → 1024。
+6. E-2 evidence：Profile / Provider identity、Organization scope、Audit/Trace、credential secret 不泄露。
 
-- `model_providers` / `model_profiles` 数据模型。
-- Migration `0025_model_provider_governance`。
-- Migration `0026_model_profile_runtime_identity`。
-- `/api/v1/model-providers` Provider CRUD。
-- Provider 下 Model Profile CRUD。
-- Organization membership / management authorization。
-- Audit trace metadata。
-- AgentVersion 支持可选 `model_profile_id`。
-- Chat Runtime 解析 Organization-scoped Chat Profile，并将 Provider endpoint / credential reference / model / parameters 交给 Model Gateway。
-- Execution / ExecutionEvent 持久化 `model_profile_id` / `provider_id` identity。
-- 未选择 Profile 时保留原 `model_id` / 环境变量兼容路径。
-- Retrieval Evaluation runner 支持 `--model-profile-id`，按 evaluation actor 的 Organization membership 解析启用的 Embedding Profile。
-- 选定 Embedding Profile 后，evaluation runner 从数据库读取 Provider endpoint、provider_type、provider identity、model_name、dimension 与 parameters；credential_ref 仅作为进程环境变量名解析，不进入 report / trace / audit。
-- Evaluation report 固化 `model_profile_id` / `provider_id` / provider identity；baseline 在选择 governed Profile 时同步冻结 Profile / Provider identity。
-- Legacy baseline 在未选择 governed Profile 时保持兼容，不要求重新冻结既有 baseline。
-- Model Provider OpenAPI contract 测试改为验证语义约束（integer + minimum=1 + nullable），避免绑定 Pydantic union schema 的具体输出顺序。
-- Standalone evaluation trace runner 显式注册 Model Profile / Provider ORM mapper，避免 `Execution.model_profile_id` 在独立脚本上下文中触发 SQLAlchemy metadata 缺失。
-- `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py` 使用本地已安装 Ollama 模型创建临时 governed Embedding Profiles，自动获取实际 dimension，执行 Profile A baseline freeze 与 Profile B identity regression 验证；测试不会下载模型并在结束时清理临时治理数据。
-- Governed evaluation smoke 的 dimension probe 已改为复用生产 `OllamaEmbeddingProvider`，不再在 smoke 脚本内维护第二套 Ollama embedding HTTP 协议；新增 unit test 覆盖该适配器复用。
-- Retrieval evaluation fixture cleanup 已增加显式 transaction rollback，避免 pgvector 写入失败后 cleanup 再次使用 aborted transaction，掩盖原始错误。
-- Governed evaluation smoke 已增加 storage-dimension preflight：在创建临时 Provider/Profile fixture 前，拒绝任何与当前 `settings.embedding_dimension` pgvector contract 不一致的实际模型维度，避免再次进入 `knowledge_chunks` 写入失败路径。
-
-## 当前待验证 / 阻塞
-
-本轮本地实际验证确认：`nomic-embed-text:latest` 为 768 维，而当前另一个已安装 Embedding 模型 `qwen3-embedding:0.6b` 为 1024 维；当前 pgvector storage contract 为 768 维。因此该模型组合不能用于 E-2 Profile A/B 正向 identity regression。
-
-本轮修复后，dimension mismatch 已在 fixture 创建前直接失败，并明确报告 Profile dimension 与 pgvector storage contract，不再产生 vector write、aborted transaction 或 Windows event-loop cleanup 噪声。
-
-因此以下仍不得标记为 Passed：
-
-1. Governed evaluation smoke 的 Profile A/B 正向 identity regression。
-2. 使用两个不同且与当前 pgvector dimension contract 兼容的 Embedding Profiles 完成 Real Provider evaluation。
-3. E-2 Real API evidence 闭环。
-4. E-2 完成后进入 2.2-E-3 Frontend Provider/Profile Management。
-
-当前本地资源约束下禁止下载新模型；必须使用已安装模型验证。如果没有第二个兼容 dimension 的模型，应继续保持为环境能力阻塞，而不是通过修改 baseline、截断向量或下载模型强行通过。
+在上述结果实际反馈前，不标记 E-2 为 Passed，也不进入 E-3。
 
 ## 下一步
 
-1. 保持当前 `e1bcd39` dimension preflight 修复，不再修改业务逻辑以绕过 768 维 pgvector contract。
-2. 在本地找到第二个**已安装且实际输出 768 维**的 Embedding 模型后，执行 Profile A baseline freeze → Profile B identity regression 正向 evidence。
-3. 完成 E-2 Real API evidence：Provider/Profile identity、Organization scope、Audit/Trace、credential secret 不泄露。
-4. E-2 Real API evidence 全部通过后，才进入 2.2-E-3 Frontend Provider/Profile Management。
-5. 进入 E-3 时按 DEVELOPMENT.md 的固定顺序先完成 Backend/API contract 与 Real API 约束确认，再开发 Frontend API Types、Vitest、UI，最后分别执行 Frontend Gate 与独立 Browser E2E Gate。
+1. 开发者执行本轮 cross-dimension targeted tests。
+2. 执行 Backend / Migration / Real API Gate。
+3. 执行 governed Profile A baseline → Profile B identity regression smoke，并确认 768 / 1024 两个 Evaluation Vector Space 不进入生产 `knowledge_chunks`。
+4. E-2 evidence 全部通过后，才进入 2.2-E-3 Frontend Provider/Profile Management。
+5. E-3 继续遵循 DEVELOPMENT.md：Backend/API contract → Frontend API Types/Vitest/UI → Backend/Frontend 独立 Gate → Browser E2E → 文档验收。
 
 ## 开发纪律
 

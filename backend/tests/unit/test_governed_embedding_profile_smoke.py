@@ -25,8 +25,10 @@ async def test_governed_smoke_model_dimension_uses_production_ollama_adapter(mon
     assert calls == [("http://localhost:11434", "nomic-embed-text:latest")]
 
 
-def test_governed_smoke_rejects_profile_dimension_mismatch_before_fixture_creation(monkeypatch):
-    monkeypatch.setattr(smoke.settings, "embedding_dimension", 768)
+def test_governed_smoke_accepts_cross_dimension_profiles():
+    smoke._assert_profile_dimensions((768, 1024))
 
-    with pytest.raises(SystemExit, match="pgvector storage contract requires dimension=768"):
-        smoke._assert_storage_dimension((768, 1024))
+
+def test_governed_smoke_rejects_invalid_profile_dimension():
+    with pytest.raises(SystemExit, match="invalid Embedding Profile dimensions"):
+        smoke._assert_profile_dimensions((768, 0))

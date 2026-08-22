@@ -53,6 +53,11 @@ def quality_gate(metrics: dict[str, float | int], baseline: dict) -> list[str]:
 
 
 async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
+    # Evaluation vectors are isolated from the production fixed-dimension table.
+    await db.execute(
+        text("DELETE FROM retrieval_evaluation_vectors WHERE knowledge_base_id = :kb"),
+        {"kb": str(KB_ID)},
+    )
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
@@ -102,6 +107,10 @@ async def cleanup_fixture(db) -> None:
     # clear that transaction state before issuing cleanup SQL so the original
     # provider/schema error is not masked by InFailedSQLTransactionError.
     await db.rollback()
+    await db.execute(
+        text("DELETE FROM retrieval_evaluation_vectors WHERE knowledge_base_id = :kb"),
+        {"kb": str(KB_ID)},
+    )
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
