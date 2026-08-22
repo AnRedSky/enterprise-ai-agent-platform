@@ -67,3 +67,25 @@ async def test_ollama_embedding_provider_reports_http_error_body() -> None:
             await provider.embed(["first"])
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ollama_embedding_provider_adds_runtime_diagnostic_for_503() -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(503, json={"error": "model runner unavailable"})
+        )
+    )
+    provider = OllamaEmbeddingProvider(
+        base_url="http://localhost:11434",
+        model="nomic-embed-text:latest",
+        client=client,
+    )
+    try:
+        with pytest.raises(
+            EmbeddingProviderError,
+            match="Ollama model 'nomic-embed-text:latest'.*container logs.*resource state",
+        ):
+            await provider.embed(["first"])
+    finally:
+        await client.aclose()

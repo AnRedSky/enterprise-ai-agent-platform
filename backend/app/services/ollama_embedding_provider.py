@@ -50,8 +50,16 @@ class OllamaEmbeddingProvider:
         except (httpx.HTTPError, ValueError) as exc:
             detail = ""
             if isinstance(exc, httpx.HTTPStatusError):
-                detail = f" (HTTP {exc.response.status_code}: {exc.response.text[:300]})"
-            raise EmbeddingProviderError(f"Ollama embedding request failed{detail}") from exc
+                body = exc.response.text[:300].strip()
+                detail = f" (HTTP {exc.response.status_code}: {body})"
+                if exc.response.status_code in {502, 503, 504}:
+                    detail += (
+                        f"; Ollama model '{self.model}' is unavailable at the embedding endpoint; "
+                        "check the Ollama container logs and model runner/resource state"
+                    )
+            raise EmbeddingProviderError(
+                f"Ollama embedding request failed for model '{self.model}'{detail}"
+            ) from exc
         finally:
             if owns_client:
                 await client.aclose()
