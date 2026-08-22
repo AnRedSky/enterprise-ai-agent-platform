@@ -1,6 +1,6 @@
 # Phase 2.1 Acceptance — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API 扩展验证进行中**
+> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F Browser E2E 实施中**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -26,8 +26,7 @@
 - [x] Resource scope authorization 基础边界。
 - [x] AuditLog。
 - [x] Unit / Integration / API Contract tests。
-
-2.1-C Backend API + Contract / Real API Gate 已由用户本地实际结果验证。
+- [x] Real API / PostgreSQL / Redis Gate。
 
 ### C. Database
 
@@ -42,7 +41,6 @@ uv run alembic heads
 实际结果：
 
 ```text
-Running upgrade 0022_workflow_trigger -> 0023_organization_membership
 0023_organization_membership (head)
 ```
 
@@ -52,28 +50,20 @@ Running upgrade 0022_workflow_trigger -> 0023_organization_membership
 
 ### D. Real API
 
-2.1-C 基线 Gate：
+用户最新完整 Gate：
 
 ```text
-23 passed in 37.45s
-[PASS] Real API gate completed.
+30 passed in 47.60s
+[PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-2.1-E 新增 Organization / Membership governance real HTTP suite：
-
-```text
-backend/tests/api_real/test_organization_governance_api.py
-```
-
-- [ ] Organization lifecycle real HTTP regression。
-- [ ] Membership role/status lifecycle real HTTP regression。
-- [ ] 普通成员不能执行管理员操作。
-- [ ] suspended member 无法访问 Organization。
-- [ ] Owner Transfer 单 Owner 不变量。
-- [ ] Transfer 后新 Owner / 原 Owner 权限边界。
-- [ ] Organization AuditLog。
-
-**2.1-E 扩展后的 Gate 尚未由开发者本地重新执行，因此当前保持未通过状态。**
+- [x] Organization lifecycle real HTTP regression。
+- [x] Membership role/status lifecycle real HTTP regression。
+- [x] 普通成员不能执行管理员操作。
+- [x] suspended member 无法访问 Organization。
+- [x] Owner Transfer 单 Owner 不变量。
+- [x] Transfer 后新 Owner / 原 Owner 权限边界。
+- [x] Organization AuditLog。
 
 ### E. Frontend
 
@@ -91,24 +81,47 @@ Production build: passed
 - [x] Frontend Contract tests。
 - [x] production build。
 
-### F. Browser E2E
+### F. Browser E2E — **实施中**
 
-Phase 2.1 需要新增独立 Browser E2E 场景；不得仅依赖现有 Trigger E2E。
+#### F-A 基础设施 — 已实现，待 Gate
 
-- [ ] Admin 管理组织成员完整链路。
-- [ ] Member 权限边界。
+- [x] 独立 Organization Playwright spec。
+- [x] 独立 Phase 2.1-F PowerShell Gate script。
+- [x] 复用 Desktop Chrome project。
+- [x] 使用 `FRONTEND_BASE_URL` / `API_BASE_URL`。
+- [x] 使用随机 fixture，避免固定测试账号和组织状态污染。
+- [ ] 本地 Browser E2E 实际执行。
+
+#### F-B Organization Management — 已实现，待 Gate
+
+- [x] Login → Organization list。
+- [x] 创建 Organization。
+- [x] Organization Detail。
+- [x] 添加成员。
+- [x] member → admin。
+- [x] member active/suspended/recovery。
+- [x] Organization suspend/recovery。
+- [x] Owner Transfer。
+- [x] API 校验单 Owner 不变量。
+- [ ] 浏览器实际执行通过。
+
+#### F-C 后续 Browser Acceptance — 未开始
+
+- [ ] Member UI 权限边界。
 - [ ] Suspended member 阻断。
-- [ ] Owner Transfer。
-- [ ] Audit 可追踪。
+- [ ] Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界。
+- [ ] Audit UI 可追踪。
 
 ## 3. 当前执行顺序
 
 ```text
-2.1-D Frontend Gate 已通过
- → 2.1-E Organization Real API / Regression
- → 根据实际 Gate 修复问题
- → 2.1-F Organization Browser E2E
- → Final Acceptance
+2.1-E Real API Gate 已通过
+ → 2.1-F-A Browser E2E infrastructure
+ → 2.1-F-B Organization Management browser contract
+ → 本地 Browser E2E Gate
+ → 根据实际结果修复
+ → F-C governance browser acceptance
+ → Full regression + final acceptance
 ```
 
 ## 4. Close Conditions
