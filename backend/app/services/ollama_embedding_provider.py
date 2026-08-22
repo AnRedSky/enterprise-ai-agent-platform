@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Sequence
 
 import httpx
@@ -10,6 +11,8 @@ from app.services.embedding_provider import EmbeddingProviderError
 class OllamaEmbeddingProvider:
     """Native Ollama embedding adapter with the same dimension contract."""
 
+    _RETRYABLE_STATUS_CODES = frozenset({502, 503, 504})
+
     def __init__(
         self,
         base_url: str,
@@ -17,6 +20,8 @@ class OllamaEmbeddingProvider:
         timeout_seconds: float = 30.0,
         expected_dimension: int | None = None,
         dimensions: int | None = None,
+        retry_attempts: int = 2,
+        retry_backoff_seconds: float = 0.5,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -24,10 +29,16 @@ class OllamaEmbeddingProvider:
         self.timeout_seconds = timeout_seconds
         self.expected_dimension = expected_dimension
         self.dimensions = dimensions
+        self.retry_attempts = retry_attempts
+        self.retry_backoff_seconds = retry_backoff_seconds
         self.dimension: int | None = expected_dimension
         self._client = client
         if expected_dimension is not None and expected_dimension < 1:
             raise EmbeddingProviderError("embedding dimensions must be greater than zero")
+        if retry_attempts < 0:
+            raise EmbeddingProviderError("embedding retry attempts must not be negative")
+        if retry_backoff_seconds < 0:
+            raise EmbeddingProviderError("embedding retry backoff must not be negative")
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
@@ -44,15 +55,14 @@ class OllamaEmbeddingProvider:
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
         try:
-            response = await client.post(f"{self.base_url}/api/embed", json=payload)
-            response.raise_for_status()
+            response = await self._post_with_retry(client, payload)
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             detail = ""
             if isinstance(exc, httpx.HTTPStatusError):
                 body = exc.response.text[:300].strip()
                 detail = f" (HTTP {exc.response.status_code}: {body})"
-                if exc.response.status_code in {502, 503, 504}:
+                if exc.response.status_code in self._RETRYABLE_STATUS_CODES:
                     detail += (
                         f"; Ollama model '{self.model}' is unavailable at the embedding endpoint; "
                         "check the Ollama container logs and model runner/resource state"
@@ -90,3 +100,25 @@ class OllamaEmbeddingProvider:
             )
         self.dimension = actual_dimension
         return vectors
+
+    async def _post_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, object],
+    ) -> httpx.Response:
+        for attempt in range(self.retry_attempts + 1):
+            try:
+                response = await client.post(f"{self.base_url}/api/embed", json=payload)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in self._RETRYABLE_STATUS_CODES:
+                    raise
+                if attempt >= self.retry_attempts:
+                    raise
+                await asyncio.sleep(self.retry_backoff_seconds * (2**attempt))
+            except httpx.RequestError:
+                if attempt >= self.retry_attempts:
+                    raise
+                await asyncio.sleep(self.retry_backoff_seconds * (2**attempt))
+        raise RuntimeError("unreachable Ollama embedding retry state")

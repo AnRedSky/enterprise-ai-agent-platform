@@ -31,6 +31,33 @@ async def test_ollama_embedding_provider_uses_native_embed_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ollama_embedding_provider_retries_transient_503() -> None:
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(503, json={"error": "model runner unavailable"})
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OllamaEmbeddingProvider(
+        base_url="http://localhost:11434",
+        model="nomic-embed-text:latest",
+        expected_dimension=2,
+        retry_attempts=1,
+        retry_backoff_seconds=0,
+        client=client,
+    )
+    try:
+        assert await provider.embed(["first"]) == [[0.1, 0.2]]
+        assert attempts == 2
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_ollama_embedding_provider_rejects_dimension_mismatch() -> None:
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -79,6 +106,7 @@ async def test_ollama_embedding_provider_adds_runtime_diagnostic_for_503() -> No
     provider = OllamaEmbeddingProvider(
         base_url="http://localhost:11434",
         model="nomic-embed-text:latest",
+        retry_attempts=0,
         client=client,
     )
     try:
@@ -89,3 +117,24 @@ async def test_ollama_embedding_provider_adds_runtime_diagnostic_for_503() -> No
             await provider.embed(["first"])
     finally:
         await client.aclose()
+
+
+@pytest.mark.parametrize(
+    "retry_attempts,retry_backoff_seconds,message",
+    [
+        (-1, 0, "embedding retry attempts must not be negative"),
+        (0, -1, "embedding retry backoff must not be negative"),
+    ],
+)
+def test_ollama_embedding_provider_rejects_invalid_retry_configuration(
+    retry_attempts: int,
+    retry_backoff_seconds: float,
+    message: str,
+) -> None:
+    with pytest.raises(EmbeddingProviderError, match=message):
+        OllamaEmbeddingProvider(
+            base_url="http://localhost:11434",
+            model="nomic-embed-text:latest",
+            retry_attempts=retry_attempts,
+            retry_backoff_seconds=retry_backoff_seconds,
+        )
