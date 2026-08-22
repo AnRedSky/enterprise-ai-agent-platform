@@ -19,10 +19,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.core.config import settings
 from app.dependencies.db import SessionLocal
 from app.services.mock_embedding_provider import MockEmbeddingProvider
-from app.services.retrieval_evaluation import (
-    RetrievalEvaluationObservation,
-    aggregate_observations,
-)
+from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
 from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
 
@@ -61,14 +58,13 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_documents WHERE id = :doc"), {"doc": str(DOC_ID)})
     await db.execute(text("DELETE FROM knowledge_bases WHERE id = :kb"), {"kb": str(KB_ID)})
-
     await db.execute(text("""
         INSERT INTO knowledge_bases
             (id, name, description, owner_id, status, created_at, updated_at)
         VALUES
             (:id, 'Phase 2.2-B Evaluation Fixture',
-             'Ephemeral deterministic retrieval evaluation data',
-             :owner, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+             'Ephemeral deterministic retrieval evaluation data', :owner, 'active',
+             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     """), {"id": str(KB_ID), "owner": str(user_id)})
     await db.execute(text("""
         INSERT INTO knowledge_documents
@@ -93,15 +89,11 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
                  content_hash, token_count, created_at)
             VALUES
                 (:id, :version, :index, :content, 0, :char_end, :hash, :tokens, CURRENT_TIMESTAMP)
-        """), {
-            "id": str(chunk_id), "version": str(VERSION_ID), "index": index,
-            "content": content, "char_end": len(content), "hash": digest,
-            "tokens": len(content.split()),
-        })
-    await db.execute(
-        text("UPDATE knowledge_documents SET current_version_id = :version WHERE id = :doc"),
-        {"version": str(VERSION_ID), "doc": str(DOC_ID)},
-    )
+        """), {"id": str(chunk_id), "version": str(VERSION_ID), "index": index,
+               "content": content, "char_end": len(content), "hash": digest,
+               "tokens": len(content.split())})
+    await db.execute(text("UPDATE knowledge_documents SET current_version_id = :version WHERE id = :doc"),
+                     {"version": str(VERSION_ID), "doc": str(DOC_ID)})
     await db.commit()
 
 
@@ -109,7 +101,7 @@ async def cleanup_fixture(db) -> None:
     await db.execute(text("DELETE FROM knowledge_chunks WHERE knowledge_base_id = :kb"), {"kb": str(KB_ID)})
     await db.execute(text("DELETE FROM knowledge_document_chunks WHERE document_version_id = :version"), {"version": str(VERSION_ID)})
     await db.execute(text("DELETE FROM knowledge_document_versions WHERE id = :version"), {"version": str(VERSION_ID)})
-    await db.execute(text("DELETE FROM knowledge_documents WHERE id = :doc"), {"id": str(DOC_ID)})
+    await db.execute(text("DELETE FROM knowledge_documents WHERE id = :doc"), {"doc": str(DOC_ID)})
     await db.execute(text("DELETE FROM knowledge_bases WHERE id = :kb"), {"kb": str(KB_ID)})
     await db.commit()
 
@@ -136,18 +128,11 @@ async def run(k: int) -> int:
         await prepare_fixture(db, fixtures, owner)
         try:
             fixture_embeddings = await provider.embed([row["content"] for row in fixtures])
-            records = [
-                VectorRecord(
-                    chunk_id=str(actual_chunk_id(row["chunk_id"])),
-                    embedding=tuple(embedding),
-                    metadata={
-                        "knowledge_base_id": str(KB_ID),
-                        "document_version_id": str(VERSION_ID),
-                        "evaluation_chunk_id": row["chunk_id"],
-                    },
-                )
-                for row, embedding in zip(fixtures, fixture_embeddings, strict=True)
-            ]
+            records = [VectorRecord(
+                chunk_id=str(actual_chunk_id(row["chunk_id"])), embedding=tuple(embedding),
+                metadata={"knowledge_base_id": str(KB_ID), "document_version_id": str(VERSION_ID),
+                          "evaluation_chunk_id": row["chunk_id"]},
+            ) for row, embedding in zip(fixtures, fixture_embeddings, strict=True)]
             vector_provider = PgVectorRetrievalProvider(db, settings.embedding_dimension)
             await vector_provider.upsert(records)
 
@@ -159,41 +144,23 @@ async def run(k: int) -> int:
                 error = None
                 ranking: list[str] = []
                 try:
-                    results = await vector_provider.search(
-                        query_embedding,
-                        top_k=k,
-                        min_score=0.0,
-                        knowledge_base_id=str(KB_ID),
-                    )
+                    results = await vector_provider.search(query_embedding, top_k=k, min_score=0.0,
+                                                           knowledge_base_id=str(KB_ID))
                     ranking = [result.metadata.get("evaluation_chunk_id", result.chunk_id) for result in results]
                 except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}"
                 latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                observations.append(RetrievalEvaluationObservation(
-                    retrieved_chunk_ids=tuple(ranking), latency_ms=latency_ms, error=error
-                ))
-                case_reports.append({
-                    "query": case.query,
-                    "relevant_chunk_ids": sorted(case.relevant_chunk_ids),
-                    "retrieved_chunk_ids": ranking,
-                    "latency_ms": latency_ms,
-                    "error": error,
-                })
+                observations.append(RetrievalEvaluationObservation(tuple(ranking), latency_ms, error))
+                case_reports.append({"query": case.query, "relevant_chunk_ids": sorted(case.relevant_chunk_ids),
+                                     "retrieved_chunk_ids": ranking, "latency_ms": latency_ms, "error": error})
 
             metrics = aggregate_observations(dataset.cases, observations, k=k)
-            baseline_all = json.loads(BASELINE.read_text(encoding="utf-8"))
-            baseline = baseline_all.get("mock-pgvector", {})
+            baseline = json.loads(BASELINE.read_text(encoding="utf-8")).get("mock-pgvector", {})
             failures = quality_gate(metrics, baseline)
-            report = {
-                "dataset": {"path": str(dataset.source), "schema_version": dataset.schema_version},
-                "mode": "mock-pgvector",
-                "source": "postgresql/pgvector",
-                "k": k,
-                **metrics,
-                "cases_detail": case_reports,
-                "quality_gate": "failed" if failures else "passed",
-                "failures": failures,
-            }
+            report = {"dataset": {"path": str(dataset.source), "schema_version": dataset.schema_version},
+                      "mode": "mock-pgvector", "source": "postgresql/pgvector", "k": k,
+                      **metrics, "cases_detail": case_reports,
+                      "quality_gate": "failed" if failures else "passed", "failures": failures}
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 1 if failures else 0
         finally:
@@ -201,9 +168,7 @@ async def run(k: int) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Evaluate Knowledge Retrieval directly against PostgreSQL/pgvector using deterministic mock embeddings"
-    )
+    parser = argparse.ArgumentParser(description="Evaluate Knowledge Retrieval directly against PostgreSQL/pgvector using deterministic mock embeddings")
     parser.add_argument("--k", type=int, default=3)
     args = parser.parse_args()
     if args.k < 1:
