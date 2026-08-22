@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.core import Agent
 from app.models.execution import Execution, ExecutionEvent
+from app.models.organization import Organization, OrganizationMembership
 from app.models.workflow import Workflow
 from app.models.workflow_trace import WorkflowTraceEvent
 
@@ -67,8 +68,33 @@ class RuntimeQueryService:
         page, page_size, offset = self._page(page, page_size)
         stmt = select(AuditLog)
         if not is_admin:
+            # Runtime audit visibility historically followed the actor's Agent/Workflow
+            # ownership. Organization governance audit records are scoped differently:
+            # their resource ids point to an Organization or Membership, so an active
+            # organization member must be able to see mutations for organizations they
+            # can access without exposing another organization's audit trail.
+            organization_ids = select(Organization.id).join(
+                OrganizationMembership,
+                OrganizationMembership.organization_id == Organization.id,
+            ).where(
+                OrganizationMembership.user_id == actor_id,
+                OrganizationMembership.status == "active",
+            )
+            membership_ids = select(OrganizationMembership.id).where(
+                OrganizationMembership.user_id == actor_id,
+                OrganizationMembership.status == "active",
+            )
             stmt = stmt.outerjoin(Agent, Agent.id == AuditLog.agent_id).outerjoin(Workflow, Workflow.id == AuditLog.workflow_id)
-            stmt = stmt.where(or_(Agent.owner_id == actor_id, Workflow.owner_id == actor_id))
+            stmt = stmt.where(or_(
+                Agent.owner_id == actor_id,
+                Workflow.owner_id == actor_id,
+                (
+                    AuditLog.resource_type == "organization"
+                ) & AuditLog.resource_id.in_(organization_ids),
+                (
+                    AuditLog.resource_type == "organization_membership"
+                ) & AuditLog.resource_id.in_(membership_ids),
+            ))
         if agent_id:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
         if tool_id:
