@@ -1,5 +1,6 @@
 {
   "provider": "ollama",
+  "provider_name": "local-ollama",
   "model": "nomic-embed-text:latest",
   "embedding_dimension": 768,
   "dataset_version": "1",
