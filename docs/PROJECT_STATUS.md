@@ -6,7 +6,7 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：`b05253a63ddd53c46c7ce147905a26fd1d07d8b2`
+- 当前远端基线：`0b7dcd1d39ee27a79ff774210186e982c10eff87`
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
 - 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项；2.1-A Contract 已完成；2.1-B Domain + Migration 代码已实现，待本地 Gate 验证。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
