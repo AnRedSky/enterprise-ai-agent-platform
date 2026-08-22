@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Evaluation Dataset / Runner 实现完成，待本地 Gate**
+> 状态：**进行中 / 2.2-B Dataset / Runner 已通过本地 Gate；2.2-C Real Provider Quality Gate 已实现，待真实 Provider 本地执行**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -28,7 +28,7 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 ### 2.2-B Evaluation Dataset / Runner
 
-已实现可重复的 Dataset Loader 与本地 runner：
+已实现并已由开发者本地 Gate 验证：
 
 - 读取现有 `backend/evaluation/knowledge_retrieval_dataset.jsonl`。
 - 对 case id、query、relevant chunk IDs、重复 ID、JSON 格式执行严格校验。
@@ -37,9 +37,28 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 - 保留 baseline quality gate，并将 provider error 显式计入失败条件。
 - Fixture 在执行完成后清理，不把评测文件当作线上业务数据源。
 
+本地已验证：
+
+```text
+Dataset Loader: 4 passed
+Retrieval evaluation + Dataset: 10 passed
+Backend regression: 279 passed, 30 deselected
+Migration head: 0023_organization_membership
+Real API: 30 passed
+2.2-B runner --k 3: 5/5 cases successful, error_rate=0, recall@3=1.0, precision@3=0.466667, MRR=0.9, quality_gate=passed
+```
+
 ### 2.2-C Real Provider Quality Gate
 
-使用真实 Embedding Provider、真实 PostgreSQL / pgvector Retrieval 链路执行质量 Gate；Provider error 不得被隐藏或静默 fallback 后计入成功质量。
+已实现真实 Provider Gate runner：
+
+- 使用现有 `OpenAICompatibleEmbeddingProvider`，不使用 Mock Provider。
+- 使用真实 PostgreSQL / pgvector Retrieval。
+- Provider failure 保留为 observation / error，并导致 Gate failure；不静默 fallback。
+- 输出 provider / model / embedding dimension / dataset version / retrieval mode / top-k / latency / error / fallback metadata。
+- 支持显式 `--freeze-baseline` 首次冻结真实 Provider baseline；冻结动作本身不会被标记为质量 Gate Passed。
+- 后续执行必须与已冻结 baseline 比较；provider、model、dimension、dataset、retrieval mode 或 top-k 变化会被识别为 regression identity change。
+- Real baseline 不预置虚假指标，必须由开发者使用真实 Provider 本地执行后冻结。
 
 ### 2.2-D Retrieval Quality Regression
 
