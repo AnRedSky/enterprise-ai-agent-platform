@@ -120,13 +120,26 @@ DEVELOPMENT_GUIDELINES.md
   ↓
 更新引用
   ↓
-删除旧入口
-  ↓
 静态校验
   ↓
-更新 PROJECT_STATUS
+一次性形成文档变更集
   ↓
-提交 main
+更新 PROJECT_STATUS / Phase / Acceptance
+  ↓
+以单个原子提交提交 main
 ```
 
 禁止只根据文件名进行批量重命名。
+
+### 文档变更集规则
+
+同一任务涉及多个文档时，应先完成全部相关文档的评估、修改和交叉引用，再统一提交。典型变更集包括：
+
+- `DEVELOPMENT.md` / `DOCUMENTATION.md` 治理规则调整；
+- 当前 `PROJECT_STATUS.md`；
+- 对应 `PHASE_x_y.md`；
+- 对应 `PHASE_x_y_ACCEPTANCE.md`；
+- 已分析完成的 `04-errors/`；
+- 新 Phase 的计划 / Acceptance 文档。
+
+除非测试反馈、代码修复或新的事实变化确实形成新的工程交付单元，否则不得为上述文档分别创建独立提交。

@@ -94,7 +94,14 @@ cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
-Browser E2E Gate：
+Browser E2E Organization Gate：
+
+```powershell
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\02_run_organization_e2e.ps1
+```
+
+Browser E2E Workflow Trigger Gate：
 
 ```powershell
 cd frontend
@@ -143,6 +150,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 15. 复杂业务规则、降级策略、兼容逻辑和 provider 替换策略必须通过代码注释与设计文档记录设计意图。
 16. **任何已经发生并完成分析的工程错误必须记录到 `docs/04-errors/`。**
 17. Migration 变更必须实际执行 `uv run alembic upgrade head` 验证。
+18. **同一任务产生的多个文档变更原则上必须作为一个原子提交一次性提交；禁止为了记录单个文档修改而连续创建多个仅包含单一文档的中间提交。**
+19. 文档批量提交前应一次性完成 Phase、Acceptance、Project Status、治理规则及错误记录的评估；只有确有独立工程意义的后续事实变化，才允许再次单独提交文档。
+20. 代码与其对应的 Phase/Acceptance/错误记录属于同一交付单元时，应尽量在同一个提交中完成；若测试反馈导致后续修复，则按新的实际修复形成下一原子提交。
 
 ## 6. 分层原则
 

@@ -6,47 +6,41 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 最新产品基线：Phase 2.1-E Real API Gate 已通过；Phase 2.1-F-A / F-B / F-C Browser E2E 已通过；当前进入最终联合验收。
-- 开发原则：所有任务直接基于最新 `main`，禁止把临时分支作为长期开发基线。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E/2.1-F-A/2.1-F-B/2.1-F-C 已完成对应 Gate；当前执行最终联合验收。**
+- 最新产品基线：Phase 2.1 Enterprise Organization & Access Governance 已完成最终联合验收并正式关闭。
+- 开发原则：所有任务直接基于最新 `main`；禁止创建功能分支、临时分支或长期分支。
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已完成 / 正式关闭；当前进入 Phase 2.2 Retrieval Production Quality 的 2.2-A Contract。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
 
-## 2. Phase 2.1 Gate 证据
+## 2. Phase 2.1 最终联合验收证据
 
-### Backend / Migration
-
-```text
-uv run pytest -q
-275 passed, 30 deselected
-
-uv run alembic heads
-0023_organization_membership (head)
-```
-
-### 2.1-D Frontend
+### Frontend Regression / Build
 
 ```text
-Targeted organization tests: 15 passed
-Full Frontend Regression: 67 passed
-Production build: passed
+16 test files passed
+69 tests passed
+Production build passed
+[PASS] Frontend regression gate completed.
 ```
 
-### 2.1-E Real API
+### Backend Regression
 
-用户最新有效完整 Gate：
+```text
+275 passed, 30 deselected in 6.92s
+```
+
+### Real API
 
 ```text
 [1/2] Prepare real API test context
+Real API context prepared: .real_api_context_39ad1c1c1d55
 [2/2] Execute all real HTTP API tests
-30 passed in 47.60s
+30 passed in 39.91s
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
-### 2.1-F Browser E2E
-
-F-A/F-B/F-C 已全部通过。最新用户本地执行：
+### Browser E2E
 
 ```text
 scripts/test/e2e/02_run_organization_e2e.ps1
@@ -57,14 +51,11 @@ npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop
 3 passed (12.8s)
 ```
 
-F-C 本次验证覆盖：
+### Phase 2.1 结论
 
-- Member 浏览器权限边界。
-- suspended member 浏览器阻断。
-- Owner Transfer 后原 Owner / 新 Owner 权限边界。
-- Owner Audit UI 可追踪证据。
+以上证据共同满足 Phase 2.1 Definition of Done：Contract、Migration、Backend、Real API、Frontend、Browser E2E、成员生命周期、权限边界和 Audit 均已验证。
 
-此前 suspended member 场景的 403 UI error contract 已修复，并由上述真实 Browser Gate 验证通过。
+**Phase 2.1 正式关闭。**
 
 ## 3. Phase 状态
 
@@ -78,88 +69,27 @@ F-C 本次验证覆盖：
 | Phase 1.6 | 已完成 / 正式关闭 | Trigger / Frontend / Browser 历史范围 |
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
-| **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A～2.1-E、2.1-F-A/F-B/F-C 已完成；当前执行最终联合验收 |
-| Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
+| Phase 1.9 | 已完成 / 正式关闭 | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
+| **Phase 2.1** | **已完成 / 正式关闭** | Enterprise Organization & Access Governance；A～F-C 全部 Gate 与最终联合验收通过 |
+| **Phase 2.2** | **进行中** | Retrieval Production Quality；当前推进 2.2-A Product / Retrieval Quality Contract |
+| Phase 2.3～2.8 | 路线候选 | Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
-## 4. Phase 2.1 当前任务
+## 4. Phase 2.2 当前任务
 
-### 2.1-A Product / Backend Contract — 已完成
+### 2.2-A Product / Retrieval Quality Contract — **设计中**
 
-已冻结 Organization / Membership / Owner/Admin/Member、迁移兼容、API、Resource Scope 与 Audit 规则。
+产品路线明确 Phase 2.2 的目标是让企业知识问答具备稳定、可量化的真实语义检索质量；进入实现前必须明确 Provider、数据集、Recall / Precision / Citation 指标。当前只进行 Contract、指标、数据集、失败边界和验收设计，不提前引入 Provider 或数据库实现。
 
-### 2.1-B Database Migration + Domain — 已完成
+下一步：
 
-已实现 Organization / OrganizationMembership model、Alembic `0023_organization_membership`、Tenant/User 兼容映射、OrganizationService、membership authorization、Owner transfer 与唯一 Owner 防护。
+1. 读取现有 Knowledge / RAG / Retrieval 架构与 Phase 1.4 历史验收边界。
+2. 定义真实 Embedding Provider Contract 与配置边界。
+3. 定义固定评测数据集格式、版本和可重复执行方式。
+4. 定义 Recall@K、Precision@K、Citation correctness 等指标及最低门槛。
+5. 定义离线评估与 Real Provider Gate 的职责边界。
+6. 完成 `PHASE_2_2.md` / `PHASE_2_2_ACCEPTANCE.md` 后，再进入实现。
 
-### 2.1-C API Contract Implementation — 已完成 Gate
-
-Organization CRUD、Membership lifecycle、Owner transfer、management authorization、suspended Organization recovery、AuditLog 与 API Contract / Real API 基线已验证。
-
-### 2.1-D Organization / Membership Frontend — 已完成 Gate
-
-Organization list/detail、成员管理、role/status、suspend/recovery、Owner Transfer 与 frontend contract tests 已完成。
-
-### 2.1-E Real API / Regression — **已完成 Gate**
-
-```text
-Backend regression: 275 passed, 30 deselected
-Full Real API: 30 passed
-```
-
-### 2.1-F-A Browser E2E 基础设施 — **已完成 Gate**
-
-保持现有 Playwright Desktop Chrome、`FRONTEND_BASE_URL`、`API_BASE_URL` 约定，使用：
-
-```text
-frontend/tests/e2e/organization-management.spec.ts
-frontend/scripts/test/e2e/02_run_organization_e2e.ps1
-```
-
-### 2.1-F-B Organization Management E2E — **已完成 Gate**
-
-当前覆盖并已由真实浏览器执行通过：
-
-- Login → Organization list。
-- 创建 Organization。
-- Organization Detail。
-- 添加成员。
-- member → admin。
-- member active/suspended/recovery。
-- Organization suspend/recovery。
-- Owner Transfer。
-- 真实 API 校验单 Owner 不变量与目标 Owner 状态。
-
-### 2.1-F-C Governance Browser Acceptance — **已完成 Gate**
-
-已补充并验证：
-
-- 登录响应持久化 `user_id`，前端根据当前 Organization membership role 决定管理 UI 是否可见。
-- Member 不显示 Organization 管理、成员编辑、Owner Transfer 控件。
-- Owner Transfer 仅当前 Owner 显示，Transfer 后原 Owner 降级为 Admin，不再显示 Owner Transfer；新 Owner 显示。
-- Browser E2E 新增 Member 权限边界与 suspended member 阻断场景。
-- Browser E2E 新增 Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界场景。
-- 现有 Organization owner E2E 增加 Audit UI `organization.owner.transferred` 可追踪证据。
-- suspended member 403 UI error contract 已修复并通过真实 Browser Gate。
-
-## 5. 下一步推进原则
-
-```text
-2.1-E Real API Gate 已通过
- → 2.1-F-A E2E infrastructure 已通过
- → 2.1-F-B Organization management browser contract 已通过
- → 2.1-F-C Governance Browser Acceptance 已通过
- → Full Frontend Regression + production build
- → Backend regression
- → Real API Gate
- → 汇总 Browser / API / Audit Evidence
- → 更新 Status / Acceptance
- → Definition of Done 全部满足后正式关闭 Phase 2.1
-```
-
-未实际执行的测试不得标记为 Passed。
-
-## 6. 维护规则
+## 5. 维护规则
 
 后续任何功能完成、延期、阻塞、范围变化或新的工程错误，都必须同步：
 
@@ -167,3 +97,5 @@ frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 - 对应 `docs/02-phases/PHASE_x_y.md`
 - 对应 `docs/03-acceptance/PHASE_x_y_ACCEPTANCE.md`
 - 已分析完成的工程错误同步 `docs/04-errors/`
+
+同一任务的多份文档变更应作为一个文档变更集一次性提交，避免每个文档形成独立中间提交。

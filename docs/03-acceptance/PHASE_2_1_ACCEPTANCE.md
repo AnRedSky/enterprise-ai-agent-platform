@@ -1,7 +1,7 @@
 # Phase 2.1 Acceptance — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B/F-C Browser E2E 已通过 / 最终联合验收待执行**
-> 未执行的 Gate 不得标记 Passed。
+> 状态：**已正式关闭 / 最终联合验收通过**
+> 结论依据：开发者本地实际执行结果；未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
 
@@ -30,7 +30,7 @@
 
 ### C. Database
 
-用户已实际执行：
+此前用户已实际执行：
 
 ```powershell
 cd backend
@@ -48,12 +48,16 @@ uv run alembic heads
 - [x] 当前 migration head 为 `0023_organization_membership`。
 - [x] Existing Tenant/User 兼容映射已覆盖。
 
-### D. Real API
+### D. Real API / Backend Final Joint Gate
 
-用户最新完整 Gate：
+本次用户最新实际结果：
 
 ```text
-30 passed in 47.60s
+uv run pytest -q
+275 passed, 30 deselected in 6.92s
+
+scripts/test/api-real/01_run_real_api_tests.ps1
+30 passed in 39.91s
 [PASS] Real API gate completed. Frontend/backend integration may proceed.
 ```
 
@@ -65,14 +69,15 @@ uv run alembic heads
 - [x] Transfer 后新 Owner / 原 Owner 权限边界。
 - [x] Organization AuditLog。
 
-### E. Frontend
+### E. Frontend Final Joint Gate
 
-用户本地实际验证：
+本次用户最新实际验证：
 
 ```text
-Targeted organization tests: 15 passed
-Full frontend regression: 67 passed
-Production build: passed
+16 test files passed
+69 tests passed
+Production build passed
+[PASS] Frontend regression gate completed.
 ```
 
 - [x] Organization 管理 UI。
@@ -115,7 +120,7 @@ Production build: passed
 - [x] Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界 Browser E2E。
 - [x] Owner E2E 增加 Audit UI 可追踪证据。
 
-用户最新本地实际结果：
+最新 Browser 实际结果：
 
 ```text
 scripts/test/e2e/02_run_organization_e2e.ps1
@@ -126,25 +131,19 @@ npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop
 3 passed (12.8s)
 ```
 
-此前 suspended member 场景的 HTTP 403 UI error contract 已修复并由上述真实 Browser Gate 验证通过。
+## 3. Close Conditions
 
-## 3. 当前执行顺序
+- [x] Product / Backend Contract 已冻结。
+- [x] Migration 实际成功。
+- [x] Organization/Membership/RBAC 后端测试通过。
+- [x] Real API 通过真实 PostgreSQL/Redis。
+- [x] Frontend regression/build 通过。
+- [x] Browser E2E 通过。
+- [x] 成员生命周期、权限边界、Audit 均有自动化证据。
+- [x] `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
 
-```text
-2.1-E Real API Gate 已通过
- → 2.1-F-A Browser E2E infrastructure 已通过
- → 2.1-F-B Organization Management browser contract 已通过
- → F-C governance browser acceptance 已通过
- → Full frontend regression + production build
- → Backend regression + Real API Gate
- → final acceptance
-```
+**Phase 2.1 Acceptance 通过并正式关闭。**
 
-## 4. Close Conditions
+## 4. 下一阶段
 
-所有涉及范围的 Gate 必须实际执行并记录结果；未执行不得标记 Passed。关闭时同步：
-
-- `docs/PROJECT_STATUS.md`
-- `docs/02-phases/PHASE_2_1.md`
-- 本文件
-- `docs/04-errors/` 中已分析完成的工程错误
+进入 Phase 2.2 — Retrieval Production Quality。下一验收入口为 `PHASE_2_2_ACCEPTANCE.md`，首项任务为 2.2-A Product / Retrieval Quality Contract。
