@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = 30.0
     embedding_dimension: int = 1536
     embedding_batch_size: int = 32
+    # Some OpenAI-compatible local providers (for example Ollama-backed
+    # Matryoshka embedding models) accept an explicit output dimension. Keep
+    # this opt-in because not every OpenAI-compatible provider implements it.
+    embedding_dimensions_parameter_enabled: bool = False
 
     # Vector retrieval is provider-neutral. Keep `none` until PostgreSQL + pgvector
     # is enabled locally; the in-memory implementation remains test-only.

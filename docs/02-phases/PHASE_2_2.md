@@ -60,6 +60,32 @@ Real API: 30 passed
 - 后续执行必须与已冻结 baseline 比较；provider、model、dimension、dataset、retrieval mode 或 top-k 变化会被识别为 regression identity change。
 - Real baseline 不预置虚假指标，必须由开发者使用真实 Provider 本地执行后冻结。
 
+#### 本地 Ollama Provider 边界
+
+当前工程的 pgvector migration 默认按 `EMBEDDING_DIMENSION=1536` 建表；因此不能直接把现有 `nomic-embed-text`（768 维）或 `bge-m3`（1024 维）写入当前 `knowledge_chunks` 表。不要通过截断、补零或修改质量指标绕过维度校验。
+
+为保持 1536 维数据库契约，同时支持本地 Ollama 真实 Provider，Embedding Adapter 增加了可选的 OpenAI-compatible `dimensions` 请求参数。仅当 `EMBEDDING_DIMENSIONS_PARAMETER_ENABLED=true` 时发送该参数；默认关闭，避免改变其他 OpenAI-compatible Provider 的请求语义。
+
+推荐本地验证路径：
+
+```text
+Ollama
+  ├─ Chat: qwen2.5:7b / 其他可用 Chat 模型
+  └─ Embedding: qwen3-embedding:4b + dimensions=1536
+          ↓
+OpenAI-compatible /v1
+          ↓
+OpenAICompatibleEmbeddingProvider
+          ↓
+PostgreSQL + pgvector (vector(1536))
+          ↓
+2.2-C Real Provider Quality Gate
+```
+
+Ollama 的兼容 API key 只作为本地兼容占位值（例如 `ollama`），不得把它当作远程 Secret；真实 Secret 仍只能进入未提交的 `backend/.env`。
+
+2.2-C 仍必须由开发者在本地实际执行并冻结 baseline；本次代码变更本身不宣称 Real Provider Quality Gate 已通过。
+
 ### 2.2-D Retrieval Quality Regression
 
 形成 Provider / model / dataset 版本之间的可比较结果，并与现有 Retrieval Debug / Citation / Audit 建立追踪关系。

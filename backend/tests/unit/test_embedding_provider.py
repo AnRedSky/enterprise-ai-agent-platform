@@ -35,6 +35,31 @@ async def test_openai_compatible_embedding_provider_orders_vectors_by_index() ->
 
 
 @pytest.mark.asyncio
+async def test_openai_compatible_embedding_provider_can_request_output_dimensions() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = request.read()
+        assert b'"model":"qwen3-embedding:4b"' in body
+        assert b'"dimensions":1536' in body
+        return httpx.Response(
+            200,
+            json={"data": [{"index": 0, "embedding": [0.1, 0.2]}]},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleEmbeddingProvider(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama",
+        model="qwen3-embedding:4b",
+        dimensions=1536,
+        client=client,
+    )
+    try:
+        assert await provider.embed(["local ollama"]) == [[0.1, 0.2]]
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_openai_compatible_embedding_provider_rejects_invalid_response() -> None:
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": []}))

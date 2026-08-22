@@ -100,6 +100,11 @@ class KnowledgeVectorIndexingService:
                     api_key=settings.embedding_api_key,
                     model=settings.embedding_model,
                     timeout_seconds=settings.embedding_timeout_seconds,
+                    dimensions=(
+                        settings.embedding_dimension
+                        if settings.embedding_dimensions_parameter_enabled
+                        else None
+                    ),
                 )
             vector_provider = PgVectorRetrievalProvider(self.db, settings.embedding_dimension)
             batch_size = max(1, settings.embedding_batch_size)

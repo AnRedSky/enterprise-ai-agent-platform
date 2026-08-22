@@ -19,11 +19,13 @@ class OpenAICompatibleEmbeddingProvider:
         model: str,
         timeout_seconds: float = 30.0,
         client: httpx.AsyncClient | None = None,
+        dimensions: int | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.dimensions = dimensions
         self._client = client
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
@@ -32,7 +34,11 @@ class OpenAICompatibleEmbeddingProvider:
         if any(not text.strip() for text in texts):
             raise EmbeddingProviderError("embedding texts must not contain empty values")
 
-        payload = {"model": self.model, "input": list(texts)}
+        payload: dict[str, object] = {"model": self.model, "input": list(texts)}
+        if self.dimensions is not None:
+            if self.dimensions < 1:
+                raise EmbeddingProviderError("embedding dimensions must be greater than zero")
+            payload["dimensions"] = self.dimensions
         headers = {"Authorization": f"Bearer {self.api_key}"}
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)

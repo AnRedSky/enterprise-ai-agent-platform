@@ -77,6 +77,11 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
         api_key=settings.embedding_api_key,
         model=settings.embedding_model,
         timeout_seconds=settings.embedding_timeout_seconds,
+        dimensions=(
+            settings.embedding_dimension
+            if settings.embedding_dimensions_parameter_enabled
+            else None
+        ),
     )
     metadata = {
         "provider": settings.embedding_provider,
