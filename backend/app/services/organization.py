@@ -3,11 +3,11 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.core import Tenant, User
+from app.models.core import AuditLog, Tenant, User
 from app.models.organization import Organization, OrganizationMembership
 
 
@@ -35,6 +35,45 @@ class OrganizationService:
             raise HTTPException(404, "Organization 不存在")
         return organization
 
+    async def list_for_user(self, user_id: UUID, offset: int = 0, limit: int = 50) -> tuple[list[Organization], int]:
+        base = (
+            select(Organization)
+            .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+            .where(
+                OrganizationMembership.user_id == user_id,
+                OrganizationMembership.status == "active",
+            )
+            .order_by(Organization.created_at.asc(), Organization.id.asc())
+        )
+        total = int((await self.db.execute(
+            select(func.count(Organization.id))
+            .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+            .where(
+                OrganizationMembership.user_id == user_id,
+                OrganizationMembership.status == "active",
+            )
+        )).scalar_one())
+        items = list((await self.db.execute(base.offset(offset).limit(limit))).scalars().all())
+        return items, total
+
+    async def list_members(
+        self, organization_id: UUID, user_id: UUID, offset: int = 0, limit: int = 50
+    ) -> tuple[list[OrganizationMembership], int]:
+        await self.require_active_membership(organization_id, user_id)
+        total = int((await self.db.execute(
+            select(func.count(OrganizationMembership.id)).where(
+                OrganizationMembership.organization_id == organization_id
+            )
+        )).scalar_one())
+        items = list((await self.db.execute(
+            select(OrganizationMembership)
+            .where(OrganizationMembership.organization_id == organization_id)
+            .order_by(OrganizationMembership.created_at.asc(), OrganizationMembership.id.asc())
+            .offset(offset)
+            .limit(limit)
+        )).scalars().all())
+        return items, total
+
     async def membership(self, organization_id: UUID, user_id: UUID) -> OrganizationMembership | None:
         return (await self.db.execute(
             select(OrganizationMembership).where(
@@ -49,6 +88,9 @@ class OrganizationService:
         user = (await self.db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
         if user is None or user.status != "active":
             raise HTTPException(403, "用户当前不可访问 Organization")
+        organization = await self.get(organization_id)
+        if organization.status != "active":
+            raise HTTPException(403, "Organization 当前不可访问")
         membership = await self.membership(organization_id, user_id)
         if membership is None or membership.status != "active":
             raise HTTPException(403, "当前用户没有有效的 Organization membership")
@@ -62,7 +104,14 @@ class OrganizationService:
             raise HTTPException(403, "Organization 管理权限不足")
         return membership
 
-    async def create(self, name: str, owner_user_id: UUID) -> Organization:
+    async def create(
+        self,
+        name: str,
+        owner_user_id: UUID,
+        *,
+        request_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> Organization:
         normalized_name = name.strip()
         if not normalized_name:
             raise HTTPException(422, "Organization 名称不能为空")
@@ -89,14 +138,73 @@ class OrganizationService:
                 self.db.add(organization)
                 self.db.add(membership)
                 await self.db.flush()
+                self._audit(
+                    actor_id=owner_user_id,
+                    tenant_id=tenant.id,
+                    resource_type="organization",
+                    resource_id=str(organization.id),
+                    action="organization.created",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                )
         except IntegrityError as exc:
             raise HTTPException(409, "Organization 创建冲突") from exc
         await self.db.commit()
         await self.db.refresh(organization)
         return organization
 
+    async def update(
+        self,
+        organization_id: UUID,
+        actor_id: UUID,
+        *,
+        name: str | None = None,
+        status: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
+    ) -> Organization:
+        await self.require_management_access(organization_id, actor_id)
+        organization = await self.get(organization_id)
+        if name is not None:
+            normalized_name = name.strip()
+            if not normalized_name:
+                raise HTTPException(422, "Organization 名称不能为空")
+            conflict = (await self.db.execute(
+                select(Organization).where(
+                    Organization.name == normalized_name,
+                    Organization.id != organization_id,
+                )
+            )).scalar_one_or_none()
+            if conflict is not None:
+                raise HTTPException(409, "Organization 名称已存在")
+            organization.name = normalized_name
+        if status is not None:
+            if status not in {"active", "suspended"}:
+                raise HTTPException(422, "不支持的 Organization 状态")
+            organization.status = status
+        action = "organization.suspended" if status == "suspended" else "organization.updated"
+        self._audit(
+            actor_id=actor_id,
+            tenant_id=organization.tenant_id,
+            resource_type="organization",
+            resource_id=str(organization.id),
+            action=action,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+        await self.db.commit()
+        await self.db.refresh(organization)
+        return organization
+
     async def add_member(
-        self, organization_id: UUID, actor_id: UUID, user_id: UUID, role: str = "member"
+        self,
+        organization_id: UUID,
+        actor_id: UUID,
+        user_id: UUID,
+        role: str = "member",
+        *,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> OrganizationMembership:
         if role not in self.ROLES:
             raise HTTPException(422, "不支持的 Organization role")
@@ -119,6 +227,15 @@ class OrganizationService:
             async with self.db.begin_nested():
                 self.db.add(membership)
                 await self.db.flush()
+                self._audit(
+                    actor_id=actor_id,
+                    tenant_id=organization.tenant_id,
+                    resource_type="organization_membership",
+                    resource_id=str(membership.id),
+                    action="organization.member.activated",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                )
         except IntegrityError as exc:
             raise HTTPException(409, "用户已经属于该 Organization") from exc
         await self.db.commit()
@@ -133,8 +250,11 @@ class OrganizationService:
         *,
         role: str | None = None,
         status: str | None = None,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> OrganizationMembership:
         actor = await self.require_management_access(organization_id, actor_id)
+        organization = await self.get(organization_id)
         membership = (await self.db.execute(select(OrganizationMembership).where(
             OrganizationMembership.id == membership_id,
             OrganizationMembership.organization_id == organization_id,
@@ -151,20 +271,41 @@ class OrganizationService:
             raise HTTPException(403, "只有 owner 可以修改 owner membership")
         if membership.role == "owner" and (role in {"admin", "member"} or status in {"suspended", "removed"}):
             await self._ensure_owner_remains(organization_id, membership.id)
-        if membership.role == "owner" and actor.role != "owner":
-            raise HTTPException(403, "只有 owner 可以管理 owner membership")
         if role is not None:
             membership.role = role
         if status is not None:
             membership.status = status
+        action = "organization.member.role_changed" if role is not None else "organization.member.updated"
+        if status == "suspended":
+            action = "organization.member.suspended"
+        elif status == "active":
+            action = "organization.member.activated"
+        elif status == "removed":
+            action = "organization.member.removed"
+        self._audit(
+            actor_id=actor_id,
+            tenant_id=organization.tenant_id,
+            resource_type="organization_membership",
+            resource_id=str(membership.id),
+            action=action,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
         await self.db.commit()
         await self.db.refresh(membership)
         return membership
 
     async def remove_member(
-        self, organization_id: UUID, membership_id: UUID, actor_id: UUID
+        self,
+        organization_id: UUID,
+        membership_id: UUID,
+        actor_id: UUID,
+        *,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> None:
         actor = await self.require_management_access(organization_id, actor_id)
+        organization = await self.get(organization_id)
         membership = (await self.db.execute(select(OrganizationMembership).where(
             OrganizationMembership.id == membership_id,
             OrganizationMembership.organization_id == organization_id,
@@ -176,10 +317,25 @@ class OrganizationService:
                 raise HTTPException(403, "只有 owner 可以管理 owner membership")
             await self._ensure_owner_remains(organization_id, membership.id)
         membership.status = "removed"
+        self._audit(
+            actor_id=actor_id,
+            tenant_id=organization.tenant_id,
+            resource_type="organization_membership",
+            resource_id=str(membership.id),
+            action="organization.member.removed",
+            request_id=request_id,
+            trace_id=trace_id,
+        )
         await self.db.commit()
 
     async def transfer_owner(
-        self, organization_id: UUID, actor_id: UUID, target_membership_id: UUID
+        self,
+        organization_id: UUID,
+        actor_id: UUID,
+        target_membership_id: UUID,
+        *,
+        request_id: str | None = None,
+        trace_id: str | None = None,
     ) -> OrganizationMembership:
         actor = await self.require_active_membership(organization_id, actor_id)
         if actor.role != "owner":
@@ -200,9 +356,41 @@ class OrganizationService:
             raise HTTPException(409, "Organization owner 状态异常")
         current_owners[0].role = "admin"
         target.role = "owner"
+        organization = await self.get(organization_id)
+        self._audit(
+            actor_id=actor_id,
+            tenant_id=organization.tenant_id,
+            resource_type="organization",
+            resource_id=str(organization.id),
+            action="organization.owner.transferred",
+            request_id=request_id,
+            trace_id=trace_id,
+        )
         await self.db.commit()
         await self.db.refresh(target)
         return target
+
+    def _audit(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        resource_type: str,
+        resource_id: str,
+        action: str,
+        request_id: str | None,
+        trace_id: str | None,
+    ) -> None:
+        self.db.add(AuditLog(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            request_id=request_id,
+            trace_id=trace_id,
+            status="success",
+        ))
 
     async def _ensure_owner_remains(self, organization_id: UUID, membership_id: UUID) -> None:
         result = await self.db.execute(
