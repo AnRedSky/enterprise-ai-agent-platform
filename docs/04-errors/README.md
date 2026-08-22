@@ -25,6 +25,7 @@
 | ERR-0017 | 2026-08-21 | Scheduled multi-worker / MissingGreenlet |
 | ERR-0018 | 2026-08-21 | Real API Idempotency race / AsyncSession rollback |
 | ERR-0019 | 2026-08-21 | WorkflowRuntime 缺失 execute / Real API bootstrap 500 |
+| ERR-0020 | 2026-08-22 | Organization Membership table row type / vue-tsc |
 
 ## 迁移规则
 
