@@ -1,6 +1,6 @@
 # Phase 2.1 Acceptance — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B Browser E2E 已通过 / 2.1-F-C Governance Browser Acceptance 实施中**
+> 状态：**进行中 / 2.1-D Frontend Gate 已验证 / 2.1-E Real API Gate 已通过 / 2.1-F-A/F-B/F-C Browser E2E 已通过 / 最终联合验收待执行**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -92,14 +92,6 @@ Production build: passed
 - [x] 使用随机 fixture，避免固定测试账号和组织状态污染。
 - [x] 本地 Browser E2E 实际执行。
 
-用户此前实际结果：
-
-```text
-scripts/test/e2e/02_run_organization_e2e.ps1
-1 passed (8.7s)
-[PASS] Phase 2.1-F organization browser E2E contract completed.
-```
-
 #### F-B Organization Management — **Gate 已通过**
 
 - [x] Login → Organization list。
@@ -113,7 +105,7 @@ scripts/test/e2e/02_run_organization_e2e.ps1
 - [x] API 校验单 Owner 不变量。
 - [x] 浏览器实际执行通过。
 
-#### F-C Governance Browser Acceptance — **已实现，待 Gate**
+#### F-C Governance Browser Acceptance — **Gate 已通过**
 
 - [x] Auth session 持久化当前 user id。
 - [x] Member 不显示 Organization / Membership 管理控件。
@@ -122,19 +114,19 @@ scripts/test/e2e/02_run_organization_e2e.ps1
 - [x] Suspended member 阻断 Browser E2E。
 - [x] Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界 Browser E2E。
 - [x] Owner E2E 增加 Audit UI 可追踪证据。
-- [ ] F-C 新增场景本地真实 Browser Gate。
 
-**最新用户本地 F-C 执行反馈：**
+用户最新本地实际结果：
 
 ```text
-Organization management: passed
-Organization browser governance boundaries: failed
-Owner transfer browser controls: passed
+scripts/test/e2e/02_run_organization_e2e.ps1
+3 passed (14.2s)
+[PASS] Phase 2.1-F organization browser E2E contract completed.
 
-2 passed, 1 failed
+npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop Chrome"
+3 passed (12.8s)
 ```
 
-失败为 suspended member 场景的前端错误文案断言：Backend 正确返回 403，但 UI 原先直接显示 Axios `Request failed with status code 403`，不符合稳定的 Organization Detail 错误文案契约。该错误已记录到 `docs/04-errors/2026-08-22-phase-2-1-f-c-suspended-member-403-error-message.md`，并已在 `frontend/src/views/organizations/detail.vue` 增加 403/404 错误归一化；修复尚待本地真实 Browser Gate 重新验证。
+此前 suspended member 场景的 HTTP 403 UI error contract 已修复并由上述真实 Browser Gate 验证通过。
 
 ## 3. 当前执行顺序
 
@@ -142,10 +134,7 @@ Owner transfer browser controls: passed
 2.1-E Real API Gate 已通过
  → 2.1-F-A Browser E2E infrastructure 已通过
  → 2.1-F-B Organization Management browser contract 已通过
- → F-C governance browser acceptance implementation
- → 修复 suspended member 403 UI error contract
- → 本地执行 F-C Browser E2E
- → 根据实际结果继续修复
+ → F-C governance browser acceptance 已通过
  → Full frontend regression + production build
  → Backend regression + Real API Gate
  → final acceptance
