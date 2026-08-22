@@ -70,6 +70,7 @@ async def login(p: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(401, "用户名或密码错误")
     roles = await get_roles(db, user.id)
     return {
+        "user_id": user.id,
         "access_token": create_token(user.id, roles, tenant_id=user.tenant_id),
         "token_type": "bearer",
         "roles": roles,
