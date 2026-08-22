@@ -18,11 +18,9 @@ const memberUserId = ref("");
 const memberRole = ref<"admin" | "member">("member");
 const editing = ref<Membership | null>(null);
 const editRole = ref<"admin" | "member">("member");
-const canManage = computed(() => {
-  const currentUserId = getUserId();
-  const currentMembership = members.value.find((member) => member.user_id === currentUserId);
-  return currentMembership?.status === "active" && (currentMembership.role === "owner" || currentMembership.role === "admin");
-});
+const currentMembership = computed(() => members.value.find((member) => member.user_id === getUserId()));
+const canManage = computed(() => currentMembership.value?.status === "active" && (currentMembership.value.role === "owner" || currentMembership.value.role === "admin"));
+const canTransferOwner = computed(() => currentMembership.value?.status === "active" && currentMembership.value.role === "owner");
 
 function asMembership(row: unknown): Membership {
   return row as Membership;
@@ -77,7 +75,7 @@ async function remove(member: Membership) {
   catch (e) { if (e !== "cancel" && e !== "close") ElMessage.error(e instanceof Error ? e.message : "成员移除失败"); }
 }
 async function transfer(member: Membership) {
-  if (!canManage.value || member.role === "owner") return;
+  if (!canTransferOwner.value || member.role === "owner") return;
   try { await ElMessageBox.confirm(`确认将 Organization 所有权转移给 ${member.user_id}？当前 Owner 将降级为 Admin。`, "转移所有权", { type: "warning", confirmButtonText: "确认转移" }); await transferOwner(id, member.id); members.value = (await listMembers(id)).items; ElMessage.success("所有权转移成功"); }
   catch (e) { if (e !== "cancel" && e !== "close") ElMessage.error(e instanceof Error ? e.message : "所有权转移失败"); }
 }
@@ -95,7 +93,7 @@ onMounted(load);
         <el-table-column prop="user_id" label="User ID" min-width="280" />
         <el-table-column label="角色" width="130"><template #default="{ row }"><el-tag>{{ row.role }}</el-tag></template></el-table-column>
         <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'warning'">{{ row.status }}</el-tag></template></el-table-column>
-        <el-table-column v-if="canManage" label="操作" min-width="430"><template #default="{ row }"><el-button v-if="row.role !== 'owner'" link type="primary" @click="openEdit(asMembership(row))">编辑</el-button><el-button v-if="row.role !== 'owner'" link type="warning" @click="toggleMember(asMembership(row))">{{ row.status === 'active' ? '暂停' : '恢复' }}</el-button><el-button v-if="row.role !== 'owner'" link type="success" @click="transfer(asMembership(row))">转移 Owner</el-button><el-button v-if="row.role !== 'owner'" link type="danger" @click="remove(asMembership(row))">移除</el-button></template></el-table-column>
+        <el-table-column v-if="canManage" label="操作" min-width="430"><template #default="{ row }"><el-button v-if="row.role !== 'owner'" link type="primary" @click="openEdit(asMembership(row))">编辑</el-button><el-button v-if="row.role !== 'owner'" link type="warning" @click="toggleMember(asMembership(row))">{{ row.status === 'active' ? '暂停' : '恢复' }}</el-button><el-button v-if="canTransferOwner && row.role !== 'owner'" link type="success" @click="transfer(asMembership(row))">转移 Owner</el-button><el-button v-if="row.role !== 'owner'" link type="danger" @click="remove(asMembership(row))">移除</el-button></template></el-table-column>
       </el-table>
       <el-empty v-if="!members.length" description="暂无成员。" />
     </el-card>
