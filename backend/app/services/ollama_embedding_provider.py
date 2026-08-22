@@ -20,8 +20,8 @@ class OllamaEmbeddingProvider:
         timeout_seconds: float = 30.0,
         expected_dimension: int | None = None,
         dimensions: int | None = None,
-        retry_attempts: int = 2,
-        retry_backoff_seconds: float = 0.5,
+        retry_attempts: int = 5,
+        retry_backoff_seconds: float = 1.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")

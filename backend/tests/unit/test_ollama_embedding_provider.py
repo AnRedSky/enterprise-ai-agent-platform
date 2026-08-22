@@ -57,6 +57,42 @@ async def test_ollama_embedding_provider_retries_transient_503() -> None:
         await client.aclose()
 
 
+def test_ollama_embedding_provider_default_retry_budget_covers_slow_runner_start() -> None:
+    provider = OllamaEmbeddingProvider(
+        base_url="http://localhost:11434",
+        model="nomic-embed-text:latest",
+    )
+    assert provider.retry_attempts == 5
+    assert provider.retry_backoff_seconds == 1.0
+
+
+@pytest.mark.asyncio
+async def test_ollama_embedding_provider_retries_until_runner_is_ready() -> None:
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 5:
+            return httpx.Response(503, json={"error": "model runner unavailable"})
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OllamaEmbeddingProvider(
+        base_url="http://localhost:11434",
+        model="nomic-embed-text:latest",
+        expected_dimension=2,
+        retry_attempts=4,
+        retry_backoff_seconds=0,
+        client=client,
+    )
+    try:
+        assert await provider.embed(["first"]) == [[0.1, 0.2]]
+        assert attempts == 5
+    finally:
+        await client.aclose()
+
+
 @pytest.mark.asyncio
 async def test_ollama_embedding_provider_rejects_dimension_mismatch() -> None:
     client = httpx.AsyncClient(
