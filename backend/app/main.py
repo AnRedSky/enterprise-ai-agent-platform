@@ -10,6 +10,7 @@ from app.api.chat import router as chat_router
 from app.api.knowledge import router as knowledge_router
 from app.api.knowledge_ingestion import router as knowledge_ingestion_router
 from app.api.knowledge_retrieval import router as knowledge_retrieval_router
+from app.api.organizations import router as organizations_router
 from app.api.runtime import router as runtime_router
 from app.api.tools import router as tools_router
 from app.api.webhooks import router as webhooks_router
@@ -51,6 +52,7 @@ app.include_router(runtime_router)
 app.include_router(knowledge_router, prefix="/api/v1/knowledge", tags=["knowledge"])
 app.include_router(knowledge_ingestion_router, prefix="/api/v1/knowledge", tags=["knowledge-ingestion"])
 app.include_router(knowledge_retrieval_router, prefix="/api/v1/knowledge", tags=["knowledge-retrieval"])
+app.include_router(organizations_router, prefix="/api/v1/organizations", tags=["organizations"])
 app.include_router(workflows_router, prefix="/api/v1/workflows", tags=["workflows"])
 app.include_router(workflow_executions_router, prefix="/api/v1/workflows", tags=["workflow-executions"])
 app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"])
