@@ -97,6 +97,19 @@ Execution / ExecutionEvent 固化 Profile + Provider identity
 
 Credential resolution 仅在进程环境中根据 `credential_ref` 读取 Secret，不将 Secret 写入数据库或 trace。
 
+### E-2 Retrieval Evaluation Profile Selection
+
+E-2 已实现以下边界：
+
+- Evaluation runner 增加 `--model-profile-id`。
+- 选择 Profile 后，runner 必须以 evaluation actor 的 Organization membership 为授权边界，只允许使用 active Organization 下启用的 Embedding Profile / Provider。
+- `provider_type`、Provider endpoint、`provider_name`、`model_name`、Embedding `dimension` 与 Profile `parameters` 均从数据库治理对象解析，不再由 runner 固定具体模型身份。
+- `credential_ref` 只作为进程环境变量名解析；实际 Secret 不进入 evaluation report、trace、audit 或 Git。
+- Evaluation report 固化 `model_profile_id`、`provider_id`、provider identity、model identity。
+- 选择 governed Profile 时，baseline 同步冻结 Profile / Provider identity；Profile 变化会被 regression gate 识别为 identity change。
+- 未选择 governed Profile 时保持现有环境变量/CLI 兼容路径，既有 legacy baseline 不需要无意义地重新冻结。
+- 仍然只使用现有 Embedding Provider + PostgreSQL/pgvector retrieval path，不引入 Reranker、Hybrid、Fallback 或 Provider routing。
+
 ## 6. Migration
 
 新增：
@@ -105,14 +118,22 @@ Credential resolution 仅在进程环境中根据 `credential_ref` 读取 Secret
 - `model_profiles`
 - `0026_model_profile_runtime_identity`：为 AgentVersion / Execution / ExecutionEvent 增加 governed Profile identity。
 
+E-2 不新增数据库表或字段，因此不新增 Migration。
+
 ## 7. 自动化验证
 
-当前新增 API contract 测试：
+当前 API contract 测试：
 
 ```powershell
 cd backend
 uv run pytest -q tests/api_contract/test_model_provider_contract.py
 uv run pytest -q tests/api_contract/test_api_agents_endpoints.py tests/api_contract/test_model_provider_contract.py tests/api_contract/test_model_profile_runtime_contract.py
+```
+
+E-2 baseline identity 单元测试：
+
+```powershell
+uv run pytest -q tests/unit/test_retrieval_evaluation_baseline.py
 ```
 
 数据库迁移：
@@ -136,6 +157,33 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
+E-2 governed evaluation 手动验证：
+
+1. 创建 Organization-scoped Provider，并确认 `provider_type` / `provider_name` / endpoint / credential reference 正确。
+2. 在同一 Provider 下创建两个 enabled Embedding Profiles，例如不同 `model_name` / dimension，至少保证实际 endpoint 可以调用。
+3. 使用 active Organization member 的 actor 执行 evaluation。
+4. 使用 `--model-profile-id <profile-A>` 运行 Real Provider evaluation；确认输出中的 provider/model/dimension 与数据库 Profile 一致。
+5. 使用 `--freeze-baseline` 为 Profile A 建立独立 baseline。
+6. 使用 `--model-profile-id <profile-B>` 对同一 dataset 运行 evaluation；若复用 Profile A baseline，quality gate 必须因为 `model_profile_id` / Provider identity 变化而失败，而不是静默复用 A 的 baseline。
+7. 查询 evaluation trace，确认 `model_profile_id` / `provider_id` 可追踪，且 credential secret 不出现。
+
+示例：
+
+```powershell
+uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py `
+  --model-profile-id <EMBEDDING_PROFILE_UUID> `
+  --k 3
+```
+
+首次冻结新的 governed Profile baseline：
+
+```powershell
+uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py `
+  --model-profile-id <EMBEDDING_PROFILE_UUID> `
+  --baseline .\evaluation\knowledge_retrieval_profile_a_baseline.json `
+  --freeze-baseline
+```
+
 Runtime Profile Real API 验证要求：
 
 1. 创建 Organization-scoped Provider。
@@ -152,6 +200,8 @@ Runtime Profile Real API 验证要求：
 **代码已实现，待本地 Gate / Real API 验证闭环。**
 
 ### 2.2-E-2 — Retrieval Evaluation Profile Selection
+
+**代码已实现，待本地 Real Provider / baseline identity 验证闭环。**
 
 - Evaluation runner 支持 `model_profile_id`。
 - Evaluation report 固化 Profile identity。
