@@ -7,16 +7,20 @@ import json
 import sys
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
+from uuid import UUID
 
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.dependencies.db import SessionLocal
+from app.models.model_provider import ModelProfile, ModelProvider
+from app.models.organization import Organization, OrganizationMembership
 from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
 from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
@@ -57,6 +61,54 @@ def _build_embedding_provider(config: RetrievalEvaluationConfig):
     )
 
 
+async def _resolve_governed_embedding_profile(db, profile_id: UUID, user_id: UUID) -> tuple[ModelProfile, ModelProvider]:
+    result = await db.execute(
+        select(ModelProfile, ModelProvider)
+        .join(ModelProvider, ModelProvider.id == ModelProfile.provider_id)
+        .join(Organization, Organization.id == ModelProvider.organization_id)
+        .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+        .where(
+            ModelProfile.id == profile_id,
+            ModelProfile.model_type == "embedding",
+            ModelProfile.enabled.is_(True),
+            ModelProvider.enabled.is_(True),
+            Organization.status == "active",
+            OrganizationMembership.user_id == user_id,
+            OrganizationMembership.status == "active",
+        )
+    )
+    row = result.first()
+    if row is None:
+        raise SystemExit("selected embedding Model Profile does not exist, is disabled, or is unavailable to the evaluation actor")
+    profile, provider = row
+    if profile.dimension is None:
+        raise SystemExit("selected embedding Model Profile must declare dimension")
+    if not provider.endpoint:
+        raise SystemExit("selected Model Provider must declare an endpoint")
+    if provider.provider_type not in {"ollama", "openai-compatible"}:
+        raise SystemExit(f"unsupported governed embedding provider_type: {provider.provider_type}")
+    return profile, provider
+
+
+def _config_from_profile(config: RetrievalEvaluationConfig, profile: ModelProfile, provider: ModelProvider) -> RetrievalEvaluationConfig:
+    parameters = profile.parameters or {}
+    credential = resolve_api_key(provider.credential_ref)
+    dimensions_parameter_enabled = bool(
+        parameters.get("dimensions_parameter_enabled", config.embedding_dimensions_parameter_enabled)
+    )
+    timeout_seconds = float(parameters.get("timeout_seconds", config.embedding_timeout_seconds))
+    return replace(
+        config,
+        embedding_provider=provider.provider_type,
+        embedding_base_url=provider.endpoint,
+        embedding_api_key=credential,
+        embedding_model=profile.model_name,
+        embedding_timeout_seconds=timeout_seconds,
+        embedding_dimension=profile.dimension or 0,
+        embedding_dimensions_parameter_enabled=dimensions_parameter_enabled,
+    )
+
+
 def _configured_threshold_failures(config: RetrievalEvaluationConfig, metrics: dict[str, float | int]) -> list[str]:
     failures: list[str] = []
     for metric, minimum in (
@@ -73,7 +125,8 @@ def _configured_threshold_failures(config: RetrievalEvaluationConfig, metrics: d
 
 
 async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
-    _require_real_provider(config)
+    if settings.vector_provider != "pgvector":
+        raise SystemExit("Real Provider Quality Gate requires VECTOR_PROVIDER=pgvector")
     dataset = load_retrieval_evaluation_dataset(config.dataset_path)
     fixtures = load_jsonl(config.fixture_path)
     fixture_by_id = {row["chunk_id"]: row for row in fixtures}
@@ -81,43 +134,60 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
     if missing:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
 
-    provider = _build_embedding_provider(config)
     evaluation_run_id = str(uuid.uuid4())
-    evaluation_parameters = {
-        "top_k": config.top_k,
-        "min_score": config.min_score,
-        "min_recall_at_k": config.min_recall_at_k,
-        "min_precision_at_k": config.min_precision_at_k,
-        "min_mrr": config.min_mrr,
-        "min_citation_correctness": config.min_citation_correctness,
-        "max_error_rate": config.max_error_rate,
-        "embedding_dimensions_parameter_enabled": config.embedding_dimensions_parameter_enabled,
-    }
-    metadata = {
-        "evaluation_run_id": evaluation_run_id,
-        "provider": config.embedding_provider,
-        "model": config.embedding_model,
-        "embedding_dimension": config.embedding_dimension,
-        "dataset_version": dataset.schema_version,
-        "dataset_sha256": _dataset_sha256(config.dataset_path),
-        "retrieval_mode": "real-provider-pgvector",
-        "retrieval_execution_path": "runtime-service",
-        "top_k": config.top_k,
-        "citation_source": "runtime-retrieval-result",
-        "evaluation_parameters": evaluation_parameters,
-    }
-
     async with SessionLocal() as db:
         owner_row = (await db.execute(text("SELECT id, tenant_id FROM users ORDER BY id LIMIT 1"))).first()
         if owner_row is None:
             raise SystemExit("evaluation runner requires at least one user in the database")
         owner = uuid.UUID(str(owner_row[0]))
         tenant_id = uuid.UUID(str(owner_row[1])) if owner_row[1] else None
+
+        profile = None
+        model_provider = None
+        effective_config = config
+        if config.model_profile_id is not None:
+            profile, model_provider = await _resolve_governed_embedding_profile(db, config.model_profile_id, owner)
+            effective_config = _config_from_profile(config, profile, model_provider)
+        _require_real_provider(effective_config)
+        provider = _build_embedding_provider(effective_config)
+
+        evaluation_parameters = {
+            "top_k": effective_config.top_k,
+            "min_score": effective_config.min_score,
+            "min_recall_at_k": effective_config.min_recall_at_k,
+            "min_precision_at_k": effective_config.min_precision_at_k,
+            "min_mrr": effective_config.min_mrr,
+            "min_citation_correctness": effective_config.min_citation_correctness,
+            "max_error_rate": effective_config.max_error_rate,
+            "embedding_dimensions_parameter_enabled": effective_config.embedding_dimensions_parameter_enabled,
+        }
+        metadata = {
+            "evaluation_run_id": evaluation_run_id,
+            "provider": effective_config.embedding_provider,
+            "model": effective_config.embedding_model,
+            "embedding_dimension": effective_config.embedding_dimension,
+            "dataset_version": dataset.schema_version,
+            "dataset_sha256": _dataset_sha256(config.dataset_path),
+            "retrieval_mode": "real-provider-pgvector",
+            "retrieval_execution_path": "runtime-service",
+            "top_k": effective_config.top_k,
+            "citation_source": "runtime-retrieval-result",
+            "evaluation_parameters": evaluation_parameters,
+        }
+        if profile is not None and model_provider is not None:
+            metadata.update({
+                "model_profile_id": str(profile.id),
+                "provider_id": str(model_provider.id),
+                "provider_name": model_provider.provider_name,
+                "provider_type": model_provider.provider_type,
+                "model_profile_name": profile.name,
+            })
+
         await prepare_fixture(db, fixtures, owner)
         try:
             observations: list[RetrievalEvaluationObservation] = []
             case_reports: list[dict[str, object]] = []
-            vector_provider = PgVectorRetrievalProvider(db, config.embedding_dimension)
+            vector_provider = PgVectorRetrievalProvider(db, effective_config.embedding_dimension)
             started = time.perf_counter()
             try:
                 fixture_embeddings = await provider.embed([row["content"] for row in fixtures])
@@ -131,7 +201,7 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
                 await vector_provider.upsert(records)
                 await db.execute(text("UPDATE knowledge_document_versions SET vector_index_status = 'ready' WHERE id = :version"), {"version": str(VERSION_ID)})
                 await db.commit()
-                evaluation_service = VectorKnowledgeRetrievalService(db, embedding_provider=provider, embedding_dimension=config.embedding_dimension)
+                evaluation_service = VectorKnowledgeRetrievalService(db, embedding_provider=provider, embedding_dimension=effective_config.embedding_dimension)
                 actual_to_evaluation = {str(actual_chunk_id(row["chunk_id"])): row["chunk_id"] for row in fixtures}
                 for case in dataset.cases:
                     started = time.perf_counter()
@@ -140,7 +210,7 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
                     cited_chunk_ids: list[str] = []
                     citations: list[dict[str, object]] = []
                     try:
-                        results = await evaluation_service.retrieve(query=case.query, top_k=config.top_k, owner_id=owner, is_admin=False, knowledge_base_id=KB_ID, min_score=config.min_score)
+                        results = await evaluation_service.retrieve(query=case.query, top_k=effective_config.top_k, owner_id=owner, is_admin=False, knowledge_base_id=KB_ID, min_score=effective_config.min_score)
                         for result in results:
                             evaluation_chunk_id = actual_to_evaluation.get(str(result["chunk_id"]))
                             if evaluation_chunk_id is None:
@@ -154,29 +224,29 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
                     observations.append(RetrievalEvaluationObservation(tuple(ranking), latency_ms, error, tuple(cited_chunk_ids)))
                     case_reports.append({"query": case.query, "relevant_chunk_ids": sorted(case.relevant_chunk_ids), "expected_citation_targets": sorted(case.expected_citation_targets), "retrieved_chunk_ids": ranking, "cited_chunk_ids": cited_chunk_ids, "citations": citations, "latency_ms": latency_ms, "error": error})
 
-            metrics = aggregate_observations(dataset.cases, observations, k=config.top_k)
+            metrics = aggregate_observations(dataset.cases, observations, k=effective_config.top_k)
             baseline_status = "not_checked"
-            failures = _configured_threshold_failures(config, metrics)
+            failures = _configured_threshold_failures(effective_config, metrics)
             regression = None
             if freeze_baseline:
                 if metrics["error_rate"] > 0:
                     failures.append(f"cannot freeze baseline with provider error rate {metrics['error_rate']}")
-                elif config.baseline_path.exists():
-                    failures.append(f"baseline already exists: {config.baseline_path}; review the existing baseline before replacing it")
+                elif effective_config.baseline_path.exists():
+                    failures.append(f"baseline already exists: {effective_config.baseline_path}; review the existing baseline before replacing it")
                 else:
-                    write_baseline(config.baseline_path, build_baseline(metadata, metrics))
+                    write_baseline(effective_config.baseline_path, build_baseline(metadata, metrics))
                     baseline_status = "created"
-            elif not config.baseline_path.exists():
+            elif not effective_config.baseline_path.exists():
                 baseline_status = "missing"
-                failures.append(f"real provider baseline is missing: {config.baseline_path}")
+                failures.append(f"real provider baseline is missing: {effective_config.baseline_path}")
             else:
-                baseline = json.loads(config.baseline_path.read_text(encoding="utf-8"))
+                baseline = json.loads(effective_config.baseline_path.read_text(encoding="utf-8"))
                 regression = build_regression_report(metadata, metrics, baseline)
                 failures.extend(compare_baseline(metadata, metrics, baseline))
                 baseline_status = "checked"
 
             quality_gate = "passed" if baseline_status == "checked" and not failures else ("baseline_created" if baseline_status == "created" and not failures else "failed")
-            report = {"dataset": {"path": str(dataset.source), "schema_version": dataset.schema_version, "sha256": metadata["dataset_sha256"]}, **metadata, "source": "postgresql/pgvector", "fallback_count": 0, "fallback_used": False, "baseline": {"path": str(config.baseline_path), "status": baseline_status}, "regression": regression, **metrics, "cases_detail": case_reports, "quality_gate": quality_gate, "failures": failures}
+            report = {"dataset": {"path": str(dataset.source), "schema_version": dataset.schema_version, "sha256": metadata["dataset_sha256"]}, **metadata, "source": "postgresql/pgvector", "fallback_count": 0, "fallback_used": False, "baseline": {"path": str(effective_config.baseline_path), "status": baseline_status}, "regression": regression, **metrics, "cases_detail": case_reports, "quality_gate": quality_gate, "failures": failures}
             await RetrievalEvaluationTraceService(db).record_run(evaluation_run_id=evaluation_run_id, owner_id=owner, tenant_id=tenant_id, metadata=metadata, case_reports=case_reports, metrics=metrics, regression=regression, quality_gate=quality_gate, failures=failures)
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return 1 if failures else 0
@@ -199,6 +269,7 @@ def _build_config(args: argparse.Namespace) -> RetrievalEvaluationConfig:
         baseline_path=args.baseline,
         top_k=args.k,
         min_score=args.min_score,
+        model_profile_id=UUID(args.model_profile_id) if args.model_profile_id else None,
         min_recall_at_k=args.min_recall_at_k,
         min_precision_at_k=args.min_precision_at_k,
         min_mrr=args.min_mrr,
@@ -209,6 +280,7 @@ def _build_config(args: argparse.Namespace) -> RetrievalEvaluationConfig:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Retrieval Quality Gate with a configurable real embedding provider and PostgreSQL/pgvector")
+    parser.add_argument("--model-profile-id", help="Organization-governed embedding Model Profile UUID; when supplied, provider/model/dimension/endpoint are resolved from the database")
     parser.add_argument("--embedding-provider", choices=["ollama", "openai-compatible"])
     parser.add_argument("--embedding-base-url")
     parser.add_argument("--embedding-api-key-env", help="Environment variable containing the provider API key; the key itself is never persisted in the report")
