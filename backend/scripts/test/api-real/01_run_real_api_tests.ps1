@@ -9,8 +9,11 @@ try{
   uv run python .\scripts\test\api-real\00_bootstrap_real_api.py
   if($LASTEXITCODE -ne 0){throw "Real API bootstrap failed."}
   if(-not(Test-Path $contextFile)){throw "Real API context file was not created."}
+  uv run python .\scripts\test\api-real\00_grant_admin_fixture.py
+  if($LASTEXITCODE -ne 0){throw "Real API admin fixture preparation failed."}
   $context=Get-Content $contextFile -Raw|ConvertFrom-Json
   $env:ACCESS_TOKEN=[string]$context.ACCESS_TOKEN
+  $env:ADMIN_ACCESS_TOKEN=[string]$context.ADMIN_ACCESS_TOKEN
   $env:WORKFLOW_ID=[string]$context.WORKFLOW_ID
   $env:WORKFLOW_EXECUTION_ID=[string]$context.WORKFLOW_EXECUTION_ID
   $env:TRIGGER_WORKFLOW_ID=[string]$context.TRIGGER_WORKFLOW_ID
@@ -35,6 +38,7 @@ try{
 }finally{
   if(Test-Path $contextFile){Remove-Item $contextFile -Force -ErrorAction SilentlyContinue}
   Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue
+  Remove-Item Env:ADMIN_ACCESS_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:WORKFLOW_ID -ErrorAction SilentlyContinue
   Remove-Item Env:WORKFLOW_EXECUTION_ID -ErrorAction SilentlyContinue
   Remove-Item Env:TRIGGER_WORKFLOW_ID -ErrorAction SilentlyContinue
