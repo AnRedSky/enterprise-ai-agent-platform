@@ -77,6 +77,22 @@ async def workflow_execution_trace(execution_id: UUID, claims: dict = Depends(_r
     return {"execution_id": execution.id, "items": rows}
 
 
+@router.get("/retrieval-evaluations/{evaluation_run_id}", response_model=ExecutionTimelineResponse)
+async def retrieval_evaluation_trace(evaluation_run_id: str, claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db)):
+    _, is_admin = _identity(claims)
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="retrieval evaluation trace requires admin role")
+    execution = await RuntimeQueryService(db).execution(UUID(claims["sub"]), True, UUID(evaluation_run_id))
+    if execution is None:
+        from sqlalchemy import select
+        from app.models.execution import Execution
+        execution = (await db.execute(select(Execution).where(Execution.trace_id == evaluation_run_id))).scalar_one_or_none()
+    if execution is None:
+        raise HTTPException(status_code=404, detail="retrieval evaluation not found")
+    _, events = await RuntimeQueryService(db).events(UUID(claims["sub"]), True, execution.id)
+    return {"execution": _normalize_execution(execution), "items": events}
+
+
 @router.get("/audit-logs", response_model=AuditLogListResponse)
 async def list_audit_logs(page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
                           agent_id: UUID | None = None, tool_id: UUID | None = None,
