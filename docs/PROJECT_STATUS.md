@@ -6,18 +6,19 @@
 - Branch: `main`
 - Phase 2.2 Retrieval Production Quality：进行中。
 - 2.2-A Contract：已形成。
-- 2.2-B Dataset / Runner：已完成既有交付范围，并已由开发者本轮实际执行验证。
+- 2.2-B Dataset / Runner：已完成既有交付范围，并已有开发者实际执行验证。
 - 2.2-C Real Provider Quality Gate：已通过当前 main 的真实 Provider baseline regression。
-- 2.2-D Retrieval Quality Regression / Traceability：代码、持久化、API contract 与 Real API traceability 已完成当前定义范围，并已由开发者本轮实际验证通过。
-- 当前新增工作：将 Real Provider 检索模型与评估参数从 runner 内部固定值提升为显式、可覆盖的 evaluation configuration；本次变更不修改冻结 baseline。
+- 2.2-D Retrieval Quality Regression / Traceability：代码、持久化、API contract 与 Real API traceability 已完成当前定义范围，并已有开发者实际验证通过。
+- 评估配置化：已完成 evaluation provider/model/dimension、dataset/fixture/baseline、top-k/min-score 与质量阈值的显式配置能力。
+- 当前新增工作：2.2-E Model Provider / Model Profile Governance Foundation，先建立组织范围的 Provider / Profile 数据模型、CRUD API、权限、Audit 与 Migration；不提前引入 Reranker / Hybrid / Provider Fallback / 路由 / 成本治理。
 
 ## 当前 main 基线
 
-远端 `main` 已包含提交 `175c5cf`（`docs(retrieval): record 2.2 traceability gate verification`）。本次开发必须以该最新 `main` 为基线；不得继续以更早的 `2559884` 作为开发基线。
+开发必须从最新 `main` 创建分支；历史提交与旧状态文档不得作为当前代码基线。
 
 ## 已验证基线
 
-以下均为开发者此前在当前 main `2559884` 之后实际执行反馈，并已记录到本项目文档；本次配置化变更尚未声称这些结果是本轮重新执行：
+以下结果为此前开发者实际执行反馈，未将其错误标记为本轮 2.2-E 已重新执行：
 
 ```text
 Real HTTP API: 31 passed
@@ -42,20 +43,47 @@ Backend regression gate:
 
 Real Provider regression 与冻结 baseline 一致：Recall@3=0.6、Precision@3=0.333333、MRR=0.6，identity 未发生变化，provider error rate=0。
 
-## 本轮开发目标
+## 当前 2.2-E 目标
 
-1. 检索 Embedding Provider、model、endpoint、dimension、timeout 不应只能依赖后端固定实现；evaluation runner 必须允许单次运行显式覆盖。
-2. Dataset、fixture、baseline 路径应可显式指定，避免评估语义被代码内固定路径锁死。
-3. `top_k`、`min_score`、Recall@K / Precision@K / MRR / Citation correctness 最低阈值、provider 最大错误率必须允许评估任务自定义。
-4. API key 只能通过环境变量名引用，不能进入命令行参数值、评估报告或 Git。
-5. 配置必须进入 evaluation trace metadata，使结果可审计、可复现；baseline identity 继续只由既有 Provider / model / dimension / dataset / retrieval mode / top-k 字段决定，不得通过修改阈值掩盖 regression。
-6. 线上 Runtime 默认仍使用 `settings`；evaluation runner 通过显式 provider injection 执行，不修改全局运行配置。
+1. Provider 与实际供应商身份解耦：`provider_type` 表示技术适配器，`provider_name` 表示实际供应商/部署身份。
+2. Model Profile 支持 `chat` / `embedding` 两类模型。
+3. Embedding Profile 必须保存 dimension；Chat Profile 不保存 embedding dimension。
+4. Provider endpoint 可治理；credential 只能保存 reference，不保存实际 Secret。
+5. Provider / Profile 按 Organization scope 管理，写操作要求 owner/admin。
+6. Provider / Profile 变更写入 AuditLog。
+7. Provider 删除前必须确认不存在 Profile。
+8. 同一 Provider + model type 只能有一个 default Profile。
+9. 为 Runtime / Evaluation 后续接入 `model_profile_id` 提供稳定数据库身份。
+10. 不在本任务提前实现 Reranker、Hybrid、Fallback、Provider routing、成本/用量治理。
+
+详细 Contract：`docs/02-phases/PHASE_2_2_E_MODEL_PROVIDER_PROFILE.md`。
+
+## 当前实现
+
+- `model_providers` / `model_profiles` 数据模型。
+- Migration `0025_model_provider_governance`。
+- `/api/v1/model-providers` Provider CRUD。
+- Provider 下 Model Profile CRUD。
+- Organization membership / management authorization。
+- Audit trace metadata。
+- API Contract tests。
 
 ## 下一步
 
-1. 在最新 main 上完成上述 evaluation configuration 实现与单元测试。
-2. 本地执行配置化单元测试、Real API Gate、Real Provider runner 与 Backend Regression Gate；只记录实际执行结果。
-3. 使用至少一组与当前冻结 baseline 不同的 model/provider 或评估参数做一次配置解析/运行验证；若 identity 发生变化，不得覆盖现有 baseline，应使用独立 baseline 文件或明确记录 identity change。
-4. 对当前 Recall@3=0.6、Precision@3=0.333333、citation_correctness=0.333333 做产品质量结论评估；不得通过修改 baseline 掩盖指标。
-5. 若产品要求更高真实语义质量，应先形成明确质量目标与架构/方案决策，再决定是否继续在 Phase 2.2 内迭代；不得直接创建未经立项的 Phase 2.3。
-6. Frontend / Browser Gate 保持独立，未实际执行不得标记 Passed。
+1. 本地执行 2.2-E API contract test 与 migration/head verification。
+2. 执行 Backend regression gate。
+3. 执行 Real API gate，验证真实 PostgreSQL CRUD、Organization scope、Audit 与 lifecycle。
+4. Runtime Profile Resolution：AgentVersion / Chat 支持 `model_profile_id`，执行时解析 Provider/Profile，并将 identity 写入 execution trace。
+5. Evaluation Profile Selection：evaluation runner 使用受治理 Model Profile，并将 Profile identity 写入 evaluation trace / baseline identity。
+6. Frontend Provider/Profile 管理与 Browser E2E 在确认进入该阶段后实施。
+7. 只有 Runtime / Evaluation Profile 接入及其 Real API evidence 完成后，才评估是否关闭 2.2。
+
+## 开发纪律
+
+- 未实际执行的测试不得记录为 Passed。
+- Baseline 只用于 regression comparison，不得通过修改 baseline 或降低阈值掩盖质量回归。
+- 线上 Runtime 数据源继续使用数据库；JSON/JSONL 只用于版本化 evaluation dataset / result。
+- 新业务代码不得新增具体模型名称硬编码。
+- 新增数据库表必须先有 Migration。
+- Secret 不进入数据库明文、CLI、报告或 Git。
+- Phase 2.3 的完整 Provider Governance（路由/Fallback/成本/用量治理）仍保持产品路线候选，不因 2.2-E 提前实施。

@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过本轮开发者本地验证；Phase 尚未关闭。当前进入评估配置化增强，不修改冻结 baseline。**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过此前开发者本地验证；2.2-E Model Provider / Model Profile Governance Foundation 已进入实现。**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -14,7 +14,60 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 2.2-C 已完成真实 Ollama Provider + PostgreSQL/pgvector Quality Gate，并冻结真实 baseline。当前 main 的 baseline regression 已通过，未修改冻结指标掩盖回归。
 
-2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。Evaluation run / case / regression summary 已持久化到现有 Runtime Observability / Audit 模型；trace API contract 与 Real API traceability 自动化测试已完成并通过本轮本地验证。
+2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。Evaluation run / case / regression summary 已持久化到现有 Runtime Observability / Audit 模型；trace API contract 与 Real API traceability 自动化测试已完成并通过此前本地验证。
+
+## 2.2-E Model Provider / Model Profile Governance Foundation
+
+当前进入 2.2-E，目标是把 Chat / Embedding 模型从 runner、环境变量和业务代码中的具体模型名称进一步提升为可治理的 Provider / Profile 身份。
+
+### Model Provider
+
+组织范围内的 Provider / deployment identity：
+
+```text
+organization_id
+name
+provider_type
+provider_name
+endpoint
+credential_ref
+enabled
+metadata
+```
+
+### Model Profile
+
+Provider 下可选择的具体模型：
+
+```text
+provider_id
+name
+model_type(chat|embedding)
+model_name
+dimension
+capabilities
+parameters
+enabled
+is_default
+```
+
+Embedding Profile 必须声明 dimension；Chat Profile 不声明 embedding dimension。
+
+### 当前实现边界
+
+本阶段只建立：
+
+- 数据模型与 Migration。
+- Organization scoped Provider / Profile CRUD API。
+- owner/admin 写权限。
+- credential reference 安全边界。
+- Provider / Profile AuditLog。
+- default Profile 管理。
+- API contract 自动化测试。
+
+下一步才接入 Runtime 与 Evaluation 的 `model_profile_id` 选择和 trace identity；不在本阶段引入 Reranker / Hybrid / Fallback / 路由 / 成本治理。
+
+详细 Contract 见 `PHASE_2_2_E_MODEL_PROVIDER_PROFILE.md`。
 
 ## 当前增强：Evaluation Configuration
 
@@ -124,10 +177,12 @@ Retrieval quality regression
     ↓
 Citation correctness + Debug / Audit / Observability traceability
     ↓
+2.2-E Model Provider / Profile Governance Foundation
+    ↓
 Acceptance
 ```
 
-## 8. 本轮既有实际验证证据
+## 8. 既有实际验证证据
 
 ```text
 API Runtime Contract: 2 passed
@@ -148,11 +203,11 @@ Real Provider:
 Backend Release / Regression Gate: passed
 ```
 
-以上为此前开发者实际反馈，不作为本轮配置化变更已重新执行的证据。
+以上为此前开发者实际反馈，不作为本次 2.2-E 已重新执行的证据。
 
 ## 9. Definition of Done
 
-Phase 2.2 关闭前至少必须满足：
+Phase 2.2 当前扩展任务完成前至少必须满足：
 
 1. Retrieval Quality Contract 已冻结。
 2. Evaluation Dataset 可版本化、可重复执行。
@@ -162,6 +217,8 @@ Phase 2.2 关闭前至少必须满足：
 6. Provider failure / fallback semantics 有自动化证据。
 7. Retrieval quality 结果与现有 Citation / Audit / Observability 可追踪。
 8. Evaluation model/provider 与 quality parameters 可显式配置并进入 trace。
-9. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
+9. Model Provider / Model Profile 具备组织范围数据模型、CRUD API、权限、Audit 与 migration。
+10. Runtime / Evaluation 后续接入 Profile 后必须保留 Provider/Profile/model/dimension identity。
+11. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
 
-当前既有 1-7 工程实现与 Gate 证据已形成；本次工作补齐第 8 项。是否关闭 Phase 还需要对当前真实语义质量指标是否满足产品目标做明确结论，不能把 baseline 通过等同于最终质量达标。
+当前 1-8 已形成既有工程实现与 Gate 证据；本次先完成第 9 项基础设施，后续完成第 10 项后再评估 Phase 2.2 是否关闭。
