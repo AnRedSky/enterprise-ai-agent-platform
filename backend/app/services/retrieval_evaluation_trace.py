@@ -6,6 +6,11 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import AuditLog
+# This service is also invoked by the standalone real-provider evaluation runner,
+# which does not import the workflow API/router. AuditLog has a foreign key to
+# workflow_versions, so register the Workflow/WorkflowVersion mappers before
+# SQLAlchemy configures AuditLog independently of the FastAPI application.
+from app.models.workflow import Workflow, WorkflowVersion  # noqa: F401
 from app.services.observability_service import ObservabilityService
 
 
