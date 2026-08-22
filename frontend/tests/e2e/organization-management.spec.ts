@@ -8,6 +8,10 @@ function normalizeApiOrigin(value: string): string {
   return value.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
 }
 
+function confirmMessageBox(page: Parameters<Parameters<typeof test>[1]>[0]["page"]): ReturnType<Parameters<typeof page.locator>[0]> {
+  return page.locator(".el-message-box:visible");
+}
+
 test("Organization management completes the real owner browser contract", async ({ page, playwright }) => {
   test.setTimeout(60_000);
 
@@ -93,22 +97,28 @@ test("Organization management completes the real owner browser contract", async 
     await expect(memberRow).toContainText("active");
 
     await page.getByRole("button", { name: "暂停 Organization" }).click();
-    const statusDialog = page.locator(".el-message-box:visible");
+    const statusDialog = confirmMessageBox(page);
     await expect(statusDialog).toContainText("suspended");
-    await statusDialog.getByRole("button", { name: "确定" }).click();
+    const statusConfirm = statusDialog.locator(".el-message-box__btns .el-button--primary");
+    await expect(statusConfirm).toBeVisible();
+    await statusConfirm.click();
     await expect(page.getByText("Organization 已暂停")).toBeVisible();
     await expect(page.getByText("Organization 当前已暂停。管理操作仍由后端授权策略控制。")).toBeVisible();
 
     await page.getByRole("button", { name: "恢复 Organization" }).click();
-    const recoveryDialog = page.locator(".el-message-box:visible");
+    const recoveryDialog = confirmMessageBox(page);
     await expect(recoveryDialog).toContainText("active");
-    await recoveryDialog.getByRole("button", { name: "确定" }).click();
+    const recoveryConfirm = recoveryDialog.locator(".el-message-box__btns .el-button--primary");
+    await expect(recoveryConfirm).toBeVisible();
+    await recoveryConfirm.click();
     await expect(page.getByText("Organization 已恢复")).toBeVisible();
 
     await memberRow.getByRole("button", { name: "转移 Owner" }).click();
-    const transferDialog = page.locator(".el-message-box:visible");
+    const transferDialog = confirmMessageBox(page);
     await expect(transferDialog).toContainText(`确认将 Organization 所有权转移给 ${memberUser.user_id}`);
-    await transferDialog.getByRole("button", { name: "确认转移" }).click();
+    const transferConfirm = transferDialog.locator(".el-message-box__btns .el-button--primary");
+    await expect(transferConfirm).toBeVisible();
+    await transferConfirm.click();
     await expect(page.getByText("所有权转移成功")).toBeVisible();
     await expect(memberRow).toContainText("owner");
 
