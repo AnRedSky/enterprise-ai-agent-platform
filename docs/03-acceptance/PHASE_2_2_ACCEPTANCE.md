@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B 已通过本地 Gate；2.2-C Real Provider Quality Gate 已实现，待真实 Provider 本地执行**
+> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者本地实际验证；Citation correctness 与 Debug/Audit/Observability traceability 仍未完成**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -31,47 +31,80 @@
 - [x] 失败 case 可通过 case detail 定位。
 - [x] 开发者本地 unit / runner Gate 实际执行并记录结果。
 
-本地证据：
+本轮实际证据：
 
 ```text
-Dataset Loader: 4 passed
-Retrieval evaluation + Dataset: 10 passed
-Backend regression: 279 passed, 30 deselected
-Migration head: 0023_organization_membership
-Real API: 30 passed
-2.2-B runner --k 3: 5/5 cases successful, error_rate=0, recall@3=1.0, precision@3=0.466667, MRR=0.9, quality_gate=passed
+Backend regression: 301 passed, 30 deselected
+Migration head: 0024_embedding_dimension_contract
+Real HTTP API: 30 passed
 ```
 
-### C. Real Provider Quality Gate — **实现完成，待本地 Gate**
+### C. Real Provider Quality Gate — **本地 Gate 已通过**
 
-- [x] 使用真实 Embedding Provider 的 runner 已实现。
+- [x] 使用真实 Embedding Provider 的 runner 已实现并实际执行。
 - [x] 使用真实 PostgreSQL / pgvector Retrieval 链路。
 - [x] Provider failure 保留为 observation / error，不静默 fallback。
-- [x] 显式 fallback 字段进入结果；本 Gate 默认 `fallback_used=false`。
+- [x] 显式 fallback 字段进入结果；本 Gate 实际 `fallback_used=false`、`fallback_count=0`。
 - [x] Mock 结果不作为真实质量证据。
 - [x] Provider / model / dimension / dataset / retrieval mode / top-k identity 纳入 baseline。
-- [x] 首次真实运行支持显式 `--freeze-baseline`；冻结结果不会被标记为 quality Gate Passed。
-- [ ] 使用开发者真实 Provider credentials 完成本地 Gate。
-- [ ] 冻结真实 Provider baseline。
-- [ ] 使用冻结 baseline 重跑并确认 regression Gate。
+- [x] 首次真实运行使用 `--freeze-baseline` 冻结真实 baseline。
+- [x] 使用冻结 baseline 重跑并确认 regression Gate。
 
-### D. Regression / Traceability
+本地真实 Provider 证据：
+
+```text
+provider=ollama
+model=nomic-embed-text:latest
+embedding_dimension=768
+cases=5
+successful_cases=5
+error_cases=0
+error_rate=0
+recall@3=0.6
+precision@3=0.333333
+mrr=0.6
+```
+
+重跑 regression：
+
+```text
+baseline.status=checked
+identity_changed=false
+metric deltas: recall=0, precision=0, mrr=0
+provider_error_rate=0
+quality_gate=passed
+```
+
+### D. Regression / Traceability — **部分完成**
 
 - [x] Provider / model / dataset identity 可进入 baseline 对比。
+- [x] Dimension / retrieval mode / top-k identity 可进入 baseline 对比。
+- [x] Recall@K / Precision@K / MRR metric delta 可输出 regression report。
+- [x] Provider error rate 纳入 regression report。
 - [ ] Citation correctness 有自动化证据。
 - [ ] Retrieval Debug / Audit / Observability 可追踪评测结果。
 
-## 3. 2.2-B 当前结论
+## 3. 2.2-C 当前结论
 
-2.2-B Dataset Loader 与 Runner 已完成，并已在开发者本地执行通过。现有结果只能证明固定 Dataset + PostgreSQL/pgvector + deterministic Mock Embedding 的工程链路，不代表真实模型语义质量。
+2.2-C Real Provider Quality Gate 已由开发者本地实际完成。Ollama `nomic-embed-text:latest` 返回 768 维 embedding，5/5 evaluation cases 成功写入并从 PostgreSQL/pgvector 检索，error_rate=0、fallback=0。真实 baseline 已冻结并随后成功完成 regression check。
 
-## 4. 2.2-C 当前结论
+当前 baseline 的 Recall@3=0.6、Precision@3=0.333333、MRR=0.6 是真实、可重复的回归基线，不应被表述为绝对质量达标。当前没有依据在本地人为设置更高绝对门槛，也不得通过修改指标或 fallback 掩盖该结果。
 
-Real Provider runner 已直接复用 `OpenAICompatibleEmbeddingProvider`、现有 Dataset Loader、PostgreSQL/pgvector fixture 与 Retrieval Evaluation aggregation。真实 Provider baseline 不预置、不伪造，必须由开发者使用本地未提交 `backend/.env` 完成真实运行后冻结。
+此前 Ollama 503、slow runner startup 与本地环境代理导致的请求失败均已完成分析和修复，相关工程错误已记录。
 
-下一步：
+## 4. 2.2-D 当前结论
 
-1. 配置未提交的 `backend/.env`：`EMBEDDING_PROVIDER=openai-compatible`、真实 endpoint、API key、model、dimension；保持 `VECTOR_PROVIDER=pgvector`。
-2. 使用 `--freeze-baseline` 执行第一次真实评测并审阅结果。
-3. 保留冻结 baseline 后再次执行 runner，确认 regression Gate。
-4. 若真实 Provider 结果或错误证据不满足要求，按实际失败记录到 `docs/04-errors/` 后修复。
+Provider / model / dimension / dataset / retrieval mode / top-k 的 regression comparison 已实际通过。下一交付单元为 Citation correctness 以及 Retrieval Debug / Audit / Observability traceability；完成后再进入 Phase 2.2 Acceptance close-out。
+
+## 5. 下一步本地验证
+
+修改 2.2-D Citation / traceability 后必须重新执行至少：
+
+```powershell
+cd backend
+uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py --k 3
+```
+
+真实 Provider / 数据库联调仍必须在开发者本地完成；未实际执行的结果不得写成 Passed。

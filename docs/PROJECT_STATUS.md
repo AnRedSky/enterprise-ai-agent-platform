@@ -7,33 +7,53 @@
 - Phase 2.2 Retrieval Production Quality：进行中。
 - 2.2-A Contract：已形成。
 - 2.2-B Dataset / Runner：已通过本地 Gate。
-- 2.2-C Real Provider Quality Gate：已实现，当前受本地 embedding 模型维度阻塞。
+- 2.2-C Real Provider Quality Gate：已通过本地真实 Provider Gate，并已冻结 baseline。
+- 2.2-D Retrieval Quality Regression：回归比较已通过，当前继续推进 Citation correctness 与 Retrieval Debug / Audit / Observability 追踪。
 
 ## 本轮实际验证
 
 ```text
-Ollama /api/tags: 3 models available
-Model Gateway unit: 5 passed
-Backend regression: 287 passed, 30 deselected
-Migration head: 0023_organization_membership
-Real API: 30 passed
+Ollama embedding smoke: PASS
+  provider=ollama
+  model=nomic-embed-text:latest
+  dimension=768
+  vector_count=1
+
+Backend regression: 301 passed, 30 deselected
+Migration head: 0024_embedding_dimension_contract
+Real HTTP API: 30 passed
+
+2.2-C real-provider-pgvector:
+  cases=5
+  successful_cases=5
+  error_cases=0
+  error_rate=0
+  fallback_count=0
+  fallback_used=false
+  recall@3=0.6
+  precision@3=0.333333
+  mrr=0.6
+  quality_gate=passed
+
+2.2-D baseline regression:
+  identity_changed=false
+  recall delta=0
+  precision delta=0
+  mrr delta=0
+  provider_error_rate=0
+  quality_gate=passed
 ```
 
-当前 Ollama embedding 模型为 `nomic-embed-text`（768 维）和 `bge-m3`（1024 维），而 pgvector 契约为 `vector(1536)`；当前资源约束禁止下载其他模型，因此不得绕过维度校验或伪造 baseline。
+真实 Provider 使用本地 Ollama `nomic-embed-text:latest`，实际维度为 768；评测真实写入 PostgreSQL/pgvector，未使用 fallback。首次 `--freeze-baseline` 已由开发者本地实际执行，随后再次执行 runner，baseline status=checked 且 regression Gate=passed。
 
-已新增 `backend/scripts/dev/ollama_chat_smoke.ps1` 解决 PowerShell 手工 JSON quoting 问题，并记录到 `docs/04-errors/`。
+当前真实 baseline 的语义质量为 Recall@3=0.6、Precision@3=0.333333、MRR=0.6。这组数据是当前 Provider / model / dataset / retrieval-mode 的回归基线，不应被表述为绝对质量达标，也不得通过修改指标、fallback、截断或补零人为提高结果。
 
-正确 Frontend Gate：
-
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
-```
+已完成 Ollama 本地 503 / runner 启动 / 环境代理问题的修复，并记录工程错误。当前 Ollama 日志已确认 `/api/embed` 返回 200。
 
 ## 下一步
 
-1. 执行 Ollama Chat smoke test。
-2. 保持 Backend / Frontend / Browser Gate 独立。
-3. 不下载其他模型、不伪造 embedding baseline。
-4. 获得可实际产生 1536 维 embedding 的 Provider，或明确批准调整 pgvector 维度后，执行 2.2-C `--freeze-baseline`。
-5. 冻结真实 baseline 后进入 2.2-D Retrieval Quality Regression。
+1. 继续 Phase 2.2-D：为 Evaluation Case 增加可验证的 Citation correctness 证据。
+2. 将评测结果与现有 Retrieval Debug / Audit / Observability 建立可追踪关系；不得把评测 JSON 当作线上业务数据源。
+3. 保持 Backend / Frontend / Browser Gate 独立。
+4. 对 Provider / model / dimension / dataset / retrieval mode / top-k 的变化继续执行 baseline regression。
+5. 当前 baseline 质量较低但稳定；在没有新的真实数据或明确质量目标前，不人为抬高绝对阈值，也不重写 baseline 来掩盖现状。
