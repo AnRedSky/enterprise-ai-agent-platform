@@ -1,6 +1,6 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已实现，等待本地 Frontend Gate**
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已实现，首次 Frontend Regression 的 production build 被 vue-tsc 阻塞，已修复，等待本地重新验证**
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -96,7 +96,7 @@ Real API
 [PASS] Real API gate completed.
 ```
 
-## 5. 2.1-D Frontend Contract + UI — **实现完成，Gate 待执行**
+## 5. 2.1-D Frontend Contract + UI — **实现完成 / Gate 修复后待重新验证**
 
 已提交：
 
@@ -127,9 +127,32 @@ frontend/tests/views/Organizations.test.ts
 frontend/tests/views/OrganizationDetail.test.ts
 ```
 
-前端只负责体验层的操作入口；最终权限仍由 Backend authorization 强制执行。
+### 2.1-D 首次本地 Gate 结果
 
-**当前尚未声称 2.1-D Passed，因为上述代码提交后尚未由本地重新执行 Frontend Regression / production build。**
+用户本地定向测试：
+
+```text
+3 test files
+15 passed
+```
+
+用户本地 Frontend Regression：
+
+```text
+16 test files
+67 passed
+```
+
+Vitest 阶段通过，但 production build 被 `vue-tsc` 阻塞，5 个错误均来自 Element Plus table slot 的 `DefaultRow` 与 `Membership` 参数类型不兼容：
+
+```text
+TS2345 / TS2739
+Argument of type 'DefaultRow' is not assignable to parameter of type 'Membership'
+```
+
+该问题已记录为 `ERR-0020` 并修复：在 UI table slot 与业务 Membership handler 之间增加集中式 `asMembership()` 类型边界；同时补充 Organization 列表测试的 `el-tag` stub，消除测试中的组件解析 warning。
+
+**修复后的代码尚未由开发者重新执行 Gate，因此当前仍不得标记 2.1-D Passed。**
 
 ## 6. 2.1-E Real API / Regression
 
@@ -177,4 +200,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 10. 当前执行结论
 
-**2.1-A、2.1-B、2.1-C 已完成对应 Gate；2.1-D 前端实现及 Contract Tests 已提交。当前下一步只验证实际 Frontend Regression / production build；若出现失败，先修复并记录实际结果，再决定 2.1-E / 2.1-F。**
+**2.1-A、2.1-B、2.1-C 已完成对应 Gate；2.1-D 前端实现及 Contract Tests 已提交。首次 Frontend Regression 的 Vitest 已通过，但 production build 发现并修复 `DefaultRow` / `Membership` 类型边界错误。当前下一步只重新验证实际 Frontend Regression / production build；若通过，再进入 2.1-E Real API / Regression，不提前宣告后续 Gate。**
