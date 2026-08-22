@@ -1,7 +1,7 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
 > 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C API Contract Implementation 进行中**
-> 当前基线：`main` @ `0b9ea8014a585e6433c25f1747732c7343378759`
+> 当前基线：`main` @ `b55b20d58a948b489ad8781d51c1f81005553dac`
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -186,6 +186,7 @@ uv run alembic heads
 - suspended Organization 的管理恢复路径。
 - Organization / Membership AuditLog 写入。
 - API Contract route/authentication tests。
+- Organization management authorization unit coverage。
 
 待本地验证：
 
