@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者本地实际验证；Citation correctness 与 Debug/Audit/Observability traceability 仍未完成**
+> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者本地实际验证；Citation correctness 已形成自动化 Contract，真实运行证据与 Debug/Audit/Observability traceability 仍未完成**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -25,13 +25,15 @@
 ### B. Evaluation Dataset / Runner — **本地 Gate 已通过**
 
 - [x] Dataset Loader 对当前 JSONL 执行结构、ID、query、relevant chunk 校验。
+- [x] Dataset 支持 `expected_citation_targets`，并要求其属于 `relevant_chunk_ids`。
 - [x] Evaluation runner 可重复执行设计与实现完成。
 - [x] 结果包含 dataset schema version、retrieval mode、case detail、latency、error 与聚合指标。
 - [x] Recall@K / Precision@K / MRR / error rate / latency 自动化计算接入现有 evaluation service。
+- [x] Citation correctness Contract 与单元测试已实现；真实 Provider runner 的最终引用链路仍待接入。
 - [x] 失败 case 可通过 case detail 定位。
-- [x] 开发者本地 unit / runner Gate 实际执行并记录结果。
+- [x] 开发者本地 unit / runner Gate 已实际执行并记录结果。
 
-本轮实际证据：
+本轮既有实际证据：
 
 ```text
 Backend regression: 301 passed, 30 deselected
@@ -81,7 +83,8 @@ quality_gate=passed
 - [x] Dimension / retrieval mode / top-k identity 可进入 baseline 对比。
 - [x] Recall@K / Precision@K / MRR metric delta 可输出 regression report。
 - [x] Provider error rate 纳入 regression report。
-- [ ] Citation correctness 有自动化证据。
+- [x] Citation correctness Contract、expected citation targets 与错误场景单元测试已实现。
+- [ ] 真实 Retrieval / Runtime 产生的最终 citations 接入 citation correctness runner。
 - [ ] Retrieval Debug / Audit / Observability 可追踪评测结果。
 
 ## 3. 2.2-C 当前结论
@@ -94,14 +97,17 @@ quality_gate=passed
 
 ## 4. 2.2-D 当前结论
 
-Provider / model / dimension / dataset / retrieval mode / top-k 的 regression comparison 已实际通过。下一交付单元为 Citation correctness 以及 Retrieval Debug / Audit / Observability traceability；完成后再进入 Phase 2.2 Acceptance close-out。
+Provider / model / dimension / dataset / retrieval mode / top-k 的 regression comparison 已实际通过。本轮继续推进了 Citation correctness 的数据契约与自动化 Contract：评测 case 现在显式记录 `expected_citation_targets`，计算规则要求 citation target 同时存在于实际 retrieval ranking 且属于 expected targets。该 Contract 已有单元测试，但尚不能据此宣称真实 Runtime citation Gate Passed。
 
-## 5. 下一步本地验证
+下一交付单元为把真实 Retrieval / Runtime 输出的 citation 目标接入该 Contract，并建立 Retrieval Debug / Audit / Observability 对评测 case、Provider、Dataset 与 regression 结果的追踪关系。
 
-修改 2.2-D Citation / traceability 后必须重新执行至少：
+## 5. 本轮代码变更后的本地验证
+
+请在同步最新 `main` 后执行：
 
 ```powershell
 cd backend
+uv run pytest -q tests/unit/test_retrieval_evaluation_dataset.py
 uv run pytest -q
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
 uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py --k 3
