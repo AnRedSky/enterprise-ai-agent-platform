@@ -99,7 +99,12 @@ class OrganizationService:
     async def require_management_access(
         self, organization_id: UUID, user_id: UUID
     ) -> OrganizationMembership:
-        membership = await self.require_active_membership(organization_id, user_id)
+        user = (await self.db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if user is None or user.status != "active":
+            raise HTTPException(403, "用户当前不可访问 Organization")
+        membership = await self.membership(organization_id, user_id)
+        if membership is None or membership.status != "active":
+            raise HTTPException(403, "当前用户没有有效的 Organization membership")
         if membership.role not in self.MANAGEMENT_ROLES:
             raise HTTPException(403, "Organization 管理权限不足")
         return membership
@@ -125,8 +130,9 @@ class OrganizationService:
             raise HTTPException(409, "Organization 名称已存在")
 
         tenant = Tenant(id=uuid4(), name=normalized_name, status="active")
-        organization = Organization(tenant_id=tenant.id, name=normalized_name, status="active")
+        organization = Organization(id=uuid4(), tenant_id=tenant.id, name=normalized_name, status="active")
         membership = OrganizationMembership(
+            id=uuid4(),
             organization_id=organization.id,
             user_id=owner_user_id,
             status="active",
@@ -221,7 +227,7 @@ class OrganizationService:
         if existing is not None:
             raise HTTPException(409, "用户已经属于该 Organization")
         membership = OrganizationMembership(
-            organization_id=organization.id, user_id=user.id, status="active", role=role
+            id=uuid4(), organization_id=organization.id, user_id=user.id, status="active", role=role
         )
         try:
             async with self.db.begin_nested():
