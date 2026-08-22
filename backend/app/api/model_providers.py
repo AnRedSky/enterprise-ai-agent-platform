@@ -65,6 +65,29 @@ async def create_model_provider(
     return _provider(item)
 
 
+@router.get("/{provider_id}/profiles", response_model=list[ModelProfileResponse])
+async def list_model_profiles(
+    provider_id: UUID,
+    claims: dict = Depends(current_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    _, items = await ModelProviderService(db).list_profiles(provider_id, _user_id(claims))
+    return [_profile(item) for item in items]
+
+
+@router.post("/{provider_id}/profiles", response_model=ModelProfileResponse, status_code=201)
+async def create_model_profile(
+    provider_id: UUID,
+    payload: ModelProfileCreate,
+    claims: dict = Depends(current_claims),
+    db: AsyncSession = Depends(get_db),
+    x_request_id: str | None = Header(default=None),
+    x_trace_id: str | None = Header(default=None),
+):
+    item = await ModelProviderService(db).create_profile(provider_id, payload, _user_id(claims), x_request_id, x_trace_id)
+    return _profile(item)
+
+
 @router.patch("/{provider_id}", response_model=ModelProviderResponse)
 async def update_model_provider(
     provider_id: UUID,
@@ -90,30 +113,7 @@ async def delete_model_provider(
     return Response(status_code=204)
 
 
-@router.get("/{provider_id}/profiles", response_model=list[ModelProfileResponse])
-async def list_model_profiles(
-    provider_id: UUID,
-    claims: dict = Depends(current_claims),
-    db: AsyncSession = Depends(get_db),
-):
-    _, items = await ModelProviderService(db).list_profiles(provider_id, _user_id(claims))
-    return [_profile(item) for item in items]
-
-
-@router.post("/{provider_id}/profiles", response_model=ModelProfileResponse, status_code=201)
-async def create_model_profile(
-    provider_id: UUID,
-    payload: ModelProfileCreate,
-    claims: dict = Depends(current_claims),
-    db: AsyncSession = Depends(get_db),
-    x_request_id: str | None = Header(default=None),
-    x_trace_id: str | None = Header(default=None),
-):
-    item = await ModelProviderService(db).create_profile(provider_id, payload, _user_id(claims), x_request_id, x_trace_id)
-    return _profile(item)
-
-
-@router.patch("/profiles/{profile_id}", response_model=ModelProfileResponse)
+@router.patch("/model-profiles/{profile_id}", response_model=ModelProfileResponse)
 async def update_model_profile(
     profile_id: UUID,
     payload: ModelProfileUpdate,
@@ -126,7 +126,7 @@ async def update_model_profile(
     return _profile(item)
 
 
-@router.delete("/profiles/{profile_id}", status_code=204)
+@router.delete("/model-profiles/{profile_id}", status_code=204)
 async def delete_model_profile(
     profile_id: UUID,
     claims: dict = Depends(current_claims),
