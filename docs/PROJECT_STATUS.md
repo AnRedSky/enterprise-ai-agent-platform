@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：`0b7dcd1d39ee27a79ff774210186e982c10eff87`
+- 当前远端基线：`0b9ea8014a585e6433c25f1747732c7343378759`
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项；2.1-A Contract 已完成；2.1-B Domain + Migration 代码已实现，待本地 Gate 验证。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A Contract 已完成；2.1-B Migration Gate 已由本地实际结果验证；2.1-C API Contract Implementation 进行中。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -27,6 +27,8 @@
 | Phase 1.9 Final Acceptance | **正式关闭** |
 
 ## 3. Phase 1.9 最终本地 Gate 证据
+
+历史证据保持原记录，不代表本轮重新执行：
 
 ### Backend
 
@@ -69,8 +71,6 @@ Frontend Regression Gate:
 [PASS]
 ```
 
-AuditLog focused regression：`2 passed / 0 failed`。
-
 ### Browser E2E
 
 ```text
@@ -78,10 +78,6 @@ Desktop Chrome:
 3 passed in 10.5s
 [PASS] Browser E2E gate completed.
 ```
-
-覆盖 Scheduled Trigger、Webhook Trigger、Webhook duplicate-event convergence 与 lifecycle security。
-
-> 上述结果是 Phase 1.9 已记录的实际本地证据，不代表本次文档整理重新执行。
 
 ## 4. Phase 状态
 
@@ -96,7 +92,7 @@ Desktop Chrome:
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A 已完成；2.1-B Domain + Migration 已实现，待本地验证 |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A 完成；2.1-B Migration Gate 已验证；2.1-C API Contract Implementation 进行中 |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
@@ -121,11 +117,7 @@ Runtime Reliability / Audit / Trace
 Vue Management + Browser E2E
 ```
 
-详细能力、验收级别、产品边界和差距见：
-
-- `docs/PRODUCT_CAPABILITY_BASELINE.md`
-- `docs/PRODUCT_DEVELOPMENT_MATRIX.md`
-- `docs/PRODUCT_ROADMAP.md`
+Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization / Membership / Access Governance 产品能力。
 
 ## 6. 当前确认的产品 / 工程差距与路线
 
@@ -139,8 +131,6 @@ Vue Management + Browser E2E
 | Event Infrastructure | 支撑高吞吐异步业务集成 | Phase 2.6 | P2，仅需求成立后 |
 | Multi-Agent | 支撑复杂任务的 Agent 协作 | Phase 2.7 | P2，尚无 Contract |
 | Agent Asset / Marketplace | 企业内部复用、发布和治理 Agent 资产 | Phase 2.8 | P2，尚无 Contract |
-
-上述路线详见 `docs/PRODUCT_ROADMAP.md`；只有当前 Phase 2.1 已正式进入开发。
 
 ## 7. Phase 2.1 当前任务
 
@@ -157,11 +147,9 @@ Vue Management + Browser E2E
 
 详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
 
-### 2.1-B Database Migration + Domain — 代码实现完成，待本地 Gate
+### 2.1-B Database Migration + Domain — Migration Gate 已验证
 
-Issue：#33
-
-已实现：
+已实现并由用户本地 Migration 验证：
 
 - SQLAlchemy `Organization` / `OrganizationMembership` model。
 - Alembic `0023_organization_membership` migration。
@@ -171,16 +159,36 @@ Issue：#33
 - Owner/Admin/Member role 约束。
 - Owner transfer 事务锁定与唯一 Owner 防护。
 - membership `(organization_id, user_id)` 数据库唯一约束。
-- Backend unit tests 覆盖核心 domain rule。
 
-尚未声称通过：
+用户本地实际结果：
 
-- `uv run pytest -q` 尚未在本次实现后实际执行。
-- `uv run alembic upgrade head` 尚未在本次实现后实际执行。
-- PostgreSQL 实际迁移数据计数/tenant scope 尚未验证。
-- Real API / API Contract 属于后续 2.1-C / 2.1-E。
+```text
+uv run alembic upgrade head
+Running upgrade 0022_workflow_trigger -> 0023_organization_membership
 
-**因此当前仍停留在 2.1-B，不进入 Frontend。**
+uv run alembic heads
+0023_organization_membership (head)
+```
+
+### 2.1-C API Contract Implementation — 进行中
+
+本轮已提交：
+
+- Organization API schema。
+- Organization / Membership router。
+- Organization CRUD。
+- Membership list/create/update/remove。
+- 显式 owner transfer mutation。
+- active membership / management authorization。
+- suspended Organization 的管理恢复路径。
+- Organization / Membership AuditLog 写入。
+- API Contract route/authentication tests。
+
+**注意：本轮 API 代码提交后尚未由本地重新执行 Backend regression，因此不能标记 2.1-C Passed。**
+
+### 2.1-D～2.1-F
+
+暂不进入 Frontend；必须先完成 2.1-C Backend regression + API Contract + Real API 所需 Gate。
 
 ## 8. Phase 2.1 验收入口
 
@@ -196,17 +204,18 @@ Phase 2.1 完成前不得声称 Organization / Enterprise IAM 已完整实现或
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-2.1-B 本地 Backend regression + Migration Gate
+2.1-C API Contract Implementation
+ → 本地 Backend regression
  → 修复实际失败
- → 2.1-C API Contract Implementation
- → 2.1-D Frontend API Types + Vitest + UI
- → 2.1-E Real API + Backend / Frontend Regression
+ → API Contract / Real API
+ → 2.1-E Regression
+ → 2.1-D Frontend Contract + UI
  → 2.1-F Browser E2E
  → Acceptance / Status / Error Record
  → 直接提交 main
 ```
 
-不涉及某层时可以裁剪，但必须在 Phase 文档说明原因。所有开发、修复、文档与测试变更直接基于 `main`。
+不涉及某层时必须在 Phase 文档说明原因。所有开发、修复、文档与测试变更直接基于 `main`。
 
 ## 10. 维护规则
 
