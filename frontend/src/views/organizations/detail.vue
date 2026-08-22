@@ -26,12 +26,19 @@ function asMembership(row: unknown): Membership {
   return row as Membership;
 }
 
+function organizationLoadError(errorValue: unknown): string {
+  const status = (errorValue as { response?: { status?: number } } | null)?.response?.status;
+  if (status === 403) return "Organization 详情加载失败：当前用户无权访问该 Organization。";
+  if (status === 404) return "Organization 详情加载失败：Organization 不存在或已不可访问。";
+  return "Organization 详情加载失败";
+}
+
 async function load() {
   loading.value = true; error.value = "";
   try {
     organization.value = await getOrganization(id);
     members.value = (await listMembers(id)).items;
-  } catch (e) { error.value = e instanceof Error ? e.message : "Organization 详情加载失败"; }
+  } catch (e) { error.value = organizationLoadError(e); }
   finally { loading.value = false; }
 }
 
