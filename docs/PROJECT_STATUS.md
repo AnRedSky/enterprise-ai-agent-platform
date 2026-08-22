@@ -10,19 +10,24 @@
 - 2.2-C Real Provider Quality Gate：已通过当前 main 的真实 Provider baseline regression。
 - 2.2-D Retrieval Quality Regression / Traceability：代码、持久化、API contract 与 Real API traceability 已完成当前定义范围，并已有开发者实际验证通过。
 - 评估配置化：已完成 evaluation provider/model/dimension、dataset/fixture/baseline、top-k/min-score 与质量阈值的显式配置能力。
-- 2.2-E Model Provider / Model Profile Governance Foundation：Provider / Profile 数据模型、CRUD API、权限、Audit、Migration 已完成；Runtime Profile Resolution E-1 已实现；Retrieval Evaluation Profile Selection E-2 已实现，待本地 Gate / Real API 证据闭环。
+- 2.2-E Model Provider / Model Profile Governance Foundation：Provider / Profile 数据模型、CRUD API、权限、Audit、Migration 已完成；Runtime Profile Resolution E-1 已实现；Retrieval Evaluation Profile Selection E-2 已实现，当前重点是完成本地真实 Provider evidence 闭环。
 
 ## 当前 main 基线
 
-开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建分支。
+开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建长期开发分支。临时修复分支只用于形成可审查提交，验证后合并回 `main`。
 
 ## 已验证基线
 
-以下结果为此前开发者实际执行反馈，未将其错误标记为本轮 E-1/E-2 已重新执行：
+以下结果为此前开发者实际执行反馈，未将其错误标记为本轮 E-1/E-2 新增代码已重新执行：
 
 ```text
-Real HTTP API: 31 passed
-API Runtime Contract: 2 passed
+API contract: 10 passed
+Unit retrieval evaluation baseline: 8 passed
+Backend regression gate:
+  Backend regression: 318 passed, 31 deselected
+  Migration head: 0026_model_profile_runtime_identity
+  Real HTTP API: 31 passed
+  Backend regression gate: passed
 Real Provider runner:
   provider=ollama
   model=nomic-embed-text:latest
@@ -34,14 +39,9 @@ Real Provider runner:
   mrr=0.6
   citation_correctness=0.333333
   quality_gate=passed
-Backend regression gate:
-  Backend regression: 309 passed, 31 deselected
-  Migration head: 0024_embedding_dimension_contract
-  Real HTTP API: 31 passed
-  Backend regression gate: passed
 ```
 
-Real Provider regression 与冻结 baseline 一致：Recall@3=0.6、Precision@3=0.333333、MRR=0.6，identity 未发生变化，provider error rate=0%。
+Real Provider regression 与既有 baseline 一致：Recall@3=0.6、Precision@3=0.333333、MRR=0.6，identity 未发生变化，provider error rate=0%。
 
 ## 当前 2.2-E 目标
 
@@ -77,30 +77,26 @@ Real Provider regression 与冻结 baseline 一致：Recall@3=0.6、Precision@3=
 - Legacy baseline 在未选择 governed Profile 时保持兼容，不要求重新冻结既有 baseline。
 - Model Provider OpenAPI contract 测试改为验证语义约束（integer + minimum=1 + nullable），避免绑定 Pydantic union schema 的具体输出顺序。
 - Standalone evaluation trace runner 显式注册 Model Profile / Provider ORM mapper，避免 `Execution.model_profile_id` 在独立脚本上下文中触发 SQLAlchemy metadata 缺失。
-- 新增 `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py`：使用本地已安装 Ollama 模型创建临时 governed Embedding Profiles，自动获取实际 dimension，执行 Profile A baseline freeze 与 Profile B identity regression 验证；测试不会下载模型并在结束时清理临时治理数据。
+- `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py` 使用本地已安装 Ollama 模型创建临时 governed Embedding Profiles，自动获取实际 dimension，执行 Profile A baseline freeze 与 Profile B identity regression 验证；测试不会下载模型并在结束时清理临时治理数据。
+- Governed evaluation smoke 的 dimension probe 已改为复用生产 `OllamaEmbeddingProvider`，不再在 smoke 脚本内维护第二套 Ollama embedding HTTP 协议；新增 unit test 覆盖该适配器复用。
 
 ## 当前待验证
 
-本轮 E-1/E-2 新增代码尚未由开发者本地重新执行，因此以下均保持“待验证”，不预填通过：
+本轮 smoke adapter 修复尚未由开发者本地重新执行，因此以下保持“待验证”：
 
-1. API contract / Backend regression。
-2. Migration `0026_model_profile_runtime_identity` upgrade/head。
-3. Real API Provider/Profile lifecycle。
-4. 使用自定义 Chat Profile 的真实 Chat Runtime。
-5. 使用自定义 Embedding Profile 的真实 Retrieval Evaluation。
-6. 不同 Embedding Profile 的 baseline identity / regression 行为。
-7. Execution / Evaluation trace 的 Profile / Provider identity 查询。
-8. Secret 不进入 response / trace / audit 的验证。
-9. 新增 governed evaluation smoke script 的本地真实 Provider 执行结果。
+1. Governed evaluation smoke 在当前 Docker Ollama 环境中完整执行。
+2. Profile A 使用 `nomic-embed-text:latest` 冻结 baseline，Profile B 使用 `bge-m3:latest` 触发 identity regression。
+3. Smoke 全流程不下载任何模型。
+4. E-2 Real API evidence 与上述 smoke evidence 汇总后进入 2.2-E-3 Frontend Provider/Profile Management。
 
 ## 下一步
 
-1. 本地执行 API contract + migration/head + Backend Gate + Real API Gate。
-2. 执行 `run_governed_embedding_profile_smoke.py`，使用当前已安装的 `nomic-embed-text:latest` 与 `bge-m3:latest`，确认无需下载模型即可完成 Profile A/B evaluation identity regression。
-3. 使用两个不同的 Organization-scoped Embedding Profiles，分别运行 Real Provider evaluation，确认 runner 不再依赖后端固定 embedding model/provider/dimension。
-4. 冻结 governed Profile baseline 后，再执行第二个 Profile 的回归测试，确认 Profile identity change 被质量门禁识别，而不会通过修改 baseline 掩盖变化。
-5. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
-6. 只有 Runtime / Evaluation Profile 接入及其 Real API evidence 完成后，才评估是否关闭 2.2。
+1. 在当前本地环境执行 API contract + migration/head + Backend Gate + Real API Gate，确认 `main` 基线不回归。
+2. 执行 governed embedding smoke，明确使用当前 Ollama 已存在的 `nomic-embed-text:latest` 与 `bge-m3:latest`，禁止 `ollama pull`。
+3. 若 smoke 仍报告 Ollama HTTP 错误，优先检查 `OLLAMA_BASE_URL` / Docker 端口映射与应用实际 endpoint，不修改模型或下载新模型；错误应来自生产 Ollama adapter，而不是 smoke 自己的协议实现。
+4. 使用两个不同的 Organization-scoped Embedding Profiles 分别运行 Real Provider evaluation，确认 runner 不再依赖后端固定 embedding model/provider/dimension。
+5. 冻结 governed Profile baseline 后，再执行第二个 Profile 的回归测试，确认 Profile identity change 被质量门禁识别，而不会通过修改 baseline 掩盖变化。
+6. E-2 Real API evidence 通过后进入 2.2-E-3 Frontend Provider/Profile Management。
 
 ## 开发纪律
 
