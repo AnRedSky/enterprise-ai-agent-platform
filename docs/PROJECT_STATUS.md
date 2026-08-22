@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 最新产品基线：Phase 2.1-E Real API Gate 已通过；当前进入 Phase 2.1-F Browser E2E + Acceptance。
+- 最新产品基线：Phase 2.1-E Real API Gate 已通过；Phase 2.1-F-A / F-B Browser E2E 已通过当前本地 Gate；当前进入 F-C Browser Acceptance。
 - 开发原则：所有任务直接基于最新 `main`，禁止把临时分支作为长期开发基线。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E 已完成对应 Gate；2.1-F-A / 2.1-F-B 已实现，Browser E2E 已连续发现并修复三个测试实现问题，当前等待第四次真实 Gate。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D/2.1-E/2.1-F-A/2.1-F-B 已完成对应 Gate；当前推进 2.1-F-C governance browser acceptance。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -46,13 +46,28 @@ Production build: passed
 
 ### 2.1-F Browser E2E
 
-首次本地 Gate 因 `getByText('成员')` strict mode 失败，已修复为唯一 heading locator。
+用户最新本地 Gate：
 
-第二次 Gate 继续执行至添加成员步骤，发现真实 Auth API 注册响应字段为 `user_id`，而 E2E 错误读取为 `memberUser.id`，导致 Playwright `fill()` 收到 `undefined`；该问题已记录并修复为 `memberUser.user_id`。
+```text
+scripts/test/e2e/02_run_organization_e2e.ps1
+1 passed (8.7s)
+[PASS] Phase 2.1-F organization browser E2E contract completed.
+```
 
-第三次 Gate 继续执行至 Organization suspend，发现 MessageBox 确认按钮使用 `getByRole('button', { name: '确定' })` 在真实浏览器环境下无法稳定匹配，最终 60 秒超时；该问题已记录于 `docs/04-errors/2026-08-22-phase-2-1-f-browser-e2e-messagebox-confirm.md`，并已修复为当前可见 MessageBox 内的 primary confirmation button 定位。
+并使用 Playwright targeted command 再次验证：
 
-修复后的 Browser E2E 尚未由本地重新执行，因此 **2.1-F 仍不得标记 Passed**。
+```text
+npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop Chrome"
+1 passed (8.5s)
+```
+
+此前 Browser E2E 连续发现的三个测试实现问题均已记录并修复：
+
+- `getByText('成员')` strict mode：改为唯一 heading locator。
+- Auth register 实际字段为 `user_id`：E2E 改为 `memberUser.user_id`。
+- Element Plus MessageBox confirmation：改为当前可见 MessageBox 内的 primary confirmation button。
+
+因此 **2.1-F-A / 2.1-F-B 当前可以标记 Passed**。
 
 ## 3. Phase 状态
 
@@ -67,7 +82,7 @@ Production build: passed
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A～2.1-E 已完成；2.1-F-A / F-B 已实现，Browser E2E 修复后待重跑 |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A～2.1-E、2.1-F-A/F-B 已完成；当前进入 F-C Acceptance |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 4. Phase 2.1 当前任务
@@ -95,7 +110,7 @@ Backend regression: 275 passed, 30 deselected
 Full Real API: 30 passed
 ```
 
-### 2.1-F-A Browser E2E 基础设施 — **已实现，待 Gate**
+### 2.1-F-A Browser E2E 基础设施 — **已完成 Gate**
 
 保持现有 Playwright Desktop Chrome、`FRONTEND_BASE_URL`、`API_BASE_URL` 约定，使用：
 
@@ -104,9 +119,9 @@ frontend/tests/e2e/organization-management.spec.ts
 frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 ```
 
-### 2.1-F-B Organization Management E2E — **已实现，待 Gate**
+### 2.1-F-B Organization Management E2E — **已完成 Gate**
 
-当前覆盖：
+当前覆盖并已由真实浏览器执行通过：
 
 - Login → Organization list。
 - 创建 Organization。
@@ -118,19 +133,31 @@ frontend/scripts/test/e2e/02_run_organization_e2e.ps1
 - Owner Transfer。
 - 真实 API 校验单 Owner 不变量与目标 Owner 状态。
 
-当前第三次 Gate 已发现并修复 MessageBox confirmation locator 问题；修复后等待真实 Browser Gate。
+### 2.1-F-C Governance Browser Acceptance — **已实现，待 Gate**
+
+已补充实现：
+
+- 登录响应持久化 `user_id`，前端根据当前 Organization membership role 决定管理 UI 是否可见。
+- Member 不显示 Organization 管理、成员编辑、Owner Transfer 控件。
+- Owner Transfer 仅当前 Owner 显示，Transfer 后原 Owner 降级为 Admin，不再显示 Owner Transfer；新 Owner 显示。
+- Browser E2E 新增 Member 权限边界与 suspended member 阻断场景。
+- Browser E2E 新增 Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界场景。
+- 现有 Organization owner E2E 增加 Audit UI `organization.owner.transferred` 可追踪证据。
+
+当前这些新增 F-C 场景尚未由用户本地实际执行，因此 **F-C 不得标记 Passed**。
 
 ## 5. 下一步推进原则
 
 ```text
 2.1-E Real API Gate 已通过
- → 2.1-F-A E2E infrastructure
- → 2.1-F-B Organization management browser contract
- → 本地执行 targeted Browser E2E
+ → 2.1-F-A E2E infrastructure 已通过
+ → 2.1-F-B Organization management browser contract 已通过
+ → 实现 F-C governance browser acceptance
+ → 本地执行新增 F-C Browser E2E
  → 若失败，按实际失败栈修复并记录 docs/04-errors
  → 修复后重新执行 Browser E2E
- → 若通过，再执行 Full Frontend Regression + Browser Acceptance
- → 补齐 Member boundary / Suspended member / Audit evidence
+ → Full Frontend Regression + production build
+ → Backend regression + Real API Gate
  → 更新 Status / Acceptance
  → 最终关闭 Phase 2.1
 ```
