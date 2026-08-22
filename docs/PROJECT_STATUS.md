@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：Phase 2.1-D Frontend Gate 已验证，2.1-E Real API / Regression 已开始。
+- 当前远端基线：Phase 2.1-D Frontend Gate 已验证；2.1-E Real API / Regression 正在修复 Gate 阻塞问题。
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D 已完成对应 Gate；当前进入 2.1-E Real API / Regression。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 进行中；2.1-A/2.1-B/2.1-C/2.1-D 已完成对应 Gate；2.1-E 已执行 Real API Gate，当前因 AuditLog 查询 PostgreSQL 类型错误失败，已修复并等待本地复验。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -80,7 +80,7 @@ Production build
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A/2.1-B/2.1-C/2.1-D 已完成对应 Gate；当前进入 2.1-E Real API / Regression |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A/2.1-B/2.1-C/2.1-D 已完成；2.1-E Real API Gate 已执行但当前失败，正在修复 |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
@@ -144,42 +144,36 @@ Phase 2.1 正在把现有 Tenant/RBAC 基础能力提升为企业 Organization /
 
 实际结果：15 个定向测试通过、完整 Frontend Regression 67 个测试通过、production build 通过。
 
-### 2.1-E Real API / Regression — 进行中
+### 2.1-E Real API / Regression — **Gate 已执行但失败，修复后待复验**
 
-当前新增真实 HTTP Organization / Membership governance suite：
+当前用户实际执行结果：
 
 ```text
-backend/tests/api_real/test_organization_governance_api.py
+10 failed, 20 passed in 41.32s
 ```
 
-覆盖：
+主要失败集中在 `/runtime/audit-logs` 返回 500，导致 Organization audit 与既有 Workflow governance 的多个 Real API 场景同时失败；另有 transferred-owner 场景使用固定组织名称导致 409。
 
-- Organization list/detail。
-- Membership role/status lifecycle。
-- suspended member access denial。
-- Member management / Owner Transfer authorization boundary。
-- explicit Owner Transfer + single-owner invariant。
-- transferred Owner management boundary。
-- Organization management AuditLog。
+根因与修复已记录：`docs/04-errors/ERR-0021-real-api-audit-resource-id-type-mismatch.md`。
 
-Real API bootstrap 与 runner 已扩展为创建一次性 Organization / 第二测试用户并传递临时 token context；测试结束清理 context 与环境变量。
+已直接提交 main 的修复：
 
-**2.1-E 代码已提交，但扩展后的 Real API Gate 尚未由开发者本地重新执行，因此当前保持 In Progress。**
+- `RuntimeQueryService.audit_logs()` 将 Organization / Membership UUID scope 子查询显式 cast 为 String，以匹配 `audit_logs.resource_id` 的 VARCHAR 存储类型。
+- transferred-owner Real API 测试改为每次使用唯一 Organization 名称，消除跨次真实数据库状态造成的固定名称冲突。
 
-### 2.1-F Browser E2E
-
-2.1-E Gate 通过后再进入独立 Organization Browser E2E，不提前宣告。
+**当前不能标记 2.1-E Passed。下一步不是进入 2.1-F，而是重新执行 Real API Gate；只有 2.1-E 全部通过后才能进入 Browser E2E。**
 
 ## 7. 下一步推进原则
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-2.1-D Frontend Gate 已通过
- → 扩展 2.1-E Real API fixtures / governance tests
- → 本地执行 Real API Gate
- → 根据实际结果修复问题
- → Real API 通过后进入 Browser E2E
+2.1-E Gate 已发现真实失败
+ → 修复 AuditLog PostgreSQL 类型边界
+ → 修复 Real API fixture 的固定名称冲突
+ → 本地执行 targeted + full backend + Real API Gate
+ → 根据实际结果继续修复
+ → Real API 全部通过后进入 Browser E2E
  → 更新 Status / Acceptance / Error Record
  → 直接提交 main
 ```
