@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
-from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
+from app.services.embedding_provider import EmbeddingProvider, EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from app.services.knowledge_retrieval import KnowledgeRetrievalService
 from app.services.mock_embedding_provider import MockEmbeddingProvider
 from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
@@ -18,15 +18,23 @@ from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, Ve
 class VectorKnowledgeRetrievalService:
     """Query embedding + PostgreSQL/pgvector search + authorized chunk hydration.
 
-    Real-provider retrieval supports the same Ollama and OpenAI-compatible
-    embedding adapters used by the production evaluation runner. Mock remains
-    available only for deterministic contract/database-loop tests.
+    The production application uses settings by default. Evaluation callers may
+    inject an explicit embedding provider and dimension so a run can select its
+    model/provider without mutating global application configuration.
     """
 
     RETRIEVAL_MODE = "vector"
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        embedding_provider: EmbeddingProvider | None = None,
+        embedding_dimension: int | None = None,
+    ):
         self.db = db
+        self._embedding_provider = embedding_provider
+        self._embedding_dimension = embedding_dimension
 
     @staticmethod
     def _build_embedding_provider():
@@ -60,25 +68,29 @@ class VectorKnowledgeRetrievalService:
             raise HTTPException(status_code=422, detail="query 不能为空")
         if settings.vector_provider != "pgvector":
             raise HTTPException(status_code=503, detail="VECTOR_PROVIDER=pgvector is required for vector retrieval")
-        if settings.embedding_provider not in {"openai-compatible", "ollama", "mock"}:
+        provider_name = settings.embedding_provider
+        if self._embedding_provider is not None:
+            provider_name = "explicit"
+        elif provider_name not in {"openai-compatible", "ollama", "mock"}:
             raise HTTPException(
                 status_code=503,
                 detail="VECTOR retrieval requires EMBEDDING_PROVIDER=openai-compatible, ollama or mock",
             )
-        if settings.embedding_provider in {"openai-compatible", "ollama"} and (
+        if self._embedding_provider is None and provider_name in {"openai-compatible", "ollama"} and (
             not settings.embedding_base_url or not settings.embedding_model
         ):
             raise HTTPException(status_code=503, detail="EMBEDDING_BASE_URL and EMBEDDING_MODEL are required")
-        if settings.embedding_provider == "openai-compatible" and not settings.embedding_api_key:
+        if self._embedding_provider is None and provider_name == "openai-compatible" and not settings.embedding_api_key:
             raise HTTPException(status_code=503, detail="EMBEDDING_API_KEY is required for openai-compatible")
 
+        embedding_dimension = self._embedding_dimension or settings.embedding_dimension
         try:
-            embedding_provider = self._build_embedding_provider()
+            embedding_provider = self._embedding_provider or self._build_embedding_provider()
             embeddings = await embedding_provider.embed([query])
             if len(embeddings) != 1:
                 raise EmbeddingProviderError("embedding provider returned an invalid query embedding")
 
-            vector_provider = PgVectorRetrievalProvider(self.db, settings.embedding_dimension)
+            vector_provider = PgVectorRetrievalProvider(self.db, embedding_dimension)
             vector_results = await vector_provider.search(
                 query_embedding=embeddings[0],
                 top_k=top_k,

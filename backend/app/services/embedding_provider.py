@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Protocol, Sequence
 
 import httpx
+
+
+class EmbeddingProvider(Protocol):
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
 class EmbeddingProviderError(RuntimeError):
@@ -10,12 +14,7 @@ class EmbeddingProviderError(RuntimeError):
 
 
 class OpenAICompatibleEmbeddingProvider:
-    """Embedding adapter for providers exposing an OpenAI-compatible /embeddings API.
-
-    ``expected_dimension`` is the application/provider contract. The provider
-    still validates the actual vector length returned by the remote model so a
-    configuration typo cannot silently corrupt the vector store.
-    """
+    """Embedding adapter for providers exposing an OpenAI-compatible /embeddings API."""
 
     def __init__(
         self,
@@ -43,7 +42,6 @@ class OpenAICompatibleEmbeddingProvider:
             return []
         if any(not text.strip() for text in texts):
             raise EmbeddingProviderError("embedding texts must not contain empty values")
-
         payload: dict[str, object] = {"model": self.model, "input": list(texts)}
         if self.dimensions is not None:
             if self.dimensions < 1:
@@ -53,11 +51,7 @@ class OpenAICompatibleEmbeddingProvider:
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
         try:
-            response = await client.post(
-                f"{self.base_url}/embeddings",
-                json=payload,
-                headers=headers,
-            )
+            response = await client.post(f"{self.base_url}/embeddings", json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -65,11 +59,9 @@ class OpenAICompatibleEmbeddingProvider:
         finally:
             if owns_client:
                 await client.aclose()
-
         data = body.get("data") if isinstance(body, dict) else None
         if not isinstance(data, list) or len(data) != len(texts):
             raise EmbeddingProviderError("embedding provider returned an invalid data length")
-
         ordered: list[tuple[int, list[float]]] = []
         for item in data:
             if not isinstance(item, dict):
@@ -81,11 +73,9 @@ class OpenAICompatibleEmbeddingProvider:
             if not all(isinstance(value, (int, float)) for value in embedding):
                 raise EmbeddingProviderError("embedding vector contains a non-numeric value")
             ordered.append((index, [float(value) for value in embedding]))
-
         ordered.sort(key=lambda item: item[0])
         if [index for index, _ in ordered] != list(range(len(texts))):
             raise EmbeddingProviderError("embedding provider returned non-contiguous indexes")
-
         embeddings = [embedding for _, embedding in ordered]
         actual_dimensions = {len(embedding) for embedding in embeddings}
         if len(actual_dimensions) != 1:
@@ -95,8 +85,7 @@ class OpenAICompatibleEmbeddingProvider:
             raise EmbeddingProviderError("embedding provider returned an empty vector")
         if self.expected_dimension is not None and actual_dimension != self.expected_dimension:
             raise EmbeddingProviderError(
-                f"embedding dimensions {actual_dimension} do not match configured dimension "
-                f"{self.expected_dimension}"
+                f"embedding dimensions {actual_dimension} do not match configured dimension {self.expected_dimension}"
             )
         self.dimension = actual_dimension
         return embeddings

@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过本轮开发者本地验证；Phase 尚未关闭。**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过本轮开发者本地验证；Phase 尚未关闭。当前进入评估配置化增强，不修改冻结 baseline。**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -16,7 +16,44 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 2.2-D 已完成 Provider / model / dimension / dataset / retrieval-mode / top-k identity 与 Recall@K / Precision@K / MRR regression comparison，以及真实 Runtime citation evidence bridge。Evaluation run / case / regression summary 已持久化到现有 Runtime Observability / Audit 模型；trace API contract 与 Real API traceability 自动化测试已完成并通过本轮本地验证。
 
-当前 baseline 仅代表真实 Provider / Dataset / Retrieval 配置的可重复回归基线，不代表绝对语义质量已达生产目标。禁止通过修改指标、fallback、截断或补零提高结果。
+## 当前增强：Evaluation Configuration
+
+评估运行与线上 Runtime 配置保持分离，但不再把评估模型和评估参数固化在 runner 代码中。
+
+### 可配置的检索模型 / Provider
+
+一次 evaluation run 可以显式覆盖：
+
+```text
+embedding_provider
+embedding_base_url
+embedding_model
+embedding_dimension
+embedding_timeout_seconds
+```
+
+支持 `ollama` 与 `openai-compatible`。OpenAI-compatible 的 API key 只允许通过环境变量名引用，不能把 Secret 作为命令行参数或报告字段保存。
+
+线上 Runtime 继续使用 `settings`；评估 runner 将显式 provider 注入 `VectorKnowledgeRetrievalService`，不会修改全局应用配置。
+
+### 可配置的评估参数
+
+```text
+dataset
+fixture
+baseline
+k / top_k
+min_score
+min_recall_at_k
+min_precision_at_k
+min_mrr
+min_citation_correctness
+max_error_rate
+```
+
+阈值用于产品质量门禁；baseline regression 仍独立比较 Provider / model / dimension / dataset / retrieval mode / top-k identity 与历史指标，不得通过降低阈值或修改 baseline 掩盖回归。
+
+Evaluation trace 会持久化本次评估参数，保证一次运行能够被审计和复现。
 
 ## 3. 现有 Phase 1.4 能力边界
 
@@ -90,7 +127,7 @@ Citation correctness + Debug / Audit / Observability traceability
 Acceptance
 ```
 
-## 8. 本轮实际验证证据
+## 8. 本轮既有实际验证证据
 
 ```text
 API Runtime Contract: 2 passed
@@ -111,7 +148,7 @@ Real Provider:
 Backend Release / Regression Gate: passed
 ```
 
-以上均来自开发者本轮实际反馈；未执行的 Frontend / Browser Gate 不在本轮结论中。
+以上为此前开发者实际反馈，不作为本轮配置化变更已重新执行的证据。
 
 ## 9. Definition of Done
 
@@ -124,6 +161,7 @@ Phase 2.2 关闭前至少必须满足：
 5. Provider / model / dataset regression 可比较。
 6. Provider failure / fallback semantics 有自动化证据。
 7. Retrieval quality 结果与现有 Citation / Audit / Observability 可追踪。
-8. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
+8. Evaluation model/provider 与 quality parameters 可显式配置并进入 trace。
+9. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
 
-当前 1-8 的工程实现与本轮 Gate 证据已形成；是否关闭 Phase 还需要对当前真实语义质量指标是否满足产品目标做明确结论，不能把 baseline 通过等同于最终质量达标。
+当前既有 1-7 工程实现与 Gate 证据已形成；本次工作补齐第 8 项。是否关闭 Phase 还需要对当前真实语义质量指标是否满足产品目标做明确结论，不能把 baseline 通过等同于最终质量达标。
