@@ -50,6 +50,8 @@ def _require_real_provider() -> None:
         raise SystemExit("Real Provider Quality Gate requires EMBEDDING_MODEL")
     if settings.vector_provider != "pgvector":
         raise SystemExit("Real Provider Quality Gate requires VECTOR_PROVIDER=pgvector")
+    if settings.embedding_dimension < 1:
+        raise SystemExit("EMBEDDING_DIMENSION must be greater than zero")
 
 
 def _dataset_sha256(path: Path) -> str:
@@ -82,6 +84,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             if settings.embedding_dimensions_parameter_enabled
             else None
         ),
+        expected_dimension=settings.embedding_dimension,
     )
     metadata = {
         "provider": settings.embedding_provider,

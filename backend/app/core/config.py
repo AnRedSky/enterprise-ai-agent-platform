@@ -66,11 +66,12 @@ class Settings(BaseSettings):
     embedding_api_key: str | None = None
     embedding_model: str | None = None
     embedding_timeout_seconds: float = 30.0
-    embedding_dimension: int = 1536
+    # The default development profile uses the installed nomic-embed-text model.
+    # The value is a provider/schema contract, not a request-time transformation.
+    embedding_dimension: int = 768
     embedding_batch_size: int = 32
-    # Some OpenAI-compatible local providers (for example Ollama-backed
-    # Matryoshka embedding models) accept an explicit output dimension. Keep
-    # this opt-in because not every OpenAI-compatible provider implements it.
+    # Some OpenAI-compatible local providers accept an explicit output dimension.
+    # Keep this opt-in because the provider must actually honor the parameter.
     embedding_dimensions_parameter_enabled: bool = False
 
     # Vector retrieval is provider-neutral. Keep `none` until PostgreSQL + pgvector

@@ -105,6 +105,7 @@ class KnowledgeVectorIndexingService:
                         if settings.embedding_dimensions_parameter_enabled
                         else None
                     ),
+                    expected_dimension=settings.embedding_dimension,
                 )
             vector_provider = PgVectorRetrievalProvider(self.db, settings.embedding_dimension)
             batch_size = max(1, settings.embedding_batch_size)
@@ -113,7 +114,9 @@ class KnowledgeVectorIndexingService:
                 batch = chunks[start : start + batch_size]
                 embeddings = await embedding_provider.embed([chunk.content for chunk in batch])
                 if any(len(embedding) != settings.embedding_dimension for embedding in embeddings):
-                    raise EmbeddingProviderError("embedding dimension does not match EMBEDDING_DIMENSION")
+                    raise EmbeddingProviderError(
+                        f"embedding dimensions do not match configured dimension {settings.embedding_dimension}"
+                    )
                 records = self.build_records(batch, embeddings, knowledge_base.id, version.id)
                 await vector_provider.upsert(records)
                 indexed += len(records)

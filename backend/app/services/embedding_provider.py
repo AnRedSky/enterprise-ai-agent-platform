@@ -10,7 +10,12 @@ class EmbeddingProviderError(RuntimeError):
 
 
 class OpenAICompatibleEmbeddingProvider:
-    """Embedding adapter for providers exposing an OpenAI-compatible /embeddings API."""
+    """Embedding adapter for providers exposing an OpenAI-compatible /embeddings API.
+
+    ``expected_dimension`` is the application/provider contract. The provider
+    still validates the actual vector length returned by the remote model so a
+    configuration typo cannot silently corrupt the vector store.
+    """
 
     def __init__(
         self,
@@ -20,13 +25,18 @@ class OpenAICompatibleEmbeddingProvider:
         timeout_seconds: float = 30.0,
         client: httpx.AsyncClient | None = None,
         dimensions: int | None = None,
+        expected_dimension: int | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.dimensions = dimensions
+        self.expected_dimension = expected_dimension
+        self.dimension: int | None = expected_dimension
         self._client = client
+        if expected_dimension is not None and expected_dimension < 1:
+            raise EmbeddingProviderError("embedding dimensions must be greater than zero")
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
@@ -75,4 +85,18 @@ class OpenAICompatibleEmbeddingProvider:
         ordered.sort(key=lambda item: item[0])
         if [index for index, _ in ordered] != list(range(len(texts))):
             raise EmbeddingProviderError("embedding provider returned non-contiguous indexes")
-        return [embedding for _, embedding in ordered]
+
+        embeddings = [embedding for _, embedding in ordered]
+        actual_dimensions = {len(embedding) for embedding in embeddings}
+        if len(actual_dimensions) != 1:
+            raise EmbeddingProviderError("embedding provider returned inconsistent dimensions")
+        actual_dimension = actual_dimensions.pop()
+        if actual_dimension < 1:
+            raise EmbeddingProviderError("embedding provider returned an empty vector")
+        if self.expected_dimension is not None and actual_dimension != self.expected_dimension:
+            raise EmbeddingProviderError(
+                f"embedding dimensions {actual_dimension} do not match configured dimension "
+                f"{self.expected_dimension}"
+            )
+        self.dimension = actual_dimension
+        return embeddings
