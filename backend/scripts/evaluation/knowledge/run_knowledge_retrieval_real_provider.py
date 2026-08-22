@@ -96,6 +96,7 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
     metadata = {
         "evaluation_run_id": evaluation_run_id,
         "provider": config.embedding_provider,
+        "provider_name": config.embedding_provider_name,
         "model": config.embedding_model,
         "embedding_dimension": config.embedding_dimension,
         "dataset_version": dataset.schema_version,
@@ -188,6 +189,7 @@ def _build_config(args: argparse.Namespace) -> RetrievalEvaluationConfig:
     defaults = config_from_settings(backend_root=BACKEND_ROOT, settings=settings)
     return RetrievalEvaluationConfig(
         embedding_provider=args.embedding_provider or defaults.embedding_provider,
+        embedding_provider_name=args.embedding_provider_name or defaults.embedding_provider_name,
         embedding_base_url=args.embedding_base_url or defaults.embedding_base_url,
         embedding_api_key=resolve_api_key(args.embedding_api_key_env) if args.embedding_api_key_env else defaults.embedding_api_key,
         embedding_model=args.embedding_model or defaults.embedding_model,
@@ -197,19 +199,20 @@ def _build_config(args: argparse.Namespace) -> RetrievalEvaluationConfig:
         dataset_path=args.dataset or defaults.dataset_path,
         fixture_path=args.fixture or defaults.fixture_path,
         baseline_path=args.baseline,
-        top_k=args.k,
-        min_score=args.min_score,
-        min_recall_at_k=args.min_recall_at_k,
-        min_precision_at_k=args.min_precision_at_k,
-        min_mrr=args.min_mrr,
-        min_citation_correctness=args.min_citation_correctness,
-        max_error_rate=args.max_error_rate,
+        top_k=args.k if args.k is not None else defaults.top_k,
+        min_score=args.min_score if args.min_score is not None else defaults.min_score,
+        min_recall_at_k=args.min_recall_at_k if args.min_recall_at_k is not None else defaults.min_recall_at_k,
+        min_precision_at_k=args.min_precision_at_k if args.min_precision_at_k is not None else defaults.min_precision_at_k,
+        min_mrr=args.min_mrr if args.min_mrr is not None else defaults.min_mrr,
+        min_citation_correctness=args.min_citation_correctness if args.min_citation_correctness is not None else defaults.min_citation_correctness,
+        max_error_rate=args.max_error_rate if args.max_error_rate is not None else defaults.max_error_rate,
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Retrieval Quality Gate with a configurable real embedding provider and PostgreSQL/pgvector")
     parser.add_argument("--embedding-provider", choices=["ollama", "openai-compatible"])
+    parser.add_argument("--embedding-provider-name")
     parser.add_argument("--embedding-base-url")
     parser.add_argument("--embedding-api-key-env", help="Environment variable containing the provider API key; the key itself is never persisted in the report")
     parser.add_argument("--embedding-model")
@@ -219,13 +222,13 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path)
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--baseline", type=Path, default=BASELINE)
-    parser.add_argument("--k", type=int, default=3)
-    parser.add_argument("--min-score", type=float, default=0.0)
+    parser.add_argument("--k", type=int)
+    parser.add_argument("--min-score", type=float)
     parser.add_argument("--min-recall-at-k", type=float)
     parser.add_argument("--min-precision-at-k", type=float)
     parser.add_argument("--min-mrr", type=float)
     parser.add_argument("--min-citation-correctness", type=float)
-    parser.add_argument("--max-error-rate", type=float, default=0.0)
+    parser.add_argument("--max-error-rate", type=float)
     parser.add_argument("--freeze-baseline", action="store_true")
     args = parser.parse_args()
     config = _build_config(args)
