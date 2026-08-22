@@ -94,7 +94,7 @@ scripts/test/api-real/01_run_real_api_tests.ps1
 - Fixture 使用随机用户名、密码、Organization 名称，避免污染固定账号/固定组织状态。
 - 浏览器通过真实 Login 进入 Vue UI；fixture provisioning 使用真实 Backend HTTP API。
 
-用户最新实际结果：
+用户此前实际结果：
 
 ```text
 scripts/test/e2e/02_run_organization_e2e.ps1
@@ -131,16 +131,28 @@ scripts/test/e2e/02_run_organization_e2e.ps1
 5. 新增 Owner Transfer 后原 Owner / 新 Owner 浏览器权限边界测试。
 6. Organization owner E2E 增加 Audit UI `organization.owner.transferred` 可追踪证据。
 
-以上新增 F-C 场景尚未由本地真实浏览器执行，当前不得标记 Passed。
-
-测试文件：
+**最新用户本地执行反馈：**
 
 ```text
-frontend/tests/e2e/organization-management.spec.ts
-frontend/src/views/organizations/detail.vue
-frontend/src/api/auth.ts
-backend/app/api/auth.py
+Organization management: passed
+Organization browser governance boundaries: failed
+Owner transfer browser controls: passed
+2 passed, 1 failed
 ```
+
+失败发生在 suspended member 场景：Backend 正确返回 HTTP 403，但 `OrganizationDetail.load()` 原先直接展示 Axios 默认 `Request failed with status code 403`，导致 E2E 对 `Organization 详情加载失败` 的业务文案断言失败。错误已记录到：
+
+```text
+docs/04-errors/2026-08-22-phase-2-1-f-c-suspended-member-403-error-message.md
+```
+
+已修复：
+
+```text
+frontend/src/views/organizations/detail.vue
+```
+
+新增 403 / 404 / fallback 错误文案归一化。**修复尚未由用户本地真实 Browser Gate 重新验证，因此 F-C 仍不得标记 Passed。**
 
 ## 5. F-C 后续补充与最终验收
 
@@ -179,4 +191,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 8. 当前执行结论
 
-**2.1-E 已由完整 Real API Gate 验证通过；2.1-F-A/F-B 已由真实浏览器 Gate 验证通过；当前直接推进 F-C governance browser acceptance，完成后再执行最终 Full Regression / Real API 联合验收并关闭 Phase 2.1。**
+**2.1-E 已由完整 Real API Gate 验证通过；2.1-F-A/F-B 已由真实浏览器 Gate 验证通过；当前直接推进 F-C governance browser acceptance。针对 suspended member 403 UI error contract 的修复已提交 main，下一步必须由本地真实 Browser Gate 重新验证，之后再执行最终 Full Regression / Real API 联合验收并关闭 Phase 2.1。**
