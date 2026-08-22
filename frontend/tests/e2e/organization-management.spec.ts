@@ -32,6 +32,7 @@ test("Organization management completes the real owner browser contract", async 
     });
     expect([200, 201]).toContain(memberRegister.status());
     const memberUser = await memberRegister.json();
+    expect(memberUser.user_id).toBeTruthy();
 
     const login = await api.post(apiPath("/auth/login"), {
       data: { username, password },
@@ -69,11 +70,11 @@ test("Organization management completes the real owner browser contract", async 
 
     await page.getByRole("button", { name: "添加成员" }).click();
     await expect(page.getByRole("dialog", { name: "添加成员" })).toBeVisible();
-    await page.getByRole("dialog").getByLabel("User ID").fill(memberUser.id);
+    await page.getByRole("dialog").getByLabel("User ID").fill(memberUser.user_id);
     await page.getByRole("dialog").getByRole("button", { name: "添加" }).click();
     await expect(page.getByText("成员添加成功")).toBeVisible();
 
-    const memberRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: memberUser.id });
+    const memberRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: memberUser.user_id });
     await expect(memberRow).toBeVisible();
     await expect(memberRow).toContainText("member");
     await memberRow.getByRole("button", { name: "编辑" }).click();
@@ -106,7 +107,7 @@ test("Organization management completes the real owner browser contract", async 
 
     await memberRow.getByRole("button", { name: "转移 Owner" }).click();
     const transferDialog = page.locator(".el-message-box:visible");
-    await expect(transferDialog).toContainText(`确认将 Organization 所有权转移给 ${memberUser.id}`);
+    await expect(transferDialog).toContainText(`确认将 Organization 所有权转移给 ${memberUser.user_id}`);
     await transferDialog.getByRole("button", { name: "确认转移" }).click();
     await expect(page.getByText("所有权转移成功")).toBeVisible();
     await expect(memberRow).toContainText("owner");
@@ -115,7 +116,7 @@ test("Organization management completes the real owner browser contract", async 
     expect(persistedMembers.ok()).toBeTruthy();
     const membershipItems = (await persistedMembers.json()).items;
     expect(membershipItems.filter((item: { role: string }) => item.role === "owner")).toHaveLength(1);
-    expect(membershipItems.find((item: { user_id: string }) => item.user_id === memberUser.id)).toMatchObject({
+    expect(membershipItems.find((item: { user_id: string }) => item.user_id === memberUser.user_id)).toMatchObject({
       status: "active",
       role: "owner",
     });
