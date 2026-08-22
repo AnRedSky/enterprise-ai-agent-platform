@@ -11,22 +11,39 @@ from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocu
 from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from app.services.knowledge_retrieval import KnowledgeRetrievalService
 from app.services.mock_embedding_provider import MockEmbeddingProvider
+from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRetrievalProviderError
 
 
 class VectorKnowledgeRetrievalService:
     """Query embedding + PostgreSQL/pgvector search + authorized chunk hydration.
 
-    ``mock`` embeddings are intentionally supported for local deterministic
-    database-loop validation. They exercise the same PostgreSQL/pgvector
-    indexing/search path as a real embedding provider; they must not be used as
-    evidence of real model semantic quality.
+    Real-provider retrieval supports the same Ollama and OpenAI-compatible
+    embedding adapters used by the production evaluation runner. Mock remains
+    available only for deterministic contract/database-loop tests.
     """
 
     RETRIEVAL_MODE = "vector"
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def _build_embedding_provider():
+        if settings.embedding_provider == "mock":
+            return MockEmbeddingProvider(dimension=settings.embedding_dimension)
+        common = {
+            "model": settings.embedding_model,
+            "timeout_seconds": settings.embedding_timeout_seconds,
+            "expected_dimension": settings.embedding_dimension,
+        }
+        if settings.embedding_provider == "ollama":
+            return OllamaEmbeddingProvider(base_url=settings.embedding_base_url, **common)
+        return OpenAICompatibleEmbeddingProvider(
+            base_url=settings.embedding_base_url,
+            api_key=settings.embedding_api_key,
+            **common,
+        )
 
     async def retrieve(
         self,
@@ -43,26 +60,20 @@ class VectorKnowledgeRetrievalService:
             raise HTTPException(status_code=422, detail="query 不能为空")
         if settings.vector_provider != "pgvector":
             raise HTTPException(status_code=503, detail="VECTOR_PROVIDER=pgvector is required for vector retrieval")
-        if settings.embedding_provider not in {"openai-compatible", "mock"}:
+        if settings.embedding_provider not in {"openai-compatible", "ollama", "mock"}:
             raise HTTPException(
                 status_code=503,
-                detail="VECTOR retrieval requires EMBEDDING_PROVIDER=openai-compatible or mock",
+                detail="VECTOR retrieval requires EMBEDDING_PROVIDER=openai-compatible, ollama or mock",
             )
-        if settings.embedding_provider == "openai-compatible" and (
-            not settings.embedding_base_url or not settings.embedding_api_key or not settings.embedding_model
+        if settings.embedding_provider in {"openai-compatible", "ollama"} and (
+            not settings.embedding_base_url or not settings.embedding_model
         ):
-            raise HTTPException(status_code=503, detail="EMBEDDING_BASE_URL, EMBEDDING_API_KEY and EMBEDDING_MODEL are required")
+            raise HTTPException(status_code=503, detail="EMBEDDING_BASE_URL and EMBEDDING_MODEL are required")
+        if settings.embedding_provider == "openai-compatible" and not settings.embedding_api_key:
+            raise HTTPException(status_code=503, detail="EMBEDDING_API_KEY is required for openai-compatible")
 
         try:
-            if settings.embedding_provider == "mock":
-                embedding_provider = MockEmbeddingProvider(dimension=settings.embedding_dimension)
-            else:
-                embedding_provider = OpenAICompatibleEmbeddingProvider(
-                    base_url=settings.embedding_base_url,
-                    api_key=settings.embedding_api_key,
-                    model=settings.embedding_model,
-                    timeout_seconds=settings.embedding_timeout_seconds,
-                )
+            embedding_provider = self._build_embedding_provider()
             embeddings = await embedding_provider.embed([query])
             if len(embeddings) != 1:
                 raise EmbeddingProviderError("embedding provider returned an invalid query embedding")

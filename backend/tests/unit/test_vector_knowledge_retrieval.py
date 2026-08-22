@@ -1,7 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
-from app.services.vector_knowledge_retrieval import KnowledgeRetrievalRouterService
+from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
+from app.services.vector_knowledge_retrieval import KnowledgeRetrievalRouterService, VectorKnowledgeRetrievalService
 
 
 @pytest.mark.asyncio
@@ -47,3 +48,29 @@ async def test_vector_failure_can_explicitly_fallback_to_lexical(monkeypatch):
     assert results == [{"retrieval_mode": "lexical-v2"}]
     assert mode == "lexical-v2"
     assert fallback is True
+
+
+def test_vector_provider_accepts_ollama_real_provider(monkeypatch):
+    monkeypatch.setattr("app.services.vector_knowledge_retrieval.settings.embedding_provider", "ollama")
+    monkeypatch.setattr("app.services.vector_knowledge_retrieval.settings.embedding_base_url", "http://localhost:11434")
+    monkeypatch.setattr("app.services.vector_knowledge_retrieval.settings.embedding_model", "nomic-embed-text:latest")
+    monkeypatch.setattr("app.services.vector_knowledge_retrieval.settings.embedding_dimension", 768)
+
+    provider = VectorKnowledgeRetrievalService._build_embedding_provider()
+
+    assert provider.__class__.__name__ == "OllamaEmbeddingProvider"
+    assert provider.model == "nomic-embed-text:latest"
+    assert provider.expected_dimension == 768
+
+
+def test_observation_citation_targets_feed_citation_correctness():
+    from app.services.retrieval_evaluation import RetrievalEvaluationCase
+
+    cases = [RetrievalEvaluationCase("q", frozenset({"a", "b"}), frozenset({"a"}))]
+    observations = [RetrievalEvaluationObservation(("b", "a"), latency_ms=12, cited_chunk_ids=("a",))]
+
+    result = aggregate_observations(cases, observations, k=2)
+
+    assert result["recall_at_k"] == 1.0
+    assert result["precision_at_k"] == 1.0
+    assert result["citation_correctness"] == 1.0

@@ -18,6 +18,7 @@ class RetrievalEvaluationObservation:
     retrieved_chunk_ids: tuple[str, ...]
     latency_ms: float = 0.0
     error: str | None = None
+    cited_chunk_ids: tuple[str, ...] | None = None
 
 
 def recall_at_k(retrieved: Sequence[str], relevant: set[str], k: int) -> float:
@@ -51,13 +52,7 @@ def citation_correctness(
     retrieved: Sequence[str],
     expected_targets: set[str],
 ) -> float:
-    """Score whether emitted citation targets are traceable and expected.
-
-    A citation is correct only when its target was actually retrieved and is
-    explicitly marked as an expected citation target for the evaluation case.
-    This intentionally does not reward a citation merely because the target is
-    relevant; provenance must be present in the retrieval result as well.
-    """
+    """Score whether emitted citation targets are traceable and expected."""
 
     if not cited_targets:
         return 0.0
@@ -123,13 +118,7 @@ def aggregate_observations(
     observations: Sequence[RetrievalEvaluationObservation],
     k: int = 3,
 ) -> dict[str, float | int]:
-    """Aggregate quality, latency and provider-error measurements.
-
-    Errors remain visible in the report and are excluded from ranking-quality
-    averages because there is no valid ranking to score. The error rate is
-    still reported so a provider cannot hide availability failures behind
-    quality metrics.
-    """
+    """Aggregate quality, latency, citation and provider-error measurements."""
 
     if len(cases) != len(observations):
         raise ValueError("cases and observations must have the same length")
@@ -152,7 +141,12 @@ def aggregate_observations(
         if not observation.error
     ]
     metrics = [
-        evaluate_case(case, observation.retrieved_chunk_ids, k)
+        evaluate_case(
+            case,
+            observation.retrieved_chunk_ids,
+            k,
+            cited_targets=observation.cited_chunk_ids,
+        )
         for case, observation in successful
     ]
     count = len(cases)

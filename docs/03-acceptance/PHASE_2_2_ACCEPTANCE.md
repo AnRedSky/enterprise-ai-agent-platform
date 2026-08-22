@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者本地实际验证；Citation correctness 已形成自动化 Contract，真实运行证据与 Debug/Audit/Observability traceability 仍未完成**
+> 状态：**进行中 / 2.2-B、2.2-C 与当前 2.2-D regression scope 已由开发者本地实际验证；本提交把真实 Provider runner 接入生产 Vector Retrieval Service，并形成真实 citation evidence bridge；最终 Debug/Audit/Observability 持久化追踪仍待完成。**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -29,30 +29,23 @@
 - [x] Evaluation runner 可重复执行设计与实现完成。
 - [x] 结果包含 dataset schema version、retrieval mode、case detail、latency、error 与聚合指标。
 - [x] Recall@K / Precision@K / MRR / error rate / latency 自动化计算接入现有 evaluation service。
-- [x] Citation correctness Contract 与单元测试已实现；真实 Provider runner 的最终引用链路仍待接入。
+- [x] Citation correctness Contract 与单元测试已实现；观察结果现在可显式携带真实 runtime citation targets。
 - [x] 失败 case 可通过 case detail 定位。
 - [x] 开发者本地 unit / runner Gate 已实际执行并记录结果。
 
-本轮既有实际证据：
-
-```text
-Backend regression: 301 passed, 30 deselected
-Migration head: 0024_embedding_dimension_contract
-Real HTTP API: 30 passed
-```
-
-### C. Real Provider Quality Gate — **本地 Gate 已通过**
+### C. Real Provider Quality Gate — **本地 Gate 已通过（基线沿用真实 Provider）**
 
 - [x] 使用真实 Embedding Provider 的 runner 已实现并实际执行。
 - [x] 使用真实 PostgreSQL / pgvector Retrieval 链路。
 - [x] Provider failure 保留为 observation / error，不静默 fallback。
-- [x] 显式 fallback 字段进入结果；本 Gate 实际 `fallback_used=false`、`fallback_count=0`。
+- [x] 显式 fallback 字段进入结果；此前 Gate 实际 `fallback_used=false`、`fallback_count=0`。
 - [x] Mock 结果不作为真实质量证据。
 - [x] Provider / model / dimension / dataset / retrieval mode / top-k identity 纳入 baseline。
 - [x] 首次真实运行使用 `--freeze-baseline` 冻结真实 baseline。
 - [x] 使用冻结 baseline 重跑并确认 regression Gate。
+- [x] 本提交将 real-provider runner 的查询阶段改为调用 `VectorKnowledgeRetrievalService`，而不是直接以底层 pgvector ranking 作为最终 citation 结果。
 
-本地真实 Provider 证据：
+既有本地真实 Provider 证据：
 
 ```text
 provider=ollama
@@ -84,8 +77,10 @@ quality_gate=passed
 - [x] Recall@K / Precision@K / MRR metric delta 可输出 regression report。
 - [x] Provider error rate 纳入 regression report。
 - [x] Citation correctness Contract、expected citation targets 与错误场景单元测试已实现。
-- [ ] 真实 Retrieval / Runtime 产生的最终 citations 接入 citation correctness runner。
-- [ ] Retrieval Debug / Audit / Observability 可追踪评测结果。
+- [x] `RetrievalEvaluationObservation` 可显式记录 runtime `cited_chunk_ids`，聚合器据此计算 citation correctness。
+- [x] Real-provider runner 通过 `VectorKnowledgeRetrievalService` 取得带 `citation/source_document/source_uri/relevance_score` 的真实检索结果，并将其映射回 evaluation chunk id。
+- [x] 评测结果带 `evaluation_run_id`、provider/model/dimension/dataset/retrieval mode/top-k/citation source identity，便于 Debug / Audit / Observability 后续关联。
+- [ ] 评测结果持久化接入现有 Retrieval Debug / Audit / Observability 查询模型。
 
 ## 3. 2.2-C 当前结论
 
@@ -97,9 +92,11 @@ quality_gate=passed
 
 ## 4. 2.2-D 当前结论
 
-Provider / model / dimension / dataset / retrieval mode / top-k 的 regression comparison 已实际通过。本轮继续推进了 Citation correctness 的数据契约与自动化 Contract：评测 case 现在显式记录 `expected_citation_targets`，计算规则要求 citation target 同时存在于实际 retrieval ranking 且属于 expected targets。该 Contract 已有单元测试，但尚不能据此宣称真实 Runtime citation Gate Passed。
+本提交完成 Citation correctness 的真实 Runtime evidence bridge：评测 runner 继续使用真实 Ollama embedding 和 PostgreSQL/pgvector，但查询阶段通过 `VectorKnowledgeRetrievalService` 走与业务 API 相同的 provider selection、向量检索、权限 hydration 和 citation 构造路径。`cited_chunk_ids` 不再默认等同于底层 ranking，实际 citation 字段来自 runtime retrieval result。
 
-下一交付单元为把真实 Retrieval / Runtime 输出的 citation 目标接入该 Contract，并建立 Retrieval Debug / Audit / Observability 对评测 case、Provider、Dataset 与 regression 结果的追踪关系。
+同时，Vector Retrieval Runtime 现在正式支持 `EMBEDDING_PROVIDER=ollama`，与真实 Provider Gate 使用的 provider 保持一致；仍保留 explicit lexical fallback，不因 provider 失败静默降级。
+
+当前尚未完成的是把 evaluation result 持久化接入线上 Retrieval Debug / Audit / Observability 查询模型。因此本阶段仍不能宣称完整 Traceability Gate Passed。
 
 ## 5. 本轮代码变更后的本地验证
 
@@ -107,10 +104,10 @@ Provider / model / dimension / dataset / retrieval mode / top-k 的 regression c
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_retrieval_evaluation_dataset.py
+uv run pytest -q tests/unit/test_vector_knowledge_retrieval.py tests/unit/test_retrieval_evaluation.py
 uv run pytest -q
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
 uv run python .\scripts\evaluation\knowledge\run_knowledge_retrieval_real_provider.py --k 3
 ```
 
-真实 Provider / 数据库联调仍必须在开发者本地完成；未实际执行的结果不得写成 Passed。
+若 baseline 已存在，runner 应直接进入 `baseline.status=checked`；只有在确认 dataset/provider identity 发生合法变化并需要建立新 baseline 时，才执行一次 `--freeze-baseline`。真实 Provider / 数据库联调必须在开发者本地完成；未实际执行的结果不得写成 Passed。

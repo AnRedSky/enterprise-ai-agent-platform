@@ -27,6 +27,7 @@ from app.services.retrieval_evaluation_baseline import (
     write_baseline,
 )
 from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
+from app.services.vector_knowledge_retrieval import VectorKnowledgeRetrievalService
 from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
 from scripts.evaluation.knowledge.run_knowledge_retrieval_evaluation import (
     DATASET,
@@ -100,14 +101,17 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
 
     provider = _build_embedding_provider()
+    evaluation_run_id = str(uuid.uuid4())
     metadata = {
+        "evaluation_run_id": evaluation_run_id,
         "provider": settings.embedding_provider,
         "model": settings.embedding_model,
         "embedding_dimension": settings.embedding_dimension,
         "dataset_version": dataset.schema_version,
         "dataset_sha256": _dataset_sha256(DATASET),
-        "retrieval_mode": "real-provider-pgvector",
+        "retrieval_mode": "real-provider-pgvector-runtime",
         "top_k": k,
+        "citation_source": "runtime-retrieval-result",
     }
 
     async with SessionLocal() as db:
@@ -127,12 +131,15 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             except EmbeddingProviderError as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                observations = [RetrievalEvaluationObservation((), latency_ms, error) for _ in dataset.cases]
+                observations = [RetrievalEvaluationObservation((), latency_ms, error, ()) for _ in dataset.cases]
                 case_reports = [
                     {
                         "query": case.query,
                         "relevant_chunk_ids": sorted(case.relevant_chunk_ids),
+                        "expected_citation_targets": sorted(case.expected_citation_targets),
                         "retrieved_chunk_ids": [],
+                        "cited_chunk_ids": [],
+                        "citations": [],
                         "latency_ms": latency_ms,
                         "error": error,
                     }
@@ -152,29 +159,65 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                     for row, embedding in zip(fixtures, fixture_embeddings, strict=True)
                 ]
                 await vector_provider.upsert(records)
+                await db.execute(
+                    text("UPDATE knowledge_document_versions SET vector_index_status = 'ready' WHERE id = :version"),
+                    {"version": str(VERSION_ID)},
+                )
+                await db.commit()
+
+                evaluation_service = VectorKnowledgeRetrievalService(db)
+                actual_to_evaluation = {
+                    str(actual_chunk_id(row["chunk_id"])): row["chunk_id"] for row in fixtures
+                }
 
                 for case in dataset.cases:
                     started = time.perf_counter()
                     error = None
                     ranking: list[str] = []
+                    cited_chunk_ids: list[str] = []
+                    citations: list[dict[str, object]] = []
                     try:
-                        query_embedding = (await provider.embed([case.query]))[0]
-                        results = await vector_provider.search(
-                            query_embedding,
+                        results = await evaluation_service.retrieve(
+                            query=case.query,
                             top_k=k,
-                            min_score=0.0,
-                            knowledge_base_id=str(KB_ID),
+                            owner_id=owner,
+                            is_admin=False,
+                            knowledge_base_id=KB_ID,
                         )
-                        ranking = [result.metadata.get("evaluation_chunk_id", result.chunk_id) for result in results]
+                        for result in results:
+                            evaluation_chunk_id = actual_to_evaluation.get(str(result["chunk_id"]))
+                            if evaluation_chunk_id is None:
+                                continue
+                            ranking.append(evaluation_chunk_id)
+                            cited_chunk_ids.append(evaluation_chunk_id)
+                            citations.append(
+                                {
+                                    "chunk_id": evaluation_chunk_id,
+                                    "citation": result["citation"],
+                                    "source_document": result["source_document"],
+                                    "source_uri": result["source_uri"],
+                                    "relevance_score": result["relevance_score"],
+                                }
+                            )
                     except Exception as exc:
                         error = f"{type(exc).__name__}: {exc}"
                     latency_ms = round((time.perf_counter() - started) * 1000, 3)
-                    observations.append(RetrievalEvaluationObservation(tuple(ranking), latency_ms, error))
+                    observations.append(
+                        RetrievalEvaluationObservation(
+                            tuple(ranking),
+                            latency_ms,
+                            error,
+                            tuple(cited_chunk_ids),
+                        )
+                    )
                     case_reports.append(
                         {
                             "query": case.query,
                             "relevant_chunk_ids": sorted(case.relevant_chunk_ids),
+                            "expected_citation_targets": sorted(case.expected_citation_targets),
                             "retrieved_chunk_ids": ranking,
+                            "cited_chunk_ids": cited_chunk_ids,
+                            "citations": citations,
                             "latency_ms": latency_ms,
                             "error": error,
                         }
@@ -227,7 +270,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run Retrieval Quality Gate with a real embedding provider and PostgreSQL/pgvector")
+    parser = argparse.ArgumentParser(description="Run Retrieval Quality Gate through the real runtime retrieval service with a real embedding provider and PostgreSQL/pgvector")
     parser.add_argument("--k", type=int, default=3)
     parser.add_argument("--baseline", type=Path, default=BASELINE)
     parser.add_argument("--freeze-baseline", action="store_true")
