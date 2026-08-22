@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：`f1758e0a76ad18ad607e6adaa764bc8b017a58bf`
+- 当前远端基线：`3a1eb4f7e65cb6e6d9cbefe14f74c47c4898876b`
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项，当前执行 2.1-A Product / Backend Contract。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项；2.1-A Contract 已完成，当前执行 2.1-B Database Migration + Domain。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -96,7 +96,7 @@ Desktop Chrome:
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **已立项 / 待开发** | Enterprise Organization & Access Governance；当前执行 2.1-A Contract |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A 已完成，当前 2.1-B |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
@@ -131,7 +131,7 @@ Vue Management + Browser E2E
 
 | 缺口 | 企业价值 | 路线 | 当前状态 |
 |---|---|---|---|
-| Organization / Membership / Enterprise Access | 让企业可以真正管理成员与资源边界 | Phase 2.1 | **当前优先级 P0** |
+| Organization / Membership / Enterprise Access | 让企业可以真正管理成员与资源边界 | Phase 2.1 | **P0 / 正在开发** |
 | Retrieval 真实 Provider 质量 | 保证知识问答业务质量可量化 | Phase 2.2 | P0，待质量 Contract |
 | Model Provider Governance | 控制模型选择、故障切换和成本 | Phase 2.3 | P1，待产品决策 |
 | Durable Scheduler | 支撑长期任务、故障恢复和多实例语义 | Phase 2.4 | P1，待产品决策 |
@@ -140,44 +140,60 @@ Vue Management + Browser E2E
 | Multi-Agent | 支撑复杂任务的 Agent 协作 | Phase 2.7 | P2，尚无 Contract |
 | Agent Asset / Marketplace | 企业内部复用、发布和治理 Agent 资产 | Phase 2.8 | P2，尚无 Contract |
 
-上述路线详见 `docs/PRODUCT_ROADMAP.md`；只有当前 Phase 2.1 是已正式进入开发的阶段。
+上述路线详见 `docs/PRODUCT_ROADMAP.md`；只有当前 Phase 2.1 已正式进入开发。
 
 ## 7. Phase 2.1 当前任务
 
-**2.1-A Product / Backend Contract：Enterprise Organization & Access Governance**
+### 2.1-A Product / Backend Contract — 已完成
 
-本任务只冻结产品与后端 Contract，不直接实现业务代码：
+已冻结：
 
-1. Organization ↔ Tenant 关系。
-2. Membership 生命周期。
+1. Organization ↔ Tenant 1:1 关系。
+2. Membership 生命周期与多组织归属。
 3. Owner/Admin/Member 权限矩阵。
-4. 多组织归属策略。
-5. User/Tenant/Role 兼容迁移策略。
-6. API schema / error / pagination / idempotency Contract。
-7. Resource scope 与 Audit 规则。
+4. User/Tenant/Role 兼容迁移策略。
+5. API schema / error / pagination / idempotency Contract。
+6. Resource scope 与 Audit 规则。
 
-Contract 冻结后，才进入 2.1-B Database Migration + Domain。
+详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
+
+### 2.1-B Database Migration + Domain — 当前任务
+
+Issue：#33
+
+实施范围：
+
+- SQLAlchemy Organization / Membership model。
+- Alembic migration。
+- Existing Tenant/User 数据兼容映射。
+- Organization/Membership Service。
+- Membership authorization service/dependency。
+- Owner/Admin/Member 权限测试。
+- 并发 membership 唯一性与 owner transfer 事务测试。
+
+**进入条件已经满足：2.1-A Contract 已冻结。**
+
+**完成条件：Migration + Backend Domain + Unit/Integration/API Contract tests 均通过后，才进入 2.1-C API 实现。**
 
 ## 8. Phase 2.1 验收入口
 
 - Phase：`docs/02-phases/PHASE_2_1.md`
+- Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`
 - Acceptance：`docs/03-acceptance/PHASE_2_1_ACCEPTANCE.md`
 - Product Roadmap：`docs/PRODUCT_ROADMAP.md`
 
-Phase 2.1 完成前不得声称 Organization / Enterprise IAM 已实现或验收通过。
+Phase 2.1 完成前不得声称 Organization / Enterprise IAM 已完整实现或验收通过。
 
 ## 9. 下一步推进原则
 
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-2.1-A Product / Backend Contract
- → 2.1-B Backend Domain + API Contract
- → 2.1-C Database Migration + Backend Tests
- → 2.1-D Real API
- → 2.1-E Frontend API Types + Vitest + UI
- → 2.1-F Backend / Frontend Regression
- → 2.1-G Browser E2E
+2.1-B Database Migration + Domain
+ → 2.1-C API Contract Implementation
+ → 2.1-D Frontend API Types + Vitest + UI
+ → 2.1-E Real API + Backend / Frontend Regression
+ → 2.1-F Browser E2E
  → Acceptance / Status / Error Record
  → 直接提交 main
 ```
