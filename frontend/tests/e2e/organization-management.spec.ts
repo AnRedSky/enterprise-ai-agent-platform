@@ -59,7 +59,7 @@ test("Organization management completes the real owner browser contract", async 
     await expect(row).toBeVisible();
     await row.getByRole("link", { name: "管理成员" }).click();
     await expect(page.getByRole("heading", { name: organizationName })).toBeVisible();
-    await expect(page.getByText("成员")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "成员", exact: true })).toBeVisible();
 
     const organizationResponse = await api.get(apiPath("/organizations"), { headers });
     expect(organizationResponse.ok()).toBeTruthy();
