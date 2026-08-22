@@ -145,12 +145,14 @@ class OrganizationService:
             raise HTTPException(422, "不支持的 Organization role")
         if status is not None and status not in self.STATUSES:
             raise HTTPException(422, "不支持的 Membership 状态")
+        if role == "owner":
+            raise HTTPException(422, "owner role 必须通过 owner transfer 变更")
         if membership.role == "owner" and actor.role != "owner":
             raise HTTPException(403, "只有 owner 可以修改 owner membership")
-        if membership.role == "owner" and role in {"admin", "member"}:
+        if membership.role == "owner" and (role in {"admin", "member"} or status in {"suspended", "removed"}):
             await self._ensure_owner_remains(organization_id, membership.id)
-        if role == "owner" and actor.role != "owner":
-            raise HTTPException(403, "只有 owner 可以授予 owner role")
+        if membership.role == "owner" and actor.role != "owner":
+            raise HTTPException(403, "只有 owner 可以管理 owner membership")
         if role is not None:
             membership.role = role
         if status is not None:
@@ -173,7 +175,6 @@ class OrganizationService:
             if actor.role != "owner":
                 raise HTTPException(403, "只有 owner 可以管理 owner membership")
             await self._ensure_owner_remains(organization_id, membership.id)
-        # Keep the record for audit/history; removal is a lifecycle transition.
         membership.status = "removed"
         await self.db.commit()
 
