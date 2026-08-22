@@ -1,6 +1,6 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 进入 2.1-E Real API + Regression**
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 2.1-E Real API Gate 已执行但失败，修复后待复验**
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -137,7 +137,7 @@ Production build
 
 此前首次 Gate 的 `DefaultRow` / `Membership` 5 个 `vue-tsc` 错误已记录为 `ERR-0020` 并修复；修复后的 targeted tests、完整 Vitest 与 production build 均已由用户实际执行通过，因此 2.1-D 现在可以标记为 Gate Passed。
 
-## 5. 2.1-E Real API / Regression — **实现已开始，等待本地 Gate**
+## 5. 2.1-E Real API / Regression — **Gate 已执行失败，修复后待复验**
 
 本阶段增加 Organization / Membership 真实 HTTP 场景，不再只验证 API Contract：
 
@@ -155,20 +155,54 @@ Production build
 backend/tests/api_real/test_organization_governance_api.py
 ```
 
-Real API bootstrap 现在会创建一次性 Organization + 第二测试用户，并通过临时 context 注入第二用户 token；密码和 token 不写入仓库。测试脚本执行结束会清理 context 与环境变量。
+Real API bootstrap 会创建一次性 Organization + 第二测试用户，并通过临时 context 注入第二用户 token；密码和 token 不写入仓库。测试结束会清理 context 与环境变量。
 
-### 2.1-E Gate
+### 2.1-E 首次扩展 Gate 结果
+
+用户实际执行：
+
+```text
+10 failed, 20 passed in 41.32s
+```
+
+失败集中表现为：
+
+1. `/runtime/audit-logs` 返回 HTTP 500，导致 Organization audit 以及既有 Workflow governance 的多个 Real API 场景共同失败。
+2. transferred-owner 场景使用固定名称 `API Real Organization Updated`，在真实 PostgreSQL 保留历史数据时可能产生 409。
+
+根因：`audit_logs.resource_id` 为 `VARCHAR`，Organization / Membership 主键为 UUID；非 admin audit scope 查询没有进行类型转换，在 PostgreSQL 上形成不兼容比较。
+
+错误记录：
+
+```text
+docs/04-errors/ERR-0021-real-api-audit-resource-id-type-mismatch.md
+```
+
+### 2.1-E 修复
+
+已直接提交 `main`：
+
+- `RuntimeQueryService.audit_logs()` 对 Organization / Membership UUID scope 子查询显式 `cast(..., String)`，与 `AuditLog.resource_id` 的 VARCHAR 存储类型保持一致。
+- Real API transferred-owner 测试改为每次生成唯一组织更新名称，消除跨次真实数据库状态造成的固定名称冲突。
+
+### 2.1-E 当前 Gate 状态
+
+**修复代码已经提交，但开发者本地尚未重新执行修复后的 Real API Gate，因此仍不得标记 Passed。**
+
+必须重新执行：
 
 ```powershell
 cd backend
+uv run pytest -q
+uv run pytest -q tests/api_real/test_organization_governance_api.py -m real_api
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
 ```
 
-当前代码已提交，但**尚未由开发者在本地重新执行该扩展后的 Real API Gate，因此不得标记 Passed**。
+若 full Real API 全部通过，才进入 2.1-F；若仍失败，继续以实际 Gate 失败为下一修复任务。
 
 ## 6. 2.1-F Browser E2E + Acceptance
 
-2.1-E Real API Gate 通过后继续：
+2.1-E Real API Gate 全部通过后继续：
 
 - 管理员创建组织/管理成员。
 - Member 权限边界。
@@ -203,4 +237,4 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 
 ## 9. 当前执行结论
 
-**2.1-A、2.1-B、2.1-C、2.1-D 已完成对应 Gate；2.1-D Frontend targeted tests / regression / production build 已实际通过。当前直接进入 2.1-E：扩展 Real API / Regression 覆盖 Organization / Membership 真实 PostgreSQL/Redis HTTP 生命周期。2.1-E 未经本地 Gate 验证前，不提前宣告 Passed。**
+**2.1-A、2.1-B、2.1-C、2.1-D 已完成对应 Gate；2.1-E 已执行并发现真实 AuditLog PostgreSQL 类型边界问题，修复已提交 main，当前直接进入“修复后 Real API Gate 复验”，不得跳过 2.1-E 进入 Browser E2E。**
