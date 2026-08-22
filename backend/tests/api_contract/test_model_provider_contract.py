@@ -13,5 +13,9 @@ def test_model_provider_openapi_exposes_chat_and_embedding_profiles():
     schema = app.openapi()
     provider_schema = schema["components"]["schemas"]["ModelProfileCreate"]
     assert provider_schema["properties"]["model_type"]["pattern"] == "^(chat|embedding)$"
-    assert provider_schema["properties"]["dimension"]["type"] == "integer"
+
+    # Pydantic v2 represents an optional integer as a nullable union in OpenAPI.
+    dimension_schema = provider_schema["properties"]["dimension"]
+    assert dimension_schema["anyOf"] == [{"type": "integer"}, {"type": "null"}]
+
     assert "credential_ref" in schema["components"]["schemas"]["ModelProviderCreate"]["properties"]
