@@ -92,7 +92,7 @@ Production build: passed
 - [x] 使用随机 fixture，避免固定测试账号和组织状态污染。
 - [x] 本地 Browser E2E 实际执行。
 
-用户最新实际结果：
+用户此前实际结果：
 
 ```text
 scripts/test/e2e/02_run_organization_e2e.ps1
@@ -124,6 +124,18 @@ scripts/test/e2e/02_run_organization_e2e.ps1
 - [x] Owner E2E 增加 Audit UI 可追踪证据。
 - [ ] F-C 新增场景本地真实 Browser Gate。
 
+**最新用户本地 F-C 执行反馈：**
+
+```text
+Organization management: passed
+Organization browser governance boundaries: failed
+Owner transfer browser controls: passed
+
+2 passed, 1 failed
+```
+
+失败为 suspended member 场景的前端错误文案断言：Backend 正确返回 403，但 UI 原先直接显示 Axios `Request failed with status code 403`，不符合稳定的 Organization Detail 错误文案契约。该错误已记录到 `docs/04-errors/2026-08-22-phase-2-1-f-c-suspended-member-403-error-message.md`，并已在 `frontend/src/views/organizations/detail.vue` 增加 403/404 错误归一化；修复尚待本地真实 Browser Gate 重新验证。
+
 ## 3. 当前执行顺序
 
 ```text
@@ -131,8 +143,9 @@ scripts/test/e2e/02_run_organization_e2e.ps1
  → 2.1-F-A Browser E2E infrastructure 已通过
  → 2.1-F-B Organization Management browser contract 已通过
  → F-C governance browser acceptance implementation
+ → 修复 suspended member 403 UI error contract
  → 本地执行 F-C Browser E2E
- → 根据实际结果修复
+ → 根据实际结果继续修复
  → Full frontend regression + production build
  → Backend regression + Real API Gate
  → final acceptance
