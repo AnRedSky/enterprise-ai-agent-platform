@@ -6,9 +6,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端基线：`3a1eb4f7e65cb6e6d9cbefe14f74c47c4898876b`
+- 当前远端基线：`f1846c79d74f2e3d2c652f99bb05571eb693642a`
 - 开发原则：所有任务直接基于最新 `main`，禁止 feature / task / 临时分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项；2.1-A Contract 已完成，当前执行 2.1-B Database Migration + Domain。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已立项；2.1-A Contract 已完成；2.1-B Domain + Migration 代码已实现，待本地 Gate 验证。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -96,7 +96,7 @@ Desktop Chrome:
 | Phase 1.7 | 已完成 / 正式关闭 | Scheduled Trigger / Governance / Browser E2E |
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | **Phase 1.9** | **已完成 / 正式关闭** | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
-| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A 已完成，当前 2.1-B |
+| **Phase 2.1** | **进行中** | Enterprise Organization & Access Governance；2.1-A 已完成；2.1-B Domain + Migration 已实现，待本地验证 |
 | Phase 2.2～2.8 | 路线候选 | Retrieval Quality、Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 5. 当前产品能力评估
@@ -157,23 +157,30 @@ Vue Management + Browser E2E
 
 详细 Contract：`docs/02-phases/PHASE_2_1_A_CONTRACT.md`。
 
-### 2.1-B Database Migration + Domain — 当前任务
+### 2.1-B Database Migration + Domain — 代码实现完成，待本地 Gate
 
 Issue：#33
 
-实施范围：
+已实现：
 
-- SQLAlchemy Organization / Membership model。
-- Alembic migration。
+- SQLAlchemy `Organization` / `OrganizationMembership` model。
+- Alembic `0023_organization_membership` migration。
 - Existing Tenant/User 数据兼容映射。
-- Organization/Membership Service。
-- Membership authorization service/dependency。
-- Owner/Admin/Member 权限测试。
-- 并发 membership 唯一性与 owner transfer 事务测试。
+- `OrganizationService`。
+- active membership / management authorization 基础规则。
+- Owner/Admin/Member role 约束。
+- Owner transfer 事务锁定与唯一 Owner 防护。
+- membership `(organization_id, user_id)` 数据库唯一约束。
+- Backend unit tests 覆盖核心 domain rule。
 
-**进入条件已经满足：2.1-A Contract 已冻结。**
+尚未声称通过：
 
-**完成条件：Migration + Backend Domain + Unit/Integration/API Contract tests 均通过后，才进入 2.1-C API 实现。**
+- `uv run pytest -q` 尚未在本次实现后实际执行。
+- `uv run alembic upgrade head` 尚未在本次实现后实际执行。
+- PostgreSQL 实际迁移数据计数/tenant scope 尚未验证。
+- Real API / API Contract 属于后续 2.1-C / 2.1-E。
+
+**因此当前仍停留在 2.1-B，不进入 Frontend。**
 
 ## 8. Phase 2.1 验收入口
 
@@ -189,7 +196,8 @@ Phase 2.1 完成前不得声称 Organization / Enterprise IAM 已完整实现或
 严格遵守 `docs/01-governance/DEVELOPMENT.md`：
 
 ```text
-2.1-B Database Migration + Domain
+2.1-B 本地 Backend regression + Migration Gate
+ → 修复实际失败
  → 2.1-C API Contract Implementation
  → 2.1-D Frontend API Types + Vitest + UI
  → 2.1-E Real API + Backend / Frontend Regression
