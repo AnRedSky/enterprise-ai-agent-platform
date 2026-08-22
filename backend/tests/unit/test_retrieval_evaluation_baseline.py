@@ -30,6 +30,21 @@ def test_build_baseline_records_provider_identity_and_quality_metrics():
     }
 
 
+def test_build_baseline_records_governed_profile_identity_when_selected():
+    baseline = build_baseline(
+        metadata(
+            model_profile_id="profile-1",
+            provider_id="provider-1",
+            provider_name="custom-ollama",
+            provider_type="ollama",
+        ),
+        {"recall_at_k": 1.0, "precision_at_k": 0.4, "mrr": 0.9},
+    )
+
+    assert baseline["model_profile_id"] == "profile-1"
+    assert baseline["provider_id"] == "provider-1"
+
+
 def test_build_regression_report_exposes_identity_changes_and_metric_deltas():
     report = build_regression_report(
         metadata(model="new-model"),
@@ -77,6 +92,22 @@ def test_compare_baseline_rejects_identity_change_and_quality_regression():
     assert "model changed: 'new-model' != baseline 'old-model'" in failures
     assert "recall_at_k regressed: 0.8 < baseline 1.0" in failures
     assert "mrr regressed: 0.7 < baseline 0.9" in failures
+
+
+def test_compare_baseline_rejects_governed_profile_identity_change():
+    actual = metadata(model_profile_id="profile-new", provider_id="provider-1")
+    baseline = {
+        **metadata(model_profile_id="profile-old", provider_id="provider-1"),
+        "metrics": {"recall_at_k": 1.0, "precision_at_k": 0.4, "mrr": 1.0},
+    }
+
+    failures = compare_baseline(
+        actual,
+        {"recall_at_k": 1.0, "precision_at_k": 0.4, "mrr": 1.0, "error_rate": 0.0},
+        baseline,
+    )
+
+    assert "model_profile_id changed: 'profile-new' != baseline 'profile-old'" in failures
 
 
 def test_compare_baseline_rejects_dataset_content_change():
