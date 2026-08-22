@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-A Product / Retrieval Quality Contract 设计中**
+> 状态：**进行中 / 2.2-B Evaluation Dataset / Runner 实现完成，待本地 Gate**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -14,7 +14,7 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 ### 2.2-A Product / Retrieval Quality Contract
 
-冻结以下产品与质量契约：
+已形成以下产品与质量契约：
 
 - 真实 Embedding Provider 的选择与配置边界。
 - Evaluation Dataset 与业务 Corpus 的严格分离。
@@ -28,7 +28,14 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 ### 2.2-B Evaluation Dataset / Runner
 
-在 A 冻结后实现可版本化数据集、评测 runner、结果 schema 和本地重复执行入口。
+已实现可重复的 Dataset Loader 与本地 runner：
+
+- 读取现有 `backend/evaluation/knowledge_retrieval_dataset.jsonl`。
+- 对 case id、query、relevant chunk IDs、重复 ID、JSON 格式执行严格校验。
+- 使用现有 PostgreSQL/pgvector fixture 执行实际 Retrieval。
+- 输出 dataset schema version、case 级 ranking、latency、error 与聚合质量指标。
+- 保留 baseline quality gate，并将 provider error 显式计入失败条件。
+- Fixture 在执行完成后清理，不把评测文件当作线上业务数据源。
 
 ### 2.2-C Real Provider Quality Gate
 
@@ -77,7 +84,7 @@ expected_citation_targets[]
 metadata
 ```
 
-字段最终以实现前 Contract 定稿为准。
+当前 Dataset Loader 已对现有 JSONL 的 `id/query/relevant_chunk_ids` 核心字段执行严格校验；expected source / citation target 将在后续真实 Provider / Citation Gate 前扩展到实际数据集。
 
 ### 4.2 指标
 

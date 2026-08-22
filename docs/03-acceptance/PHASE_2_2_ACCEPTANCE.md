@@ -1,6 +1,6 @@
 # Phase 2.2 Acceptance — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-A Product / Retrieval Quality Contract 设计中**
+> 状态：**进行中 / 2.2-B Evaluation Dataset / Runner 已实现，尚待本地 Gate**
 > 未执行的 Gate 不得标记 Passed。
 
 ## 1. Acceptance Scope
@@ -9,26 +9,27 @@
 
 ## 2. Acceptance Gates
 
-### A. Product / Retrieval Quality Contract — **设计中**
+### A. Product / Retrieval Quality Contract — **已形成**
 
-- [ ] 真实 Embedding Provider Contract 冻结。
-- [ ] Evaluation Dataset / Corpus 边界冻结。
-- [ ] Dataset version / case schema 冻结。
-- [ ] Recall@K 定义冻结。
-- [ ] Precision@K 定义冻结。
-- [ ] MRR 定义冻结。
-- [ ] Citation correctness 定义冻结。
-- [ ] latency / provider error rate 观察口径冻结。
-- [ ] baseline 与 regression comparison 规则冻结。
-- [ ] failure / fallback semantics 冻结。
+- [x] 真实 Embedding Provider Contract 边界冻结。
+- [x] Evaluation Dataset / Corpus 边界冻结。
+- [x] Dataset version / case schema 口径冻结。
+- [x] Recall@K 定义冻结。
+- [x] Precision@K 定义冻结。
+- [x] MRR 定义冻结。
+- [x] Citation correctness 定义冻结。
+- [x] latency / provider error rate 观察口径冻结。
+- [x] baseline 与 regression comparison 规则冻结。
+- [x] failure / fallback semantics 冻结。
 
-### B. Evaluation Dataset / Runner
+### B. Evaluation Dataset / Runner — **实现完成，待本地 Gate**
 
-- [ ] Dataset 可版本化。
-- [ ] Evaluation runner 可重复执行。
-- [ ] 结果包含 Provider / model / dimension / dataset version / retrieval mode。
-- [ ] 指标计算自动化。
-- [ ] 失败 case 可定位到 case ID。
+- [x] Dataset Loader 对当前 JSONL 执行结构、ID、query、relevant chunk 校验。
+- [x] Evaluation runner 可重复执行设计与实现完成。
+- [x] 结果包含 dataset schema version、retrieval mode、case detail、latency、error 与聚合指标。
+- [x] Recall@K / Precision@K / MRR / error rate / latency 自动化计算接入现有 evaluation service。
+- [x] 失败 case 可通过 case detail 定位。
+- [ ] 开发者本地 unit / runner Gate 实际执行并记录结果。
 
 ### C. Real Provider Quality Gate
 
@@ -44,8 +45,8 @@
 - [ ] Citation correctness 有自动化证据。
 - [ ] Retrieval Debug / Audit / Observability 可追踪评测结果。
 
-## 3. 2.2-A 当前结论
+## 3. 2.2-B 当前结论
 
-当前只冻结 Contract、指标、数据集与失败边界。尚未执行 Real Provider Quality Gate，因此不得标记 Phase 2.2 或 2.2-A Passed。
+Dataset Loader 与 Runner 已实现并直接复用现有 Retrieval Evaluation / PostgreSQL / pgvector fixture。由于本次实现尚未在开发者本地执行，当前只能记录为“实现完成，待 Gate”，不得标记 Passed。
 
-下一步在 Contract 定稿后实现 Dataset / Runner，并以真实 Provider 进行本地质量验证。
+下一步执行本地 unit / runner Gate；通过后进入 2.2-C Real Provider Quality Gate。

@@ -8,7 +8,7 @@
 - Branch: `main`
 - 最新产品基线：Phase 2.1 Enterprise Organization & Access Governance 已完成最终联合验收并正式关闭。
 - 开发原则：所有任务直接基于最新 `main`；禁止创建功能分支、临时分支或长期分支。
-- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已完成 / 正式关闭；当前进入 Phase 2.2 Retrieval Production Quality 的 2.2-A Contract。**
+- 当前开发阶段：**Phase 1.9 已完成 / 正式关闭；Phase 2.1 已完成 / 正式关闭；Phase 2.2 进行中，2.2-A Contract 已形成，当前执行 2.2-B Dataset / Runner。**
 - 产品能力基线：`docs/PRODUCT_CAPABILITY_BASELINE.md`
 - 产品与功能开发对比矩阵：`docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - 产品整体路线：`docs/PRODUCT_ROADMAP.md`
@@ -71,23 +71,33 @@ npx playwright test tests/e2e/organization-management.spec.ts --project="Desktop
 | Phase 1.8 | 已完成 / 正式关闭 | Event / Webhook Trigger Expansion |
 | Phase 1.9 | 已完成 / 正式关闭 | Runtime Reliability / Production Hardening 全部 Acceptance Gate 通过 |
 | **Phase 2.1** | **已完成 / 正式关闭** | Enterprise Organization & Access Governance；A～F-C 全部 Gate 与最终联合验收通过 |
-| **Phase 2.2** | **进行中** | Retrieval Production Quality；当前推进 2.2-A Product / Retrieval Quality Contract |
+| **Phase 2.2** | **进行中** | Retrieval Production Quality；2.2-A Contract 已形成，当前为 2.2-B Dataset / Runner 实现与本地验证 |
 | Phase 2.3～2.8 | 路线候选 | Model Governance、Durable Scheduler、Advanced Workflow、Event Infrastructure、Multi-Agent、Agent Marketplace |
 
 ## 4. Phase 2.2 当前任务
 
-### 2.2-A Product / Retrieval Quality Contract — **设计中**
+### 2.2-A Product / Retrieval Quality Contract — **已形成**
 
-产品路线明确 Phase 2.2 的目标是让企业知识问答具备稳定、可量化的真实语义检索质量；进入实现前必须明确 Provider、数据集、Recall / Precision / Citation 指标。当前只进行 Contract、指标、数据集、失败边界和验收设计，不提前引入 Provider 或数据库实现。
+已明确 Provider / Dataset / Corpus 边界、Recall@K / Precision@K / MRR、Citation correctness、latency、provider error rate、baseline regression 与 failure/fallback semantics。真实 Provider Quality Gate 尚未执行。
+
+### 2.2-B Evaluation Dataset / Runner — **实现完成，待本地 Gate**
+
+本次实现直接复用现有 `retrieval_evaluation.py`、`knowledge_retrieval_dataset.jsonl`、PostgreSQL/pgvector fixture 与 baseline：
+
+- 新增严格 JSONL Dataset Loader：校验 JSON、case id、query、relevant chunk IDs、重复 case ID、空数据集。
+- Runner 改为通过 Dataset Loader 消费现有评测数据，不再重复解析 Dataset。
+- Runner 输出 dataset schema version、case 级 ranking / latency / error、聚合 Recall@K / Precision@K / MRR / error rate / average latency。
+- Runner 仍通过真实 PostgreSQL/pgvector 执行 Retrieval；评测 JSONL 仅是评测输入，不是生产 Retrieval 数据源。
+- Runner 修正 `backend/scripts/evaluation/knowledge` 到 `backend` 的路径解析，并保证 evaluation fixture cleanup 参数正确。
+
+本次代码尚未在开发者本地执行，因此 **不得标记 2.2-B Passed**。
 
 下一步：
 
-1. 读取现有 Knowledge / RAG / Retrieval 架构与 Phase 1.4 历史验收边界。
-2. 定义真实 Embedding Provider Contract 与配置边界。
-3. 定义固定评测数据集格式、版本和可重复执行方式。
-4. 定义 Recall@K、Precision@K、Citation correctness 等指标及最低门槛。
-5. 定义离线评估与 Real Provider Gate 的职责边界。
-6. 完成 `PHASE_2_2.md` / `PHASE_2_2_ACCEPTANCE.md` 后，再进入实现。
+1. 本地执行 Dataset Loader unit tests。
+2. 本地执行现有 Backend regression。
+3. 本地执行 Phase 2.2-B runner，确认 PostgreSQL/pgvector fixture、指标和 cleanup。
+4. 再进入 2.2-C Real Provider Quality Gate。
 
 ## 5. 维护规则
 
