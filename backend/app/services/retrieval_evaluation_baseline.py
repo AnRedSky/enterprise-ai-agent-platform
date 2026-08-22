@@ -10,6 +10,7 @@ IDENTITY_FIELDS = (
     "model",
     "embedding_dimension",
     "dataset_version",
+    "dataset_sha256",
     "retrieval_mode",
     "top_k",
 )
@@ -17,12 +18,9 @@ IDENTITY_FIELDS = (
 
 def build_baseline(metadata: dict[str, Any], metrics: dict[str, Any]) -> dict[str, Any]:
     return {
-        "provider": metadata["provider"],
-        "model": metadata["model"],
-        "embedding_dimension": metadata["embedding_dimension"],
-        "dataset_version": metadata["dataset_version"],
-        "retrieval_mode": metadata["retrieval_mode"],
-        "top_k": metadata["top_k"],
+        field: metadata[field]
+        for field in IDENTITY_FIELDS
+    } | {
         "metrics": {
             metric: float(metrics[metric])
             for metric in QUALITY_METRICS

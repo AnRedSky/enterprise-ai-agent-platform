@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import sys
 import time
@@ -51,6 +52,10 @@ def _require_real_provider() -> None:
         raise SystemExit("Real Provider Quality Gate requires VECTOR_PROVIDER=pgvector")
 
 
+def _dataset_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
     _require_real_provider()
     dataset = load_retrieval_evaluation_dataset(DATASET)
@@ -78,6 +83,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
         "model": settings.embedding_model,
         "embedding_dimension": settings.embedding_dimension,
         "dataset_version": dataset.schema_version,
+        "dataset_sha256": _dataset_sha256(DATASET),
         "retrieval_mode": "real-provider-pgvector",
         "top_k": k,
     }
@@ -93,12 +99,14 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             case_reports: list[dict[str, object]] = []
             vector_provider = PgVectorRetrievalProvider(db, settings.embedding_dimension)
 
+            started = time.perf_counter()
             try:
                 fixture_embeddings = await provider.embed([row["content"] for row in fixtures])
             except EmbeddingProviderError as exc:
                 error = f"{type(exc).__name__}: {exc}"
+                latency_ms = round((time.perf_counter() - started) * 1000, 3)
                 observations = [
-                    RetrievalEvaluationObservation((), 0.0, error)
+                    RetrievalEvaluationObservation((), latency_ms, error)
                     for _ in dataset.cases
                 ]
                 case_reports = [
@@ -106,7 +114,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                         "query": case.query,
                         "relevant_chunk_ids": sorted(case.relevant_chunk_ids),
                         "retrieved_chunk_ids": [],
-                        "latency_ms": 0.0,
+                        "latency_ms": latency_ms,
                         "error": error,
                     }
                     for case in dataset.cases
@@ -162,12 +170,17 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
             baseline_status = "not_checked"
             failures: list[str] = []
             if freeze_baseline:
-                if baseline_path.exists():
-                    raise SystemExit(
+                if metrics["error_rate"] > 0:
+                    failures.append(
+                        f"cannot freeze baseline with provider error rate {metrics['error_rate']}"
+                    )
+                elif baseline_path.exists():
+                    failures.append(
                         f"baseline already exists: {baseline_path}; review the existing baseline before replacing it"
                     )
-                write_baseline(baseline_path, build_baseline(metadata, metrics))
-                baseline_status = "created"
+                else:
+                    write_baseline(baseline_path, build_baseline(metadata, metrics))
+                    baseline_status = "created"
             elif not baseline_path.exists():
                 baseline_status = "missing"
                 failures.append(f"real provider baseline is missing: {baseline_path}")
@@ -180,6 +193,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 "dataset": {
                     "path": str(dataset.source),
                     "schema_version": dataset.schema_version,
+                    "sha256": metadata["dataset_sha256"],
                 },
                 **metadata,
                 "source": "postgresql/pgvector",
@@ -192,7 +206,7 @@ async def run(k: int, baseline_path: Path, freeze_baseline: bool) -> int:
                 **metrics,
                 "cases_detail": case_reports,
                 "quality_gate": "passed" if baseline_status == "checked" and not failures else (
-                    "baseline_created" if baseline_status == "created" else "failed"
+                    "baseline_created" if baseline_status == "created" and not failures else "failed"
                 ),
                 "failures": failures,
             }
