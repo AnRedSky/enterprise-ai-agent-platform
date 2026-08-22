@@ -1,6 +1,6 @@
 # Phase 2.1 — Enterprise Organization & Access Governance
 
-> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已实现，首次 Frontend Regression 的 production build 被 vue-tsc 阻塞，已修复，等待本地重新验证**
+> 状态：**进行中 / 2.1-A Contract 已完成 / 2.1-B Migration Gate 已验证 / 2.1-C Backend API + Real API Gate 已验证 / 2.1-D Frontend UI + Contract Tests 已验证 / 进入 2.1-E Real API + Regression**
 > 前置：Phase 1.9 已正式关闭
 > 产品主题：企业组织、成员与资源访问治理基础
 
@@ -96,18 +96,9 @@ Real API
 [PASS] Real API gate completed.
 ```
 
-## 5. 2.1-D Frontend Contract + UI — **实现完成 / Gate 修复后待重新验证**
+### 2.1-D Frontend Contract + UI — **Gate 已验证**
 
-已提交：
-
-```text
-frontend/src/api/organizations.ts
-frontend/src/views/organizations/index.vue
-frontend/src/views/organizations/detail.vue
-frontend/src/router/index.ts
-```
-
-实现范围：
+已实现：
 
 - Organization 列表、创建、状态展示。
 - Organization Detail。
@@ -118,6 +109,8 @@ frontend/src/router/index.ts
 - 移除成员。
 - Organization 暂停 / 恢复。
 - 独立 Owner Transfer 操作与确认。
+- `Membership` table row 类型边界修复。
+- `el-tag` 测试 stub。
 
 对应 Contract Tests：
 
@@ -127,45 +120,55 @@ frontend/tests/views/Organizations.test.ts
 frontend/tests/views/OrganizationDetail.test.ts
 ```
 
-### 2.1-D 首次本地 Gate 结果
-
-用户本地定向测试：
+用户本地实际结果：
 
 ```text
+Targeted tests
 3 test files
 15 passed
-```
 
-用户本地 Frontend Regression：
-
-```text
+Frontend Regression
 16 test files
 67 passed
+
+Production build
+✓ built successfully
 ```
 
-Vitest 阶段通过，但 production build 被 `vue-tsc` 阻塞，5 个错误均来自 Element Plus table slot 的 `DefaultRow` 与 `Membership` 参数类型不兼容：
+此前首次 Gate 的 `DefaultRow` / `Membership` 5 个 `vue-tsc` 错误已记录为 `ERR-0020` 并修复；修复后的 targeted tests、完整 Vitest 与 production build 均已由用户实际执行通过，因此 2.1-D 现在可以标记为 Gate Passed。
+
+## 5. 2.1-E Real API / Regression — **实现已开始，等待本地 Gate**
+
+本阶段增加 Organization / Membership 真实 HTTP 场景，不再只验证 API Contract：
+
+- Organization list / detail。
+- Membership role/status lifecycle。
+- suspended member 真实访问阻断。
+- Member 不得执行 Organization management / Owner Transfer。
+- 显式 Owner Transfer 与单 Owner 不变量。
+- Transfer 后新 Owner 管理能力、原 Owner 管理边界。
+- Organization management AuditLog。
+
+新增：
 
 ```text
-TS2345 / TS2739
-Argument of type 'DefaultRow' is not assignable to parameter of type 'Membership'
+backend/tests/api_real/test_organization_governance_api.py
 ```
 
-该问题已记录为 `ERR-0020` 并修复：在 UI table slot 与业务 Membership handler 之间增加集中式 `asMembership()` 类型边界；同时补充 Organization 列表测试的 `el-tag` stub，消除测试中的组件解析 warning。
+Real API bootstrap 现在会创建一次性 Organization + 第二测试用户，并通过临时 context 注入第二用户 token；密码和 token 不写入仓库。测试脚本执行结束会清理 context 与环境变量。
 
-**修复后的代码尚未由开发者重新执行 Gate，因此当前仍不得标记 2.1-D Passed。**
+### 2.1-E Gate
 
-## 6. 2.1-E Real API / Regression
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+```
 
-2.1-D Frontend Gate 通过后执行：
+当前代码已提交，但**尚未由开发者在本地重新执行该扩展后的 Real API Gate，因此不得标记 Passed**。
 
-- Frontend regression。
-- Production build。
-- Real API regression / lifecycle verification。
-- AuditLog 查询验证。
+## 6. 2.1-F Browser E2E + Acceptance
 
-## 7. 2.1-F Browser E2E + Acceptance
-
-最终覆盖：
+2.1-E Real API Gate 通过后继续：
 
 - 管理员创建组织/管理成员。
 - Member 权限边界。
@@ -174,7 +177,7 @@ Argument of type 'DefaultRow' is not assignable to parameter of type 'Membership
 - Organization suspended / recovery。
 - Audit 可追踪。
 
-## 8. 明确 Out of Scope
+## 7. 明确 Out of Scope
 
 - SSO / OIDC / SAML。
 - SCIM。
@@ -185,7 +188,7 @@ Argument of type 'DefaultRow' is not assignable to parameter of type 'Membership
 - 跨 Organization 资源共享。
 - 完整 IAM 管理平台。
 
-## 9. Definition of Done
+## 8. Definition of Done
 
 Phase 2.1 只有同时满足以下条件才能关闭：
 
@@ -198,6 +201,6 @@ Phase 2.1 只有同时满足以下条件才能关闭：
 7. 成员生命周期、权限边界、Audit 均有自动化证据。
 8. `PROJECT_STATUS.md`、Acceptance、错误记录同步。
 
-## 10. 当前执行结论
+## 9. 当前执行结论
 
-**2.1-A、2.1-B、2.1-C 已完成对应 Gate；2.1-D 前端实现及 Contract Tests 已提交。首次 Frontend Regression 的 Vitest 已通过，但 production build 发现并修复 `DefaultRow` / `Membership` 类型边界错误。当前下一步只重新验证实际 Frontend Regression / production build；若通过，再进入 2.1-E Real API / Regression，不提前宣告后续 Gate。**
+**2.1-A、2.1-B、2.1-C、2.1-D 已完成对应 Gate；2.1-D Frontend targeted tests / regression / production build 已实际通过。当前直接进入 2.1-E：扩展 Real API / Regression 覆盖 Organization / Membership 真实 PostgreSQL/Redis HTTP 生命周期。2.1-E 未经本地 Gate 验证前，不提前宣告 Passed。**
