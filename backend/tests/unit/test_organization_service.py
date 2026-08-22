@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 from uuid import uuid4
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -59,6 +59,37 @@ async def test_remove_unique_owner_is_rejected():
 
     assert exc.value.status_code == 409
     service._ensure_owner_remains.assert_awaited_once_with(membership.organization_id, membership.id)
+
+
+@pytest.mark.asyncio
+async def test_management_access_allows_active_owner_without_requiring_active_org():
+    db = AsyncMock()
+    user_id = uuid4()
+    membership = SimpleNamespace(id=uuid4(), user_id=user_id, role="owner", status="active")
+    user = SimpleNamespace(id=user_id, status="active")
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: user)
+    service = OrganizationService(db)
+    service.membership = AsyncMock(return_value=membership)
+
+    result = await service.require_management_access(uuid4(), user_id)
+
+    assert result is membership
+
+
+@pytest.mark.asyncio
+async def test_management_access_rejects_member():
+    db = AsyncMock()
+    user_id = uuid4()
+    membership = SimpleNamespace(id=uuid4(), user_id=user_id, role="member", status="active")
+    user = SimpleNamespace(id=user_id, status="active")
+    db.execute.return_value = SimpleNamespace(scalar_one_or_none=lambda: user)
+    service = OrganizationService(db)
+    service.membership = AsyncMock(return_value=membership)
+
+    with pytest.raises(HTTPException) as exc:
+        await service.require_management_access(uuid4(), user_id)
+
+    assert exc.value.status_code == 403
 
 
 def test_organization_domain_constants_match_contract():
