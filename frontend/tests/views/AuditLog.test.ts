@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 
 const { auditLogs } = vi.hoisted(() => ({ auditLogs: vi.fn() }));
@@ -35,18 +35,21 @@ describe("AuditLogPanel", () => {
 
   it("renders error state", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    afterEach(() => consoleError.mockRestore());
 
-    // Keep the transport envelope malformed so the component exercises its
-    // error path without creating an unhandled rejected Promise in Vitest.
-    auditLogs.mockResolvedValue(undefined);
+    try {
+      // Keep the transport envelope malformed so the component exercises its
+      // error path without creating an unhandled rejected Promise in Vitest.
+      auditLogs.mockResolvedValue(undefined);
 
-    const wrapper = mount(AuditLog, { global });
-    await vi.waitFor(() => expect(auditLogs).toHaveBeenCalledTimes(1));
-    await flushPromises();
+      const wrapper = mount(AuditLog, { global });
+      await vi.waitFor(() => expect(auditLogs).toHaveBeenCalledTimes(1));
+      await flushPromises();
 
-    expect(wrapper.find(".alert").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Audit 查询失败");
-    expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(wrapper.find(".alert").exists()).toBe(true);
+      expect(wrapper.text()).toContain("Audit 查询失败");
+      expect(consoleError).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
