@@ -4,114 +4,58 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- Phase 2.2 Retrieval Production Quality：进行中。
-- 2.2-A Contract：已形成。
-- 2.2-B Dataset / Runner：已完成既有交付范围，并已有开发者实际执行验证。
-- 2.2-C Real Provider Quality Gate：已通过当前 main 的真实 Provider baseline regression。
-- 2.2-D Retrieval Quality Regression / Traceability：当前定义范围已完成并有 Real API evidence。
-- 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2 已完成当前代码实现；E-2 cross-dimension 本地 evidence 已由开发者实际执行通过；E-3 Frontend Provider/Profile Management 已通过 targeted Vitest 与 Frontend Regression Gate；E-4 当前等待本轮修复后的三层 Gate 重新执行。
+- Phase 2.2 Retrieval Production Quality：**已正式关闭**。
+- 2.2-A Contract：已完成。
+- 2.2-B Dataset / Runner：已完成，并有开发者实际执行验证。
+- 2.2-C Real Provider Quality Gate：已通过真实 Provider baseline regression。
+- 2.2-D Retrieval Quality Regression / Traceability：已完成并有 Real API evidence。
+- 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2、E-3、E-4 全部完成；E-4 三层 Gate 已由开发者本地实际执行通过。
 
-## 当前 main 基线
+## E-4 最终实际验证证据
 
-开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建功能分支。本轮 E-4 修复提交：
-
-- `448e2f8`：修复 Real API Model Provider Governance 测试 fixture 边界。共享 bootstrap 的 secondary membership 当前用于 Organization governance 生命周期，初始为 admin；Provider Governance 测试在验证 member 403 前显式将该 membership 降级为 member，避免把 admin token 错当 member token。
-- `be5b9ca`：修复 Model Provider/Profile Browser E2E 的 Element Plus `el-select` 点击定位，改为点击 `.el-select__wrapper`，避免内部 readonly input 与 selected-item placeholder 的 pointer interception / stability 问题。
-- `bfe6512`：修复组织成员无法查看 Model Provider / Model Profile AuditLog 的查询范围问题。
-- `04c23de`：修复 Model Provider/Profile Browser E2E 中 Profile“名称”字段 locator 的 strict mode 冲突。
-- `9b7ae04`：记录上一轮 E-4 错误与修复要求。
-
-当前不能将本轮修复标记为 Passed；必须等待开发者重新执行三层 Gate。
-
-## E-2 实际验证证据
-
-开发者本地实际执行并反馈：
+开发者在当前修复后的 `main` 上实际执行：
 
 ```text
-Cross-dimension targeted tests: 13 passed
-Migration head: 0027_retrieval_evaluation_vector_space
-Backend regression gate: 323 passed, 31 deselected
-Real HTTP API: 31 passed
-Standalone Real API Gate: 31 passed
-Governed E-2 smoke: status=passed
-  Profile A: nomic-embed-text:latest / 768
-  Profile B: qwen3-embedding:0.6b / 1024
-  retrieval_mode=real-provider-pgvector
-  retrieval_execution_path=runtime-service
-  fallback_count=0 / fallback_used=false
-  Profile B regression quality_gate=failed because governed identity changed (expected)
-  Profile B metrics: recall@3=1.0, precision@3=0.466667, mrr=1.0
-```
-
-这里的 `Profile B quality_gate=failed` 不是测试失败，而是本次 smoke 对 baseline identity change 的预期断言：model、dimension、model_profile_id 改变时必须拒绝复用 Profile A baseline。Smoke 顶层 `status=passed`，说明该治理回归规则被正确触发。
-
-## E-3 实际验证证据
-
-开发者在此前 main `0a4462a` 上实际执行并反馈：
-
-```text
-Targeted Vitest:
-  tests/api/modelProviders.test.ts + tests/views/ModelProviders.test.ts
-  2 test files passed
-  6 tests passed
+Backend Real API Gate:
+  32 passed in 58.51s
 
 Frontend Regression Gate:
   18 test files passed
   75 tests passed
-  production build: passed
-  vue-tsc -b: passed
-  Vite build: passed
-  built in 5.41s
-
-Browser E2E:
-  Phase 2.1-F organization browser contract
-  3 tests passed
-```
-
-Browser E2E 属于既有 Organization governance contract，不作为 Model Provider/Profile 专项 Browser evidence。
-
-## E-3 当前结论
-
-E-3 已完成代码实现、测试阻塞修复，并由开发者本地实际执行 targeted Vitest 与 Frontend Regression Gate 通过，因此 **E-3 Passed**。
-
-## E-4 本轮实际反馈与修复状态
-
-开发者在上一轮本地环境执行：
-
-```text
-Real API Gate: 31 passed, 1 failed
-  test_model_provider_profile_governance_lifecycle_real_http
-  Failure: member token 实际对应 admin membership，因此 provider PATCH 返回 200 而不是预期 403
-
-Frontend Regression Gate:
-  18 test files passed
-  75 tests passed
-  production build passed
+  vue-tsc -b passed
+  Vite production build passed
 
 Model Provider/Profile Browser E2E:
-  1 passed, 1 failed
-  Failure: Profile type el-select 的 readonly input 被 selected-item placeholder 拦截点击，最终 60s timeout
+  2 passed in 8.1s
 ```
 
-本轮已完成对应修复：
+三层 Gate 均通过，因此 **E-4 Passed / Phase 2.2 Closed**。
 
-1. Real API：Provider Governance 测试在 member boundary 断言前显式将共享 fixture membership 降级为 `member`，再使用 `ORGANIZATION_MEMBER_ACCESS_TOKEN` 验证 Provider/Profile 写操作返回 403。没有放宽权限规则，也没有修改 production authorization logic。
-2. Browser E2E：Profile type selector 改为定位 Element Plus `.el-select__wrapper`，避免直接点击内部 combobox input 被 placeholder intercept。
+## E-4 已完成修复
 
-前一轮已完成的 E-4 修复仍保持有效：
+- `448e2f8`：修复 Real API Model Provider Governance 测试 fixture 的 member boundary，member token 现在明确对应 `member` membership，再验证 Provider/Profile 写操作 403。
+- `be5b9ca`：修复 Model Provider/Profile Browser E2E 的 Element Plus `el-select` selector 点击定位。
+- `bfe6512`：修复 Model Provider/Profile AuditLog 的 organization-scoped 查询范围。
+- `04c23de`：修复 Browser E2E Profile 名称字段的 strict locator 冲突。
+- `92568e2`：清理 AuditLog error-path 单测预期 `console.error` 噪声，同时保留对错误日志行为的显式断言。
 
-3. Backend Audit：`RuntimeQueryService.audit_logs()` 增加 Model Provider / Model Profile 的 organization membership scoped resource-id 查询，保持跨组织隔离。
-4. Browser：Profile 名称字段使用精确 accessible name locator，避免“名称”与“模型名称”前缀匹配。
+## Phase 2.2 最终结论
 
-**注意：以上修复均尚未由开发者重新执行 Gate 验证，因此 E-4 仍为 Pending Re-test，不得标记 Passed。**
+Phase 2.2 已满足 Retrieval Quality、Real Provider、Evaluation、Runtime Profile、Provider/Profile Governance、Frontend 与 Browser acceptance requirements，并完成 Acceptance / Phase / Status 同步。
 
-## 下一执行顺序
+Phase 2.2 正式关闭；不得继续向已关闭 Phase 2.2 塞入新的 Provider routing / fallback / cost / usage 功能。
 
-1. 重新执行 Real API Gate，确认 member authorization 与 AuditLog organization scope。
-2. 保持 Frontend Regression Gate 独立执行，确认 18 files / 75 tests + production build。
-3. 重新执行 Model Provider/Profile Browser E2E，确认 owner CRUD、organization scope、member UI boundary 与 Profile selector。
-4. 三层 Gate 全部重新执行通过后，再更新 E-4 Acceptance evidence 与 Phase 2.2 关闭决策。
-5. 在 E-4 尚未通过前，不提前进入 Phase 2.3 Provider Governance（路由/Fallback/成本/用量治理）。
+## 下一执行阶段：Phase 2.3 Model Provider Governance
+
+根据 Product Roadmap，下一正式阶段是 Phase 2.3。进入条件为明确成本口径、路由策略与 Provider Contract。下一任务不是直接修改 2.2 foundation，而是建立独立的 2.3 Provider Governance Contract，并随后按产品开发矩阵执行 Backend Contract → Migration/Tests → Real API → Frontend/Browser（按实际范围裁剪）→ Acceptance。
+
+Phase 2.3 首批必须冻结：
+
+1. Provider routing strategy。
+2. Fallback eligibility / failure semantics。
+3. Model whitelist / capability constraints。
+4. Cost accounting unit and pricing source。
+5. Usage accounting dimensions and audit identity。
 
 ## 开发纪律
 
@@ -121,5 +65,4 @@ Model Provider/Profile Browser E2E:
 - 新业务代码不得新增具体模型名称硬编码；UI 测试中的模型字符串仅作为 fixture contract。
 - 新增数据库表或字段必须先有 Migration。
 - Secret 不进入数据库明文、CLI、报告或 Git。
-- Phase 2.3 的完整 Provider Governance（路由/Fallback/成本/用量治理）仍保持产品路线候选，不因 2.2-E 提前实施。
-- PowerShell `<PROFILE_UUID>` 占位符误用已记录在 `docs/04-errors/2026-08-22-phase-2-2-e-governed-evaluation-placeholder-command.md`；后续优先使用自动化 smoke script。
+- Phase 2.3 的完整 Provider Governance 必须独立 Product Contract，不得因 2.2 关闭而绕过 Contract 直接扩展。
