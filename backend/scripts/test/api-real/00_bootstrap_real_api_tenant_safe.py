@@ -3,10 +3,20 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 from pathlib import Path
+import sys
 import uuid
 
 import httpx
 from sqlalchemy import select
+
+
+# The tenant-safe bootstrap is executed as a standalone script by PowerShell.
+# Python therefore puts this script's directory (not backend/) on sys.path.
+# Add the backend application root explicitly before importing app.* for the
+# fixture-only database recovery path.
+_BACKEND_ROOT = Path(__file__).resolve().parents[3]
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
 
 
 _BOOTSTRAP_PATH = Path(__file__).with_name("00_bootstrap_real_api.py")
