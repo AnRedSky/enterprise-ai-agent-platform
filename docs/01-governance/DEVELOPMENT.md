@@ -122,6 +122,13 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
 ```
 
+模块化整改 Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
+```
+
 ## 5. 固定开发顺序
 
 ```text
@@ -161,8 +168,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 19. 文档批量提交前应一次性完成 Phase、Acceptance、Project Status、治理规则及错误记录的评估；只有确有独立工程意义的后续事实变化，才允许再次单独提交文档。
 20. 代码与其对应的 Phase/Acceptance/错误记录属于同一交付单元时，应尽量在同一个提交中完成；若测试反馈导致后续修复，则按新的实际修复形成下一原子提交。
 21. **代码中的功能说明、设计意图和注释统一使用中文表述；Python docstring、TypeScript/Vue 注释、数据库 migration 说明以及复杂业务规则注释均不得使用英文自然语言作为主要说明。协议字段名、类名、函数名、异常码、第三方库名称等代码标识按技术约定保留原文，不要求翻译。**
-22. **当前阶段临时模块化规则：同一业务功能的代码必须按领域职责组织为子模块包；禁止继续把 Contract、Service、Repository、Runtime 等同一功能的代码零散堆放在 `app/services/` 或其他公共目录。子模块包应通过 `__init__.py` 暴露稳定入口，内部按职责拆分文件；仅保留确有兼容价值的薄入口文件，不得在入口文件重复实现业务逻辑。**
+22. **当前阶段同一业务功能的代码必须按领域职责组织为子模块包；禁止继续把 Contract、Service、Repository、Runtime 等同一功能的代码零散堆放在 `app/services/` 或其他公共目录。子模块通过 `__init__.py` 暴露正式入口。领域迁移完成后必须删除旧文件、旧目录和旧模块路径；禁止使用兼容垫片、旧入口转发、代理文件或双实现维持旧路径。**
 23. **Backend 领域模块的目录、职责、迁移规则和新项目开发模板统一参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`；当前项目具体旧文件到目标模块的迁移以 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。**
+24. **模块重构属于完整交付单元：生产代码 import、测试 import、旧文件删除、旧路径搜索、领域测试和 Backend Regression 必须全部完成后，才允许将该领域标记为迁移完成。**
 
 ## 6. 分层原则
 
