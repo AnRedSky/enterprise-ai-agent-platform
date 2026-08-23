@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
+from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 
 def test_interval_slot_is_stable_for_same_interval_window():
