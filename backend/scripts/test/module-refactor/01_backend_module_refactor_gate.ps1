@@ -19,12 +19,14 @@ $requiredDirectories = @(
     'app/services/agent',
     'app/services/knowledge',
     'app/services/memory',
+    'app/services/model',
     'app/infrastructure',
     'app/infrastructure/db',
     'app/infrastructure/providers',
     'app/middleware',
     'app/utils',
-    'app/runtime/memory'
+    'app/runtime/memory',
+    'app/runtime/model'
 )
 foreach ($directory in $requiredDirectories) {
     if (-not (Test-Path $directory -PathType Container)) {
@@ -48,7 +50,13 @@ $forbiddenPaths = @(
     'app/services/mock_embedding_provider.py',
     'app/services/ollama_embedding_provider.py',
     'app/services/vector_retrieval_provider.py',
-    'app/runtime/memory_context.py'
+    'app/services/model_provider.py',
+    'app/services/model_provider_governance_contract.py',
+    'app/services/runtime_model_governance.py',
+    'app/runtime/memory_context.py',
+    'app/runtime/model_gateway.py',
+    'app/runtime/provider.py',
+    'app/runtime/openai_provider.py'
 )
 foreach ($path in $forbiddenPaths) {
     if (Test-Path $path) { throw "Forbidden legacy module still exists: $path" }
@@ -70,7 +78,13 @@ $legacyImportPatterns = @(
     'app\.services\.embedding_provider',
     'app\.services\.mock_embedding_provider',
     'app\.services\.ollama_embedding_provider',
-    'app\.services\.vector_retrieval_provider'
+    'app\.services\.vector_retrieval_provider',
+    'app\.services\.model_provider',
+    'app\.services\.model_provider_governance_contract',
+    'app\.services\.runtime_model_governance',
+    'app\.runtime\.model_gateway',
+    'app\.runtime\.provider',
+    'app\.runtime\.openai_provider'
 )
 foreach ($pattern in $legacyImportPatterns) {
     $matches = @(git grep -n -E $pattern -- '*.py' 2>$null)
@@ -100,8 +114,15 @@ foreach ($path in @(
     'app/services/knowledge/__init__.py',
     'app/services/memory/__init__.py',
     'app/services/memory/service.py',
+    'app/services/model/__init__.py',
+    'app/services/model/contract.py',
+    'app/services/model/provider.py',
+    'app/services/model/routing.py',
+    'app/services/model/governance.py',
     'app/runtime/memory/__init__.py',
-    'app/runtime/memory/context.py'
+    'app/runtime/memory/context.py',
+    'app/runtime/model/__init__.py',
+    'app/runtime/model/gateway.py'
 )) {
     if (-not (Test-Path $path -PathType Leaf)) { throw "Required migrated implementation is missing: $path" }
 }
@@ -112,14 +133,14 @@ foreach ($file in @('registry.py','ingestion.py','retrieval.py','vector_indexing
     }
 }
 
-foreach ($file in @('embedding.py','mock_embedding.py','ollama_embedding.py','vector_retrieval.py')) {
+foreach ($file in @('embedding.py','mock_embedding.py','ollama_embedding.py','vector_retrieval.py','model.py','mock_model.py','openai_model.py')) {
     if (-not (Test-Path "app/infrastructure/providers/$file" -PathType Leaf)) {
         throw "Provider implementation is missing: $file"
     }
 }
 
 # 已迁移领域禁止在 services 根目录保留第二套实现；Provider 也必须只存在于 infrastructure/providers。
-foreach ($filter in @('*agent*','*knowledge*','*memory*','*embedding_provider*','*vector_retrieval_provider*')) {
+foreach ($filter in @('*agent*','*knowledge*','*memory*','*embedding_provider*','*vector_retrieval_provider*','*model_provider*','*runtime_model_governance*')) {
     $rootFiles = @(Get-ChildItem 'app/services' -File -Filter $filter -ErrorAction SilentlyContinue)
     if ($rootFiles.Count -gt 0) {
         $rootFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
@@ -128,38 +149,29 @@ foreach ($filter in @('*agent*','*knowledge*','*memory*','*embedding_provider*',
 }
 
 $agentTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*agent*.py' -ErrorAction SilentlyContinue)
-if ($agentTests.Count -gt 0) {
-    Invoke-GateStep 'Agent targeted tests' { uv run pytest -q @($agentTests.FullName) }
-}
+if ($agentTests.Count -eq 0) { throw 'Agent module tests are missing.' }
 
 $knowledgeTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*knowledge*.py' -ErrorAction SilentlyContinue)
-if ($knowledgeTests.Count -gt 0) {
-    Invoke-GateStep 'Knowledge targeted tests' { uv run pytest -q @($knowledgeTests.FullName) }
-} else {
-    Write-Warning 'No Knowledge-specific test files were found.'
-}
+if ($knowledgeTests.Count -eq 0) { throw 'Knowledge module tests are missing.' }
 
-$memoryTests = @(
-    'tests/unit/test_memory_service.py',
-    'tests/unit/test_memory_context.py'
-)
-$existingMemoryTests = @($memoryTests | Where-Object { Test-Path $_ })
-if ($existingMemoryTests.Count -gt 0) {
-    Invoke-GateStep 'Memory targeted tests' { uv run pytest -q @($existingMemoryTests) }
-}
+$providerTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*provider*.py' -ErrorAction SilentlyContinue)
+if ($providerTests.Count -eq 0) { throw 'Provider module tests are missing.' }
 
-$providerTests = @(
-    'tests/unit/test_embedding_provider.py',
-    'tests/unit/test_mock_embedding_provider.py',
-    'tests/unit/test_ollama_embedding_provider.py',
-    'tests/unit/test_vector_retrieval_provider.py'
-)
-$existingProviderTests = @($providerTests | Where-Object { Test-Path $_ })
-if ($existingProviderTests.Count -gt 0) {
-    Invoke-GateStep 'Infrastructure provider targeted tests' { uv run pytest -q @($existingProviderTests) }
+Invoke-GateStep 'Agent targeted tests' {
+    uv run pytest -q tests/unit -k 'agent' --disable-warnings
 }
-
-Invoke-GateStep 'Backend default regression' { uv run pytest -q }
+Invoke-GateStep 'Knowledge targeted tests' {
+    uv run pytest -q tests/unit -k 'knowledge' --disable-warnings
+}
+Invoke-GateStep 'Infrastructure provider targeted tests' {
+    uv run pytest -q tests/unit -k 'provider' --disable-warnings
+}
+Invoke-GateStep 'Model targeted tests' {
+    uv run pytest -q tests/unit/test_model_gateway.py tests/unit/test_model_provider_governance_contract.py tests/unit/test_runtime_model_governance.py --disable-warnings
+}
+Invoke-GateStep 'Backend default regression' {
+    uv run pytest -q
+}
 
 Write-Host '============================================================'
 Write-Host 'Backend Module Refactor Gate completed.'
