@@ -1,4 +1,4 @@
-from app.services.knowledge_ingestion import KnowledgeIngestionService
+from app.services.knowledge import KnowledgeIngestionService
 
 
 def test_normalize_text_collapses_whitespace_and_blank_lines():
