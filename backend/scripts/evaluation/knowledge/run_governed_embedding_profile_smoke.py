@@ -23,7 +23,7 @@ from app.dependencies.db import SessionLocal
 from app.models.core import User
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
-from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
+from app.infrastructure.providers.ollama_embedding import OllamaEmbeddingProvider
 
 RUNNER = BACKEND_ROOT / "scripts" / "evaluation" / "knowledge" / "run_knowledge_retrieval_real_provider.py"
 
