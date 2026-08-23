@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from uuid import UUID
+from typing import Awaitable, Callable
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import HTTPException
@@ -20,6 +21,12 @@ from app.services.model_provider_governance_contract import FallbackReason
 class RuntimeProviderCandidate:
     profile: ModelProfile
     provider: ModelProvider
+
+
+RuntimeInvocationAttemptCallback = Callable[
+    [RuntimeProviderCandidate, str, str, FallbackReason | None, object | None],
+    Awaitable[None],
+]
 
 
 class RuntimeModelGovernanceService:
@@ -58,7 +65,7 @@ class RuntimeModelGovernanceService:
     def fallback_reason(exc: BaseException) -> FallbackReason | None:
         if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError)):
             return FallbackReason.CONNECTIVITY
-        if isinstance(exc, (httpx.ReadTimeout, TimeoutError, TimeoutError)):
+        if isinstance(exc, (httpx.ReadTimeout, TimeoutError)):
             return FallbackReason.TIMEOUT
         if isinstance(exc, HTTPException):
             if exc.status_code == 429:
@@ -81,6 +88,7 @@ class RuntimeModelGovernanceService:
         messages: list[dict],
         *,
         max_attempts: int = 2,
+        on_attempt: RuntimeInvocationAttemptCallback | None = None,
     ):
         if max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
@@ -94,16 +102,23 @@ class RuntimeModelGovernanceService:
             if attempts >= max_attempts:
                 break
             attempts += 1
+            request_id = str(uuid4())
             try:
-                return await self.gateway.generate(
+                result = await self.gateway.generate(
                     candidate.profile.model_name,
                     messages,
                     model_profile=candidate.profile,
                     model_provider=candidate.provider,
                 )
+                if on_attempt is not None:
+                    await on_attempt(candidate, request_id, "success", None, result)
+                return result
             except Exception as exc:
                 last_error = exc
-                if self.fallback_reason(exc) is None:
+                reason = self.fallback_reason(exc)
+                if on_attempt is not None:
+                    await on_attempt(candidate, request_id, "failed", reason, None)
+                if reason is None:
                     raise
 
         if last_error is not None:
