@@ -7,268 +7,70 @@
 - 当前架构基线：远端 `main` 已进入 Backend 模块化整改实施阶段。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，当前正在修复本地 Persistence Gate 的 PostgreSQL fixture / asyncpg 生命周期问题，尚未完成 API Contract 与 Scheduler Runtime 闭环。**
-- Backend 模块化整改与 Phase 2.4 并行但职责独立；目录重构不得改变既有业务行为。
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；Persistence Gate 尚未闭环，当前优先修复模块化迁移后的测试/评估入口残留，再重新执行 Backend Regression 与 Scheduler Persistence Gate。**
 
-## Backend 模块化架构整改
+## 本轮修复事实
 
-本次整改以远端 `main` 当前真实目录为基线，执行原则统一为：**完整重构、无兼容垫片、无双实现、无旧入口保留，并对功能重复实现进行强制检查。**
+基于远端 `main` 的开发准则执行了测试边界与重复模块清理：
 
-正式架构文档：
+1. Runtime HTTP Contract 测试改用唯一 FastAPI 数据库依赖 `app.dependencies.db.get_db`，不再引用不存在的 `app.api.dependencies`。
+2. Scheduled/Webhook Real API 测试直接引用 `app.infrastructure.db.session.engine`；Application Service、Runtime、Evaluation 不通过 API Dependency 获取 Engine。
+3. governed Embedding Profile smoke 直接引用 `app.infrastructure.db.session.SessionLocal`，不复制数据库 Session 实现。
+4. Scheduler Repository unit 测试改为唯一文件名 `test_workflow_scheduler_repository_unit.py`，删除与 integration 层冲突的旧同名 unit 文件，避免 pytest module identity 冲突。
+5. 受影响脚本/测试补充中文模块职责、边界和关键依赖说明。
+6. Embedding Provider 验证脚本统一引用 `app.infrastructure.providers.embedding`，不保留旧 `services` Provider 路径或第二套实现。
+7. 本轮测试边界问题记录为 `docs/04-errors/ERR-0024-backend-module-refactor-test-boundary.md`。
 
-- `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 长期目录、职责、依赖方向、新功能开发模板及完整重构规则。
-- `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前文件到目标领域模块的迁移映射与验收要求。
+**以上均为代码/文档修复事实；开发者尚未在本地重新执行完整验证，因此不得记录为 Passed。**
 
-目标结构：
+## 当前必须执行的本地验证
 
-```text
-backend/app/
-├── api/
-├── core/
-├── dependencies/
-├── middleware/
-├── models/
-├── schemas/
-├── services/
-├── runtime/
-├── infrastructure/
-└── utils/
+```powershell
+cd backend
+uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
+uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_scheduler_persistence_gate.ps1
 ```
 
-### 已完成 / 已纠偏
+若 Scheduler PostgreSQL Integration 仍出现 Windows Proactor / asyncpg `Event loop is closed`，只能依据最新失败栈修复测试生命周期；不得通过 JSON/JSONL 替代真实 PostgreSQL Persistence。
 
-基础目录已经建立：
+## Backend 模块化整改纪律
 
-```text
-app/infrastructure/
-app/infrastructure/db/
-app/infrastructure/providers/
-app/middleware/
-app/utils/
-```
-
-Agent 已完成彻底领域重构：
+本次整改继续遵守：
 
 ```text
-app/services/agent/
-├── __init__.py
-├── service.py
-└── repository.py
+远端 main 唯一基线
+→ 领域职责唯一
+→ 生产/测试/评估 import 全量切换
+→ 删除旧文件
+→ 全仓旧路径搜索 = 0
+→ 重复实现检查 = 0
+→ 中文模块职责说明
+→ targeted tests
+→ Backend Regression
 ```
 
-生产代码直接引用新领域入口；旧 `agent_registry.py` 与旧 `agent/registry.py` 已删除，不允许重新建立。
-
-此前曾采用兼容入口方式进行 Agent 迁移，该做法已判定不符合最终重构要求并纠正，工程错误已记录在 `docs/04-errors/`。
-
-### Knowledge：领域与 Provider 均已完成彻底重构
-
-领域模块：
-
-```text
-app/services/knowledge/
-├── __init__.py
-├── contract.py
-├── registry.py
-├── ingestion.py
-├── retrieval.py
-├── vector_indexing.py
-├── vector_retrieval.py
-├── hybrid.py
-└── hybrid_service.py
-```
-
-技术 Provider：
-
-```text
-app/infrastructure/providers/
-├── __init__.py
-├── embedding.py
-├── mock_embedding.py
-├── ollama_embedding.py
-└── vector_retrieval.py
-```
-
-已完成：
-
-- Knowledge 领域 Service / Contract / Retrieval / Indexing 已集中到 `services/knowledge/`；
-- Embedding Contract 与 Provider 实现集中到 `infrastructure/providers/`；
-- pgvector / InMemory Vector Provider 集中到 `infrastructure/providers/`；
-- 生产代码和受影响测试已切换新 import；
-- 旧 Provider 文件已删除；
-- 未复制第二套 Provider 实现；
-- 新增/重构模块补充中文职责说明；
-- 模块化 Gate 已增加 Provider 旧路径、重复实现和 Provider targeted tests 检查。
-
-旧 Provider 路径已删除：
-
-```text
-app/services/embedding_provider.py
-app/services/mock_embedding_provider.py
-app/services/ollama_embedding_provider.py
-app/services/vector_retrieval_provider.py
-```
-
-此前开发者本地实际执行的 targeted 结果：Embedding / Provider 相关 28 passed；Knowledge 相关 26 passed。Backend Regression 在模块导入回归修复前曾因旧 Knowledge import 收集失败，现 `app.main` 已恢复可导入；完整 Regression 与模块化 Gate 仍需重新执行。
-
-### 本轮模块化 / Persistence 纠偏
-
-本地 Scheduler Persistence Gate 暴露出两个测试基础设施问题：
-
-1. Scheduler integration fixture 同一 flush 中同时创建 `WorkflowTrigger` 与依赖其外键的 `WorkflowSchedule`，由于 ORM 没有 relationship，flush 顺序不能作为数据库 FK 前置保证；已调整 fixture 为先 flush 前置实体，再创建 Schedule。
-2. pytest-asyncio 使用 function 级事件循环，而 SQLAlchemy asyncpg 连接池跨测试复用连接，导致第二个 integration test 出现 `Event loop is closed`；仅设置 async fixture loop 为 session 不足，因为 async test 默认仍可使用 function loop。
-3. 当前修复新增 `asyncio_default_test_loop_scope = "session"`，使 async test 与 session-scoped async fixture 使用同一事件循环；同时 pytest 使用 `importlib` import mode，消除 unit/integration 同名测试文件的 `import file mismatch`。
-4. Module Refactor Gate 另外发现 Embedding 验证脚本仍引用已删除的 `app.services.embedding_provider`；已改用唯一 canonical `app.infrastructure.providers.embedding`，并补充中文模块职责与边界说明。
-
-同时确认存在一个违反模块化规则的数据库 Session 重复实现：
-
-```text
-app/dependencies/db.py
-app/infrastructure/db/session.py
-```
-
-两者均独立创建 Engine / SessionLocal。已将 API 依赖收敛到 `app.infrastructure.db`，并删除 `app.dependencies.db`，确保数据库 Session 只有一个正式 Infrastructure 入口。该问题及验收纪律已记录到 `docs/04-errors/`。
-
-以上代码修复尚未由开发者本地重新执行，因此**不得记录为 Passed**。
-
-### 当前未完成
-
-- Model / Provider 尚未完成 Service、Runtime、Infrastructure 全边界重构；
-- Tool 尚未完成领域与技术实现分离；
-- Workflow / Trigger 尚未完成；
-- Scheduler 尚未完成最终目录收敛；
-- Memory / Organization / Governance / Observability 尚未完成；
-- Runtime 尚未完成分域；
-- API 尚未完成 `api/v1/<domain>` 收敛；
-- **整个 Backend 模块化整改不得标记 Passed。**
-- Phase 2.4 Scheduler Persistence Gate 尚未重新执行通过；API Contract、Runtime persistence/lease/slot 闭环、tenant isolation、misfire、Audit / Trace 与 Real API acceptance 仍未完成。
-
-### 完整重构原则
-
-每个领域必须一次性完成：
-
-```text
-建立目标领域
- ↓
-职责拆分
- ↓
-生产代码 import 全量切换
- ↓
-测试 import 全量切换
- ↓
-删除旧文件
- ↓
-全仓旧路径搜索 = 0
- ↓
-重复实现检查 = 0
- ↓
-模块职责说明检查 = 0
- ↓
-领域测试
- ↓
-Backend Regression
-```
-
-禁止：
-
-```text
-旧文件 → 新模块转发
-旧实现 + 新实现并存
-旧目录长期保留
-只改目录名不改职责
-复制 Provider 形成第二套实现
-```
-
-### 业务不变原则
-
-目录重构必须满足：
-
-```text
-API Path 不变
-HTTP Method 不变
-Request / Response Contract 不变
-权限行为不变
-Tenant Isolation 不变
-数据库模型与 Migration 不变
-Runtime 行为不变
-Provider 行为不变
-错误语义不变
-```
-
-仅允许改变：
-
-```text
-文件位置
-模块边界
-import 路径
-内部职责组织
-```
-
-如果发现必须改变业务行为才能完成目录迁移，必须暂停该迁移单元并单独形成设计变更。
-
-## Phase 2.3 最终本地验收结果
-
-此前开发者在 `main` 基线实际执行：
-
-```text
-Targeted usage/governance tests: 40 passed
-Backend Regression: 358 passed, 35 deselected
-Alembic upgrade heads: passed
-Tenant Safe Real API Gate: 35 passed
-```
-
-以上结果来自此前开发者本地实际执行，不使用 GitHub Actions 作为开发测试、质量门禁或验收依据。
-
-## Phase 2.4 当前进度
-
-Scheduler 已形成独立功能子模块：
-
-```text
-backend/app/services/workflow_scheduler/
-├── __init__.py
-├── contract.py
-├── models.py
-├── time.py
-├── lease.py
-├── misfire.py
-├── repository.py
-└── runtime.py
-```
-
-当前已经完成：
-
-- Scheduler Contract；
-- `WorkflowSchedule` / `WorkflowScheduleSlot` 持久化模型；
-- `0028_durable_scheduler_persistence` Migration；
-- PostgreSQL 原子 lease claim / release；
-- PostgreSQL slot 唯一键幂等 claim；
-- WorkflowExecution 与 slot 绑定基础能力；
-- 新增 Scheduler PostgreSQL Repository integration test；
-- 新增独立 Scheduler Persistence Gate，包含 Migration、Scheduler targeted tests、Repository PostgreSQL integration 与 Backend Regression。
-
-当前**不得记录 Phase 2.4 Passed**。Persistence Gate 尚未由开发者本地实际执行通过；API Contract、Runtime 闭环、tenant isolation、misfire、Audit / Trace 与 Real API acceptance 仍未完成。
+禁止兼容垫片、旧入口转发、双实现以及在 `app/services/` 复制 Provider。Provider 正式技术适配统一位于 `app/infrastructure/providers/`；数据库 Engine / Session 正式实现统一位于 `app/infrastructure/db/`。
 
 ## Phase 2.4 下一执行任务
 
-1. 开发者本地重新执行 Backend 模块化 Gate，确认旧路径搜索、重复实现和模块职责说明均通过；
-2. 执行 Scheduler Persistence Gate；若仍失败，仅根据最新 PostgreSQL 实际结果修复 repository / fixture / tenant 边界，不回退到 JSON 模拟数据；
-3. 完成 Scheduler API Contract；
-4. 将 Runtime 接入 persistence / lease / slot；
-5. 增加 Tenant Safe Real API Gate，覆盖多实例 lease、重复 claim、misfire、状态与 tenant isolation；
-6. 重新执行 Backend Regression Gate；
-7. 若涉及用户操作，再进入 Frontend API / UI 与独立 Browser E2E。
+1. 开发者本地重新执行 Backend Regression，确认本轮 5 个 collection error 已消失；
+2. 执行模块化 Gate，确认旧 Provider import、旧领域文件、重复实现搜索为 0；
+3. 执行 Scheduler Persistence Gate，确认 Migration、Repository targeted tests、真实 PostgreSQL integration 与 Backend Regression；
+4. 若 Gate 通过，再继续 Scheduler API Contract；
+5. 接入 Runtime persistence / lease / slot，补充 tenant isolation、misfire、Audit / Trace；
+6. 完成 Tenant Safe Real API Gate 后再进入前端/API 联调。
 
 ## 开发纪律
 
-- 远端 `main` 是唯一开发基线；不创建功能分支。
+- 远端 `main` 是唯一开发基线，不创建功能分支。
 - 未实际执行的测试不得记录为 Passed。
-- Runtime 数据继续使用 PostgreSQL；JSON/JSONL 仅用于版本化 evaluation dataset/result/baseline。
-- 新业务代码不得硬编码具体模型名称。
+- Runtime 数据必须使用真实 PostgreSQL；JSON/JSONL 仅用于版本化 evaluation dataset/result/baseline。
 - Secret 不进入 Git、数据库明文、报告或 trace/audit。
 - 代码、Phase、Acceptance、Error、Status 必须保持可追溯。
-- 代码中的功能说明和注释统一使用中文；技术标识保持原文。
-- **每个新增或重构 Python 模块必须提供必要的中文职责说明；类和复杂方法按需补充说明约束与技术原因。**
-- 同一业务功能必须按领域职责组织为子模块包，禁止继续向公共 `services` 目录新增同功能零散文件。
-- **禁止以兼容垫片、旧入口转发或双实现方式完成模块迁移；领域迁移完成后旧文件必须删除。**
-- **每个迁移单元必须执行功能重复实现检查；同一能力只能保留一个正式实现。**
-- **Provider 只能在 `app/infrastructure/providers/` 保留正式技术适配实现，禁止在 `services/` 复制第二套 Provider。**
-- Backend 模块化设计与后续新功能开发统一参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`；具体迁移按 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 执行。
+- 代码中的功能说明和注释统一使用中文。
+- 每个新增或重构 Python 模块必须提供中文职责说明、边界及必要外部依赖。
+- 同一业务功能只能保留一个正式实现；模块迁移完成后删除旧文件与旧路径。
+- Provider 只能在 `app/infrastructure/providers/` 保留正式技术适配实现。
+- Backend 模块化设计参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`，具体迁移参照 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`。
