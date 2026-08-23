@@ -56,15 +56,7 @@ def _run_fixture_db(operation):
 
 
 def _existing_tenant_organization(tenant_id: str):
-    """Read the tenant's singleton Organization for fixture recovery.
-
-    The public Organization list is intentionally membership-scoped. After the
-    API correctly rejects a second Organization with HTTP 409, a freshly-created
-    bootstrap user therefore cannot discover that existing Organization through
-    HTTP until it has a membership. The test fixture may use the database only to
-    repair this bootstrap boundary; all subsequent governance operations remain
-    real HTTP API calls.
-    """
+    """Read the tenant's singleton Organization for fixture recovery."""
     from app.models.organization import Organization
     from uuid import UUID
 
@@ -117,14 +109,7 @@ def _ensure_existing_organization_membership(organization_id: str, user_id: str)
 
 
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
-    """Create or reuse the owner's tenant-scoped Organization fixture.
-
-    Runtime governance resolves Organization scope from the Workflow execution
-    tenant, while the authenticated owner carries its tenant in the JWT. The
-    Organization endpoint permits only one Organization per Tenant, so a
-    rerunnable Real API gate must reuse the existing Organization instead of
-    treating HTTP 409 as a bootstrap failure.
-    """
+    """Create or reuse the owner's tenant-scoped Organization fixture."""
     global _BOOTSTRAP_ORGANIZATION_ID
 
     with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as owner_client:
@@ -157,11 +142,6 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
         except RuntimeError as exc:
             if "POST /organizations -> 409" not in str(exc):
                 raise
-
-            # HTTP GET /organizations is membership-scoped. A new bootstrap user
-            # cannot see the existing tenant singleton after the expected 409, so
-            # recover the owner membership at the fixture DB boundary and then
-            # return to the real HTTP API for the rest of the gate.
             organization_row = _existing_tenant_organization(owner_tenant_id)
             if organization_row is None:
                 raise RuntimeError(
@@ -210,15 +190,18 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
     }
 
 
-def create_governed_mock_agent(client, *, model_id: str, name_prefix: str) -> str:
+def create_governed_mock_agent(
+    client,
+    *,
+    model_id: str = "mock-http-404",
+    name_prefix: str = "API Retry Agent",
+) -> str:
     """Create a deterministic mock agent through the governed Provider/Profile path.
 
-    Phase 2.3 runtime no longer permits an ungoverned legacy model_id to reach the
-    runtime. The Real API bootstrap therefore creates the mock Provider/Profile
-    through the real HTTP API and binds the fixture Agent to that Profile. The
-    model gateway still uses its deterministic MockProvider because the governed
-    provider type is explicitly ``mock``; this is test fixture behavior, not a
-    production fallback.
+    The legacy bootstrap calls this helper as ``create_retry_agent(client)``.
+    Keep that callable contract while defaulting it to the same deterministic
+    retry fixture values. Circuit-breaker fixtures pass their own model/profile
+    values explicitly.
     """
     if not _BOOTSTRAP_ORGANIZATION_ID:
         raise RuntimeError("Governed mock agent requires an initialized Organization fixture")
