@@ -13,7 +13,7 @@ from pathlib import Path
 # When a script is executed by file path, Python puts ``backend/scripts`` on
 # sys.path instead of the backend project root. Add the project root explicitly
 # so the probe always imports the same application package used by ``uv run``.
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
