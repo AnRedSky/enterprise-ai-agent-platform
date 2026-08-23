@@ -1,6 +1,6 @@
 """Workflow Scheduler Repository 单元测试。
 
-模块职责：验证 Scheduler Repository 的 SQL 构造与数据库冲突边界。
+模块职责：验证 Scheduler Repository 的 SQL 构造、数据库冲突边界与时间类型归一化。
 边界：只使用 AsyncMock/Mock，不访问真实 PostgreSQL；真实持久化验证位于 integration 层。
 关键依赖：WorkflowSchedulerRepository 与 PostgreSQL SQL 编译器。
 """
@@ -78,3 +78,54 @@ async def test_claim_schedule_slot_uses_database_unique_conflict_boundary():
     sql = _sql(statement)
     assert "INSERT INTO workflow_schedule_slots" in sql
     assert "ON CONFLICT (schedule_slot_key) DO NOTHING" in sql
+
+
+async def test_claim_due_lease_normalizes_timezone_aware_datetimes_for_postgres():
+    db = AsyncMock()
+    result = Mock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    repository = WorkflowSchedulerRepository(db)
+
+    now = datetime(2026, 8, 23, 10, 0, tzinfo=timezone.utc)
+    lease_expires_at = datetime(2026, 8, 23, 10, 1, tzinfo=timezone.utc)
+    await repository.claim_due_lease(
+        schedule_id=uuid4(),
+        tenant_id=uuid4(),
+        owner="worker-a",
+        now=now,
+        lease_expires_at=lease_expires_at,
+    )
+
+    statement = db.execute.await_args.args[0]
+    compiled = statement.compile(dialect=postgresql.dialect())
+    params = compiled.params
+    assert params["next_run_at"] == datetime(2026, 8, 23, 10, 0)
+    assert params["lease_expires_at"] == datetime(2026, 8, 23, 10, 1)
+    assert params["updated_at"] == datetime(2026, 8, 23, 10, 0)
+    assert params["next_run_at"].tzinfo is None
+    assert params["lease_expires_at"].tzinfo is None
+
+
+async def test_claim_schedule_slot_normalizes_timezone_aware_planned_at():
+    db = AsyncMock()
+    result = Mock()
+    result.scalar_one_or_none.return_value = None
+    existing_result = Mock()
+    existing_result.scalar_one_or_none.return_value = None
+    db.execute.side_effect = [result, existing_result]
+    repository = WorkflowSchedulerRepository(db)
+
+    await repository.claim_schedule_slot(
+        tenant_id=uuid4(),
+        trigger_id=uuid4(),
+        workflow_id=uuid4(),
+        schedule_slot_key="trigger:2026-08-23T10:00:00+00:00",
+        planned_at=datetime(2026, 8, 23, 10, 0, tzinfo=timezone.utc),
+        scheduler_owner="worker-a",
+    )
+
+    statement = db.execute.await_args_list[0].args[0]
+    params = statement.compile(dialect=postgresql.dialect()).params
+    assert params["planned_at"] == datetime(2026, 8, 23, 10, 0)
+    assert params["planned_at"].tzinfo is None
