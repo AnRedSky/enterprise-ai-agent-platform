@@ -1,4 +1,4 @@
-# Project Status
+# 项目状态
 
 ## 当前阶段
 
@@ -6,66 +6,94 @@
 - Branch: `main`
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 2.3-A Provider Governance Contract：**已实现并进入运行时强制执行**。
-- 2.3-B Backend Domain + API Contract：**已实现**。
-- 2.3-C Runtime Governance Invocation：**已实现并接入 WorkflowRuntime**。
-- 2.3-D Runtime Usage / Trace Identity：**已实现**。
-- 2.3-E Governed fallback success + deterministic multi-provider：**已通过开发者本地 Real API Gate**。
-- 2.3-F Fallback Policy Enforcement：**已通过开发者本地 targeted regression、Backend regression、Migration 与 Tenant Safe Real API Gate**。
-- 2.3-G Cost / Usage Accounting：**已通过开发者本地 targeted regression、Backend regression、Migration 与 Tenant Safe Real API Gate，Phase 2.3 已关闭**。
+- Phase 2.3-A 至 2.3-G：**均已完成对应本地验收**。
+- 当前：**无进行中的正式 Phase**。
+- 下一正式工作：**Phase 2.4 Durable Scheduler Contract 确认**，暂不进入业务代码实现。
 
-## 本轮实际验收证据
+## Phase 2.3 最终本地验收结果
 
-开发者在最新 `main`（`14fd450`）实际执行并反馈：
+开发者在 `main` 最新基线实际执行：
 
 ```text
-2.3-G targeted tests: 40 passed
-Backend default regression: 358 passed, 35 deselected
+Targeted usage/governance tests: 40 passed
+Backend Regression: 358 passed, 35 deselected
 Alembic upgrade heads: passed
 Alembic current: 0023_model_usage_accounting (head), 0027_retrieval_evaluation_vector_space (head)
 Tenant Safe Real API Gate: 35 passed
 ```
 
-因此 2.3-G 的本地 acceptance blocker 已关闭。上述结果均来自开发者本地实际执行，不以 GitHub Actions 作为验收依据。
+以上结果来自开发者本地实际执行，不使用 GitHub Actions 作为开发测试、质量门禁或验收依据。
 
 ## Phase 2.3 交付结果
 
-Runtime 主链路已形成完整的 Provider Governance：
+Runtime 已形成完整 Provider Governance：
 
-1. 读取已发布 `AgentVersion.model_profile_id`；
-2. 有 `model_profile_id` 时使用 `explicit_profile`；
-3. 无 `model_profile_id` 时使用 `organization_default`；
-4. organization scope 从 Workflow execution tenant 对应的 active Organization 获取；
-5. 通过 `RuntimeModelGovernanceService` 解析真实 PostgreSQL Provider/Profile；
-6. 调用 `ModelGateway` 时显式传入 governed profile/provider；
-7. fallback 只接受治理 Contract 定义的 connectivity / timeout / rate limit / provider 5xx；
-8. `FallbackPolicy.enabled`、`eligible_reasons` 与最大 attempts=2 实际控制 Runtime fallback；
-9. 不允许静默 Mock fallback；
-10. 每次 provider attempt 生成独立 `request_id`，并通过 Workflow Trace 记录 usage identity；
-11. 每次 governed provider attempt 生成 durable `model_usage_records`；
-12. usage identity、pricing source/version、token/request units 与成本均从真实 PostgreSQL 持久化数据查询；
-13. `model.invocation` trace 与 Model Usage Accounting 在同一数据库事务中持久化，避免 trace 与 usage 记录脱节；
-14. usage 查询严格按 active organization membership 做 tenant scope 校验；
-15. endpoint、credential_ref、Token、Secret 不进入 usage/audit/trace。
+1. 使用已发布 `AgentVersion.model_profile_id` 或 organization default；
+2. organization scope 从 Workflow execution tenant 对应的 active Organization 获取；
+3. 通过 `RuntimeModelGovernanceService` 从真实 PostgreSQL Provider/Profile 数据解析模型调用；
+4. `FallbackPolicy` 强制控制 connectivity / timeout / rate limit / provider 5xx fallback，最大 attempts=2；
+5. 禁止静默 Mock fallback；
+6. provider attempt 具有独立 `request_id`，并通过 Workflow Trace 记录 usage identity；
+7. `model_usage_records` 持久化 provider attempt、usage、pricing source/version 与成本；
+8. usage 查询严格执行 active organization membership tenant scope；
+9. endpoint、credential_ref、Token、Secret 不进入 usage/audit/trace。
 
-## Phase 2.3 关闭结论
+## Phase 2.4 优先级与灵活性评估结论
 
-2.3-A 至 2.3-G 均已完成对应本地验收。当前 Provider Governance 范围内没有新的已确认开发缺口，因此 Phase 2.3 正式关闭，不继续扩张未经产品确认的 UI、E2E 或 Provider 能力。
+**确认 Phase 2.4 Durable Scheduler 为下一项 P1 正式工作，但采用 Contract-first、MVP 边界和可替换实现。**
 
-## 下一阶段
+### 为什么优先
 
-候选下一阶段为 **Phase 2.4 Durable Scheduler**。当前只能进入需求 / Contract 确认，不直接把历史规划转成代码任务。正式进入开发前必须明确：
+当前平台已经具备 Workflow、Execution、Scheduled Trigger、Reliability、Audit/Trace 与 PostgreSQL 持久化基础。Durable Scheduler 能直接补齐现有 Scheduled Trigger 的长期运行可靠性，复用现有领域模型，实施范围和验收边界均明显小于 Advanced Workflow、Event Infrastructure、Multi-Agent 和 Marketplace。
 
-1. `next_run_at` 的计算与时区语义；
-2. 多实例 scheduler lease / ownership 语义；
+因此当前优先级确定为：
+
+```text
+P1  Phase 2.4 Durable Scheduler
+        ↓
+P1  Phase 2.5 Advanced Workflow Orchestration
+        ↓
+P2  Phase 2.6 Enterprise Event Infrastructure
+        ↓
+P2  Phase 2.7 Multi-Agent Collaboration
+        ↓
+P2  Phase 2.8 Agent Asset / Marketplace
+```
+
+### 灵活性原则
+
+Phase 2.4 首版只解决：持久化调度、`next_run_at`、多实例 lease、misfire、幂等、状态转换和 Audit/Trace。
+
+暂不引入 MQ/Kafka、Temporal、独立 Scheduler 服务、跨区域调度、复杂 DAG 或通用任务平台。租约优先采用 PostgreSQL 原子更新/行锁，只有真实吞吐或可靠性数据证明不足时才单独评估基础设施升级。
+
+## Phase 2.4 Contract 进入条件
+
+正式创建 Migration 或业务代码前必须确认：
+
+1. `next_run_at` 的计算、时区与时钟语义；
+2. 多实例 scheduler lease / ownership；
 3. lease 过期、抢占与重复执行边界；
 4. misfire policy 与可接受延迟；
-5. 执行幂等键与重复触发语义；
+5. 调度槽位幂等键与重复触发语义；
 6. paused / enabled / disabled 状态转换；
-7. 调度状态与 WorkflowExecution 的审计、trace 关系；
+7. 调度状态与 WorkflowExecution 的 Audit / Trace 关系；
 8. PostgreSQL migration 与 Real API acceptance 场景。
 
-在上述 Contract 未确认前，不以“Scheduler”技术名词自行扩大产品范围。
+Contract 确认后，按开发准则执行：
+
+```text
+Backend Domain + API Contract
+        ↓
+PostgreSQL Migration + Backend tests
+        ↓
+Real API Gate
+        ↓
+Backend Regression Gate
+        ↓
+Frontend API / UI（如存在明确用户操作范围）
+        ↓
+Browser E2E（如存在对应 UI 用户链路）
+```
 
 ## 开发纪律
 

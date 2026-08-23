@@ -14,7 +14,7 @@
 | Provider Governance | routing/fallback/policy/cost/usage + durable accounting | 2.3-A~G 全部验收 | Phase 2.3 关闭 |
 | Observability | Execution/Event/Trace/Audit + UI | 已验收当前范围 | 继续承载 provider/profile/usage identity |
 | Governance | Tenant/RBAC/Audit/Trace/Reliability | 已验收当前范围 | 后续阶段复用治理边界 |
-| Frontend | Vue 3 + API Types + Governance UI | 已验收当前范围 | Phase 2.3 无新增 UI 范围 |
+| Frontend | Vue 3 + API Types + Governance UI | 已验收当前范围 | 后续 Phase 按用户操作范围决定 |
 | Browser E2E | Playwright Browser → Vue → Backend | 已验收当前范围 | 随后续 Phase 范围进入独立 Gate |
 
 ## 2. Phase 映射
@@ -24,11 +24,11 @@
 | 2.1 | Enterprise Organization & Access Governance | 已关闭 | 否，除回归 |
 | 2.2 | Retrieval Production Quality + Model Provider/Profile Foundation | 正式关闭 | 否，除回归 |
 | **2.3** | **Model Provider Governance（路由/Fallback/成本/用量）** | **正式关闭** | **否，除回归** |
-| 2.4 | Durable Scheduler | 候选路线 | 需求确认后 |
-| 2.5 | Advanced Workflow Orchestration | 候选路线 | 需求确认后 |
-| 2.6 | Enterprise Event Infrastructure | 候选路线 | 需求确认后 |
-| 2.7 | Multi-Agent Collaboration | 候选路线 | 需求确认后 |
-| 2.8 | Agent Asset / Marketplace | 候选路线 | 需求确认后 |
+| **2.4** | **Durable Scheduler** | **已确认下一正式工作，Contract 设计中** | **是** |
+| 2.5 | Advanced Workflow Orchestration | 候选路线 | 2.4 后按需求确认 |
+| 2.6 | Enterprise Event Infrastructure | 候选路线 | 真实吞吐/可靠性需求出现时确认 |
+| 2.7 | Multi-Agent Collaboration | 候选路线 | 业务场景确认后 |
+| 2.8 | Agent Asset / Marketplace | 候选路线 | 产品资产模型确认后 |
 
 ## 3. Phase 2.3 实现矩阵
 
@@ -40,14 +40,26 @@
 | Cost | usage units + pricing source/version | PostgreSQL `model_usage_records` + pricing calculator + usage API | 2.3-G Passed |
 | Usage identity | organization/provider/profile/request/trace/outcome | Workflow Trace + durable usage record | 2.3-G Passed |
 
-## 4. Phase 2.3 关闭判定
+## 4. Phase 2.4 Contract 决策矩阵
 
-- 2.3-A/B/C/D 已实现并验收。
-- 2.3-E Real API acceptance 已通过。
-- 2.3-F Fallback Policy Enforcement 已通过开发者本地 Gate。
-- 2.3-G Cost / Usage Accounting 已通过 targeted、Backend regression、Migration 与 Tenant Safe Real API Gate。
-- 当前无新增 Frontend/Browser 用户链路，因此 Phase 2.3 不新增 UI/E2E 范围。
+| 能力 | 首版确认方案 | 灵活性边界 |
+|---|---|---|
+| 调度对象 | 已发布 Workflow 的 Scheduled Trigger | 不新增通用 Job 产品概念 |
+| `next_run_at` | UTC 持久化 + IANA timezone | clock abstraction 可替换 |
+| Lease | PostgreSQL 原子 lease / ownership | 后续可替换为专用协调基础设施 |
+| 幂等 | `trigger_id + planned_slot` 持久化唯一键 | 数据库唯一约束为最终边界 |
+| Misfire | `skip` / `fire_once` / 有上限 `catch_up` | 不支持无限追赶 |
+| 状态 | `enabled` / `paused` / `disabled` | 恢复行为由 misfire policy 决定 |
+| Trace | Scheduler decision 与 WorkflowExecution 关联 | 不泄露 Secret |
+| 基础设施 | 首版不引入 MQ/Kafka/Temporal | 真实容量证据不足时不提前扩张 |
 
-## 5. 下一正式决策
+## 5. Phase 2.4 进入代码前 Gate
 
-候选 Phase 2.4 为 Durable Scheduler，但目前仍属于候选路线。进入正式开发前必须确认：`next_run_at`、scheduler lease、misfire policy、幂等与重复触发、状态转换、审计/trace 以及 Real API acceptance Contract。确认前不得直接创建 Scheduler 业务代码或 Migration。
+- `next_run_at` / timezone / clock 语义确认；
+- Lease ownership、过期、抢占和重复执行边界确认；
+- misfire、幂等和重复触发边界确认；
+- 状态转换确认；
+- Audit / Trace 关联字段确认；
+- PostgreSQL Migration 与 Real API acceptance 场景确认。
+
+Contract 未确认前，不创建 Scheduler Migration、Service、API 或 UI 代码。

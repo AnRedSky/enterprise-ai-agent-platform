@@ -1,9 +1,9 @@
 # 企业级 AI Agent Platform 产品整体实现路线
 
-> 基线：当前 `main`
+> 基线：`main`
 > 评估日期：2026-08-23
 > 目的：以真实企业产品场景为依据，对已确认能力缺口进行优先级排序，并形成后续阶段路线。
-> 规则：本路线是产品规划基线；只有已进入对应 Phase 的范围才允许转化为开发任务。
+> 规则：只有已进入正式 Phase 的范围才允许转化为开发任务；候选路线必须先完成 Contract 决策。
 
 ## 1. 产品目标
 
@@ -44,42 +44,42 @@
 
 ### 候选能力缺口
 
-1. Scheduler Durability：当前 Scheduler 尚没有完整 `next_run_at`、lease、misfire policy、独立 scheduler state Contract。
+1. Scheduler Durability：当前 Scheduled Trigger 尚需要完整 `next_run_at`、lease、misfire policy、独立 scheduler state Contract。
 2. Workflow Orchestration Depth：当前不支持复杂 DAG、并行/条件分支、Saga、复杂 Policy DSL、可视化 Designer。
 3. Event Infrastructure：没有通用 MQ/Kafka/Event Bus；当前 Webhook 是受控 HTTP 入口。
 4. Multi-Agent / Marketplace：尚未形成正式 Product Contract。
 
 ## 3. 优先级路线
 
-| 优先级 | 后续阶段 | 产品主题 | 企业场景 | 进入条件 |
+| 优先级 | 后续阶段 | 产品主题 | 企业场景 | 当前决策 |
 |---|---|---|---|---|
 | P0 | Phase 2.1 | Enterprise Organization & Access Governance | 企业管理员需要管理组织、成员、角色和资源边界 | 已完成并正式关闭 |
 | P0 | Phase 2.2 | Retrieval Production Quality + Model Provider/Profile Foundation | 企业需要稳定检索质量，并能够明确选择和追踪实际模型 | 已完成并正式关闭 |
 | P1 | Phase 2.3 | Model Provider Governance | 企业需要 Provider 路由、Fallback、模型白名单、成本/用量治理 | 已完成并正式关闭 |
-| **P1** | **Phase 2.4** | **Durable Scheduler** | **企业任务需要长期运行、故障恢复、misfire 与多实例语义** | **明确 scheduler lease / misfire / next-run Contract** |
-| P1 | Phase 2.5 | Advanced Workflow Orchestration | 企业流程需要并行、条件、重试分支、人工节点或补偿 | 明确 Workflow DSL 与执行语义 |
-| P2 | Phase 2.6 | Enterprise Integration / Event Infrastructure | 企业系统需要稳定事件集成、异步解耦和高吞吐事件处理 | Webhook 无法满足真实吞吐/可靠性需求时立项 |
-| P2 | Phase 2.7 | Multi-Agent Collaboration | 复杂任务需要多个专职 Agent 协同 | 明确业务场景、协作协议、权限与成本边界 |
-| P2 | Phase 2.8 | Agent Asset / Marketplace | 企业需要 Agent 模板复用、发布、共享和生命周期管理 | 明确资产所有权、版本、审批和跨组织共享模型 |
+| **P1** | **Phase 2.4** | **Durable Scheduler** | **企业任务需要长期运行、故障恢复、misfire 与多实例语义** | **已确认下一正式工作，先完成 Contract** |
+| P1 | Phase 2.5 | Advanced Workflow Orchestration | 企业流程需要并行、条件、重试分支、人工节点或补偿 | 排在 2.4 后，暂不编码 |
+| P2 | Phase 2.6 | Enterprise Integration / Event Infrastructure | 企业系统需要稳定事件集成、异步解耦和高吞吐事件处理 | Webhook 无法满足真实吞吐/可靠性需求时再立项 |
+| P2 | Phase 2.7 | Multi-Agent Collaboration | 复杂任务需要多个专职 Agent 协同 | 明确业务场景、协作协议、权限与成本边界后再立项 |
+| P2 | Phase 2.8 | Agent Asset / Marketplace | 企业需要 Agent 模板复用、发布、共享和生命周期管理 | 明确资产所有权、版本、审批和跨组织共享模型后再立项 |
 
-## 4. Phase 2.3 关闭结果
+## 4. Phase 2.4 方案确认
 
-Phase 2.3 已完成：
+Phase 2.4 采用 **Contract-first + MVP 边界 + 可替换实现**：
 
-- Provider/Profile routing Contract 与真实 PostgreSQL resolver；
-- Runtime governed invocation；
-- connectivity / timeout / rate limit / provider 5xx fallback；
-- `FallbackPolicy` 强制执行与最大 attempts=2；
-- provider attempt usage identity 与 Workflow Trace；
-- `model_usage_records` PostgreSQL durable accounting；
-- pricing source/version 与 deterministic cost calculation；
-- organization scoped usage query；
-- Secret / endpoint / credential_ref 边界；
-- 本地 targeted、Backend regression、Migration 与 Tenant Safe Real API acceptance。
+- 首版只针对已发布 Workflow 的 Scheduled Trigger；
+- `next_run_at` 使用 UTC 持久化，调度配置保存 IANA timezone；
+- 多实例 ownership 通过 PostgreSQL 原子 lease 优先实现；
+- 使用 `schedule_slot_key = trigger_id + planned_slot` 做持久化幂等；
+- misfire 首版支持 `skip` / `fire_once` / 有上限的 `catch_up`；
+- 状态至少支持 `enabled` / `paused` / `disabled`；
+- Scheduler ownership、misfire、execution creation 与状态变化必须可审计，并与 WorkflowExecution 关联；
+- 不提前引入 MQ/Kafka、Temporal、独立 Scheduler 服务或通用任务平台。
 
-## 5. Phase 2.4 进入条件
+该方案的优势是复用现有 Workflow / Trigger / Execution / PostgreSQL / Audit / Trace 基础，同时保留未来替换调度基础设施的空间。
 
-Phase 2.4 目前仅为候选路线。正式进入代码开发前必须先确认：
+## 5. Phase 2.4 进入代码开发的 Contract
+
+正式进入代码开发前必须确认：
 
 1. `next_run_at` 的计算、时区与时钟语义；
 2. 多实例 scheduler lease / ownership 语义；
@@ -90,7 +90,21 @@ Phase 2.4 目前仅为候选路线。正式进入代码开发前必须先确认�
 7. 调度状态与 WorkflowExecution 的审计、trace 关系；
 8. PostgreSQL migration 与 Real API acceptance 场景。
 
-上述 Contract 未确认前，不将 Scheduler 技术实现直接转化为产品需求，也不创建对应 Migration 或业务代码。
+Contract 确认后，按开发准则进入：
+
+```text
+Backend Domain + API Contract
+        ↓
+PostgreSQL Migration + Backend tests
+        ↓
+Real API Gate
+        ↓
+Backend Regression Gate
+        ↓
+Frontend API Types + Vitest / UI（如范围需要）
+        ↓
+Browser E2E（如范围需要）
+```
 
 ## 6. 后续阶段统一验收标准
 
@@ -118,4 +132,4 @@ Phase 2.4 目前仅为候选路线。正式进入代码开发前必须先确认�
 
 ## 8. 当前执行结论
 
-**Phase 2.3 已关闭。下一正式工作不是直接编码 Scheduler，而是确认 Phase 2.4 Durable Scheduler Contract；Contract 通过后再按开发准则进入 Backend Domain + API Contract → Migration → tests → Real API Gate。**
+**Phase 2.3 已关闭。Phase 2.4 Durable Scheduler 已按 P1 确认为下一正式工作；当前只执行 Contract 确认与文档固化，不创建 Scheduler Migration 或业务代码。Contract 通过后再进入 Backend Domain + API Contract → Migration → tests → Real API Gate。**
