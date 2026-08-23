@@ -1,3 +1,10 @@
+"""受治理 Embedding Profile 真实评估烟测脚本。
+
+模块职责：使用真实 PostgreSQL 中的 Model Provider/Profile 数据，验证不同 Embedding Profile 的基线身份隔离。
+边界：只负责评估编排，不实现第二套数据库 Session 或 Embedding Provider；数据库 Session 与 Provider 均复用正式基础设施入口。
+关键依赖：`app.infrastructure.db.session.SessionLocal`、`app.infrastructure.providers.ollama_embedding.OllamaEmbeddingProvider`。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -19,11 +26,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from sqlalchemy import delete, select
 
 from app.core.config import settings
-from app.dependencies.db import SessionLocal
+from app.infrastructure.db.session import SessionLocal
+from app.infrastructure.providers.ollama_embedding import OllamaEmbeddingProvider
 from app.models.core import User
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
-from app.infrastructure.providers.ollama_embedding import OllamaEmbeddingProvider
 
 RUNNER = BACKEND_ROOT / "scripts" / "evaluation" / "knowledge" / "run_knowledge_retrieval_real_provider.py"
 
@@ -41,7 +48,7 @@ def _ollama_json(base_url: str, path: str, payload: dict | None = None) -> dict:
 
 
 async def _model_dimension(base_url: str, model: str) -> int:
-    """Probe dimensions through the production Ollama adapter, not a second HTTP contract."""
+    """通过正式 Ollama Provider 获取维度，禁止评估脚本复制 Provider HTTP 协议。"""
     provider = OllamaEmbeddingProvider(
         base_url=base_url,
         model=model,
@@ -50,11 +57,9 @@ async def _model_dimension(base_url: str, model: str) -> int:
     try:
         vectors = await provider.embed(["governed evaluation smoke test"])
     except Exception as exc:
-        raise SystemExit(
-            f"Ollama model {model!r} failed the production embedding adapter probe at {base_url}: {exc}"
-        ) from exc
+        raise SystemExit(f"Ollama 模型 {model!r} 的正式 Embedding Provider 探测失败：{exc}") from exc
     if not vectors or not vectors[0]:
-        raise SystemExit(f"Ollama did not return an embedding for existing model {model}")
+        raise SystemExit(f"Ollama 未返回模型 {model} 的 Embedding 向量")
     return len(vectors[0])
 
 
@@ -67,7 +72,7 @@ def _assert_model_exists(base_url: str, model: str) -> None:
     available = {item.get("name") for item in models}
     if model not in available:
         raise SystemExit(
-            f"model {model!r} is not installed in Ollama. This smoke test never downloads models; "
+            f"model {model!r} is not installed in Ollama; this smoke test never downloads models; "
             f"available models: {sorted(x for x in available if x)}"
         )
 
@@ -86,10 +91,7 @@ async def _create_fixture(model_a: str, model_b: str, dimensions: tuple[int, int
         membership = (
             await db.execute(
                 select(OrganizationMembership)
-                .where(
-                    OrganizationMembership.user_id == user.id,
-                    OrganizationMembership.status == "active",
-                )
+                .where(OrganizationMembership.user_id == user.id, OrganizationMembership.status == "active")
                 .order_by(OrganizationMembership.organization_id)
             )
         ).scalars().first()
@@ -145,16 +147,7 @@ async def _cleanup_fixture(provider_id: str) -> None:
 
 
 def _run_runner(profile_id: str, baseline: Path, freeze: bool) -> tuple[int, dict]:
-    command = [
-        sys.executable,
-        str(RUNNER),
-        "--model-profile-id",
-        profile_id,
-        "--baseline",
-        str(baseline),
-        "--k",
-        "3",
-    ]
+    command = [sys.executable, str(RUNNER), "--model-profile-id", profile_id, "--baseline", str(baseline), "--k", "3"]
     if freeze:
         command.append("--freeze-baseline")
     result = subprocess.run(command, cwd=BACKEND_ROOT, capture_output=True, text=True, check=False, timeout=240)
@@ -176,9 +169,7 @@ async def _run_smoke(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="governed-eval-") as tmp:
         baseline = Path(tmp) / "profile-a-baseline.json"
         try:
-            provider_id, profile_a, profile_b = await _create_fixture(
-                args.profile_a_model, args.profile_b_model, dimensions, args.ollama_base_url
-            )
+            provider_id, profile_a, profile_b = await _create_fixture(args.profile_a_model, args.profile_b_model, dimensions, args.ollama_base_url)
             code_a, report_a = _run_runner(profile_a, baseline, freeze=True)
             if code_a != 0 or report_a.get("quality_gate") != "baseline_created":
                 raise SystemExit(f"Profile A baseline freeze failed:\n{json.dumps(report_a, ensure_ascii=False, indent=2)}")
