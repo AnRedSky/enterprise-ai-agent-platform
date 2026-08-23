@@ -4,10 +4,49 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
+- 当前架构基线：远端 `main` 提交 `e2f71dbfdb1e038e50f16d034442690d22fd1c37`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，尚未完成本地 Persistence Gate、API Contract 与 Scheduler Runtime 闭环。**
 - 下一正式工作：**完成 Scheduler Persistence Gate，然后进入 API Contract 与 Real API。**
+
+## Backend 模块化架构整改
+
+本次暂停功能开发，先完成 Backend 模块化架构设计确认，并以远端 `main` 实际目录为基线建立迁移设计。
+
+已形成正式架构文档：
+
+- `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 长期目录、职责、依赖方向、新功能开发模板。
+- `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前实际文件到目标领域模块的迁移映射。
+
+目标结构采用：
+
+```text
+backend/app/
+├── api/
+├── core/
+├── dependencies/
+├── middleware/
+├── models/
+├── schemas/
+├── services/
+├── runtime/
+├── infrastructure/
+└── utils/
+```
+
+其中：
+
+- `services/<domain>/` 承担领域业务规则；
+- `runtime/` 承担执行与运行时编排；
+- `infrastructure/` 承担 DB、Redis、外部 Provider、HTTP 等技术适配；
+- `utils/` 仅允许无业务语义的纯工具；
+- `models/` 继续承担 ORM 持久化模型，不因目录重构迁入 `infrastructure/db`；
+- `middleware/` 与 `dependencies/` 保持 HTTP 生命周期和 FastAPI DI 的职责分离。
+
+当前 `services/workflow_scheduler/` 已经具备领域子模块形态，可作为后续迁移的参考模板。fileciteturn21file0L2-L2
+
+**当前仅完成架构设计与文档基线，不代表代码目录迁移已经完成。**
 
 ## Phase 2.3 最终本地验收结果
 
@@ -71,3 +110,4 @@ backend/app/services/workflow_scheduler/
 - 代码、Phase、Acceptance、Error、Status 必须保持可追溯。
 - 代码中的功能说明和注释统一使用中文；技术标识保持原文。
 - 当前阶段同一业务功能必须按领域职责组织为子模块包，禁止继续向公共 services 目录新增同功能零散文件；仅允许保留薄兼容入口。
+- Backend 模块化设计与后续新功能开发统一参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`；具体迁移按 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 执行。
