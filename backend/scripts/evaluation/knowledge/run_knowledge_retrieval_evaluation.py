@@ -1,3 +1,10 @@
+"""Knowledge Retrieval 评估运行器。
+
+模块职责：直接基于 PostgreSQL/pgvector 执行确定性检索质量评估。
+边界：评估脚本只编排评估数据、唯一 Infrastructure Provider 与数据库会话，不复制业务 Provider。
+关键依赖：app.infrastructure.db.session、app.infrastructure.providers、Knowledge Retrieval 评估领域服务。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -17,11 +24,10 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
-from app.dependencies.db import SessionLocal
-from app.services.mock_embedding_provider import MockEmbeddingProvider
+from app.infrastructure.db.session import SessionLocal
+from app.infrastructure.providers import MockEmbeddingProvider, PgVectorRetrievalProvider, VectorRecord
 from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
 from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
-from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
 
 DATASET = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_dataset.jsonl"
 FIXTURE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_fixture.jsonl"
@@ -33,14 +39,17 @@ VERSION_ID = uuid.UUID("00000000-0000-0000-0000-000000000103")
 
 
 def load_jsonl(path: Path) -> list[dict]:
+    """读取评估 JSONL 数据集，不承担领域数据校验职责。"""
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def actual_chunk_id(evaluation_chunk_id: str) -> uuid.UUID:
+    """把评估数据中的稳定标识映射为隔离 fixture 的 UUID。"""
     return uuid.uuid5(FIXTURE_NAMESPACE, evaluation_chunk_id)
 
 
 def quality_gate(metrics: dict[str, float | int], baseline: dict) -> list[str]:
+    """比较评估指标与基线，避免评估脚本自行实现检索质量逻辑。"""
     failures: list[str] = []
     for metric in ("recall_at_k", "mrr"):
         actual = float(metrics[metric])
@@ -53,7 +62,7 @@ def quality_gate(metrics: dict[str, float | int], baseline: dict) -> list[str]:
 
 
 async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
-    # Evaluation vectors are isolated from the production fixed-dimension table.
+    """创建隔离的 PostgreSQL 评估 fixture，不写入生产固定维度向量表。"""
     await db.execute(
         text("DELETE FROM retrieval_evaluation_vectors WHERE knowledge_base_id = :kb"),
         {"kb": str(KB_ID)},
@@ -103,9 +112,7 @@ async def prepare_fixture(db, rows: list[dict], user_id: uuid.UUID) -> None:
 
 
 async def cleanup_fixture(db) -> None:
-    # A failed pgvector write can abort the current PostgreSQL transaction. Always
-    # clear that transaction state before issuing cleanup SQL so the original
-    # provider/schema error is not masked by InFailedSQLTransactionError.
+    """清理评估 fixture，并在失败事务后先恢复 PostgreSQL 会话状态。"""
     await db.rollback()
     await db.execute(
         text("DELETE FROM retrieval_evaluation_vectors WHERE knowledge_base_id = :kb"),
@@ -120,6 +127,7 @@ async def cleanup_fixture(db) -> None:
 
 
 async def run(k: int) -> int:
+    """执行一次真实 PostgreSQL/pgvector 评估，Embedding 使用确定性离线 Provider。"""
     if settings.embedding_provider != "mock":
         raise SystemExit("Evaluation runner requires EMBEDDING_PROVIDER=mock for offline validation")
     if settings.vector_provider != "pgvector":
@@ -181,6 +189,7 @@ async def run(k: int) -> int:
 
 
 def main() -> int:
+    """解析评估参数并启动异步运行器。"""
     parser = argparse.ArgumentParser(description="Evaluate Knowledge Retrieval directly against PostgreSQL/pgvector using deterministic mock embeddings")
     parser.add_argument("--k", type=int, default=3)
     args = parser.parse_args()
