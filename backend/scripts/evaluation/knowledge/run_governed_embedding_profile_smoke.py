@@ -168,29 +168,16 @@ def _run_runner(profile_id: str, baseline: Path, freeze: bool) -> tuple[int, dic
     return result.returncode, report
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Real governed Embedding Profile evaluation smoke test; never downloads models")
-    parser.add_argument("--profile-a-model", default=os.getenv("GOVERNED_EVAL_PROFILE_A_MODEL", "nomic-embed-text:latest"))
-    parser.add_argument("--profile-b-model", default=os.getenv("GOVERNED_EVAL_PROFILE_B_MODEL", "bge-m3:latest"))
-    parser.add_argument("--ollama-base-url", default=os.getenv("OLLAMA_BASE_URL") or settings.embedding_base_url or "http://localhost:11434")
-    args = parser.parse_args()
-
-    if args.profile_a_model == args.profile_b_model:
-        raise SystemExit("Profile A and Profile B must use different installed embedding models")
-    if settings.vector_provider != "pgvector":
-        raise SystemExit("governed evaluation smoke test requires VECTOR_PROVIDER=pgvector")
-
-    _assert_model_exists(args.ollama_base_url, args.profile_a_model)
-    _assert_model_exists(args.ollama_base_url, args.profile_b_model)
-    dimensions = asyncio.run(_model_dimensions(args.ollama_base_url, (args.profile_a_model, args.profile_b_model)))
+async def _run_smoke(args: argparse.Namespace) -> int:
+    dimensions = await _model_dimensions(args.ollama_base_url, (args.profile_a_model, args.profile_b_model))
     _assert_profile_dimensions(dimensions)
 
     provider_id = profile_a = profile_b = None
     with tempfile.TemporaryDirectory(prefix="governed-eval-") as tmp:
         baseline = Path(tmp) / "profile-a-baseline.json"
         try:
-            provider_id, profile_a, profile_b = asyncio.run(
-                _create_fixture(args.profile_a_model, args.profile_b_model, dimensions, args.ollama_base_url)
+            provider_id, profile_a, profile_b = await _create_fixture(
+                args.profile_a_model, args.profile_b_model, dimensions, args.ollama_base_url
             )
             code_a, report_a = _run_runner(profile_a, baseline, freeze=True)
             if code_a != 0 or report_a.get("quality_gate") != "baseline_created":
@@ -209,7 +196,24 @@ def main() -> int:
             return 0
         finally:
             if provider_id:
-                asyncio.run(_cleanup_fixture(provider_id))
+                await _cleanup_fixture(provider_id)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Real governed Embedding Profile evaluation smoke test; never downloads models")
+    parser.add_argument("--profile-a-model", default=os.getenv("GOVERNED_EVAL_PROFILE_A_MODEL", "nomic-embed-text:latest"))
+    parser.add_argument("--profile-b-model", default=os.getenv("GOVERNED_EVAL_PROFILE_B_MODEL", "bge-m3:latest"))
+    parser.add_argument("--ollama-base-url", default=os.getenv("OLLAMA_BASE_URL") or settings.embedding_base_url or "http://localhost:11434")
+    args = parser.parse_args()
+
+    if args.profile_a_model == args.profile_b_model:
+        raise SystemExit("Profile A and Profile B must use different installed embedding models")
+    if settings.vector_provider != "pgvector":
+        raise SystemExit("governed evaluation smoke test requires VECTOR_PROVIDER=pgvector")
+
+    _assert_model_exists(args.ollama_base_url, args.profile_a_model)
+    _assert_model_exists(args.ollama_base_url, args.profile_b_model)
+    return asyncio.run(_run_smoke(args))
 
 
 if __name__ == "__main__":
