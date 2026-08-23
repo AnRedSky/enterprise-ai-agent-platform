@@ -10,6 +10,7 @@
 - 2.3-B Backend Domain + API Contract：**已实现**。
 - 2.3-C Runtime Governance Invocation Service：**已实现并接入 WorkflowRuntime 主链路**。
 - 2.3-D Runtime Usage / Trace Identity：**已实现基础 trace identity，待完整 acceptance**。
+- 2.3-E Governed fallback success path：**已补充真实 HTTP Provider fixture 测试，待本地 Real API 验证**。
 
 ## Phase 2.2 最终验证证据
 
@@ -79,7 +80,15 @@ Runtime 主链路现在：
 
 当前 Real API 场景覆盖 governed Profile + connectivity failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
 
-本轮没有新增数据库表/字段，因此不需要 Migration。
+### 2.3-E Governed fallback success path + deterministic multi-provider acceptance
+
+已新增 Real API 测试：
+
+- `backend/tests/api_real/test_runtime_model_governance_api.py`
+- 本地测试 HTTP server 使用真实 `OpenAICompatibleProvider` 协议，不使用 `MockProvider` 伪造 governed success；
+- 第一候选真实 HTTP 返回 `503`，验证 `provider_5xx` fallback eligibility；
+- 第二候选真实 HTTP 返回 `200`，验证 bounded fallback success；
+- 验证 candidate deterministic ordering、独立 request_id、同一 execution trace_id、成功 usage identity 与 Secret boundary。
 
 ## 当前验证状态
 
@@ -91,15 +100,15 @@ Backend default regression: 344 passed, 33 deselected
 Real API Gate: blocked during bootstrap before test execution
 ```
 
-Real API 阻塞原因已经定位并修复：`00_bootstrap_real_api.py` 原先在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，随着 Runtime execution 强制要求 active Organization membership，fixture run 从预期的 `404` 变成 `403 当前用户没有有效的 Organization membership`。修复为先创建 Organization，再创建全部需要运行的 Workflow fixtures；同时不再复用可能缺少当前 tenant membership 的历史 workflow，而是创建本次 bootstrap 专用 executable fixture。
+Real API bootstrap 问题已经定位并修复：`00_bootstrap_real_api.py` 原先在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，随着 Runtime execution 强制要求 active Organization membership，fixture run 从预期的 `404` 变成 `403 当前用户没有有效的 Organization membership`。修复为先创建 Organization，再创建全部需要运行的 Workflow fixtures；同时不再复用可能缺少当前 tenant membership 的历史 workflow，而是创建本次 bootstrap 专用 executable fixture。
 
-上述 Real API 本轮结果仍不得标记为 Passed；必须由开发者重新执行 Real API Gate 验证修复。
+本轮新增的 2.3-E Real HTTP Provider success/fallback 测试尚未由开发者本地执行；不得记录为 Passed。
 
 Migration/head verification：本轮反馈未提供执行结果，保持 Pending。
 
 ## 下一执行任务
 
-**2.3-E Governed fallback success path + deterministic multi-provider acceptance**：先完成本轮 Real API Gate 重跑并确认 bootstrap 修复；随后补充真实可控 Provider adapter/fixture（不得以 Mock Provider 伪造 governed success），验证 candidate 顺序、bounded fallback、成功 outcome usage identity 与 fallback attempt trace；随后形成 Phase 2.3 acceptance gate。
+**2.3-E Acceptance Gate**：先重新执行修复后的 Real API Gate，确认 bootstrap tenant 修复；随后根据实际结果修复 2.3-E 测试或 Runtime contract 问题，完成 Backend regression + Migration/head + Real API 三层 Backend Gate，之后再进入 Phase 2.3 Acceptance / 2.3-F 后续任务。
 
 ## 开发纪律
 
