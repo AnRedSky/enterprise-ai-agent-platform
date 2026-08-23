@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
 from app.dependencies.db import engine as app_engine
-from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
+from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
