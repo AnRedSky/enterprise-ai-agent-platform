@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import uuid
 
 import httpx
 
@@ -15,23 +16,37 @@ _SPEC.loader.exec_module(_BOOTSTRAP)
 
 
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
-    """Create a tenant and member without changing the bootstrap owner's session.
+    """Create a tenant-safe Organization and preserve the bootstrap owner's session.
 
-    Organization creation itself creates an active owner membership. The original
-    helper logged in the secondary admin member through the same httpx client,
-    replacing its Authorization header. Runtime fixtures created afterwards could
-    therefore run under the wrong session and fail the tenant governance boundary.
-    Keep the owner token on the fixture client and persist the member token only
-    for tests that explicitly need the member boundary.
+    Runtime governance resolves Organization scope from the Workflow execution
+    tenant, while the authenticated owner carries its tenant in the JWT. The
+    Organization endpoint must therefore bind the new Organization to the same
+    tenant rather than creating an unrelated tenant.
     """
     organization = _BOOTSTRAP.request(
         client,
         "POST",
         "/organizations",
-        json={"name": f"API Real Organization {__import__('uuid').uuid4().hex[:8]}"},
+        json={"name": f"API Real Organization {uuid.uuid4().hex[:8]}"},
     ).json()
-    member_username = f"api_real_org_member_{__import__('uuid').uuid4().hex[:12]}"
-    member_password = f"ApiRealTest!{__import__('uuid').uuid4().hex[:16]}"
+
+    # Verify the production API established the same tenant boundary used by
+    # the owner's JWT before creating any runtime fixtures.
+    with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as owner_client:
+        owner_login = _BOOTSTRAP.request(
+            owner_client,
+            "POST",
+            "/auth/login",
+            json={"username": owner_username, "password": owner_password},
+        ).json()
+    if str(organization["tenant_id"]) != str(owner_login["tenant_id"]):
+        raise RuntimeError(
+            "Organization tenant boundary mismatch: "
+            f"organization={organization['tenant_id']} owner={owner_login['tenant_id']}"
+        )
+
+    member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
+    member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
     member = _BOOTSTRAP.request(
         client,
         "POST",
