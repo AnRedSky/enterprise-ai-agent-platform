@@ -4,7 +4,7 @@
 
 本文件定义 Backend 的长期模块边界、目录模板、依赖方向和新功能开发模板，作为后续项目复用的工程模板。
 
-本模板基于当前 `main` 的实际 FastAPI 项目结构演进而来，不要求一次性重构所有历史代码；历史代码按迁移矩阵逐步收敛。
+本模板基于当前 `main` 的实际 FastAPI 项目结构演进而来。历史代码迁移必须完成真实模块重构，不允许通过兼容垫片长期保留旧目录或旧实现。
 
 ## 2. 标准目录
 
@@ -12,8 +12,7 @@
 backend/
 ├── app/
 │   ├── api/                    # HTTP / API 协议适配
-│   │   └── v1/
-│   │       └── <domain>/
+│   │   └── v1/<domain>/
 │   ├── core/                   # 应用核心能力
 │   ├── dependencies/           # FastAPI 依赖注入
 │   ├── middleware/             # HTTP 横向中间件
@@ -29,7 +28,6 @@ backend/
 │   │   └── http/
 │   ├── utils/                  # 无业务语义的通用工具
 │   └── main.py
-├── models/                     # 若项目需要独立共享 ORM 基础设施，可按项目约定保留；当前项目以 app/models 为准
 ├── scripts/
 ├── tests/
 └── ...
@@ -45,7 +43,7 @@ backend/
 | `middleware` | Request/Response 生命周期、Request ID、横向错误处理等 | 不承载领域业务规则 |
 | `models` | SQLAlchemy ORM 持久化模型 | 不作为 API Contract |
 | `schemas` | API 输入输出与 DTO | 不替代领域 Service Contract |
-| `services` | 领域业务规则、Policy、Repository 编排 | 不把所有 Runtime 代码堆入 Service 根目录 |
+| `services` | 领域业务规则、Policy、Repository 编排 | 不把 Runtime、Infrastructure 混入领域业务 |
 | `runtime` | Agent/Workflow/Trigger 等执行编排 | 不直接承担 HTTP 协议适配 |
 | `infrastructure` | DB、Redis、外部 Provider、HTTP 等技术适配 | 不放领域业务规则 |
 | `utils` | 与业务无关的纯工具 | 禁止建立 `xxx_utils.py` 业务垃圾桶 |
@@ -125,7 +123,7 @@ infrastructure/
 └── http/
 ```
 
-Repository 不进入 `infrastructure/db/`；Repository 属于对应业务领域，数据库 Session/Transaction 等技术能力属于 Infrastructure。
+Repository 必须属于对应业务领域，不进入 `infrastructure/db/`；数据库 Session、Transaction 等技术能力属于 Infrastructure。
 
 ## 8. Middleware 与 Dependencies 边界
 
@@ -213,7 +211,7 @@ backend/scripts/test/
 ├── release/
 ├── api-real/
 ├── integration/
-└── ...
+└── module-refactor/
 ```
 
 Backend 根测试目录不得新增 `test_*.py`。
@@ -224,18 +222,67 @@ Backend 根测试目录不得新增 `test_*.py`。
 
 Evaluation 数据集、Baseline、Result 可以使用版本化 JSON / JSONL，但不得反向充当线上业务数据库。
 
-## 14. 迁移原则
+## 14. 完全重构原则
 
-历史代码不进行机械批量重命名。迁移必须：
+目录重构必须是完整重构，不允许使用垫片、代理文件、旧入口转发或双实现掩盖迁移未完成。
 
-1. 先建立映射矩阵；
-2. 分领域迁移；
-3. 调整 import 与测试；
-4. 必要时保留薄兼容入口；
-5. 静态检查旧路径；
-6. 执行对应 Backend Gate；
-7. 不因纯目录迁移创建数据库 Migration。
+每个领域迁移必须同时完成：
 
-## 15. 当前项目作为模板的参考实现
+1. 建立目标领域子模块；
+2. 按职责拆分 Service / Repository / Contract / Runtime；
+3. 修改所有生产代码 import；
+4. 修改所有测试 import；
+5. 删除旧文件；
+6. 全仓搜索并清除旧模块路径；
+7. 执行对应测试 Gate；
+8. 更新迁移矩阵、Phase、Acceptance、Status 与必要的 Error 记录。
 
-当前 `services/workflow_scheduler/` 已采用领域子模块方式，并通过 `__init__.py` 暴露稳定入口；内部已经拆分 Contract、模型、时间、lease、misfire、Repository、Runtime。这一组织方式作为后续领域模块化的参考实现。
+只有以上步骤全部完成，该领域才允许标记为“迁移完成”。迁移期间可以在一个原子提交中完成文件新增、调用方切换和旧文件删除，但不得留下兼容实现。
+
+## 15. 业务不变原则
+
+目录重构不得改变既有业务行为：
+
+```text
+API Path 不变
+HTTP Method 不变
+Request / Response Contract 不变
+权限行为不变
+Tenant Isolation 不变
+数据库模型与 Migration 不变
+Runtime 行为不变
+Provider 行为不变
+错误语义不变
+```
+
+允许改变的仅是：
+
+```text
+文件位置
+模块边界
+import 路径
+内部职责组织
+```
+
+如果为了完成目录重构发现必须改变业务行为，必须先暂停迁移并单独形成设计变更。
+
+## 16. 迁移验收模板
+
+每个领域完成后必须执行：
+
+```text
+① 领域单元 / 集成测试
+② API Contract（涉及 API 时）
+③ 全仓旧 import 搜索
+④ 目标目录结构检查
+⑤ Backend Regression
+⑥ Alembic head/current（仅当任务涉及数据库时）
+⑦ Real API Gate（范围需要时）
+⑧ 更新 Phase / Acceptance / Status / Error
+```
+
+测试结果只能记录本地实际执行结果，禁止预填通过。
+
+## 17. 当前项目参考实现
+
+当前 `services/workflow_scheduler/` 已采用领域子模块方式，并通过 `__init__.py` 暴露稳定入口；内部已经拆分 Contract、模型、时间、lease、misfire、Repository、Runtime。该结构可作为职责拆分参考，但后续重构必须遵守本文件第 14 节的完全重构原则。
