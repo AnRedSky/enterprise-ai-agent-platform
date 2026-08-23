@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.core import AuditLog, Tenant, User
+from app.models.core import AuditLog, User
 from app.models.organization import Organization, OrganizationMembership
 
 
@@ -129,8 +129,26 @@ class OrganizationService:
         if existing is not None:
             raise HTTPException(409, "Organization 名称已存在")
 
-        tenant = Tenant(id=uuid4(), name=normalized_name, status="active")
-        organization = Organization(id=uuid4(), tenant_id=tenant.id, name=normalized_name, status="active")
+        # Organization and Tenant are intentionally one-to-one. Runtime workflow
+        # governance resolves the Organization from the execution tenant, while
+        # authenticated users carry their active tenant in the JWT. Creating a
+        # second Tenant here leaves the owner membership on one tenant and the
+        # newly-created Organization on another, so workflow execution is denied
+        # with the misleading "没有有效的 Organization membership" boundary error.
+        # Reuse the owner's existing tenant so the membership, JWT tenant claim,
+        # Workflow tenant and Organization tenant remain the same governance scope.
+        existing_tenant_organization = (await self.db.execute(
+            select(Organization).where(Organization.tenant_id == owner.tenant_id)
+        )).scalar_one_or_none()
+        if existing_tenant_organization is not None:
+            raise HTTPException(409, "当前 Tenant 已存在 Organization")
+
+        organization = Organization(
+            id=uuid4(),
+            tenant_id=owner.tenant_id,
+            name=normalized_name,
+            status="active",
+        )
         membership = OrganizationMembership(
             id=uuid4(),
             organization_id=organization.id,
@@ -140,13 +158,12 @@ class OrganizationService:
         )
         try:
             async with self.db.begin_nested():
-                self.db.add(tenant)
                 self.db.add(organization)
                 self.db.add(membership)
                 await self.db.flush()
                 self._audit(
                     actor_id=owner_user_id,
-                    tenant_id=tenant.id,
+                    tenant_id=organization.tenant_id,
                     resource_type="organization",
                     resource_id=str(organization.id),
                     action="organization.created",
