@@ -95,20 +95,24 @@ Runtime 主链路现在：
 开发者本轮实际执行并反馈：
 
 ```text
-2.3-C/D targeted unit tests: 28 passed
-Backend default regression: 344 passed, 33 deselected
+2.3-C/D targeted unit tests: 30 passed, 2 deselected
+Backend default regression: 346 passed, 34 deselected
+Migration/head verification: uv run alembic upgrade head completed
 Real API Gate: blocked during bootstrap before test execution
 ```
 
-Real API bootstrap 问题已经定位并修复：`00_bootstrap_real_api.py` 原先在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，随着 Runtime execution 强制要求 active Organization membership，fixture run 从预期的 `404` 变成 `403 当前用户没有有效的 Organization membership`。修复为先创建 Organization，再创建全部需要运行的 Workflow fixtures；同时不再复用可能缺少当前 tenant membership 的历史 workflow，而是创建本次 bootstrap 专用 executable fixture。
+Real API bootstrap 已连续暴露两个独立问题：
+
+1. 早期 bootstrap 在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，Runtime execution 因缺少 active Organization membership 返回 `403`；已修复为先建立与 owner tenant 对齐的 Organization governance boundary。
+2. 后续在已有本地治理数据上重复执行时，`POST /organizations` 正确返回 `409 当前 Tenant 已存在 Organization`；该唯一性约束本身正确，但 tenant-safe bootstrap 将其错误视为不可恢复失败。
+
+本轮已修复 `00_bootstrap_real_api_tenant_safe.py`：优先通过真实 `GET /organizations` 复用 owner tenant 的既有 Organization；首次运行才创建；并处理 GET/POST 之间的 409 竞态后重新查询，同时继续强制校验 `Organization.tenant_id == owner.tenant_id`。对应工程错误已记录在 `docs/04-errors/2026-08-23-phase-2-3-real-api-bootstrap-existing-organization-409.md`。
 
 本轮新增的 2.3-E Real HTTP Provider success/fallback 测试尚未由开发者本地执行；不得记录为 Passed。
 
-Migration/head verification：本轮反馈未提供执行结果，保持 Pending。
-
 ## 下一执行任务
 
-**2.3-E Acceptance Gate**：先重新执行修复后的 Real API Gate，确认 bootstrap tenant 修复；随后根据实际结果修复 2.3-E 测试或 Runtime contract 问题，完成 Backend regression + Migration/head + Real API 三层 Backend Gate，之后再进入 Phase 2.3 Acceptance / 2.3-F 后续任务。
+**2.3-E Acceptance Gate**：先重新执行修复后的 Tenant Safe Real API Gate，确认“新环境创建 Organization”和“已有 Organization 重复运行”两种 bootstrap 路径均能通过；随后根据实际结果修复 2.3-E 测试或 Runtime contract 问题，完成 Backend regression + Migration/head + Real API 三层 Backend Gate，之后再进入 Phase 2.3 Acceptance / 2.3-F 后续任务。
 
 ## 开发纪律
 
