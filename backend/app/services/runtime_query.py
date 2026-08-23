@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.audit import AuditLog
 from app.models.core import Agent
 from app.models.execution import Execution, ExecutionEvent
+from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
 from app.models.workflow import Workflow
 from app.models.workflow_trace import WorkflowTraceEvent
@@ -70,9 +71,9 @@ class RuntimeQueryService:
         if not is_admin:
             # Runtime audit visibility historically followed the actor's Agent/Workflow
             # ownership. Organization governance audit records are scoped differently:
-            # their resource ids point to an Organization or Membership, so an active
-            # organization member must be able to see mutations for organizations they
-            # can access without exposing another organization's audit trail.
+            # their resource ids point to an Organization, Membership, Model Provider, or
+            # Model Profile, so an active organization member must be able to see mutations
+            # for organizations they can access without exposing another organization's audit trail.
             # AuditLog.resource_id is persisted as VARCHAR, therefore UUID subqueries
             # must be cast to String before comparison on PostgreSQL.
             organization_ids = select(cast(Organization.id, String)).join(
@@ -86,6 +87,23 @@ class RuntimeQueryService:
                 OrganizationMembership.user_id == actor_id,
                 OrganizationMembership.status == "active",
             )
+            model_provider_ids = select(cast(ModelProvider.id, String)).join(
+                OrganizationMembership,
+                OrganizationMembership.organization_id == ModelProvider.organization_id,
+            ).where(
+                OrganizationMembership.user_id == actor_id,
+                OrganizationMembership.status == "active",
+            )
+            model_profile_ids = select(cast(ModelProfile.id, String)).join(
+                ModelProvider,
+                ModelProvider.id == ModelProfile.provider_id,
+            ).join(
+                OrganizationMembership,
+                OrganizationMembership.organization_id == ModelProvider.organization_id,
+            ).where(
+                OrganizationMembership.user_id == actor_id,
+                OrganizationMembership.status == "active",
+            )
             stmt = stmt.outerjoin(Agent, Agent.id == AuditLog.agent_id).outerjoin(Workflow, Workflow.id == AuditLog.workflow_id)
             stmt = stmt.where(or_(
                 Agent.owner_id == actor_id,
@@ -96,6 +114,12 @@ class RuntimeQueryService:
                 (
                     AuditLog.resource_type == "organization_membership"
                 ) & AuditLog.resource_id.in_(membership_ids),
+                (
+                    AuditLog.resource_type == "model_provider"
+                ) & AuditLog.resource_id.in_(model_provider_ids),
+                (
+                    AuditLog.resource_type == "model_profile"
+                ) & AuditLog.resource_id.in_(model_profile_ids),
             ))
         if agent_id:
             stmt = stmt.where(AuditLog.agent_id == agent_id)
