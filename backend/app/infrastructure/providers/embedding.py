@@ -29,19 +29,20 @@ class OpenAICompatibleEmbeddingProvider:
             raise EmbeddingProviderError("embedding dimensions must be greater than zero")
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        if not texts or any(not text.strip() for text in texts):
-            if texts:
-                raise EmbeddingProviderError("embedding texts must not contain empty values")
+        if not texts:
             return []
+        if any(not text.strip() for text in texts):
+            raise EmbeddingProviderError("embedding texts must not contain empty values")
         payload: dict[str, object] = {"model": self.model, "input": list(texts)}
         if self.dimensions is not None:
             if self.dimensions < 1:
                 raise EmbeddingProviderError("embedding dimensions must be greater than zero")
             payload["dimensions"] = self.dimensions
+        headers = {"Authorization": f"Bearer {self.api_key}"}
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self.timeout_seconds)
         try:
-            response = await client.post(f"{self.base_url}/embeddings", json=payload, headers={"Authorization": f"Bearer {self.api_key}"})
+            response = await client.post(f"{self.base_url}/embeddings", json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -54,20 +55,25 @@ class OpenAICompatibleEmbeddingProvider:
             raise EmbeddingProviderError("embedding provider returned an invalid data length")
         ordered: list[tuple[int, list[float]]] = []
         for item in data:
-            if not isinstance(item, dict) or not isinstance(item.get("index"), int) or not isinstance(item.get("embedding"), list):
+            if not isinstance(item, dict):
+                raise EmbeddingProviderError("embedding provider returned an invalid item")
+            index = item.get("index")
+            embedding = item.get("embedding")
+            if not isinstance(index, int) or not isinstance(embedding, list):
                 raise EmbeddingProviderError("embedding provider returned an invalid embedding item")
-            embedding = item["embedding"]
             if not all(isinstance(value, (int, float)) for value in embedding):
                 raise EmbeddingProviderError("embedding vector contains a non-numeric value")
-            ordered.append((item["index"], [float(value) for value in embedding]))
+            ordered.append((index, [float(value) for value in embedding]))
         ordered.sort(key=lambda item: item[0])
         if [index for index, _ in ordered] != list(range(len(texts))):
             raise EmbeddingProviderError("embedding provider returned non-contiguous indexes")
         embeddings = [embedding for _, embedding in ordered]
-        dimensions = {len(embedding) for embedding in embeddings}
-        if len(dimensions) != 1 or not dimensions.pop():
-            raise EmbeddingProviderError("embedding provider returned invalid dimensions")
-        actual_dimension = len(embeddings[0])
+        actual_dimensions = {len(embedding) for embedding in embeddings}
+        if len(actual_dimensions) != 1:
+            raise EmbeddingProviderError("embedding provider returned inconsistent dimensions")
+        actual_dimension = actual_dimensions.pop()
+        if actual_dimension < 1:
+            raise EmbeddingProviderError("embedding provider returned an empty vector")
         if self.expected_dimension is not None and actual_dimension != self.expected_dimension:
             raise EmbeddingProviderError(f"embedding dimensions {actual_dimension} do not match configured dimension {self.expected_dimension}")
         self.dimension = actual_dimension
