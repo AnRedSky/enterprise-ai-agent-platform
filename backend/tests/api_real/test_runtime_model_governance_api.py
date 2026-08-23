@@ -183,8 +183,10 @@ def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_a
 
                 trace = client.get(f"/workflows/executions/{execution_id}/trace")
                 assert trace.status_code == 200, trace.text
-                trace_items = trace.json()["items"]
-                invocation_events = [item for item in trace_items if item["event_type"] == "model.invocation"]
+                invocation_events = [
+                    item for item in trace.json().get("items", [])
+                    if item["event_type"] == "model.invocation"
+                ]
                 assert len(invocation_events) == 2
 
                 first, second = invocation_events
@@ -205,7 +207,7 @@ def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_a
                     "total_tokens": 18,
                 }
 
-                serialized_trace = str(trace_items)
+                serialized_trace = str(trace.json().get("items", []))
                 assert f"GOVERNED_FALLBACK_SECRET_{suffix}" not in serialized_trace
                 assert "endpoint" not in second["data"]
                 assert "credential_ref" not in second["data"]
@@ -341,7 +343,7 @@ def test_runtime_uses_published_model_profile_and_records_usage_identity_without
 
             trace = client.get(f"/workflows/executions/{execution_id}/trace")
             assert trace.status_code == 200, trace.text
-            trace_items = trace.json()["items"]
+            trace_items = trace.json().get("items", [])
             invocation_events = [item for item in trace_items if item["event_type"] == "model.invocation"]
             assert invocation_events
             invocation = invocation_events[-1]
