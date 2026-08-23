@@ -1,3 +1,9 @@
+"""Workflow Scheduler 持久化模型：保存调度状态与槽位幂等记录。
+
+边界：只负责 Scheduler 持久化结构，不负责调度计算、租约算法或 HTTP API。
+关键依赖：SQLAlchemy ORM；`WorkflowSchedule` 引用 Workflow Trigger，`WorkflowScheduleSlot` 用于执行槽位幂等。
+"""
+
 from __future__ import annotations
 
 import uuid

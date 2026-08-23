@@ -1,3 +1,9 @@
+"""Scheduler PostgreSQL 集成测试：验证持久化租约、槽位幂等与租户隔离。
+
+边界：只验证真实 PostgreSQL Repository 行为，不模拟业务数据库，也不覆盖 API / Runtime。
+关键依赖：项目唯一数据库 Session、Scheduler Repository 与 Workflow Scheduler 持久化模型。
+"""
+
 from __future__ import annotations
 
 import os
@@ -6,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.dependencies.db import SessionLocal
+from app.infrastructure.db import SessionLocal
 from app.models.core import Tenant, User, utcnow_naive
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_scheduler import WorkflowSchedule
@@ -73,21 +79,25 @@ async def test_scheduler_repository_claim_release_and_tenant_isolation() -> None
                         created_by=user_id,
                         config={},
                     ),
-                    WorkflowSchedule(
-                        id=schedule_id,
-                        tenant_id=tenant_id,
-                        trigger_id=trigger_id,
-                        workflow_id=workflow_id,
-                        enabled=True,
-                        status="enabled",
-                        timezone="UTC",
-                        schedule_expression="*/5 * * * *",
-                        next_run_at=now - timedelta(minutes=1),
-                        misfire_policy="skip",
-                        catch_up_limit=10,
-                        updated_at=now,
-                    ),
                 ]
+            )
+            # 先提交 FK 前置实体，再建立依赖 Trigger 的 Schedule，避免无 ORM relationship 时 flush 顺序不稳定。
+            await session.flush()
+            session.add(
+                WorkflowSchedule(
+                    id=schedule_id,
+                    tenant_id=tenant_id,
+                    trigger_id=trigger_id,
+                    workflow_id=workflow_id,
+                    enabled=True,
+                    status="enabled",
+                    timezone="UTC",
+                    schedule_expression="*/5 * * * *",
+                    next_run_at=now - timedelta(minutes=1),
+                    misfire_policy="skip",
+                    catch_up_limit=10,
+                    updated_at=now,
+                )
             )
 
         repository = WorkflowSchedulerRepository(session)
@@ -185,6 +195,7 @@ async def test_scheduler_repository_slot_claim_is_idempotent() -> None:
                     ),
                 ]
             )
+            await session.flush()
 
         repository = WorkflowSchedulerRepository(session)
         first = await repository.claim_schedule_slot(

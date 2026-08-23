@@ -1,3 +1,9 @@
+"""Workflow Trigger ORM 模型：定义可驱动 Workflow 执行的触发器持久化结构。
+
+边界：只负责触发器数据模型与数据库约束，不负责触发执行、调度或 HTTP 协议。
+关键依赖：SQLAlchemy ORM 与核心 Tenant / Workflow / User 外键。
+"""
+
 from __future__ import annotations
 
 import uuid

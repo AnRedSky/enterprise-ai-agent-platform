@@ -7,7 +7,7 @@
 - 当前架构基线：远端 `main` 已进入 Backend 模块化整改实施阶段。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，当前正在执行本地 Persistence Gate，尚未完成 API Contract 与 Scheduler Runtime 闭环。**
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，当前正在修复本地 Persistence Gate 的 PostgreSQL fixture / asyncpg 生命周期问题，尚未完成 API Contract 与 Scheduler Runtime 闭环。**
 - Backend 模块化整改与 Phase 2.4 并行但职责独立；目录重构不得改变既有业务行为。
 
 ## Backend 模块化架构整改
@@ -110,6 +110,24 @@ app/services/vector_retrieval_provider.py
 
 此前开发者本地实际执行的 targeted 结果：Embedding / Provider 相关 28 passed；Knowledge 相关 26 passed。Backend Regression 在模块导入回归修复前曾因旧 Knowledge import 收集失败，现 `app.main` 已恢复可导入；完整 Regression 与模块化 Gate 仍需重新执行。
 
+### 本轮模块化 / Persistence 纠偏
+
+本地 Scheduler Persistence Gate 暴露出两个测试基础设施问题：
+
+1. Scheduler integration fixture 同一 flush 中同时创建 `WorkflowTrigger` 与依赖其外键的 `WorkflowSchedule`，由于 ORM 没有 relationship，flush 顺序不能作为数据库 FK 前置保证；已调整 fixture 为先 flush 前置实体，再创建 Schedule。
+2. pytest-asyncio 使用 function 级事件循环，而 SQLAlchemy asyncpg 连接池跨测试复用连接，导致第二个 integration test 出现 `Event loop is closed`；已将 Backend pytest 默认 async fixture loop scope 调整为 session，保持 asyncpg pool 与事件循环生命周期一致。
+
+同时确认存在一个违反模块化规则的数据库 Session 重复实现：
+
+```text
+app/dependencies/db.py
+app/infrastructure/db/session.py
+```
+
+两者均独立创建 Engine / SessionLocal。已将 API 依赖收敛到 `app.infrastructure.db`，并删除 `app.dependencies.db`，确保数据库 Session 只有一个正式 Infrastructure 入口。该问题及验收纪律已记录到 `docs/04-errors/`。
+
+以上代码修复尚未由开发者本地重新执行，因此**不得记录为 Passed**。
+
 ### 当前未完成
 
 - Model / Provider 尚未完成 Service、Runtime、Infrastructure 全边界重构；
@@ -120,10 +138,7 @@ app/services/vector_retrieval_provider.py
 - Runtime 尚未完成分域；
 - API 尚未完成 `api/v1/<domain>` 收敛；
 - **整个 Backend 模块化整改不得标记 Passed。**
-
-### 最新模块化 Gate 纠偏
-
-开发者在 `main` 上一次实际执行中，模块化 Gate 已通过脚本解析修复、Knowledge targeted tests 与 Provider targeted tests，但旧路径搜索仍在 `scripts/evaluation/knowledge/run_knowledge_retrieval_real_provider.py` 发现 `app.services.vector_knowledge_retrieval`。该路径不属于正式 Provider / Knowledge 入口，已按无兼容垫片、无重复实现原则修复为 `app.services.knowledge.vector_retrieval`，并将相关 Provider 导入统一收敛到 `app.infrastructure.providers`。该修复后的模块化 Gate 与 Backend Regression 尚未由开发者重新执行，因此不得记录为 Passed。
+- Phase 2.4 Scheduler Persistence Gate 尚未重新执行通过；API Contract、Runtime persistence/lease/slot 闭环、tenant isolation、misfire、Audit / Trace 与 Real API acceptance 仍未完成。
 
 ### 完整重构原则
 
