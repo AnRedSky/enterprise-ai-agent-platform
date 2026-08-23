@@ -17,7 +17,7 @@ from app.schemas.model_provider import (
     ModelProviderRoutingResponse,
     ModelProviderUpdate,
 )
-from app.services.model_provider import ModelProviderService
+from app.services.model import ModelProviderService
 
 router = APIRouter()
 
