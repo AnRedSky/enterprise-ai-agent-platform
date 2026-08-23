@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Contract-first 已完成；持久化模型、Migration 与原子仓储第一版已实现，尚未完成本地 Persistence Gate、API Contract 与 Durable Scheduler Runtime。**
+> 状态：**Contract-first 已完成；持久化模型、Migration 与原子仓储第一版已实现，当前进入本地 Persistence Gate；API Contract 与 Durable Scheduler Runtime 尚未完成。**
 > 评估日期：2026-08-23
 > 优先级：**P1**
 
@@ -20,7 +20,7 @@ Scheduler 已统一收敛到功能子模块，并遵循当前阶段模块化规�
 ```text
 backend/app/services/workflow_scheduler/
 ├── __init__.py      # 稳定公开入口
-├── contract.py      # 薄兼容入口，不重复实现领域规则
+├── contract.py      # 薄入口，不重复实现领域规则
 ├── models.py        # 状态、misfire、lease、slot 数据模型
 ├── time.py          # UTC、IANA timezone、DST 时间语义
 ├── lease.py         # lease 可抢占判断
@@ -52,22 +52,29 @@ backend/app/services/workflow_scheduler/
 - `WorkflowSchedule`：调度状态、next/last run、lease、misfire 等持久化；
 - `WorkflowScheduleSlot`：`schedule_slot_key` 唯一约束、planned time、owner 与 WorkflowExecution 关联；
 - `0028_durable_scheduler_persistence` Migration；
-- `workflow_scheduler/repository.py`：单条 UPDATE 原子 lease claim、owner 条件 release、PostgreSQL `ON CONFLICT DO NOTHING` slot claim、Execution 绑定。
+- `workflow_scheduler/repository.py`：单条 UPDATE 原子 lease claim、owner 条件 release、PostgreSQL `ON CONFLICT DO NOTHING` slot claim、Execution 绑定；
+- `tests/integration/test_workflow_scheduler_repository.py`：真实 PostgreSQL Repository lease / release、tenant isolation 与 slot idempotency 测试；
+- `scripts/test/integration/01_scheduler_persistence_gate.ps1`：Migration、Contract targeted、Repository PostgreSQL integration、Backend Regression 固定编排。
 
-当前 Repository 尚未完成本地 Persistence Gate，也未接入完整 Scheduler Runtime 业务闭环。
+## 5. Persistence Gate
 
-## 5. Contract / Persistence Gate 剩余项
+必须由开发者本地实际执行：
 
-必须本地确认：
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_scheduler_persistence_gate.ps1
+```
+
+Gate 必须确认：
 
 1. Migration heads 可重复升级；
 2. Repository lease claim / release 的原子语义；
-3. slot 幂等 claim 与 Execution 绑定竞态；
-4. Tenant / Organization scope；
-5. paused / enabled / disabled 与 lease 清理；
-6. misfire 与实时槽位排序、catch-up 上限；
-7. Audit / Trace 关联字段；
-8. API Contract 与 Tenant Safe Real API acceptance。
+3. slot 幂等 claim；
+4. Tenant scope；
+5. Scheduler Contract targeted tests；
+6. Backend Regression。
+
+未实际执行前，不得记录 Gate Passed。
 
 ## 6. 下一执行顺序
 

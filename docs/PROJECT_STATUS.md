@@ -7,7 +7,7 @@
 - 当前架构基线：远端 `main` 已进入 Backend 模块化整改实施阶段。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，尚未完成本地 Persistence Gate、API Contract 与 Scheduler Runtime 闭环。**
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，当前正在执行本地 Persistence Gate，尚未完成 API Contract 与 Scheduler Runtime 闭环。**
 - Backend 模块化整改与 Phase 2.4 并行但职责独立；目录重构不得改变既有业务行为。
 
 ## Backend 模块化架构整改
@@ -108,7 +108,7 @@ app/services/ollama_embedding_provider.py
 app/services/vector_retrieval_provider.py
 ```
 
-**注意：本轮代码重构已提交，但当前远端工具环境没有执行 pytest，因此不能记录 targeted tests 或 Backend Regression Passed。**
+此前开发者本地实际执行的 targeted 结果：Embedding / Provider 相关 28 passed；Knowledge 相关 26 passed。Backend Regression 在模块导入回归修复前曾因旧 Knowledge import 收集失败，现 `app.main` 已恢复可导入；完整 Regression 与模块化 Gate 仍需重新执行。
 
 ### 当前未完成
 
@@ -220,19 +220,21 @@ backend/app/services/workflow_scheduler/
 - `0028_durable_scheduler_persistence` Migration；
 - PostgreSQL 原子 lease claim / release；
 - PostgreSQL slot 唯一键幂等 claim；
-- WorkflowExecution 与 slot 绑定基础能力。
+- WorkflowExecution 与 slot 绑定基础能力；
+- 新增 Scheduler PostgreSQL Repository integration test；
+- 新增独立 Scheduler Persistence Gate，包含 Migration、Scheduler targeted tests、Repository PostgreSQL integration 与 Backend Regression。
 
-当前**不得记录 Phase 2.4 Passed**。仍需本地完成 Migration / Repository Gate，并确认 API Contract、Runtime 闭环、tenant isolation、misfire、Audit / Trace 与 Real API acceptance。
+当前**不得记录 Phase 2.4 Passed**。Persistence Gate 尚未由开发者本地实际执行通过；API Contract、Runtime 闭环、tenant isolation、misfire、Audit / Trace 与 Real API acceptance 仍未完成。
 
 ## Phase 2.4 下一执行任务
 
-1. 执行 Scheduler targeted tests；
-2. 执行 `uv run alembic upgrade heads` 与 `uv run alembic current`；
-3. 执行 Backend Regression；
-4. 核查 lease / slot repository 的真实 PostgreSQL 行为与竞态；
-5. 完成 Scheduler API Contract；
-6. 将 Runtime 接入 persistence / lease / slot；
-7. 创建 Tenant Safe Real API Gate，覆盖多实例 lease、重复 claim、misfire、状态与 tenant isolation。
+1. 开发者本地执行 Scheduler Persistence Gate；
+2. 根据真实 PostgreSQL 结果修复 lease / slot repository 的竞态或 tenant 边界问题；
+3. 完成 Scheduler API Contract；
+4. 将 Runtime 接入 persistence / lease / slot；
+5. 增加 Tenant Safe Real API Gate，覆盖多实例 lease、重复 claim、misfire、状态与 tenant isolation；
+6. 重新执行 Backend Regression Gate；
+7. 若涉及用户操作，再进入 Frontend API / UI 与独立 Browser E2E。
 
 ## 开发纪律
 
