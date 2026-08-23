@@ -10,6 +10,7 @@
 - 2.2-C Real Provider Quality Gate：已通过真实 Provider baseline regression。
 - 2.2-D Retrieval Quality Regression / Traceability：已完成并有 Real API evidence。
 - 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2、E-3、E-4 全部完成；E-4 三层 Gate 已由开发者本地实际执行通过。
+- Phase 2.3 Model Provider Governance：**进行中 / 2.3-A Contract 已实现，等待开发者本地 targeted test 验证**。
 
 ## E-4 最终实际验证证据
 
@@ -33,7 +34,7 @@ Model Provider/Profile Browser E2E:
 
 ## E-4 已完成修复
 
-- `448e2f8`：修复 Real API Model Provider Governance 测试 fixture 的 member boundary，member token 现在明确对应 `member` membership，再验证 Provider/Profile 写操作 403。
+- `448e2f8`：修复 Real API Model Provider Governance 测试 fixture 的 member boundary。
 - `be5b9ca`：修复 Model Provider/Profile Browser E2E 的 Element Plus `el-select` selector 点击定位。
 - `bfe6512`：修复 Model Provider/Profile AuditLog 的 organization-scoped 查询范围。
 - `04c23de`：修复 Browser E2E Profile 名称字段的 strict locator 冲突。
@@ -45,17 +46,23 @@ Phase 2.2 已满足 Retrieval Quality、Real Provider、Evaluation、Runtime Pro
 
 Phase 2.2 正式关闭；不得继续向已关闭 Phase 2.2 塞入新的 Provider routing / fallback / cost / usage 功能。
 
-## 下一执行阶段：Phase 2.3 Model Provider Governance
+## Phase 2.3 当前执行进度
 
-根据 Product Roadmap，下一正式阶段是 Phase 2.3。进入条件为明确成本口径、路由策略与 Provider Contract。下一任务不是直接修改 2.2 foundation，而是建立独立的 2.3 Provider Governance Contract，并随后按产品开发矩阵执行 Backend Contract → Migration/Tests → Real API → Frontend/Browser（按实际范围裁剪）→ Acceptance。
+### 2.3-A Provider Governance Contract — 已实现，待本地验证
 
-Phase 2.3 首批必须冻结：
+已新增可执行 Backend Contract：`backend/app/services/model_provider_governance_contract.py`，并新增 `backend/tests/unit/test_model_provider_governance_contract.py`。
 
-1. Provider routing strategy。
-2. Fallback eligibility / failure semantics。
-3. Model whitelist / capability constraints。
-4. Cost accounting unit and pricing source。
-5. Usage accounting dimensions and audit identity。
+本任务冻结并以代码断言以下规则：
+
+1. Provider routing strategy：默认 `explicit_profile`；没有显式 Profile 时不得隐式挑选 Provider；`organization_default` 必须按 enabled、model type、capability 与 provider allowlist 过滤并稳定排序。
+2. Fallback eligibility：仅 connectivity、timeout、rate limit、provider 5xx；默认最大尝试次数 2；认证、参数、能力不匹配等错误不得自动 fallback。
+3. Model whitelist / capability constraints：使用 Provider/Profile identity、model type、capabilities 与 provider allowlist，不硬编码具体模型名称。
+4. Cost accounting：显式 usage unit + pricing source + pricing version；未获得真实 usage 时不得隐式估算冒充真实成本。
+5. Usage accounting identity：organization/provider/profile/model_type/request/trace/outcome 可追踪，Secret 不进入 usage identity。
+
+**本地验证状态：Pending。** 本轮没有把未执行的 targeted test 记录为 Passed。
+
+下一任务：**2.3-B Backend Domain + API Contract**，将路由策略与治理策略接入真实 Provider/Profile 数据链路；涉及持久化时先 Migration，再进入 Backend tests / Real API。
 
 ## 开发纪律
 
