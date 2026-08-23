@@ -1,3 +1,9 @@
+"""Embedding Provider 真实服务验证脚本。
+
+模块职责：执行一次真实 Embedding Provider 连通性与向量维度校验。
+边界：脚本只负责读取配置、调用 canonical infrastructure provider 并输出验证结果；Provider 实现统一归属 ``app.infrastructure.providers``，避免在 services 层重复实现。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,12 +13,12 @@ from pathlib import Path
 # When a script is executed by file path, Python puts ``backend/scripts`` on
 # sys.path instead of the backend project root. Add the project root explicitly
 # so the probe always imports the same application package used by ``uv run``.
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
-from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
+from app.infrastructure.providers.embedding import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 
 
 async def validate() -> int:
