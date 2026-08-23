@@ -1,5 +1,5 @@
-"""Agent 领域服务。"""
+"""Agent 领域服务入口。"""
 
-from app.services.agent.registry import AgentRegistry
+from app.services.agent.service import AgentService
 
-__all__ = ["AgentRegistry"]
+__all__ = ["AgentService"]
