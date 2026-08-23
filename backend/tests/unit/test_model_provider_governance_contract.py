@@ -2,17 +2,17 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.model_provider_governance_contract import (
+from app.services.model import (
     CostPolicy,
     CostUnit,
     FallbackPolicy,
     FallbackReason,
     PricingSource,
     ProviderCandidate,
+    ProviderGovernanceContract,
     RoutingRequest,
     RoutingStrategy,
     UsageIdentity,
-    ProviderGovernanceContract,
     select_candidates,
     usage_dimensions,
 )
