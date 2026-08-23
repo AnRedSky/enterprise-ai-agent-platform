@@ -61,8 +61,8 @@ backend/app/
 |---|---|---|---|
 | Agent | `app/services/agent/` | 已完成 | Service / Repository 已物理迁移，旧入口删除 |
 | Knowledge | `app/services/knowledge/` + `app/infrastructure/providers/` | 已完成 | 领域与 Provider 已分离，无旧 Provider 实现 |
-| Memory | `app/services/memory/` + `app/runtime/memory/` | **本次完成** | Service 与 Runtime 上下文均已迁移，旧 `memory_service.py` / `memory_context.py` 删除 |
-| Model | `app/services/model/` + Provider | 待迁移 | 当前仍存在根目录旧 Service / Runtime Provider 组合 |
+| Memory | `app/services/memory/` + `app/runtime/memory/` | 已完成 | Service 与 Runtime 上下文均已迁移，旧入口删除 |
+| Model | `app/services/model/` + `app/runtime/model/` + Provider | **本轮完成** | Service / Contract / Routing / Governance / Runtime Gateway / Provider 已收敛，旧 Service / Runtime Provider 入口删除 |
 | Workflow | `app/services/workflow/` + `app/runtime/workflow/` | 待迁移 | Registry / Execution / Governance 仍待领域收敛 |
 | Trigger | `app/services/trigger/` | 待迁移 | Scheduled / Webhook Trigger 仍待统一领域入口 |
 | Organization / Governance / Observability | 对应领域子模块 | 待迁移 | 当前仍存在多个根目录 Service 文件 |
@@ -129,21 +129,20 @@ app/infrastructure/providers/
 
 Embedding Contract 只保留 `infrastructure/providers/embedding.py` 一份正式定义；Knowledge 领域不复制 Provider 实现。
 
-## 8. Model
+## 8. Model：彻底迁移完成
 
-### 当前
+### 原结构
 
 ```text
 app/services/model_provider.py
 app/services/model_provider_governance_contract.py
 app/services/runtime_model_governance.py
-app/services/circuit_breaker.py
 app/runtime/model_gateway.py
 app/runtime/provider.py
 app/runtime/openai_provider.py
 ```
 
-### 目标
+### 当前正式结构
 
 ```text
 app/services/model/
@@ -151,14 +150,33 @@ app/services/model/
 ├── contract.py
 ├── provider.py
 ├── governance.py
-├── routing.py
-└── ...
+└── routing.py
+
+app/runtime/model/
+├── __init__.py
+└── gateway.py
 
 app/infrastructure/providers/
-└── <具体外部 Provider 适配>
+├── model.py
+├── openai_model.py
+└── mock_model.py
 ```
 
-必须先建立调用关系，再进行物理迁移；不得通过旧路径垫片完成迁移，也不得复制一套新 Provider。
+迁移结论：
+
+- `ModelProviderService` 已归入 `app.services.model.provider`；
+- Provider Governance Contract、Fallback/Cost/Usage 领域值对象已归入 `app.services.model.contract`；
+- Provider 路由筛选规则已归入 `app.services.model.routing`，不再由 API 或 Runtime 重复实现；
+- `RuntimeModelGovernanceService` 已归入 `app.services.model.governance`；
+- `ModelGateway` 已归入 `app.runtime.model.gateway`，作为 Runtime 唯一模型调用入口；
+- OpenAI-compatible、Mock Provider 及统一 Provider Contract 已归入 `app.infrastructure.providers`；
+- 已知生产/测试 import 已切换到新入口；
+- 原 Service / Runtime Provider 文件已删除，不保留兼容垫片；
+- Module Refactor Gate 已增加 Model 旧路径、旧 import、目录、Provider 文件和 targeted tests 检查；
+- 新增/重构 Model 模块均补充中文职责、边界和关键依赖说明；
+- 本轮未新增数据库 Migration，Model 数据结构保持不变。
+
+**重要验收要求：本地必须执行 Module Refactor Gate，通过 Gate 的 Model targeted tests 与 Backend Regression 后，才能将 Model 视为开发者本地已验证完成。**
 
 ## 9. Workflow / Trigger / Organization / Governance / Observability / Tool
 
