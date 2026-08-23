@@ -115,7 +115,9 @@ app/services/vector_retrieval_provider.py
 本地 Scheduler Persistence Gate 暴露出两个测试基础设施问题：
 
 1. Scheduler integration fixture 同一 flush 中同时创建 `WorkflowTrigger` 与依赖其外键的 `WorkflowSchedule`，由于 ORM 没有 relationship，flush 顺序不能作为数据库 FK 前置保证；已调整 fixture 为先 flush 前置实体，再创建 Schedule。
-2. pytest-asyncio 使用 function 级事件循环，而 SQLAlchemy asyncpg 连接池跨测试复用连接，导致第二个 integration test 出现 `Event loop is closed`；已将 Backend pytest 默认 async fixture loop scope 调整为 session，保持 asyncpg pool 与事件循环生命周期一致。
+2. pytest-asyncio 使用 function 级事件循环，而 SQLAlchemy asyncpg 连接池跨测试复用连接，导致第二个 integration test 出现 `Event loop is closed`；仅设置 async fixture loop 为 session 不足，因为 async test 默认仍可使用 function loop。
+3. 当前修复新增 `asyncio_default_test_loop_scope = "session"`，使 async test 与 session-scoped async fixture 使用同一事件循环；同时 pytest 使用 `importlib` import mode，消除 unit/integration 同名测试文件的 `import file mismatch`。
+4. Module Refactor Gate 另外发现 Embedding 验证脚本仍引用已删除的 `app.services.embedding_provider`；已改用唯一 canonical `app.infrastructure.providers.embedding`，并补充中文模块职责与边界说明。
 
 同时确认存在一个违反模块化规则的数据库 Session 重复实现：
 
