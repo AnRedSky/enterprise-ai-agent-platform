@@ -7,8 +7,8 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.3-A 至 2.3-G：**均已完成对应本地验收**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成领域 Contract、模块化整理与持久化模型第一版设计，尚未完成本地 Migration Gate。**
-- 下一正式工作：**执行 Scheduler Contract + Persistence targeted tests、Alembic heads upgrade 与数据库结构验收，再进入 repository 原子 lease / API Contract。**
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成领域 Contract、模块化整理、持久化模型与原子仓储第一版，尚未完成本地 Migration / Repository Gate。**
+- 下一正式工作：**执行 Scheduler targeted tests、Alembic heads upgrade 与数据库结构验收，再进入 API Contract 与 Real API。**
 
 ## Phase 2.3 最终本地验收结果
 
@@ -74,19 +74,20 @@ Phase 2.4 首版只解决：持久化调度、`next_run_at`、多实例 lease、
 2. `backend/app/services/workflow_scheduler/runtime.py`：既有 Scheduled Trigger 轮询器迁移，保持历史行为兼容；
 3. `backend/app/models/workflow_scheduler/schedule.py`：新增 `WorkflowSchedule` 与 `WorkflowScheduleSlot` 持久化模型；
 4. `0028_durable_scheduler_persistence`：合并当前两个 Alembic heads，创建调度状态与槽位幂等表；
-5. 相关 targeted unit tests 已加入，但尚未由当前执行者本地运行，因此不记录 Passed。
+5. `workflow_scheduler/repository.py`：实现单条 UPDATE 原子 lease claim、owner 条件 release、唯一键 slot claim 与 execution 绑定；
+6. 相关 targeted unit tests 已加入，但尚未由当前执行者本地运行，因此不记录 Passed。
 
-### 下一执行任务：Persistence Gate
+### 下一执行任务：Scheduler Persistence Gate
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py
+uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py tests/unit/test_workflow_scheduler_repository.py
 uv run alembic upgrade heads
 uv run alembic current
 uv run pytest -q
 ```
 
-全部由开发者本地实际通过后，才进入 `workflow_scheduler/repository.py` 的 PostgreSQL 原子 lease、slot 幂等 claim 和 API Contract。Real API Gate 随后覆盖多实例 lease、重复 claim、misfire 与状态转换。
+全部由开发者本地实际通过后，进入 Scheduler API Contract 与 Real API Gate，覆盖多实例 lease、重复 claim、misfire、状态转换和 tenant isolation。
 
 ## 开发纪律
 

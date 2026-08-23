@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Contract-first 已完成结构整理；已进入持久化模型与 Migration 实现，尚未执行本地 Migration Gate，也尚未实现 Durable Scheduler Runtime。**
+> 状态：**Contract-first 已完成结构整理；持久化模型、Migration 与原子仓储第一版已实现，尚未执行本地 Migration / Repository Gate，也尚未实现 Durable Scheduler Runtime。**
 > 评估日期：2026-08-23
 > 优先级：**P1**
 > 产品主题：Durable Scheduler
@@ -128,14 +128,14 @@ Scheduler 功能现在统一收敛到功能子模块：
 backend/app/services/workflow_scheduler/
 ├── __init__.py
 ├── contract.py
+├── repository.py
 └── runtime.py
 ```
 
 - `contract.py`：定义领域状态、misfire、时间、lease、slot 幂等键和可注入 clock；
+- `repository.py`：封装 PostgreSQL 原子 lease / slot 持久化操作；
 - `runtime.py`：承载原有 Scheduled Trigger 轮询器；
 - `__init__.py`：统一公开 Scheduler 领域入口。
-
-对应 Contract Test：`backend/tests/unit/test_workflow_scheduler_contract.py`。
 
 ## 5. 持久化第一版
 
@@ -155,30 +155,30 @@ Migration：`0028_durable_scheduler_persistence`，合并当前两个 Alembic he
 2. `workflow_schedule_slots`：`schedule_slot_key` 唯一约束、计划时间、owner 和 WorkflowExecution 关联；
 3. 状态、misfire、catch-up、lease 配对约束与查询索引。
 
-本轮只实现持久化 Contract，不实现原子 lease repository、worker loop 或新的 API。
+Repository 第一版已经使用数据库原子 UPDATE 实现 lease claim，并使用 PostgreSQL `ON CONFLICT DO NOTHING` 实现 slot 幂等 claim；尚未将其接入 Scheduler worker。
 
-## 6. 下一步：Persistence Gate → Repository / API Contract
+## 6. 下一步：Persistence Gate → API Contract
 
 开发者本地执行：
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py
+uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py tests/unit/test_workflow_scheduler_repository.py
 uv run alembic upgrade heads
 uv run alembic current
 uv run pytest -q
 ```
 
-全部通过后，再实现：
+全部通过后，再实现 Scheduler API Contract 与 Real API Gate：
 
 ```text
-workflow_scheduler/repository.py
-    ↓
-PostgreSQL 原子 lease claim / release
-    ↓
-schedule_slot 幂等 claim
-    ↓
 API Contract
+    ↓
+租约 claim / release HTTP 验证
+    ↓
+schedule_slot 重复 claim 验证
+    ↓
+misfire / 状态 / tenant isolation
     ↓
 Real API Gate
 ```
@@ -234,4 +234,4 @@ Browser E2E（只有存在对应 UI 用户链路时）
 6. Audit / Trace 关联字段确认；
 7. PostgreSQL migration 与 Real API acceptance 场景确认。
 
-> 当前已完成 Contract 与持久化第一版代码，但尚未宣称 Durable Scheduler Runtime 业务能力完成。
+> 当前已完成 Contract、持久化模型与原子仓储第一版代码，但尚未宣称 Durable Scheduler Runtime 业务能力完成。
