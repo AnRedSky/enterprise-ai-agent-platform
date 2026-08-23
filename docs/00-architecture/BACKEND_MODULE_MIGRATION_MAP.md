@@ -48,6 +48,7 @@ backend/app/
 5. **import 必须彻底切换**：所有调用方直接引用新模块；全仓搜索确认旧路径不存在。
 6. **测试跟随迁移**：受影响测试同步修改 import 与模块路径，不通过兼容代码维持旧测试。
 7. **数据库不因目录重构产生 Migration**：只有真实数据库结构变化才允许新增 Alembic Migration。
+8. **功能重复实现检查必须是每个迁移单元的 Gate**：新旧文件、同职责 Service、重复 Provider、重复 Runtime 均必须检查。
 
 ## 4. 一级目录迁移
 
@@ -65,15 +66,7 @@ backend/app/
 | 不存在 | `app/utils/` | 新建并严格限制 | 已建立基础目录 |
 | `app/tools/` | `app/tools/` | 保留技术实现与注册机制 | 待细化 |
 
-## 5. Agent 已完成的彻底迁移
-
-### 原结构
-
-```text
-app/services/agent_registry.py
-```
-
-### 新结构
+## 5. Agent：彻底迁移完成
 
 ```text
 app/services/agent/
@@ -82,23 +75,61 @@ app/services/agent/
 └── repository.py
 ```
 
-职责：
+原 `app/services/agent_registry.py` 与 `app/services/agent/registry.py` 已删除；生产代码直接使用 `app.services.agent`，不存在兼容垫片或双实现。
 
-- `service.py`：Agent 生命周期与版本业务规则；
-- `repository.py`：Agent / AgentVersion 持久化访问；
-- `__init__.py`：领域模块正式入口。
+## 6. Knowledge：本轮彻底迁移
 
-API 已直接使用：
+### 已完成
 
-```python
-from app.services.agent import AgentService
+```text
+app/services/knowledge/
+├── __init__.py
+├── contract.py
+├── registry.py
+├── ingestion.py
+├── retrieval.py
+├── vector_indexing.py
+├── vector_retrieval.py
+├── hybrid.py
+└── hybrid_service.py
 ```
 
-原 `app/services/agent_registry.py` 已删除；原 `app/services/agent/registry.py` 也已删除。
+生产 API 已切换到：
 
-**不存在兼容垫片，不存在双实现。**
+```python
+from app.services.knowledge import (
+    KnowledgeRegistry,
+    KnowledgeIngestionService,
+    KnowledgeVectorIndexingService,
+    KnowledgeRetrievalRouterService,
+    HybridKnowledgeRetrievalService,
+)
+```
 
-## 6. Model
+已删除的旧业务实现：
+
+```text
+app/services/knowledge_ingestion.py
+app/services/knowledge_registry.py
+app/services/knowledge_retrieval.py
+app/services/knowledge_retrieval_contract.py
+app/services/knowledge_vector_indexing.py
+app/services/hybrid_knowledge_retrieval.py
+app/services/hybrid_knowledge_retrieval_service.py
+app/services/vector_knowledge_retrieval.py
+```
+
+### Provider 边界
+
+当前 `embedding_provider.py`、`mock_embedding_provider.py`、`ollama_embedding_provider.py`、`vector_retrieval_provider.py` 仍属于待处理的技术 Provider 迁移单元；它们本轮没有复制到新目录，避免产生重复实现。后续统一迁移至：
+
+```text
+app/infrastructure/providers/
+```
+
+完成 Provider 迁移后，旧 `app/services/*provider*.py` 必须删除。
+
+## 7. Model
 
 ### 当前
 
@@ -129,41 +160,6 @@ app/infrastructure/providers/
 
 必须先建立调用关系，再进行物理迁移；不得通过旧路径垫片完成迁移。
 
-## 7. Knowledge
-
-### 当前
-
-```text
-app/services/embedding_provider.py
-app/services/mock_embedding_provider.py
-app/services/ollama_embedding_provider.py
-app/services/knowledge_ingestion.py
-app/services/knowledge_registry.py
-app/services/knowledge_retrieval.py
-app/services/knowledge_retrieval_contract.py
-app/services/knowledge_vector_indexing.py
-app/services/hybrid_knowledge_retrieval.py
-app/services/hybrid_knowledge_retrieval_service.py
-app/services/vector_knowledge_retrieval.py
-app/services/vector_retrieval_provider.py
-```
-
-### 目标
-
-```text
-app/services/knowledge/
-├── __init__.py
-├── contract.py
-├── ingestion.py
-├── registry.py
-├── retrieval.py
-├── indexing.py
-├── embedding.py
-└── evaluation.py
-```
-
-Provider 技术适配进入 `infrastructure/providers/`；知识领域规则进入 `services/knowledge/`。
-
 ## 8. Memory
 
 ```text
@@ -186,12 +182,6 @@ app/services/workflow_execution.py
 app/services/workflow_governance.py
         ↓
 app/services/workflow/
-├── __init__.py
-├── definition.py
-├── execution.py
-├── governance.py
-├── registry.py
-└── ...
 
 app/runtime/workflow_runtime.py
         ↓
@@ -206,30 +196,11 @@ app/services/workflow_trigger_schedule.py
 app/services/webhook_trigger.py
         ↓
 app/services/trigger/
-├── __init__.py
-├── contract.py
-├── workflow.py
-├── schedule.py
-└── webhook.py
 ```
 
 ## 11. Scheduler
 
-当前：
-
-```text
-app/services/workflow_scheduler/
-├── __init__.py
-├── contract.py
-├── models.py
-├── time.py
-├── lease.py
-├── misfire.py
-├── repository.py
-└── runtime.py
-```
-
-该模块本身已经满足领域模块化要求，因此不采用兼容垫片方式重命名。后续如果从 `workflow_scheduler` 收敛到 `scheduler`，必须一次性完成所有 import、测试和文档迁移，并删除旧目录。
+当前 `app/services/workflow_scheduler/` 已经满足领域模块化要求，暂不重命名。若后续收敛到 `scheduler`，必须一次性完成全部 import、测试、文档迁移并删除旧目录。
 
 ## 12. Organization / Governance / Observability
 
@@ -244,7 +215,7 @@ app/services/governance/
 app/services/observability/
 ```
 
-`session_service.py` 必须基于实际职责确定最终领域，不允许为了目录整齐机械归类。
+最终领域归属必须基于实际职责判断，不得机械归类。
 
 ## 13. Tool
 
@@ -256,28 +227,11 @@ app/services/tool_repository.py
 app/services/tool_runtime_service.py
         ↓
 app/services/tool/
-├── __init__.py
-├── audit.py
-├── observability.py
-├── rbac.py
-├── repository.py
-└── ...
 ```
 
-`app/tools/` 保留 Tool Registry、Schema、HTTP Executor 等技术实现。两者不通过兼容垫片互相转发。
+`app/tools/` 保留 Tool Registry、Schema、HTTP Executor 等技术实现；不得形成第二套 Tool Runtime。
 
 ## 14. Runtime
-
-```text
-app/runtime/agent_runtime.py
-app/runtime/memory_context.py
-app/runtime/model_gateway.py
-app/runtime/openai_provider.py
-app/runtime/provider.py
-app/runtime/workflow_runtime.py
-```
-
-目标：
 
 ```text
 app/runtime/
@@ -288,11 +242,11 @@ app/runtime/
 └── ...
 ```
 
-Provider 技术适配如果属于外部系统连接，则进入 `infrastructure/providers/`；Runtime 只保留执行编排。
+Runtime 只负责执行编排；外部 Provider 技术适配归 `infrastructure/providers/`。
 
 ## 15. API
 
-当前单文件 Router 逐步收敛：
+最终收敛为：
 
 ```text
 app/api/v1/
@@ -307,19 +261,19 @@ app/api/v1/
 └── workflows/
 ```
 
-API URL、HTTP Method、Request/Response Contract 不变。迁移完成后旧单文件 Router 删除，不保留转发 Router。
+API URL、HTTP Method、Request/Response Contract 不变；迁移完成后旧 Router 删除，不保留转发 Router。
 
-## 16. 验收
-
-每个领域迁移完成后必须：
+## 16. 每个迁移单元验收
 
 1. 全仓搜索旧 import 路径，结果为 0；
-2. 确认旧文件已删除；
-3. 确认不存在重复实现；
-4. 执行受影响模块测试；
-5. 执行 Backend Regression；
-6. 必要时执行 Real API / Tenant Safe Real API Gate；
-7. 执行 Alembic `upgrade heads` / `current`，确认目录重构未引入数据库变化；
-8. 更新 Migration Map、PROJECT_STATUS 与相关开发记录。
+2. 旧文件已删除；
+3. 不存在重复实现；
+4. 生产代码只存在一个正式入口；
+5. 受影响测试已切换；
+6. targeted tests；
+7. Backend Regression；
+8. 必要时 Real API / Tenant Safe Real API；
+9. Alembic `upgrade heads` / `current`，确认没有因目录重构产生数据库变化；
+10. 更新 Migration Map、PROJECT_STATUS 与开发记录。
 
-**只有代码、import、测试、文档全部完成，才能把该领域标记为迁移完成。**
+**只有代码、import、测试、重复实现检查、文档全部完成，才能将领域标记为迁移完成。**
