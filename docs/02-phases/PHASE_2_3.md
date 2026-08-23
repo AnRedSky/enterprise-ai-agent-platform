@@ -1,32 +1,18 @@
 # Phase 2.3 — Model Provider Governance
 
-> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D 已实现；2.3-E 已补充真实 HTTP Provider fallback success 测试，Real API acceptance 仍阻塞。**
+> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D / 2.3-E 已实现；2.3-E Real API acceptance 已通过；2.3-F Fallback Policy Enforcement 已实现，待本地验证。**
 
 Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之上建立独立、可测试的 Provider Governance Runtime 能力。
 
-## 2.3-A 首批 Contract
+## 2.3-A Provider Governance Contract — 已实现
 
-### 1. Provider routing strategy
-
-- `explicit_profile`：Runtime 必须明确提供 `model_profile_id`，否则不得隐式挑选 Provider。
-- `organization_default`：仅显式选择该策略时，按 Organization scope、model type、enabled、capability 与 provider allowlist 过滤 default Profile，并以稳定排序产生候选。
-- 禁止按具体 provider/model 名称硬编码路由。
-
-### 2. Fallback eligibility / failure semantics
-
-Fallback 首版仅允许 connectivity、timeout、rate limit、provider 5xx；认证、参数校验、能力不匹配、业务 4xx 等错误不得自动 fallback。最大尝试次数有上限，默认 `2`。
-
-### 3. Model whitelist / capability constraints
-
-候选必须同时满足 organization scope、enabled、requested `model_type`、required capabilities 与 optional provider allowlist。
-
-### 4. Cost accounting
-
-成本建立在明确 usage unit 与 versioned pricing source 上，支持 input token、output token、embedding token、request；pricing source 与 `pricing_version` 必须显式标识。
-
-### 5. Usage accounting / audit identity
-
-每次模型调用的 usage identity 至少包含 `organization_id + provider_id + profile_id + model_type + request_id + trace_id + outcome`。Secret、credential、API key 不属于 usage/audit identity。
+- `explicit_profile` / `organization_default` routing strategy；
+- fallback eligible reasons：connectivity / timeout / rate limit / provider 5xx；
+- bounded fallback attempts，最大 2，默认 2；
+- model type / capability / provider allowlist constraints；
+- cost units + pricing source + pricing version；
+- usage identity：organization/provider/profile/model_type/request/trace/outcome；
+- Secret 不进入 usage/audit identity。
 
 ## 2.3-B Backend Domain + API Contract — 已实现
 
@@ -43,14 +29,6 @@ Fallback 首版仅允许 connectivity、timeout、rate limit、provider 5xx；�
 
 ## 2.3-C Runtime Governance Invocation Service + WorkflowRuntime 接入 — 已实现
 
-已完成：
-
-- `backend/app/services/runtime_model_governance.py`
-- `backend/app/runtime/workflow_runtime.py`
-- `backend/tests/unit/test_runtime_model_governance.py`
-- `backend/tests/unit/test_workflow_runtime.py`
-- `backend/tests/api_real/test_runtime_model_governance_api.py`
-
 Runtime 主链路：
 
 1. 读取已发布 `AgentVersion.model_profile_id`；
@@ -59,7 +37,7 @@ Runtime 主链路：
 4. organization scope 从 Workflow execution tenant 对应的 active Organization 获取；
 5. 通过 `RuntimeModelGovernanceService` 解析真实 PostgreSQL Provider/Profile；
 6. 调用 `ModelGateway` 时显式传入 governed profile/provider；
-7. fallback 仅接受 2.3-A 定义的 connectivity / timeout / rate limit / provider 5xx；
+7. fallback 仅接受 2.3-A 定义的 failure semantics；
 8. 不允许静默 Mock fallback。
 
 ## 2.3-D Runtime Usage / Trace Identity — 已实现基础能力
@@ -71,44 +49,47 @@ Runtime 主链路：
 - fallback failure 额外记录 `fallback_reason`；
 - provider 成功时可记录 prompt/completion/total token usage；
 - identity 记录通过 Workflow Trace 落库，不写入 endpoint/credential_ref；
-- `RuntimeModelGovernanceService` 通过 attempt callback 将每次 provider attempt 暴露给 Runtime governance trace。
+- Runtime governance attempt callback 将每次 provider attempt 暴露给 Runtime trace。
 
-当前 Real API 场景覆盖 governed Profile + connectivity/timeout failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
+## 2.3-E Governed fallback success + deterministic multi-provider — 已验收
 
-## 2.3-E Governed fallback success path + deterministic multi-provider acceptance — 测试已实现
+Real API 场景覆盖：
 
-已新增 Real API 场景：
+- 进程内真实 HTTP OpenAI-compatible fixture server；
+- Backend 通过真实 `OpenAICompatibleProvider` HTTP 调用 fixture，不使用 `MockProvider` 伪造 governed success；
+- 第一候选返回 `503`，验证 `provider_5xx` fallback eligibility；
+- 第二候选返回 `200` + usage，验证 bounded fallback success；
+- 验证 deterministic candidate ordering、独立 request identity、统一 execution trace identity、usage identity 与 Secret boundary。
 
-- 测试进程内启动真实 HTTP OpenAI-compatible fixture server；
-- Backend 通过真实 `OpenAICompatibleProvider` HTTP 调用该 fixture，不使用 `MockProvider` 伪造 governed success；
-- 第一候选按 deterministic provider name 顺序返回 `503`；
-- 第二候选返回 `200` + prompt/completion/total token usage；
-- 验证 bounded fallback、`provider_5xx` fallback reason、独立 request identity、统一 execution trace identity、usage identity 与 Secret boundary。
-
-该测试实现尚未由开发者本地重新执行，因此不能标记为 acceptance passed。
-
-## 当前验证状态
-
-开发者最新实际执行结果：
+开发者实际执行：
 
 ```text
-Backend default regression: 346 passed, 34 deselected
-Real API Gate: 33 passed, 1 failed
-Failure: test_runtime_uses_published_model_profile_and_records_usage_identity_without_mock_fallback
-Expected fallback_reason=connectivity; actual fallback_reason=timeout
+Targeted runtime governance tests: 30 passed
+Backend default regression: 348 passed, 34 deselected
+Alembic upgrade head: passed
+Tenant Safe Real API Gate: 34 passed
 ```
 
-该失败已经分析为测试契约与实际 timeout 分类不一致。提交 `43f9e683d00d936db94f249b4e587654e9517914` 已将断言从 `connectivity` 修正为 `timeout`；对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-provider-timeout-fallback-reason.md`。修复提交后尚未由开发者重新执行完整 Tenant Safe Real API Gate，因此仍不得标记为 Passed。
+因此 2.3-E Real API acceptance 已关闭。
 
-此前 Real API bootstrap 的 Organization/membership 与 governed mock fixture 边界均已完成修复：bootstrap 先建立或复用 owner tenant Organization，恢复 owner membership，并通过真实 HTTP API 创建 governed `mock` Provider/Profile 后绑定 fixture Agent。
+## 2.3-F Fallback Policy Enforcement — 已实现，待本地验证
+
+此前 `FallbackPolicy` 已定义 `enabled`、`max_attempts`、`eligible_reasons`，但 Runtime invocation 实际执行只根据异常类型决定是否继续 fallback，导致 Contract 与 Runtime policy 存在脱节。
+
+`dd037f8` 已修复：
+
+- `max_attempts` 上限固定为 2；
+- Runtime 可显式接收 `FallbackPolicy`；
+- `enabled=false` 时失败立即返回，不进行 fallback；
+- 只有 `eligible_reasons` 中的失败原因允许继续尝试；
+- 调用方不能通过 `max_attempts` 绕过 policy 上限；
+- 新增对应 unit tests，覆盖上限、eligible reasons 与 attempt limit。
+
+该提交尚未由开发者本地执行，因此当前不能标记 2.3-F Passed。
 
 ## 下一执行任务
 
-**2.3-E Acceptance Gate**：拉取最新 `main`（至少包含 `43f9e683` 及错误记录提交），重新执行修复后的 Tenant Safe Real API Gate；若继续失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
-
-若后续引入持久化 routing policy / pricing / usage record，必须先新增 Alembic Migration，再实现依赖该结构的业务代码。
-
-## Gate 纪律
+**2.3-F Acceptance Gate**：
 
 ```powershell
 cd backend
@@ -118,4 +99,4 @@ uv run alembic upgrade head
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
 ```
 
-上述命令必须由开发者本地实际执行；未执行的结果不得标记为 Passed。
+全部通过后，进入 **2.3-G Cost / Usage Accounting**。若需要新增 usage/pricing 持久化结构，必须先新增 Alembic Migration，再实现依赖该结构的业务代码。

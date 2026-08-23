@@ -6,55 +6,29 @@
 - Branch: `main`
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**进行中**。
-- 2.3-A Provider Governance Contract：**已实现**。
+- 2.3-A Provider Governance Contract：**已实现并进入运行时强制执行**。
 - 2.3-B Backend Domain + API Contract：**已实现**。
-- 2.3-C Runtime Governance Invocation Service：**已实现并接入 WorkflowRuntime 主链路**。
-- 2.3-D Runtime Usage / Trace Identity：**已实现基础 trace identity，待完整 acceptance**。
-- 2.3-E Governed fallback success path：**已补充真实 HTTP Provider fixture 测试，待本地 Real API 验证**。
+- 2.3-C Runtime Governance Invocation：**已实现并接入 WorkflowRuntime**。
+- 2.3-D Runtime Usage / Trace Identity：**已实现基础能力**。
+- 2.3-E Governed fallback success + deterministic multi-provider：**已通过开发者本地 Real API Gate**。
+- 2.3-F Fallback Policy Enforcement：**已实现，待本地 targeted regression 验证**。
 
-## Phase 2.2 最终验证证据
+## 本轮实际验收证据
 
-开发者实际执行并反馈：
+开发者在最新 `main`（`d0b7a2e`）实际执行并反馈：
 
 ```text
-Backend Real API Gate: 32 passed
-Frontend Regression Gate: 18 test files / 75 tests passed; vue-tsc + Vite build passed
-Model Provider/Profile Browser E2E: 2 passed
+Targeted runtime governance tests: 30 passed
+Backend default regression: 348 passed, 34 deselected
+Alembic upgrade head: passed
+Tenant Safe Real API Gate: 34 passed
 ```
 
-因此 **E-4 Passed / Phase 2.2 Closed**。不得继续向 2.2 塞入新的 Provider routing / fallback / cost / usage 功能。
+因此 2.3-E 的 Real API acceptance blocker 已关闭。此前 `fallback_reason=connectivity` / actual `timeout` 不一致已修复，并进一步补齐了 HTTPX write/pool timeout 分类测试。
 
-## Phase 2.3 当前实现
+注意：上述结果对应 `d0b7a2e`。后续提交 `dd037f8` 新增了 FallbackPolicy 强制执行与对应单元测试，因此该新变更尚未由开发者本地执行，不能把它计入当前 Passed 数字。
 
-### 2.3-A Provider Governance Contract
-
-已提交可执行 Contract：
-
-- `explicit_profile` / `organization_default` routing strategy；
-- fallback eligible reasons：connectivity / timeout / rate limit / provider 5xx；
-- bounded fallback attempts，默认 2；
-- model type / capability / provider allowlist constraints；
-- cost units + pricing source + pricing version；
-- usage identity：organization/provider/profile/model_type/request/trace/outcome；
-- Secret 不进入 usage/audit identity。
-
-### 2.3-B Backend Domain + API Contract
-
-已新增真实数据库 Provider/Profile 候选解析接口：
-
-`POST /api/v1/model-providers/routing/resolve`
-
-该接口使用 PostgreSQL Provider/Profile 数据，强制 Organization membership scope，并不返回 endpoint、credential_ref 等敏感连接信息。
-
-### 2.3-C Runtime Governance Invocation Service + WorkflowRuntime 接入
-
-已实现：
-
-- `backend/app/services/runtime_model_governance.py`
-- `backend/app/runtime/workflow_runtime.py`
-- `backend/tests/unit/test_runtime_model_governance.py`
-- `backend/tests/unit/test_workflow_runtime.py`
-- `backend/tests/api_real/test_runtime_model_governance_api.py`
+## 当前 Runtime Governance 实现
 
 Runtime 主链路现在：
 
@@ -64,56 +38,32 @@ Runtime 主链路现在：
 4. organization scope 从 Workflow execution tenant 对应的 active Organization 获取；
 5. 通过 `RuntimeModelGovernanceService` 解析真实 PostgreSQL Provider/Profile；
 6. 调用 `ModelGateway` 时显式传入 governed profile/provider；
-7. fallback 仅接受 2.3-A 定义的 connectivity / timeout / rate limit / provider 5xx；
-8. 不允许静默 Mock fallback。
+7. fallback 只接受治理 Contract 定义的 connectivity / timeout / rate limit / provider 5xx；
+8. fallback attempt 数量受 `FallbackPolicy.max_attempts` 上限约束，当前最大值为 2；
+9. `FallbackPolicy.enabled` 与 `eligible_reasons` 现在实际控制 Runtime fallback，而不是仅停留在 Contract；
+10. 不允许静默 Mock fallback；
+11. 每次 provider attempt 生成独立 `request_id`，并通过 Workflow Trace 记录 usage identity。
 
-### 2.3-D Runtime Usage / Trace Identity
+## 当前执行任务
 
-已实现：
+**2.3-F Fallback Policy Enforcement**：将 2.3-A 中已定义的 fallback policy 从数据结构提升为 Runtime 强制规则，确保 enabled、eligible reasons、最大 attempts 在执行层真实生效。
 
-- 每次 governed provider attempt 生成独立 `request_id`；
-- trace identity 写入 `organization_id/provider_id/profile_id/model_type/request_id/trace_id/outcome`；
-- fallback failure 额外记录 `fallback_reason`；
-- provider 成功时可记录 prompt/completion/total token usage；
-- identity 记录通过 Workflow Trace 落库，不写入 endpoint/credential_ref；
-- `RuntimeModelGovernanceService` 通过 attempt callback 将每次 provider attempt 暴露给 Runtime governance trace。
+已提交：`dd037f8` (`fix(runtime): enforce governed fallback policy`)
 
-当前 Real API 场景覆盖 governed Profile + connectivity/timeout failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
+### 下一步
 
-### 2.3-E Governed fallback success path + deterministic multi-provider acceptance
-
-已新增 Real API 测试：
-
-- `backend/tests/api_real/test_runtime_model_governance_api.py`
-- 本地测试 HTTP server 使用真实 `OpenAICompatibleProvider` 协议，不使用 `MockProvider` 伪造 governed success；
-- 第一候选真实 HTTP 返回 `503`，验证 `provider_5xx` fallback eligibility；
-- 第二候选返回 `200`，验证 bounded fallback success；
-- 验证 candidate deterministic ordering、独立 request_id、同一 execution trace_id、成功 usage identity 与 Secret boundary。
-
-## 当前验证状态
-
-开发者本轮实际执行并反馈：
-
-```text
-Backend default regression: 346 passed, 34 deselected
-Real API Gate: 33 passed, 1 failed
-Failure: test_runtime_uses_published_model_profile_and_records_usage_identity_without_mock_fallback
-Expected fallback_reason=connectivity; actual fallback_reason=timeout
-```
-
-此前 Real API bootstrap 的 tenant/membership 与 governed mock fixture 边界已完成修复。当前阻塞点已收敛为测试断言与 timeout 分类契约不一致；提交 `43f9e683d00d936db94f249b4e587654e9517914` 已将断言调整为 `timeout`。该提交之后尚未由开发者重新执行完整 Real API Gate，因此不得标记为 Passed。
-
-对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-provider-timeout-fallback-reason.md`。
-
-## 下一执行任务
-
-**2.3-E Acceptance Gate**：拉取最新 `main`（至少包含 `43f9e683` 及其后的错误记录提交），重新执行 Tenant Safe Real API Gate；若失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
+1. 开发者本地执行 2.3-F targeted tests；
+2. 执行 Backend default regression；
+3. 执行 Migration/head verification；
+4. 执行 Tenant Safe Real API Gate；
+5. 若全部通过，更新 Phase 2.3 Acceptance 并进入下一项尚未实现的 Cost / Usage accounting 能力；
+6. Cost / Usage 若需要持久化，必须先新增 Alembic Migration，再实现依赖数据库结构的业务代码。
 
 ## 开发纪律
 
 - 远端 `main` 是唯一开发基线；不创建功能分支。
 - 未实际执行的测试不得记录为 Passed。
-- Runtime 数据继续使用数据库；JSON/JSONL 仅用于版本化 evaluation dataset/result/baseline。
+- Runtime 数据继续使用 PostgreSQL；JSON/JSONL 仅用于版本化 evaluation dataset/result/baseline。
 - 新业务代码不得硬编码具体模型名称。
 - Secret 不进入 Git、数据库明文、报告或 trace/audit。
 - 代码与 Phase/Acceptance/Error/Status 必须保持可追溯。
