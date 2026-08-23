@@ -1,6 +1,6 @@
 # Phase 2.3 — Model Provider Governance
 
-> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D / 2.3-E 已实现；2.3-E Real API acceptance 已通过；2.3-F Fallback Policy Enforcement 已实现，待本地验证。**
+> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D / 2.3-E / 2.3-F 已实现并完成对应验收；2.3-G Cost / Usage Accounting 已实现第一版，待本地验证。**
 
 Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之上建立独立、可测试的 Provider Governance Runtime 能力。
 
@@ -61,22 +61,18 @@ Real API 场景覆盖：
 - 第二候选返回 `200` + usage，验证 bounded fallback success；
 - 验证 deterministic candidate ordering、独立 request identity、统一 execution trace identity、usage identity 与 Secret boundary。
 
-开发者实际执行：
+开发者实际执行并通过：
 
 ```text
-Targeted runtime governance tests: 30 passed
-Backend default regression: 348 passed, 34 deselected
+Targeted runtime governance tests: 33 passed
+Backend default regression: 351 passed, 34 deselected
 Alembic upgrade head: passed
 Tenant Safe Real API Gate: 34 passed
 ```
 
-因此 2.3-E Real API acceptance 已关闭。
+## 2.3-F Fallback Policy Enforcement — 已验收
 
-## 2.3-F Fallback Policy Enforcement — 已实现，待本地验证
-
-此前 `FallbackPolicy` 已定义 `enabled`、`max_attempts`、`eligible_reasons`，但 Runtime invocation 实际执行只根据异常类型决定是否继续 fallback，导致 Contract 与 Runtime policy 存在脱节。
-
-`dd037f8` 已修复：
+`dd037f8` 已将 Contract 中的 fallback policy 提升为 Runtime 强制规则：
 
 - `max_attempts` 上限固定为 2；
 - Runtime 可显式接收 `FallbackPolicy`；
@@ -85,18 +81,72 @@ Tenant Safe Real API Gate: 34 passed
 - 调用方不能通过 `max_attempts` 绕过 policy 上限；
 - 新增对应 unit tests，覆盖上限、eligible reasons 与 attempt limit。
 
-该提交尚未由开发者本地执行，因此当前不能标记 2.3-F Passed。
+开发者随后在 `843e19d` 实际执行：
+
+```text
+Targeted runtime governance tests: 33 passed
+Backend default regression: 351 passed, 34 deselected
+Alembic upgrade head: passed
+Tenant Safe Real API Gate: 34 passed
+```
+
+因此 2.3-F acceptance 已关闭。
+
+## 2.3-G Cost / Usage Accounting — 已实现，待本地验证
+
+本任务把已有 Contract 的 cost/usage 定义真正落到 PostgreSQL，而不是继续只记录在 trace JSON 中。
+
+### 持久化
+
+新增 `model_usage_records`，每一次 governed provider attempt 一条记录：
+
+- organization / tenant / execution / workflow / node scope；
+- provider / profile / model identity；
+- request / trace / outcome / fallback reason；
+- prompt / completion / total tokens；
+- request / input token / output token usage units；
+- pricing source / version；
+- input/output/request/total cost。
+
+### Pricing contract
+
+Model Profile 的 `parameters.pricing` 支持：
+
+```json
+{
+  "pricing_source": "provider_pricing",
+  "pricing_version": "fixture-v1",
+  "input_token_per_1k": 0.002,
+  "output_token_per_1k": 0.004,
+  "request": 0.001
+}
+```
+
+token cost 按每 1,000 tokens 计算；request cost 按 provider attempt 计算。没有配置 pricing 时仍记录 usage/request identity，但成本为 0，并保留 `pricing_version=unconfigured`，禁止伪造计费结果。
+
+### Query API
+
+新增：`GET /api/v1/usage/model`
+
+- 必须属于 active organization member；
+- 支持 `organization_id`、可选 `execution_id`、offset/limit；
+- 返回 durable usage records 与 organization scoped `total_cost`；
+- 不返回 endpoint / credential_ref / Secret。
+
+### 当前本地验证状态
+
+代码、Migration、unit、API contract 与 Real API tests 已提交；**本轮新增 2.3-G 代码尚未由开发者本地执行，因此当前不得标记 Passed。**
 
 ## 下一执行任务
 
-**2.3-F Acceptance Gate**：
+**2.3-G Acceptance Gate**：
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_model_provider_governance_contract.py tests/api_contract/test_api_model_provider_governance.py tests/unit/test_runtime_model_governance.py tests/unit/test_workflow_runtime.py
+uv run pytest -q tests/unit/test_usage_accounting.py tests/api_contract/test_api_usage_accounting.py tests/unit/test_model_provider_governance_contract.py tests/api_contract/test_api_model_provider_governance.py tests/unit/test_runtime_model_governance.py tests/unit/test_workflow_runtime.py
 uv run pytest -q
 uv run alembic upgrade head
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
 ```
 
-全部通过后，进入 **2.3-G Cost / Usage Accounting**。若需要新增 usage/pricing 持久化结构，必须先新增 Alembic Migration，再实现依赖该结构的业务代码。
+全部通过后关闭 2.3-G，并重新评估 Phase 2.3 是否还有明确剩余能力；不要在未完成 Provider Governance acceptance 前切换到候选 Phase 2.4。
