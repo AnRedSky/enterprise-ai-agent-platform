@@ -11,6 +11,7 @@ from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, Ve
 async def test_pgvector_evaluation_upsert_uses_variable_dimension_storage():
     db = MagicMock()
     db.execute = AsyncMock()
+    db.commit = AsyncMock()
     provider = PgVectorRetrievalProvider(db, embedding_dimension=1024)
 
     await provider.upsert(
@@ -31,6 +32,7 @@ async def test_pgvector_evaluation_upsert_uses_variable_dimension_storage():
     assert "retrieval_evaluation_vectors" in sql
     assert "embedding_dimension" in sql
     assert "knowledge_chunks" not in sql
+    db.commit.assert_awaited_once()
 
 
 @pytest.mark.asyncio
