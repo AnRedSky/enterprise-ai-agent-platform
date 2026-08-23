@@ -19,7 +19,7 @@ from app.api.webhooks import router as webhooks_router
 from app.api.workflow_executions import router as workflow_executions_router
 from app.api.workflows import router as workflows_router
 from app.core.config import settings
-from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
+from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 
 @asynccontextmanager
@@ -39,13 +39,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(agents_router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(chat_router, prefix="/api/v1/agents", tags=["chat"])

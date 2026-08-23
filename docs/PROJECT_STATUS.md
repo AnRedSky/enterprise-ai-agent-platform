@@ -7,8 +7,8 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.3-A 至 2.3-G：**均已完成对应本地验收**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成领域 Contract，下一步进入模块化 Backend Domain + API Contract 与 PostgreSQL Migration 设计。**
-- 下一正式工作：**完成 Scheduler Contract Gate 后，创建 Scheduler 功能子模块的持久化模型与 API Contract；不在公共 service 目录继续新增零散 Scheduler 文件。**
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成领域 Contract、模块化整理与持久化模型第一版设计，尚未完成本地 Migration Gate。**
+- 下一正式工作：**执行 Scheduler Contract + Persistence targeted tests、Alembic heads upgrade 与数据库结构验收，再进入 repository 原子 lease / API Contract。**
 
 ## Phase 2.3 最终本地验收结果
 
@@ -66,31 +66,27 @@ Phase 2.4 首版只解决：持久化调度、`next_run_at`、多实例 lease、
 
 暂不引入 MQ/Kafka、Temporal、独立 Scheduler 服务、跨区域调度、复杂 DAG 或通用任务平台。租约优先采用 PostgreSQL 原子更新/行锁，只有真实吞吐或可靠性数据证明不足时才单独评估基础设施升级。
 
-## Phase 2.4 Contract-first 当前进度
+## Phase 2.4 当前进度
 
-已完成第一步纯领域 Contract 实现，并已按模块化规则整理为 `backend/app/services/workflow_scheduler/` 功能子模块：
+已完成：
 
-- `contract.py`：定义状态、misfire、时间、lease、slot 幂等键与可注入 clock 边界；
-- `__init__.py`：对外暴露 Scheduler 领域 Contract；
-- `backend/tests/unit/test_workflow_scheduler_contract.py`：覆盖 UTC、IANA timezone、DST、lease、misfire、状态与幂等边界；
-- 当前实现不访问 PostgreSQL、不创建 WorkflowExecution、不启动 scheduler worker，因此没有越过业务 Runtime Gate。
+1. `backend/app/services/workflow_scheduler/contract.py`：纯领域 Contract；
+2. `backend/app/services/workflow_scheduler/runtime.py`：既有 Scheduled Trigger 轮询器迁移，保持历史行为兼容；
+3. `backend/app/models/workflow_scheduler/schedule.py`：新增 `WorkflowSchedule` 与 `WorkflowScheduleSlot` 持久化模型；
+4. `0028_durable_scheduler_persistence`：合并当前两个 Alembic heads，创建调度状态与槽位幂等表；
+5. 相关 targeted unit tests 已加入，但尚未由当前执行者本地运行，因此不记录 Passed。
 
-## Phase 2.4 下一执行任务
+### 下一执行任务：Persistence Gate
 
-下一步进入 **Backend Domain + API Contract / Migration 设计**，但必须先完成 Contract Gate 的本地实际验证。设计必须保持 Scheduler 功能子模块边界：
-
-```text
-backend/app/services/workflow_scheduler/
-├── contract.py
-├── service.py
-├── repository.py
-├── schemas.py
-└── api.py（若最终采用 Router 子包）
+```powershell
+cd backend
+uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py
+uv run alembic upgrade heads
+uv run alembic current
+uv run pytest -q
 ```
 
-数据库模型可进入 `backend/app/models/workflow_scheduler/`；Migration 保持 Alembic 标准目录，但 migration 说明使用中文。
-
-首个持久化迭代只覆盖：调度字段、`schedule_slot_key` 唯一约束、lease 字段、状态字段及 Workflow/Trigger 外键；暂不实现 worker loop 和真实 WorkflowExecution 创建。
+全部由开发者本地实际通过后，才进入 `workflow_scheduler/repository.py` 的 PostgreSQL 原子 lease、slot 幂等 claim 和 API Contract。Real API Gate 随后覆盖多实例 lease、重复 claim、misfire 与状态转换。
 
 ## 开发纪律
 

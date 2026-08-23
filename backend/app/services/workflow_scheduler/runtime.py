@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.dependencies.db import SessionLocal
-from app.models.execution import Execution  # noqa: F401 - register legacy execution table for AuditLog FK metadata
+from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外键元数据
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.workflow_trigger import WorkflowTriggerService
@@ -17,12 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ScheduledTriggerScheduler:
-    """DB-backed scheduler for interval-based Workflow Triggers.
-
-    Cross-worker convergence is owned by the database unique constraint on
-    (tenant_id, idempotency_key). Each worker attempts the same durable claim,
-    and only the worker whose INSERT returns a row is counted as dispatched.
-    """
+    """现有 Scheduled Trigger 的数据库轮询调度器。"""
 
     DEFAULT_RECOVERY_SLOTS = 2
     MAX_RECOVERY_SLOTS = 5
@@ -85,27 +80,18 @@ class ScheduledTriggerScheduler:
         current_slot = cls.interval_slot(now, interval_seconds)
         if slot == current_slot:
             return False
-
-        # A newly-created trigger owns the slot in which it was created. If the
-        # scheduler crosses the interval boundary before its first poll, that
-        # creation slot must still be treated as a normal scheduled dispatch,
-        # not as recovery. Historical test clocks are intentionally ignored when
-        # they are earlier than the persisted creation timestamp.
+        # 新建 Trigger 在创建时所在槽位视为正常首次调度，不作为历史恢复槽位。
         if trigger_created_at is not None:
             created_at = trigger_created_at.replace(tzinfo=UTC) if trigger_created_at.tzinfo is None else trigger_created_at.astimezone(UTC)
             if now.astimezone(UTC) >= created_at and slot == cls.interval_slot(created_at, interval_seconds):
                 return False
-
         return True
 
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
-        """Dispatch enabled scheduled triggers for the bounded recovery window."""
+        """在受控恢复窗口内分发已启用的 Scheduled Trigger。"""
         now = now or datetime.now(UTC)
         counters = {"eligible": 0, "dispatched": 0, "skipped": 0, "failed": 0, "recovered": 0, "contention": 0}
-
-        # Discover only stable primary keys in one short-lived session. Each
-        # trigger is then processed in its own session so a rollback cannot
-        # expire ORM instances that a later candidate would access implicitly.
+        # 先只读取稳定主键，再让每个 Trigger 使用独立会话处理，避免回滚影响后续候选对象。
         async with SessionLocal() as discovery_db:
             result = await discovery_db.execute(
                 select(WorkflowTrigger.id)
@@ -143,18 +129,11 @@ class ScheduledTriggerScheduler:
                     trigger, workflow = candidate
                     workflow_id_text = str(workflow.id)
                     counters["eligible"] += 1
-
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
                     service = WorkflowTriggerService(db)
-                    current_slot = self.interval_slot(now, config["interval_seconds"])
                     for slot in self.recovery_slots(now, config["interval_seconds"]):
                         idempotency_key = self.slot_idempotency_key(trigger.id, slot)
-                        recovery = self.is_recovery_slot(
-                            now,
-                            slot,
-                            config["interval_seconds"],
-                            trigger.created_at,
-                        )
+                        recovery = self.is_recovery_slot(now, slot, config["interval_seconds"], trigger.created_at)
                         try:
                             _, created = await service.invoke_scheduled(
                                 workflow=workflow,
@@ -166,10 +145,7 @@ class ScheduledTriggerScheduler:
                                 return_created=True,
                             )
                         except HTTPException as exc:
-                            if self.is_concurrent_runtime_claim(exc):
-                                counters["contention"] += 1
-                                continue
-                            if self.is_scheduled_claim_contention(exc):
+                            if self.is_concurrent_runtime_claim(exc) or self.is_scheduled_claim_contention(exc):
                                 counters["contention"] += 1
                                 continue
                             raise

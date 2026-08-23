@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Contract-first 已完成结构整理；下一步进入 Backend Domain + API Contract 与 PostgreSQL Migration 设计，尚未实现 Scheduler Runtime worker。**
+> 状态：**Contract-first 已完成结构整理；已进入持久化模型与 Migration 实现，尚未执行本地 Migration Gate，也尚未实现 Durable Scheduler Runtime。**
 > 评估日期：2026-08-23
 > 优先级：**P1**
 > 产品主题：Durable Scheduler
@@ -120,51 +120,72 @@ request_id / trace_id（进入 Runtime 后）
 
 Scheduler 本身不得记录 Secret；日志与 Audit 不得泄露 credential、token 或 endpoint 敏感凭据。
 
-## 4. Contract-first 当前实现
+## 4. 模块化 Contract 与运行时整理
 
-已新增纯领域 Contract，并按功能子模块包组织：`backend/app/services/workflow_scheduler/contract.py`。`__init__.py` 负责模块公共导出，避免 Scheduler 领域代码继续散落到 `app/services/`。
-
-当前 Contract 已覆盖：
-
-1. `enabled / paused / disabled` 状态语义；
-2. IANA timezone 校验；
-3. `next_run_at / last_run_at / lease_expires_at / updated_at` 必须使用 UTC；
-4. 可注入 `SchedulerClock` 协议；
-5. `schedule_slot_key` 稳定幂等键；
-6. lease 未过期不可抢占、过期可抢占的纯判断；
-7. `skip / fire_once / catch_up` 三类 misfire 决策；
-8. 夏令时歧义选择第一次出现时间，不存在时间直接拒绝；
-9. lease owner 与 lease expiry 成对约束。
-
-对应 Contract Test：`backend/tests/unit/test_workflow_scheduler_contract.py`。
-
-## 5. 下一步：Backend Domain + API Contract / Migration 设计
-
-在 Contract Gate 本地验证通过后，创建 Scheduler 功能子模块的持久化模型与 API Contract：
+Scheduler 功能现在统一收敛到功能子模块：
 
 ```text
 backend/app/services/workflow_scheduler/
+├── __init__.py
 ├── contract.py
-├── service.py
-├── repository.py
-├── schemas.py
-└── api.py（若最终采用 Router 子包）
+└── runtime.py
+```
+
+- `contract.py`：定义领域状态、misfire、时间、lease、slot 幂等键和可注入 clock；
+- `runtime.py`：承载原有 Scheduled Trigger 轮询器；
+- `__init__.py`：统一公开 Scheduler 领域入口。
+
+对应 Contract Test：`backend/tests/unit/test_workflow_scheduler_contract.py`。
+
+## 5. 持久化第一版
+
+新增模块化模型：
+
+```text
 backend/app/models/workflow_scheduler/
+├── __init__.py
 └── schedule.py
 ```
 
-首个 Migration 只负责持久化 Contract，不实现 worker loop：
+`WorkflowSchedule` 保存一个 Scheduled Trigger 的 durable 状态；`WorkflowScheduleSlot` 保存最终调度幂等边界。该设计不引入通用 Job/Task 产品概念，也不改变现有 Workflow Trigger API。
 
-- 调度字段与默认值；
-- `schedule_slot_key` 唯一约束；
-- lease owner / expiry；
-- `enabled / paused / disabled` 状态；
-- Workflow / Trigger 外键；
-- tenant scope 与必要索引。
+Migration：`0028_durable_scheduler_persistence`，合并当前两个 Alembic heads，创建：
 
-Migration 完成后再增加 repository 的原子 lease 操作和 API Contract tests。
+1. `workflow_schedules`：调度状态、UTC 时间、lease、misfire、tenant/workflow/trigger 关系；
+2. `workflow_schedule_slots`：`schedule_slot_key` 唯一约束、计划时间、owner 和 WorkflowExecution 关联；
+3. 状态、misfire、catch-up、lease 配对约束与查询索引。
 
-## 6. 推荐实现顺序
+本轮只实现持久化 Contract，不实现原子 lease repository、worker loop 或新的 API。
+
+## 6. 下一步：Persistence Gate → Repository / API Contract
+
+开发者本地执行：
+
+```powershell
+cd backend
+uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py
+uv run alembic upgrade heads
+uv run alembic current
+uv run pytest -q
+```
+
+全部通过后，再实现：
+
+```text
+workflow_scheduler/repository.py
+    ↓
+PostgreSQL 原子 lease claim / release
+    ↓
+schedule_slot 幂等 claim
+    ↓
+API Contract
+    ↓
+Real API Gate
+```
+
+上述测试结果必须以开发者本地实际执行结果为准，当前未执行，因此不记录 Passed。
+
+## 7. 推荐实现顺序
 
 ```text
 Phase 2.4 Contract Gate
@@ -188,7 +209,7 @@ Frontend API / UI（只有存在明确用户操作范围时）
 Browser E2E（只有存在对应 UI 用户链路时）
 ```
 
-## 7. 暂不纳入范围
+## 8. 暂不纳入范围
 
 以下内容保持候选状态，不因为 Phase 2.4 自动进入开发：
 
@@ -201,9 +222,9 @@ Browser E2E（只有存在对应 UI 用户链路时）
 - Multi-Agent
 - Marketplace
 
-## 8. 进入业务代码 Gate
+## 9. 进入业务代码 Gate
 
-只有以下条件全部确认，才允许进入 Scheduler Runtime：
+只有以下条件全部确认，才允许进入 Durable Scheduler Runtime：
 
 1. Contract 字段与状态语义确认；
 2. `next_run_at` / timezone / clock 语义确认；
@@ -213,4 +234,4 @@ Browser E2E（只有存在对应 UI 用户链路时）
 6. Audit / Trace 关联字段确认；
 7. PostgreSQL migration 与 Real API acceptance 场景确认。
 
-> 当前已越过“是否进入 Contract 实现”的决策门，但尚未宣称 Scheduler Runtime 业务能力完成。
+> 当前已完成 Contract 与持久化第一版代码，但尚未宣称 Durable Scheduler Runtime 业务能力完成。
