@@ -1,11 +1,18 @@
-from uuid import UUID, uuid4
+"""Runtime HTTP 契约测试。
+
+模块职责：验证 Runtime API 的鉴权、所有者范围及查询参数转发契约。
+边界：只验证 API Contract，不连接真实数据库或外部 Provider。
+关键依赖：FastAPI TestClient、Canonical 数据库依赖与 Runtime 查询服务。
+"""
+
+from uuid import uuid4
 
 import pytest
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_db
 from app.api.runtime import _runtime_claims
+from app.dependencies.db import get_db
 from app.main import app
 from app.schemas.runtime import ExecutionItem
 
