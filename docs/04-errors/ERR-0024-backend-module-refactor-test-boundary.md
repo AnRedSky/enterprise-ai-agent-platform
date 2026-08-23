@@ -11,7 +11,8 @@
 - 模块化 Gate 在开发者本地还发现多个 Embedding / Knowledge 验证脚本存在旧 Provider import 路径；
 - 修复后完整 pytest 已消除业务测试中的两个 `AsyncMock` 未等待警告，并移除当前 `pytest-asyncio` 版本不支持的未知配置项；
 - 上述旧 Provider 路径处理后，模块化 Gate 又发现 `scripts/test_ollama_embedding.py` 引用已删除的 `app.services.ollama_embedding_provider`；
-- Ollama 路径处理后，模块化 Gate 继续发现 `scripts/dev/validate_pgvector.py` 引用已删除的 `app.services.vector_retrieval_provider`。
+- Ollama 路径处理后，模块化 Gate 继续发现 `scripts/dev/validate_pgvector.py` 引用已删除的 `app.services.vector_retrieval_provider`；
+- 先前 Scheduler PostgreSQL Integration 在 Windows Proactor 环境中出现 `Event loop is closed`，根因是项目唯一 SQLAlchemy AsyncEngine 的连接池跨 pytest-asyncio 函数级事件循环复用了绑定旧 loop 的 asyncpg 连接。
 
 ## 2. 根因
 
@@ -35,7 +36,9 @@ Provider 正式边界为：
   -> app.infrastructure.providers
 ```
 
-不得重新在 `app.services` 复制 Provider，也不得通过兼容垫片保留旧业务入口。
+Scheduler PostgreSQL 集成测试另外受测试生命周期影响：pytest-asyncio 函数级事件循环关闭后，SQLAlchemy 默认连接池仍可能持有绑定旧事件循环的 asyncpg 连接；Windows Proactor 下下一测试再次 checkout 时会触发 `Event loop is closed`。
+
+不得重新在 `app.services` 复制 Provider，也不得通过兼容垫片保留旧业务入口；测试生命周期修复也不能改变生产数据库 Engine 的统一实现。
 
 ## 3. 已完成修复
 
@@ -51,7 +54,8 @@ Provider 正式边界为：
 8. Scheduler Repository 单元测试把数据库执行结果从 `AsyncMock` 改为 `Mock`，避免把同步 Result API 模拟成 coroutine；
 9. Ollama Embedding 验证脚本切换到唯一正式入口 `app.infrastructure.providers.ollama_embedding`，并补充中文模块职责、边界和外部依赖说明；
 10. 移除仓库当前声明的 `pytest-asyncio==0.25.0` 不支持的 `asyncio_default_test_loop_scope` 配置项，保留会话级 fixture loop 配置，避免本地产生未知配置警告；
-11. pgvector 验证脚本切换到唯一正式入口 `app.infrastructure.providers.vector_retrieval`，并补充中文模块职责、边界及关键外部依赖说明。
+11. pgvector 验证脚本切换到唯一正式入口 `app.infrastructure.providers.vector_retrieval`，并补充中文模块职责、边界及关键外部依赖说明；
+12. Scheduler PostgreSQL 集成测试增加函数级异步 fixture，在每个测试前后释放项目唯一数据库 Engine 连接池，隔离 pytest-asyncio 事件循环，同时保持真实 PostgreSQL Persistence 测试语义。
 
 ## 4. 当前实际验证结果
 
@@ -75,7 +79,9 @@ scripts/dev/validate_pgvector.py
 app.infrastructure.providers.vector_retrieval
 ```
 
-**以上最新代码修复尚未由开发者本地重新验证，因此不得记录模块化 Gate Passed 或 Backend Regression Passed。**
+同时针对此前 Scheduler PostgreSQL Integration 的 Windows Proactor / asyncpg 事件循环关闭错误完成测试生命周期修复。
+
+**以上最新代码修复尚未由开发者本地重新验证，因此不得记录模块化 Gate、Backend Regression 或 Scheduler Persistence Gate Passed。**
 
 ## 5. 预防
 
@@ -91,6 +97,7 @@ app.infrastructure.providers.vector_retrieval
 重复实现
 测试文件命名唯一性
 模块职责说明
+测试事件循环/资源生命周期
 ```
 
 只有上述检查与实际 targeted tests / Backend Regression 全部完成后，才能将领域迁移标记为完成。
