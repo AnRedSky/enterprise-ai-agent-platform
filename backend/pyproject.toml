@@ -32,7 +32,10 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 # SQLAlchemy asyncpg 连接池绑定创建它的事件循环；项目集成测试共享同一会话级事件循环，避免连接池跨函数事件循环复用。
 asyncio_default_fixture_loop_scope = "session"
-addopts = "-m 'not real_api'"
+# 异步测试本身也必须共享同一会话级事件循环；否则 session-scoped async fixture 创建的连接可能被后续测试在已关闭的 loop 上复用。
+asyncio_default_test_loop_scope = "session"
+# unit/integration 下允许存在同名测试文件；使用 importlib 模式避免 pytest 以顶层模块名导入造成 import file mismatch。
+addopts = "-m 'not real_api' --import-mode=importlib"
 markers = [
     "real_api: tests that make HTTP calls to a separately running backend service",
     "integration: tests that require external integration infrastructure such as PostgreSQL",
