@@ -112,6 +112,6 @@ class ScheduleSlot:
 def _require_utc(value: datetime, field_name: str) -> None:
     """确保持久化时间字段带有明确的 UTC 时区信息。"""
     if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError(f"{field_name} 必须包含明确时区")
+        raise ValueError(f"{field_name} 必须使用 UTC 且包含明确时区")
     if value.utcoffset() != timezone.utc.utcoffset(value):
         raise ValueError(f"{field_name} 必须使用 UTC")
