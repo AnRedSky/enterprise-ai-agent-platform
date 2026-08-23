@@ -13,17 +13,16 @@
 
 基于远端 `main` 的开发准则继续处理上一轮模块化 Gate 与测试反馈：
 
-1. `backend/scripts/evaluation/knowledge/run_knowledge_retrieval_evaluation.py` 已从已删除的 `app.services.mock_embedding_provider` / `app.services.vector_retrieval_provider` 切换到唯一正式入口 `app.infrastructure.providers`。
-2. Knowledge Retrieval 评估脚本的数据库 Session 已统一使用 `app.infrastructure.db.session.SessionLocal`，不复制数据库连接实现。
-3. 该评估运行器补充中文模块职责、边界及关键外部依赖说明，并将 fixture、Provider 和质量评估职责保持分离。
-4. `tests/unit/test_workflow_scheduler_repository_unit.py` 的数据库执行结果改用同步 `Mock`，仅数据库执行入口保持 `AsyncMock`，避免 `AsyncMock.scalar_one_or_none()` 被误当作同步 Result API 导致 `coroutine was never awaited`。
-5. `docs/04-errors/ERR-0024-backend-module-refactor-test-boundary.md` 已同步记录本轮旧 Provider import 与测试警告处理事实。
+1. `backend/scripts/test_ollama_embedding.py` 已从已删除的 `app.services.ollama_embedding_provider` 切换到唯一正式入口 `app.infrastructure.providers.ollama_embedding`。
+2. Ollama 验证脚本补充中文模块职责、边界及关键外部依赖说明，不实现第二套 Provider。
+3. `backend/pyproject.toml` 删除当前仓库声明的 `pytest-asyncio==0.25.0` 不支持的 `asyncio_default_test_loop_scope` 配置项，保留 session 级 fixture loop 配置，避免未知配置警告。
+4. `docs/04-errors/ERR-0024-backend-module-refactor-test-boundary.md` 已记录本轮旧 Ollama Provider import 与 pytest 配置警告处理事实。
 
 **以上为代码/文档修复事实，不代表开发者本地最新验证已经通过。**
 
 ## 当前待执行本地验证
 
-先同步开发依赖，确保本地 `uv` 环境与仓库声明的 `pytest-asyncio==0.25.0` 一致：
+先同步开发依赖，确保本地 `uv` 环境与仓库声明的开发依赖一致：
 
 ```powershell
 cd backend
@@ -33,6 +32,7 @@ uv sync --dev
 然后按固定顺序执行：
 
 ```powershell
+uv run python -c "import pytest_asyncio; print(pytest_asyncio.__version__)"
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 uv run pytest -q
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
@@ -46,7 +46,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 ```text
 远端 main 唯一基线
 → 领域职责唯一
-→ 生产/测试/评估 import 全量切换
+→ 生产/测试/评估/验证 import 全量切换
 → 删除旧文件
 → 全仓旧路径搜索 = 0
 → 重复实现检查 = 0
@@ -59,8 +59,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 
 ## Phase 2.4 下一执行任务
 
-1. 开发者本地重新执行 Backend Regression，确认本轮 collection error 与单元测试 warning 已消失，并确认 pytest-asyncio 配置不再产生未知选项警告；
-2. 执行模块化 Gate，确认 Knowledge Retrieval 评估脚本不存在旧 Provider import；
+1. 开发者本地重新执行 Backend Regression，确认本轮旧 Provider import 与 pytest 配置 warning 均已消失；
+2. 执行模块化 Gate，确认旧 Provider import、旧领域文件、重复实现搜索为 0；
 3. 执行 Scheduler Persistence Gate，确认 Migration、Repository targeted tests、真实 PostgreSQL integration 与 Backend Regression；
 4. **只有 Persistence Gate 本地实际通过后**，继续 Scheduler API Contract；
 5. 接入 Runtime persistence / lease / slot，补充 tenant isolation、misfire、Audit / Trace；
