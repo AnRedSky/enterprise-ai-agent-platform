@@ -1,0 +1,18 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mount } from "@vue/test-utils";
+
+const api = vi.hoisted(() => ({ listModelProviders: vi.fn(), listModelProfiles: vi.fn(), createModelProvider: vi.fn(), updateModelProvider: vi.fn(), deleteModelProvider: vi.fn(), createModelProfile: vi.fn(), updateModelProfile: vi.fn(), deleteModelProfile: vi.fn() }));
+vi.mock("../../src/api/modelProviders", () => ({ ...api }));
+vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), error: vi.fn() }, ElMessageBox: { confirm: vi.fn().mockResolvedValue(true) } }));
+
+import ModelProviders from "../../src/views/organizations/model-providers.vue";
+
+const global = { stubs: {
+  "el-button": { template: "<button @click=\"$emit('click')\"><slot/></button>" }, "el-card": { template: "<section><slot name=\"header\"/><slot/></section>" }, "el-alert": { template: "<div><slot/></div>" }, "el-empty": { template: "<div>empty</div>" }, "el-tag": { template: "<span><slot/></span>" }, "el-table": { template: "<div><slot/></div>" }, "el-table-column": { template: "<div/>" }, "el-descriptions": { template: "<div><slot/></div>" }, "el-descriptions-item": { template: "<div><slot/></div>" }, "el-dialog": { template: "<div><slot/><slot name=\"footer\"/></div>" }, "el-form": { template: "<form><slot/></form>" }, "el-form-item": { template: "<div><slot/></div>" }, "el-input": { template: "<input/>" }, "el-input-number": { template: "<input/>" }, "el-select": { template: "<select><slot/></select>" }, "el-option": { template: "<option><slot/></option>" }, "el-switch": { template: "<input type=\"checkbox\"/>" },
+}, directives: { loading: () => undefined } };
+
+describe("Model Provider / Profile management UI", () => {
+  beforeEach(() => { vi.clearAllMocks(); api.listModelProviders.mockResolvedValue({ items: [{ id: "p1", organization_id: "o1", name: "Local Ollama", provider_type: "ollama", provider_name: "local-ollama", endpoint: "http://localhost:11434", credential_ref: null, enabled: true, metadata: {} }], total: 1 }); api.listModelProfiles.mockResolvedValue([{ id: "m1", provider_id: "p1", name: "Embedding", model_type: "embedding", model_name: "nomic-embed-text:latest", dimension: 768, capabilities: {}, parameters: {}, enabled: true, is_default: true }]); });
+  it("loads organization scoped providers and profiles", async () => { const wrapper = mount(ModelProviders, { global, global: { ...global, mocks: { $route: { params: { id: "o1" } }, $router: { push: vi.fn() } } } } as any); await vi.waitFor(() => expect(api.listModelProviders).toHaveBeenCalledWith("o1")); await vi.waitFor(() => expect(api.listModelProfiles).toHaveBeenCalledWith("p1")); expect((wrapper.vm as any).providers[0].name).toBe("Local Ollama"); });
+  it("keeps chat dimension unset when saving a profile", async () => { api.createModelProfile.mockResolvedValue({ id: "m2" }); const wrapper = mount(ModelProviders, { global, global: { ...global, mocks: { $route: { params: { id: "o1" } }, $router: { push: vi.fn() } } } } as any); await vi.waitFor(() => expect(api.listModelProviders).toHaveBeenCalled()); (wrapper.vm as any).selectedProviderId = "p1"; (wrapper.vm as any).profileForm = { name: "Chat", model_type: "chat", model_name: "chat-model", dimension: 1024, capabilities: {}, parameters: {}, enabled: true, is_default: false }; await (wrapper.vm as any).saveProfile(); expect(api.createModelProfile).toHaveBeenCalledWith("p1", expect.objectContaining({ model_type: "chat", dimension: null })); });
+});
