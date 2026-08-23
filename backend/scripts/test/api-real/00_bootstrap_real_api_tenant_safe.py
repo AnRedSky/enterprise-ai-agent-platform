@@ -31,16 +31,7 @@ _BOOTSTRAP_ORGANIZATION_ID: str | None = None
 
 
 def _run_fixture_db(operation):
-    """Run one fixture-only DB operation on a fresh async engine/loop.
-
-    The bootstrap script is intentionally synchronous at its public boundary and
-    calls these recovery helpers sequentially. Reusing the application's global
-    async engine across multiple ``asyncio.run`` calls can leave asyncpg pooled
-    connections attached to the previous Windows ProactorEventLoop. The next
-    helper then fails with ``Event loop is closed`` / ``proactor is None``.
-    Keep each short recovery operation isolated and dispose its pool before the
-    event loop closes.
-    """
+    """Run one fixture-only DB operation on a fresh async engine/loop."""
     from app.core.config import settings
 
     async def _run():
@@ -69,14 +60,52 @@ def _existing_tenant_organization(tenant_id: str):
     return _run_fixture_db(_load)
 
 
-def _ensure_existing_organization_membership(organization_id: str, user_id: str) -> str:
-    """Create an active admin membership for the fresh fixture user.
+def _ensure_existing_organization_owner(organization_id: str, user_id: str) -> str:
+    """Make the fresh fixture user the sole active owner of a reused Organization.
 
-    This is fixture recovery, not an application authorization shortcut. The
-    production API deliberately does not expose tenant-wide Organization lookup
-    to users who are not members, so the test harness must establish the initial
-    membership before it can continue through the real HTTP surface.
+    This is test-fixture recovery only. It restores a deterministic owner boundary
+    when the local tenant already contains an Organization from an earlier real
+    API run, while the actual ownership mutations remain exercised through HTTP.
     """
+    from app.models.organization import OrganizationMembership
+    from uuid import UUID
+
+    organization_uuid = UUID(organization_id)
+    user_uuid = UUID(user_id)
+
+    async def _ensure(db):
+        result = await db.execute(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == organization_uuid
+            )
+        )
+        memberships = list(result.scalars().all())
+        target = next((item for item in memberships if item.user_id == user_uuid), None)
+        if target is None:
+            target = OrganizationMembership(
+                id=uuid.uuid4(),
+                organization_id=organization_uuid,
+                user_id=user_uuid,
+                status="active",
+                role="owner",
+            )
+            db.add(target)
+        for membership in memberships:
+            if membership.id != target.id and membership.role == "owner":
+                membership.role = "admin"
+                if membership.status != "active":
+                    membership.status = "active"
+        target.status = "active"
+        target.role = "owner"
+        await db.commit()
+        await db.refresh(target)
+        return str(target.id)
+
+    return _run_fixture_db(_ensure)
+
+
+def _ensure_existing_organization_membership(organization_id: str, user_id: str) -> str:
+    """Create an active admin membership for the fresh fixture user."""
     from app.models.organization import OrganizationMembership
     from uuid import UUID
 
@@ -154,7 +183,6 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
                 "name": organization_row.name,
                 "status": organization_row.status,
             }
-            _ensure_existing_organization_membership(str(organization_row.id), owner_user_id)
 
     if str(organization["tenant_id"]) != owner_tenant_id:
         raise RuntimeError(
@@ -163,6 +191,9 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
         )
 
     _BOOTSTRAP_ORGANIZATION_ID = str(organization["id"])
+    # Whether the Organization was newly created or recovered, establish a
+    # deterministic fixture owner before exercising ownership through HTTP.
+    _ensure_existing_organization_owner(_BOOTSTRAP_ORGANIZATION_ID, owner_user_id)
 
     member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
     member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
@@ -196,13 +227,7 @@ def create_governed_mock_agent(
     model_id: str = "mock-http-404",
     name_prefix: str = "API Retry Agent",
 ) -> str:
-    """Create a deterministic mock agent through the governed Provider/Profile path.
-
-    The legacy bootstrap calls this helper as ``create_retry_agent(client)``.
-    Keep that callable contract while defaulting it to the same deterministic
-    retry fixture values. Circuit-breaker fixtures pass their own model/profile
-    values explicitly.
-    """
+    """Create a deterministic mock agent through the governed Provider/Profile path."""
     if not _BOOTSTRAP_ORGANIZATION_ID:
         raise RuntimeError("Governed mock agent requires an initialized Organization fixture")
 
@@ -254,8 +279,6 @@ def create_governed_mock_agent(
     return agent["id"]
 
 
-# Runtime retry/circuit fixtures must all use an explicit governed Profile now
-# that Phase 2.3 runtime resolution rejects ungoverned legacy model_id values.
 _BOOTSTRAP.create_retry_agent = create_governed_mock_agent
 _BOOTSTRAP.create_organization_fixture = create_organization_fixture
 
