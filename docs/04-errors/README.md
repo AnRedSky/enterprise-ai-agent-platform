@@ -29,6 +29,7 @@
 | ERR-0021 | 2026-08-22 | Scheduled Trigger 与 Real Retrieval Gate 回归失败 |
 | ERR-0022 | 2026-08-22 | Real Provider baseline 缺失导致 Real API trace gate 阻塞 |
 | ERR-0023 | 2026-08-23 | Knowledge Retrieval Real Provider 评估脚本旧 Provider 导入路径 |
+| ERR-0024 | 2026-08-23 | Backend 模块重构后的测试边界残留 |
 
 ## 迁移规则
 
