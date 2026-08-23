@@ -7,39 +7,55 @@
 - 当前架构基线：远端 `main` 已进入 Backend 模块化整改实施阶段。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；Persistence Gate 尚未闭环。当前先完成模块化迁移残留修复、测试警告清理，再重新执行 Backend Regression 与 Scheduler Persistence Gate。**
+- 当前：**Phase 2.4 Durable Scheduler Contract-first + Persistence 第一版已完成，Runtime persistence / lease / slot 已接入；当前等待 Runtime Gate 本地验证。**
+
+## 本轮执行基线
+
+本轮以远端 `main` 最新提交 `3d0c488` 为基线继续推进。开发准则要求远端 `main` 是唯一开发基线、所有变更直接提交 `main`，并要求模块职责唯一、禁止兼容垫片与重复 Provider、每个新增/重构 Python 模块补充中文职责说明。
+
+此前开发者本地已经实际验证：
+
+```text
+378 passed, 2 skipped, 35 deselected
+Backend Module Refactor Gate completed
+Scheduler Persistence Gate completed
+```
+
+其中 Scheduler Persistence Gate 已实际完成 Migration、13 个 Contract tests、2 个真实 PostgreSQL Repository integration tests 与 Backend Regression。
 
 ## 本轮新增修复事实
 
-基于远端 `main` 的开发准则继续处理上一轮模块化 Gate 与测试反馈：
+1. `backend/app/services/workflow_scheduler/runtime.py` 已从进程内 interval recovery 改为使用真实 PostgreSQL `WorkflowSchedule` 作为持久化调度状态来源。
+2. Runtime 为每个实例生成独立 scheduler owner，通过 `WorkflowSchedulerRepository.claim_due_lease` 进行原子 ownership claim。
+3. Runtime 使用持久化 `next_run_at` 生成稳定 `WorkflowScheduleSlot.schedule_slot_key`，slot 唯一键继续作为最终幂等边界。
+4. WorkflowExecution 仍统一复用既有 `WorkflowTriggerService.invoke_scheduled`，没有复制第二套 Workflow 执行实现。
+5. Runtime 在 Execution 创建后绑定 slot，并通过 lease owner 原子推进 `next_run_at / last_run_at / last_execution_id` 后释放 lease。
+6. 首版继续明确 `misfire=skip`：历史积压不逐槽补发，下一次运行从未来时间重新计算。
+7. `backend/tests/unit/test_workflow_scheduler_runtime.py` 新增 Runtime 纯计算 targeted tests。
+8. `backend/scripts/test/integration/02_scheduler_runtime_gate.ps1` 新增 Runtime Gate，固定执行 Runtime targeted tests + Scheduler Persistence Gate。
+9. `docs/04-errors/ERR-0025-durable-scheduler-runtime-persistence.md` 已记录本轮 Runtime 从旧内存槽位切换到持久化 Scheduler 状态的工程问题与验证边界。
+10. 新增/重构代码均补充中文职责、边界和关键外部依赖说明。
 
-1. `backend/scripts/test_ollama_embedding.py` 已从已删除的 `app.services.ollama_embedding_provider` 切换到唯一正式入口 `app.infrastructure.providers.ollama_embedding`。
-2. Ollama 验证脚本补充中文模块职责、边界及关键外部依赖说明，不实现第二套 Provider。
-3. `backend/pyproject.toml` 删除当前仓库声明的 `pytest-asyncio==0.25.0` 不支持的 `asyncio_default_test_loop_scope` 配置项，保留 session 级 fixture loop 配置，避免未知配置警告。
-4. `docs/04-errors/ERR-0024-backend-module-refactor-test-boundary.md` 已记录本轮旧 Ollama Provider import 与 pytest 配置警告处理事实。
-
-**以上为代码/文档修复事实，不代表开发者本地最新验证已经通过。**
+**以上为代码/文档修复事实，不代表本轮 Runtime 修改已经由开发者本地验证通过。**
 
 ## 当前待执行本地验证
 
-先同步开发依赖，确保本地 `uv` 环境与仓库声明的开发依赖一致：
+先确保依赖与当前仓库一致：
 
 ```powershell
 cd backend
 uv sync --dev
 ```
 
-然后按固定顺序执行：
+然后执行：
 
 ```powershell
-uv run python -c "import pytest_asyncio; print(pytest_asyncio.__version__)"
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
-uv run pytest -q
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_scheduler_persistence_gate.ps1
+uv run pytest -q tests/unit/test_workflow_scheduler_runtime.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
 ```
 
-若 Scheduler PostgreSQL Integration 仍出现 Windows Proactor / asyncpg `Event loop is closed`，只能依据最新失败栈修复测试生命周期；不得通过 JSON/JSONL 替代真实 PostgreSQL Persistence。
+如 Runtime Gate 失败，必须依据真实失败栈继续修复；不得用 JSON/JSONL 替代 PostgreSQL Scheduler Persistence，也不得通过兼容垫片恢复旧 Runtime 路径。
 
 ## Backend 模块化整改纪律
 
@@ -55,26 +71,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 → Backend Regression
 ```
 
-禁止兼容垫片、旧入口转发、双实现以及在 `app/services/` 复制 Provider。Provider 正式技术适配统一位于 `app/infrastructure/providers/`；数据库 Engine / Session 正式实现统一位于 `app/infrastructure/db/`。
+Provider 正式技术适配统一位于 `app/infrastructure/providers/`；数据库 Engine / Session 正式实现统一位于 `app/infrastructure/db/`。Backend 模块化目录、职责与迁移规则继续遵循架构文档和迁移映射表。
 
 ## Phase 2.4 下一执行任务
 
-1. 开发者本地重新执行 Backend Regression，确认本轮旧 Provider import 与 pytest 配置 warning 均已消失；
-2. 执行模块化 Gate，确认旧 Provider import、旧领域文件、重复实现搜索为 0；
-3. 执行 Scheduler Persistence Gate，确认 Migration、Repository targeted tests、真实 PostgreSQL integration 与 Backend Regression；
-4. **只有 Persistence Gate 本地实际通过后**，继续 Scheduler API Contract；
-5. 接入 Runtime persistence / lease / slot，补充 tenant isolation、misfire、Audit / Trace；
-6. 完成 Tenant Safe Real API Gate 后再进入前端/API 联调。
-
-## 开发纪律
-
-- 远端 `main` 是唯一开发基线，不创建功能分支。
-- 未实际执行的测试不得记录为 Passed。
-- Runtime 数据必须使用真实 PostgreSQL；JSON/JSONL 仅用于版本化 evaluation dataset/result/baseline。
-- Secret 不进入 Git、数据库明文、报告或 trace/audit。
-- 代码、Phase、Acceptance、Error、Status 必须保持可追溯。
-- 代码中的功能说明和注释统一使用中文。
-- 每个新增或重构 Python 模块必须提供中文职责说明、边界及必要外部依赖。
-- 同一业务功能只能保留一个正式实现；模块迁移完成后删除旧文件与旧路径。
-- Provider 只能在 `app/infrastructure/providers/` 保留正式技术适配实现。
-- Backend 模块化设计参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`，具体迁移参照 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`。
+1. 开发者本地执行 Scheduler Runtime Gate，确认 Runtime persistence / lease / slot 接入没有引入回归；
+2. 补充 Runtime tenant isolation / misfire targeted integration；
+3. 完成 Scheduler API Contract 与持久化状态可观测性；
+4. 完成 Tenant Safe Real API Gate；
+5. 完成 Audit / Trace 与 Scheduler lifecycle 完整验收；
+6. 所有 Gate 实际通过后，再推进前端/API 联调。

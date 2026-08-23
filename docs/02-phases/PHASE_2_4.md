@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Contract-first 已完成；持久化模型、Migration 与原子仓储第一版已实现，当前进入本地 Persistence Gate；API Contract 与 Durable Scheduler Runtime 尚未完成。**
+> 状态：**Contract-first 与 Persistence 第一版已完成；Scheduler Runtime 已接入持久化 lease / slot，当前等待开发者本地 Runtime Gate 验证。API Contract 与完整 Durable Scheduler 验收尚未完成。**
 > 评估日期：2026-08-23
 > 优先级：**P1**
 
@@ -26,7 +26,7 @@ backend/app/services/workflow_scheduler/
 ├── lease.py         # lease 可抢占判断
 ├── misfire.py       # misfire 槽位选择
 ├── repository.py    # PostgreSQL 原子 lease / slot 持久化
-└── runtime.py       # Scheduled Trigger 轮询器
+└── runtime.py       # Scheduled Trigger 持久化调度器
 ```
 
 `__init__.py` 负责稳定导出；领域规则按职责拆分，禁止继续向公共 `app/services/` 零散增加同功能文件。
@@ -56,36 +56,49 @@ backend/app/services/workflow_scheduler/
 - `tests/integration/test_workflow_scheduler_repository.py`：真实 PostgreSQL Repository lease / release、tenant isolation 与 slot idempotency 测试；
 - `scripts/test/integration/01_scheduler_persistence_gate.ps1`：Migration、Contract targeted、Repository PostgreSQL integration、Backend Regression 固定编排。
 
-## 5. Persistence Gate
+Persistence Gate 已由开发者本地实际执行并通过：Migration heads、13 个 Contract tests、2 个 Repository PostgreSQL integration tests、378 个 Backend Regression tests 均通过，且该次结果未报告警告。
+
+## 5. Durable Runtime 接入
+
+本轮已将 Runtime 从“进程内 interval recovery”切换为持久化 Scheduler 状态驱动：
+
+1. Scheduled Trigger 首次进入 Runtime 时由 Repository 确保唯一 `WorkflowSchedule`；
+2. 每个 Scheduler 实例拥有唯一 owner，通过 PostgreSQL 原子 lease claim 取得执行权；
+3. 以持久化 `next_run_at` 生成稳定 `WorkflowScheduleSlot.schedule_slot_key`；
+4. Execution 创建继续复用既有 `WorkflowTriggerService.invoke_scheduled`；
+5. Execution 与 slot 绑定后，由 lease owner 原子推进 `next_run_at / last_run_at / last_execution_id` 并释放 lease；
+6. 首版 `misfire=skip` 保持明确边界：历史积压不逐槽补发，下一次运行从未来时间重新计算；
+7. 新增 `tests/unit/test_workflow_scheduler_runtime.py` 与 `scripts/test/integration/02_scheduler_runtime_gate.ps1`。
+
+**以上为代码实现事实，不代表开发者本地已验证本轮 Runtime 修改。**
+
+## 6. Runtime Gate
 
 必须由开发者本地实际执行：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\01_scheduler_persistence_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
 ```
 
-Gate 必须确认：
-
-1. Migration heads 可重复升级；
-2. Repository lease claim / release 的原子语义；
-3. slot 幂等 claim；
-4. Tenant scope；
-5. Scheduler Contract targeted tests；
-6. Backend Regression。
-
-未实际执行前，不得记录 Gate Passed。
-
-## 6. 下一执行顺序
+该 Gate 固定执行：
 
 ```text
-Persistence Gate
+Scheduler Runtime targeted tests
+        ↓
+Scheduler Persistence Gate
+```
+
+Persistence Gate 仍负责真实 PostgreSQL、Migration、Repository integration 与 Backend Regression，不允许使用 JSON/JSONL 替代 Runtime 持久化路径。
+
+## 7. 下一执行顺序
+
+```text
+Runtime Gate
       ↓
-Scheduler API Contract
+Scheduler API Contract / 状态可观测性
       ↓
-Scheduler Runtime 接入 persistence / lease / slot
-      ↓
-Unit / Integration / API Contract
+Tenant isolation / misfire integration
       ↓
 Tenant Safe Real API Gate
       ↓
