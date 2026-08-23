@@ -9,16 +9,19 @@
 - 2.2-B Dataset / Runner：已完成既有交付范围，并已有开发者实际执行验证。
 - 2.2-C Real Provider Quality Gate：已通过当前 main 的真实 Provider baseline regression。
 - 2.2-D Retrieval Quality Regression / Traceability：当前定义范围已完成并有 Real API evidence。
-- 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2 已完成当前代码实现；E-2 cross-dimension 本地 evidence 已由开发者实际执行通过；E-3 Frontend Provider/Profile Management 已通过 targeted Vitest 与 Frontend Regression Gate；E-4 当前存在两个已定位并已修复、等待开发者本地重新执行确认的 Gate 阻塞。
+- 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2 已完成当前代码实现；E-2 cross-dimension 本地 evidence 已由开发者实际执行通过；E-3 Frontend Provider/Profile Management 已通过 targeted Vitest 与 Frontend Regression Gate；E-4 当前等待本轮修复后的三层 Gate 重新执行。
 
 ## 当前 main 基线
 
-开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建功能分支。E-4 本轮修复依次提交：
+开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建功能分支。本轮 E-4 修复提交：
 
+- `448e2f8`：修复 Real API Model Provider Governance 测试 fixture 边界。共享 bootstrap 的 secondary membership 当前用于 Organization governance 生命周期，初始为 admin；Provider Governance 测试在验证 member 403 前显式将该 membership 降级为 member，避免把 admin token 错当 member token。
+- `be5b9ca`：修复 Model Provider/Profile Browser E2E 的 Element Plus `el-select` 点击定位，改为点击 `.el-select__wrapper`，避免内部 readonly input 与 selected-item placeholder 的 pointer interception / stability 问题。
 - `bfe6512`：修复组织成员无法查看 Model Provider / Model Profile AuditLog 的查询范围问题。
 - `04c23de`：修复 Model Provider/Profile Browser E2E 中 Profile“名称”字段 locator 的 strict mode 冲突。
-- `9b7ae04`：记录本轮 E-4 错误与修复要求。
-- 当前 `PROJECT_STATUS.md` 更新记录本轮本地反馈；不得将未重新执行的修复结果标记为 Passed。
+- `9b7ae04`：记录上一轮 E-4 错误与修复要求。
+
+当前不能将本轮修复标记为 Passed；必须等待开发者重新执行三层 Gate。
 
 ## E-2 实际验证证据
 
@@ -44,7 +47,7 @@ Governed E-2 smoke: status=passed
 
 ## E-3 实际验证证据
 
-开发者在当前 main `0a4462a` 上实际执行并反馈：
+开发者在此前 main `0a4462a` 上实际执行并反馈：
 
 ```text
 Targeted Vitest:
@@ -71,19 +74,14 @@ Browser E2E 属于既有 Organization governance contract，不作为 Model Prov
 
 E-3 已完成代码实现、测试阻塞修复，并由开发者本地实际执行 targeted Vitest 与 Frontend Regression Gate 通过，因此 **E-3 Passed**。
 
-此前两个阻塞分别为：
-
-- vue-router test environment 缺少 route/router injection，导致 `route.params` 崩溃；已由 `ba830da` 修复。
-- Element Plus `el-table` `DefaultRow` 与 `ModelProfile` handler 参数冲突，导致 production `vue-tsc` 失败；已由 `0a4462a` 修复。
-
 ## E-4 本轮实际反馈与修复状态
 
-开发者在当前本地环境执行：
+开发者在上一轮本地环境执行：
 
 ```text
 Real API Gate: 31 passed, 1 failed
   test_model_provider_profile_governance_lifecycle_real_http
-  Failure: /runtime/audit-logs 未返回 model_provider.created
+  Failure: member token 实际对应 admin membership，因此 provider PATCH 返回 200 而不是预期 403
 
 Frontend Regression Gate:
   18 test files passed
@@ -92,24 +90,28 @@ Frontend Regression Gate:
 
 Model Provider/Profile Browser E2E:
   1 passed, 1 failed
-  Failure: profileDialog.getByLabel("名称") strict mode violation，匹配“名称”和“模型名称”两个 textbox
+  Failure: Profile type el-select 的 readonly input 被 selected-item placeholder 拦截点击，最终 60s timeout
 ```
 
-两个失败均已定位并修复：
+本轮已完成对应修复：
 
-1. Backend：`RuntimeQueryService.audit_logs()` 增加 Model Provider / Model Profile 的 organization membership scoped resource-id 查询，保持跨组织隔离。
-2. Browser：Profile 名称字段使用精确 accessible name locator，避免“名称”与“模型名称”前缀匹配。
+1. Real API：Provider Governance 测试在 member boundary 断言前显式将共享 fixture membership 降级为 `member`，再使用 `ORGANIZATION_MEMBER_ACCESS_TOKEN` 验证 Provider/Profile 写操作返回 403。没有放宽权限规则，也没有修改 production authorization logic。
+2. Browser E2E：Profile type selector 改为定位 Element Plus `.el-select__wrapper`，避免直接点击内部 combobox input 被 placeholder intercept。
 
-详细记录：`docs/04-errors/2026-08-23-phase-2-2-e-4-audit-and-browser-gate.md`。
+前一轮已完成的 E-4 修复仍保持有效：
 
-**注意：以上修复尚未由开发者重新执行 Gate 验证，因此 E-4 仍为 Blocked / Pending Re-test，不得标记 Passed。**
+3. Backend Audit：`RuntimeQueryService.audit_logs()` 增加 Model Provider / Model Profile 的 organization membership scoped resource-id 查询，保持跨组织隔离。
+4. Browser：Profile 名称字段使用精确 accessible name locator，避免“名称”与“模型名称”前缀匹配。
+
+**注意：以上修复均尚未由开发者重新执行 Gate 验证，因此 E-4 仍为 Pending Re-test，不得标记 Passed。**
 
 ## 下一执行顺序
 
-1. 重新执行 Real API Gate，确认 AuditLog organization scope 修复。
-2. 保持 Frontend Regression Gate 独立执行，确认前端回归仍为 18 files / 75 tests + production build。
-3. 重新执行 Model Provider/Profile Browser E2E，确认 owner CRUD、organization scope 与 member UI boundary。
+1. 重新执行 Real API Gate，确认 member authorization 与 AuditLog organization scope。
+2. 保持 Frontend Regression Gate 独立执行，确认 18 files / 75 tests + production build。
+3. 重新执行 Model Provider/Profile Browser E2E，确认 owner CRUD、organization scope、member UI boundary 与 Profile selector。
 4. 三层 Gate 全部重新执行通过后，再更新 E-4 Acceptance evidence 与 Phase 2.2 关闭决策。
+5. 在 E-4 尚未通过前，不提前进入 Phase 2.3 Provider Governance（路由/Fallback/成本/用量治理）。
 
 ## 开发纪律
 
