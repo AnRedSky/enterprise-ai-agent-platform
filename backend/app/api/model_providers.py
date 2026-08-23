@@ -12,6 +12,9 @@ from app.schemas.model_provider import (
     ModelProviderCreate,
     ModelProviderListResponse,
     ModelProviderResponse,
+    ModelProviderRoutingCandidate,
+    ModelProviderRoutingRequest,
+    ModelProviderRoutingResponse,
     ModelProviderUpdate,
 )
 from app.services.model_provider import ModelProviderService
@@ -63,6 +66,30 @@ async def create_model_provider(
 ):
     item = await ModelProviderService(db).create_provider(payload, _user_id(claims), x_request_id, x_trace_id)
     return _provider(item)
+
+
+@router.post("/routing/resolve", response_model=ModelProviderRoutingResponse)
+async def resolve_model_provider_routing(
+    payload: ModelProviderRoutingRequest,
+    claims: dict = Depends(current_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    candidates = await ModelProviderService(db).resolve_routing(payload, _user_id(claims))
+    return ModelProviderRoutingResponse(
+        routing_strategy=payload.routing_strategy,
+        candidates=[
+            ModelProviderRoutingCandidate(
+                provider_id=item.provider_id,
+                profile_id=item.profile_id,
+                model_type=item.model_type,
+                model_name=item.model_name,
+                provider_name=item.provider_name,
+                is_default=item.is_default,
+                capabilities=sorted(item.capabilities),
+            )
+            for item in candidates
+        ],
+    )
 
 
 @router.get("/{provider_id}/profiles", response_model=list[ModelProfileResponse])

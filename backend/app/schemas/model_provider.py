@@ -71,3 +71,27 @@ class ModelProfileResponse(BaseModel):
 class ModelProviderListResponse(BaseModel):
     items: list[ModelProviderResponse]
     total: int
+
+
+class ModelProviderRoutingRequest(BaseModel):
+    organization_id: UUID
+    model_type: str = Field(pattern="^(chat|embedding)$")
+    routing_strategy: str = Field(pattern="^(explicit_profile|organization_default)$")
+    profile_id: UUID | None = None
+    required_capabilities: list[str] = Field(default_factory=list)
+    allowed_provider_ids: list[UUID] = Field(default_factory=list)
+
+
+class ModelProviderRoutingCandidate(BaseModel):
+    provider_id: UUID
+    profile_id: UUID
+    model_type: str
+    model_name: str
+    provider_name: str
+    is_default: bool
+    capabilities: list[str]
+
+
+class ModelProviderRoutingResponse(BaseModel):
+    routing_strategy: str
+    candidates: list[ModelProviderRoutingCandidate]

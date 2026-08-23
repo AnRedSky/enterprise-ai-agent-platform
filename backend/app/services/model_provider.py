@@ -7,7 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import AuditLog
 from app.models.model_provider import ModelProfile, ModelProvider
+from app.models.organization import Organization, OrganizationMembership
 from app.services.organization import OrganizationService
+from app.services.model_provider_governance_contract import (
+    ProviderCandidate,
+    RoutingRequest,
+    RoutingStrategy,
+    select_candidates,
+)
 
 
 class ModelProviderService:
@@ -35,6 +42,46 @@ class ModelProviderService:
             raise HTTPException(404, "Model Provider 不存在")
         await self.organizations.require_active_membership(provider.organization_id, user_id)
         return provider
+
+    async def resolve_routing(self, payload, user_id: UUID):
+        await self.organizations.require_active_membership(payload.organization_id, user_id)
+        query = (
+            select(ModelProfile, ModelProvider)
+            .join(ModelProvider, ModelProvider.id == ModelProfile.provider_id)
+            .join(Organization, Organization.id == ModelProvider.organization_id)
+            .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
+            .where(
+                ModelProvider.organization_id == payload.organization_id,
+                ModelProfile.model_type == payload.model_type,
+                ModelProfile.enabled.is_(True),
+                ModelProvider.enabled.is_(True),
+                Organization.status == "active",
+                OrganizationMembership.user_id == user_id,
+                OrganizationMembership.status == "active",
+            )
+        )
+        rows = (await self.db.execute(query)).all()
+        candidates = [
+            ProviderCandidate(
+                provider_id=provider.id,
+                profile_id=profile.id,
+                model_type=profile.model_type,
+                model_name=profile.model_name,
+                enabled=profile.enabled and provider.enabled,
+                is_default=profile.is_default,
+                capabilities=frozenset(key for key, value in (profile.capabilities or {}).items() if value is True),
+                provider_name=provider.provider_name,
+            )
+            for profile, provider in rows
+        ]
+        request = RoutingRequest(
+            organization_id=payload.organization_id,
+            model_type=payload.model_type,
+            profile_id=payload.profile_id,
+            required_capabilities=frozenset(payload.required_capabilities),
+            allowed_provider_ids=frozenset(payload.allowed_provider_ids),
+        )
+        return select_candidates(request, candidates, RoutingStrategy(payload.routing_strategy))
 
     async def create_provider(self, payload, user_id: UUID, request_id: str | None, trace_id: str | None):
         await self.require_management(payload.organization_id, user_id)
