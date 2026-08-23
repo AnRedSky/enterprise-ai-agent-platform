@@ -74,6 +74,20 @@ foreach ($pattern in $legacyImportPatterns) {
     }
 }
 
+# 数据库依赖边界：API 只使用 FastAPI dependency；Application Service / Scheduler 直接使用 Infrastructure Session。
+$forbiddenDatabaseDependencyPatterns = @(
+    'app\.api\.dependencies',
+    'from app\.dependencies\.db import SessionLocal',
+    'from app\.dependencies\.db import .*SessionLocal'
+)
+foreach ($pattern in $forbiddenDatabaseDependencyPatterns) {
+    $matches = @(git grep -n -E $pattern -- '*.py' 2>$null)
+    if ($matches.Count -gt 0) {
+        $matches | ForEach-Object { Write-Host $_ }
+        throw "Forbidden database dependency boundary import exists: $pattern"
+    }
+}
+
 if (-not (Test-Path 'app/services/agent/service.py' -PathType Leaf)) { throw 'Agent service implementation is missing.' }
 if (-not (Test-Path 'app/services/agent/repository.py' -PathType Leaf)) { throw 'Agent repository implementation is missing.' }
 if (-not (Test-Path 'app/services/knowledge/__init__.py' -PathType Leaf)) { throw 'Knowledge domain entry is missing.' }
