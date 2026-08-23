@@ -7,8 +7,8 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.3-A 至 2.3-G：**均已完成对应本地验收**。
-- 当前：**无进行中的正式 Phase**。
-- 下一正式工作：**Phase 2.4 Durable Scheduler Contract 确认**，暂不进入业务代码实现。
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；尚未进入 Migration / Scheduler Runtime 业务实现**。
+- 下一正式工作：**完成 Phase 2.4 Contract Gate，然后进入 Backend Domain + API Contract**。
 
 ## Phase 2.3 最终本地验收结果
 
@@ -40,7 +40,7 @@ Runtime 已形成完整 Provider Governance：
 
 ## Phase 2.4 优先级与灵活性评估结论
 
-**确认 Phase 2.4 Durable Scheduler 为下一项 P1 正式工作，但采用 Contract-first、MVP 边界和可替换实现。**
+**确认 Phase 2.4 Durable Scheduler 为下一项 P1 正式工作，采用 Contract-first、MVP 边界和可替换实现。**
 
 ### 为什么优先
 
@@ -65,6 +65,16 @@ P2  Phase 2.8 Agent Asset / Marketplace
 Phase 2.4 首版只解决：持久化调度、`next_run_at`、多实例 lease、misfire、幂等、状态转换和 Audit/Trace。
 
 暂不引入 MQ/Kafka、Temporal、独立 Scheduler 服务、跨区域调度、复杂 DAG 或通用任务平台。租约优先采用 PostgreSQL 原子更新/行锁，只有真实吞吐或可靠性数据证明不足时才单独评估基础设施升级。
+
+## Phase 2.4 Contract-first 当前进度
+
+已完成第一步纯领域 Contract 实现：
+
+- `backend/app/services/workflow_scheduler_contract.py`：定义状态、misfire、时间、lease、slot 幂等键与可注入 clock 边界；
+- `backend/tests/unit/test_workflow_scheduler_contract.py`：覆盖 UTC、IANA timezone、DST、lease、misfire、状态与幂等边界；
+- 当前实现不访问 PostgreSQL、不创建 WorkflowExecution、不启动 scheduler worker，因此没有越过业务代码 Gate。
+
+当前未宣称通过 Phase 2.4 Acceptance。下一步必须完成 Contract Gate 的完整确认后，再创建 Migration / API / Runtime 实现。
 
 ## Phase 2.4 Contract 进入条件
 
