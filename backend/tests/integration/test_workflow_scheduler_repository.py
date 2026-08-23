@@ -11,8 +11,10 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 
 from app.infrastructure.db import SessionLocal
+from app.infrastructure.db.session import engine
 from app.models.core import Tenant, User, utcnow_naive
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_scheduler import WorkflowSchedule
@@ -28,6 +30,21 @@ def require_database_integration() -> None:
     """数据库持久化测试必须由显式 Gate 开启，避免普通单元回归隐式依赖 PostgreSQL。"""
     if os.getenv("RUN_DATABASE_INTEGRATION") != "1":
         pytest.skip("需要设置 RUN_DATABASE_INTEGRATION=1 才执行 Scheduler PostgreSQL 持久化测试")
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_database_engine_pool() -> None:
+    """隔离 pytest-asyncio 测试事件循环，避免 asyncpg 连接跨测试循环复用。
+
+    该测试文件使用项目唯一数据库 Engine。pytest-asyncio 的函数级事件循环会在每个测试结束后关闭，
+    而 SQLAlchemy 默认连接池可能保留绑定旧事件循环的 asyncpg 连接；在测试前后释放连接池可保持真实
+    PostgreSQL 测试语义，同时避免 Windows Proactor 下出现 `Event loop is closed`。
+    """
+    await engine.dispose()
+    try:
+        yield
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
