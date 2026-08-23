@@ -8,7 +8,8 @@
 - Phase 2.3 Model Provider Governance：**进行中**。
 - 2.3-A Provider Governance Contract：**已实现**。
 - 2.3-B Backend Domain + API Contract：**已实现**。
-- 2.3-C Runtime Governance Invocation Service：**已实现并接入 WorkflowRuntime 主链路，待本地验证**。
+- 2.3-C Runtime Governance Invocation Service：**已实现并接入 WorkflowRuntime 主链路**。
+- 2.3-D Runtime Usage / Trace Identity：**已实现基础 trace identity，待本地验证与完整 acceptance**。
 
 ## Phase 2.2 最终验证证据
 
@@ -65,17 +66,20 @@ Runtime 主链路现在：
 7. fallback 仅接受 2.3-A 定义的 connectivity / timeout / rate limit / provider 5xx；
 8. 不允许静默 Mock fallback。
 
+### 2.3-D Runtime Usage / Trace Identity
+
+已实现：
+
+- 每次 governed provider attempt 生成独立 `request_id`；
+- trace identity 写入 `organization_id/provider_id/profile_id/model_type/request_id/trace_id/outcome`；
+- fallback failure 额外记录 `fallback_reason`；
+- provider 成功时可记录 prompt/completion/total token usage；
+- identity 记录通过 Workflow Trace 落库，不写入 endpoint/credential_ref；
+- `RuntimeModelGovernanceService` 通过 attempt callback 将每次 provider attempt 暴露给 Runtime governance trace。
+
+当前 Real API 场景覆盖 governed Profile + connectivity failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
+
 本轮没有新增数据库表/字段，因此不需要 Migration。
-
-同时新增 Real API 场景，验证：
-
-- 已发布 AgentVersion 的 `model_profile_id` 能进入 Runtime governed invocation；
-- 无法连接 governed Provider 时按失败语义结束，不切换到 Mock success；
-- trace/audit 不泄漏 credential_ref。
-
-### 当前尚未宣称完成的部分
-
-2.3-A 中定义的 usage identity 维度已经作为 Contract 存在，但本轮没有虚构“usage persistence 已完成”的状态；需要下一步把 provider/profile/model_type/request/trace/outcome 接入实际 runtime usage/trace 记录后，再进行验收。
 
 ## 当前验证状态
 
@@ -85,17 +89,16 @@ Runtime 主链路现在：
 2.3-A targeted unit test: developer previously executed 11 passed
 2.3-B API Contract test: developer previously included in 334-test regression
 2.3-C targeted unit tests: Pending local execution after WorkflowRuntime integration
-Backend default regression after 2.3-C: Pending
-Migration/head verification after 2.3-C: Pending (no migration expected)
-Real API after 2.3-C: Pending local execution
+2.3-D targeted unit tests: Pending local execution after trace identity changes
+Backend default regression after 2.3-C/D: Pending
+Migration/head verification: Pending local verification (no migration expected)
+Real API after 2.3-C/D: Pending local execution
 Runtime governed invocation integration: Implemented, validation Pending
 ```
 
 ## 下一执行任务
 
-**2.3-D Runtime Usage / Trace Identity**：把 `organization/provider/profile/model_type/request_id/trace_id/outcome` 按 2.3-A `UsageIdentity` Contract 接入实际 runtime usage/trace 记录，并新增 Real API 验证；继续保持 Secret 不进入 usage/audit/trace。
-
-随后再推进 governed fallback 的成功路径与多 Provider deterministic candidate 顺序验证。
+**2.3-E Governed fallback success path + deterministic multi-provider acceptance**：补充真实可控 Provider adapter/fixture（不得以 Mock Provider 伪造 governed success），验证 candidate 顺序、bounded fallback、成功 outcome usage identity 与 fallback attempt trace；随后形成 Phase 2.3 acceptance gate。
 
 ## 开发纪律
 
