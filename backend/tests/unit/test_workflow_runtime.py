@@ -39,25 +39,80 @@ async def test_input_and_output_nodes_preserve_payload():
 
 
 @pytest.mark.asyncio
-async def test_agent_node_uses_published_agent_version_and_gateway():
+async def test_agent_node_uses_published_agent_version_and_governed_gateway():
     db = AsyncMock()
     agent_id = uuid4()
     owner_id = uuid4()
+    tenant_id = uuid4()
+    organization_id = uuid4()
     version_id = uuid4()
+    profile_id = uuid4()
     agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
-    version = SimpleNamespace(id=version_id, agent_id=agent_id, system_prompt="system", model_id="mock", version="1.0.0")
-    first = SimpleNamespace(scalar_one_or_none=lambda: agent)
-    second = SimpleNamespace(scalar_one_or_none=lambda: version)
-    db.execute = AsyncMock(side_effect=[first, second])
+    version = SimpleNamespace(
+        id=version_id,
+        agent_id=agent_id,
+        system_prompt="system",
+        model_id="legacy-model-id",
+        model_profile_id=profile_id,
+        version="1.0.0",
+    )
+    db.execute = AsyncMock(side_effect=[
+        SimpleNamespace(scalar_one_or_none=lambda: agent),
+        SimpleNamespace(scalar_one_or_none=lambda: version),
+        SimpleNamespace(scalar_one_or_none=lambda: organization_id),
+    ])
     runtime = WorkflowRuntime(db)
-    runtime.gateway.generate = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None))
+    governed_result = SimpleNamespace(content="ok", usage=None, model="governed-model")
+    runtime.governance.invoke = AsyncMock(return_value=governed_result)
 
     result = await runtime.execute_node(
         {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
-        {"input": "hello"}, owner_id, False, uuid4(),
+        {"input": "hello"}, owner_id, False, uuid4(), tenant_id,
     )
+
     assert result["content"] == "ok"
-    runtime.gateway.generate.assert_awaited_once()
+    assert result["model_id"] == "governed-model"
+    runtime.governance.invoke.assert_awaited_once()
+    request = runtime.governance.invoke.call_args.args[0]
+    assert request.organization_id == organization_id
+    assert request.routing_strategy == "explicit_profile"
+    assert request.profile_id == profile_id
+
+
+@pytest.mark.asyncio
+async def test_agent_node_without_profile_uses_organization_default_routing():
+    db = AsyncMock()
+    agent_id = uuid4()
+    owner_id = uuid4()
+    tenant_id = uuid4()
+    organization_id = uuid4()
+    version_id = uuid4()
+    agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
+    version = SimpleNamespace(
+        id=version_id,
+        agent_id=agent_id,
+        system_prompt="system",
+        model_id="legacy-model-id",
+        model_profile_id=None,
+        version="1.0.0",
+    )
+    db.execute = AsyncMock(side_effect=[
+        SimpleNamespace(scalar_one_or_none=lambda: agent),
+        SimpleNamespace(scalar_one_or_none=lambda: version),
+        SimpleNamespace(scalar_one_or_none=lambda: organization_id),
+    ])
+    runtime = WorkflowRuntime(db)
+    runtime.governance.invoke = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None, model="default-model"))
+
+    result = await runtime.execute_node(
+        {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
+        {"input": "hello"}, owner_id, False, uuid4(), tenant_id,
+    )
+
+    assert result["content"] == "ok"
+    request = runtime.governance.invoke.call_args.args[0]
+    assert request.routing_strategy == "organization_default"
+    assert request.profile_id is None
 
 
 @pytest.mark.asyncio
@@ -66,15 +121,25 @@ async def test_agent_node_query_is_scoped_to_workflow_tenant():
     agent_id = uuid4()
     owner_id = uuid4()
     tenant_id = uuid4()
+    organization_id = uuid4()
     version_id = uuid4()
+    profile_id = uuid4()
     agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
-    version = SimpleNamespace(id=version_id, agent_id=agent_id, system_prompt="system", model_id="mock", version="1.0.0")
+    version = SimpleNamespace(
+        id=version_id,
+        agent_id=agent_id,
+        system_prompt="system",
+        model_id="legacy-model-id",
+        model_profile_id=profile_id,
+        version="1.0.0",
+    )
     db.execute = AsyncMock(side_effect=[
         SimpleNamespace(scalar_one_or_none=lambda: agent),
         SimpleNamespace(scalar_one_or_none=lambda: version),
+        SimpleNamespace(scalar_one_or_none=lambda: organization_id),
     ])
     runtime = WorkflowRuntime(db)
-    runtime.gateway.generate = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None))
+    runtime.governance.invoke = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None, model="governed-model"))
 
     result = await runtime.execute_node(
         {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
