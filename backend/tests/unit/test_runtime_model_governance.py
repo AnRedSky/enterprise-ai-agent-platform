@@ -5,8 +5,8 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.services.runtime_model_governance import RuntimeModelGovernanceService, RuntimeProviderCandidate
 from app.services.model_provider_governance_contract import FallbackReason
+from app.services.runtime_model_governance import RuntimeModelGovernanceService, RuntimeProviderCandidate
 
 
 @pytest.mark.parametrize(
@@ -52,6 +52,43 @@ async def test_invoke_tries_next_governed_candidate_without_mock_fallback(monkey
 
     assert result.content == "real provider success"
     assert [item[0] for item in calls] == ["provider-model-1", "provider-model-2"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_reports_attempt_identity_without_exposing_provider_secrets(monkeypatch):
+    class Gateway:
+        async def generate(self, model, messages, **kwargs):
+            raise httpx.ConnectError("connect")
+
+    service = RuntimeModelGovernanceService(None, gateway=Gateway())
+    provider = SimpleNamespace(id=uuid4())
+    profile = SimpleNamespace(id=uuid4(), model_name="governed-model", model_type="chat")
+    candidate = RuntimeProviderCandidate(profile, provider)
+    attempts = []
+
+    async def resolve(_request, _user_id):
+        return [candidate]
+
+    async def on_attempt(item, request_id, outcome, reason, result):
+        attempts.append((item, request_id, outcome, reason, result))
+
+    monkeypatch.setattr(service, "resolve", resolve)
+    with pytest.raises(httpx.ConnectError):
+        await service.invoke(
+            SimpleNamespace(),
+            uuid4(),
+            [{"role": "user", "content": "hello"}],
+            on_attempt=on_attempt,
+        )
+
+    assert len(attempts) == 1
+    item, request_id, outcome, reason, result = attempts[0]
+    assert item.profile.id == profile.id
+    assert item.provider.id == provider.id
+    assert request_id
+    assert outcome == "failed"
+    assert reason == FallbackReason.CONNECTIVITY
+    assert result is None
 
 
 @pytest.mark.asyncio
