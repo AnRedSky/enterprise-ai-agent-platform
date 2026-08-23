@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from pathlib import Path
 import uuid
@@ -28,24 +29,19 @@ def _existing_tenant_organization(tenant_id: str):
     """
     from app.dependencies.db import SessionLocal
     from app.models.organization import Organization
+    from uuid import UUID
 
     async def _load():
-        from uuid import UUID
-
         async with SessionLocal() as db:
             result = await db.execute(
                 select(Organization).where(Organization.tenant_id == UUID(tenant_id))
             )
             return result.scalar_one_or_none()
 
-    import asyncio
-
     return asyncio.run(_load())
 
 
-def _ensure_existing_organization_membership(
-    organization_id: str, user_id: str, tenant_id: str
-) -> str:
+def _ensure_existing_organization_membership(organization_id: str, user_id: str) -> str:
     """Create an active admin membership for the fresh fixture user.
 
     This is fixture recovery, not an application authorization shortcut. The
@@ -83,8 +79,6 @@ def _ensure_existing_organization_membership(
             await db.refresh(membership)
             return str(membership.id)
 
-    import asyncio
-
     return asyncio.run(_ensure())
 
 
@@ -106,6 +100,7 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
         ).json()
         owner_token = owner_login.get("access_token")
         owner_tenant_id = str(owner_login["tenant_id"])
+        owner_user_id = str(owner_login["user_id"])
         if not owner_token:
             raise RuntimeError("Owner login response does not contain access_token")
         owner_client.headers["Authorization"] = f"Bearer {owner_token}"
@@ -114,7 +109,6 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
     items = organizations.get("items", [])
     matching = [item for item in items if str(item.get("tenant_id")) == owner_tenant_id]
     organization = matching[0] if matching else None
-    membership_id: str | None = None
 
     if organization is None:
         try:
@@ -124,14 +118,13 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
                 "/organizations",
                 json={"name": f"API Real Organization {uuid.uuid4().hex[:8]}"},
             ).json()
-            membership_id = None
         except RuntimeError as exc:
             if "POST /organizations -> 409" not in str(exc):
                 raise
 
             # HTTP GET /organizations is membership-scoped. A new bootstrap user
             # cannot see the existing tenant singleton after the expected 409, so
-            # recover the fixture membership at the DB boundary and immediately
+            # recover the owner membership at the fixture DB boundary and then
             # return to the real HTTP API for the rest of the gate.
             organization_row = _existing_tenant_organization(owner_tenant_id)
             if organization_row is None:
@@ -145,11 +138,7 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
                 "name": organization_row.name,
                 "status": organization_row.status,
             }
-            membership_id = _ensure_existing_organization_membership(
-                str(organization_row.id),
-                str(owner_login["user_id"]),
-                owner_tenant_id,
-            )
+            _ensure_existing_organization_membership(str(organization_row.id), owner_user_id)
 
     if str(organization["tenant_id"]) != owner_tenant_id:
         raise RuntimeError(
@@ -157,51 +146,28 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
             f"organization={organization['tenant_id']} owner={owner_tenant_id}"
         )
 
-    if membership_id is None:
-        member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
-        member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
-        member = _BOOTSTRAP.request(
-            client,
-            "POST",
-            "/auth/register",
-            json={"username": member_username, "password": member_password},
-        ).json()
-        membership = _BOOTSTRAP.request(
-            client,
-            "POST",
-            f"/organizations/{organization['id']}/members",
-            json={"user_id": member["user_id"], "role": "admin"},
-        ).json()
-        membership_id = str(membership["id"])
+    member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
+    member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
+    member = _BOOTSTRAP.request(
+        client,
+        "POST",
+        "/auth/register",
+        json={"username": member_username, "password": member_password},
+    ).json()
+    membership = _BOOTSTRAP.request(
+        client,
+        "POST",
+        f"/organizations/{organization['id']}/members",
+        json={"user_id": member["user_id"], "role": "admin"},
+    ).json()
 
-        with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as member_client:
-            member_token = _BOOTSTRAP.login_token(member_client, member_username, member_password)
-        member_user_id = str(member["user_id"])
-    else:
-        # The existing-Organization recovery already attached the owner through
-        # the fixture boundary. Keep the returned member token independent from
-        # the owner token used by the runtime tests.
-        member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
-        member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
-        member = _BOOTSTRAP.request(
-            client,
-            "POST",
-            "/auth/register",
-            json={"username": member_username, "password": member_password},
-        ).json()
-        membership_id = _ensure_existing_organization_membership(
-            str(organization["id"]),
-            str(member["user_id"]),
-            owner_tenant_id,
-        )
-        with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as member_client:
-            member_token = _BOOTSTRAP.login_token(member_client, member_username, member_password)
-        member_user_id = str(member["user_id"])
+    with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as member_client:
+        member_token = _BOOTSTRAP.login_token(member_client, member_username, member_password)
 
     return {
         "organization_id": str(organization["id"]),
-        "membership_id": membership_id,
-        "member_user_id": member_user_id,
+        "membership_id": str(membership["id"]),
+        "member_user_id": str(member["user_id"]),
         "member_access_token": member_token,
     }
 
