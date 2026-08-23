@@ -21,6 +21,7 @@ import {
   ElScrollbar,
   ElSelect,
   ElSlider,
+  ElSwitch,
   ElTable,
   ElTableColumn,
   ElTabPane,
@@ -56,6 +57,7 @@ const components = {
   ElScrollbar,
   ElSelect,
   ElSlider,
+  ElSwitch,
   ElTable,
   ElTableColumn,
   ElTabPane,
@@ -65,8 +67,5 @@ const components = {
   ElTimelineItem,
 };
 
-for (const [name, component] of Object.entries(components)) {
-  app.component(name, component);
-}
-
+for (const [name, component] of Object.entries(components)) app.component(name, component);
 app.use(createPinia()).use(router).mount("#app");
