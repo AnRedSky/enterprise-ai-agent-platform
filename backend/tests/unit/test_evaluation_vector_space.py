@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
+from app.infrastructure.providers.vector_retrieval import PgVectorRetrievalProvider, VectorRecord
 
 
 @pytest.mark.asyncio
