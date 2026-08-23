@@ -27,15 +27,35 @@ def _client(token: str | None = None) -> httpx.Client:
 
 def _require_context() -> None:
     missing = [
-        name for name, value in {
+        name
+        for name, value in {
             "ORGANIZATION_ID": ORGANIZATION_ID,
             "ORGANIZATION_MEMBERSHIP_ID": MEMBERSHIP_ID,
             "ORGANIZATION_MEMBER_USER_ID": MEMBER_USER_ID,
             "ORGANIZATION_MEMBER_ACCESS_TOKEN": MEMBER_TOKEN,
-        }.items() if not value
+        }.items()
+        if not value
     ]
     if missing:
         pytest.fail(f"Organization real API fixture context is missing: {', '.join(missing)}")
+
+
+def _list_all_members(client: httpx.Client) -> list[dict]:
+    """Read the complete paginated membership collection for fixture assertions."""
+    items: list[dict] = []
+    offset = 0
+    while True:
+        response = client.get(
+            f"/organizations/{ORGANIZATION_ID}/members",
+            params={"offset": offset, "limit": 50},
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        page = payload["items"]
+        items.extend(page)
+        if not page or len(items) >= payload["total"]:
+            return items
+        offset += len(page)
 
 
 def test_organization_list_real_http_contract():
@@ -52,12 +72,10 @@ def test_organization_detail_and_membership_real_http_contract():
     _require_context()
     with _client() as client:
         organization = client.get(f"/organizations/{ORGANIZATION_ID}")
-        members = client.get(f"/organizations/{ORGANIZATION_ID}/members")
+        members = _list_all_members(client)
     assert organization.status_code == 200, organization.text
-    assert members.status_code == 200, members.text
     assert organization.json()["id"] == ORGANIZATION_ID
-    items = members.json()["items"]
-    assert any(item["id"] == MEMBERSHIP_ID and item["user_id"] == MEMBER_USER_ID for item in items)
+    assert any(item["id"] == MEMBERSHIP_ID and item["user_id"] == MEMBER_USER_ID for item in members)
 
 
 def test_membership_role_and_status_lifecycle_real_http():
@@ -115,9 +133,8 @@ def test_owner_transfer_is_explicit_and_preserves_single_owner():
         assert transferred.json()["id"] == MEMBERSHIP_ID
         assert transferred.json()["role"] == "owner"
 
-        members = client.get(f"/organizations/{ORGANIZATION_ID}/members")
-        assert members.status_code == 200, members.text
-        owners = [item for item in members.json()["items"] if item["role"] == "owner" and item["status"] == "active"]
+        members = _list_all_members(client)
+        owners = [item for item in members if item["role"] == "owner" and item["status"] == "active"]
         assert len(owners) == 1
         assert owners[0]["id"] == MEMBERSHIP_ID
 
