@@ -149,6 +149,9 @@ def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_a
                                 "config": {
                                     "agent_id": agent_id,
                                     "prompt": "verify deterministic governed fallback success",
+                                    "model_governance": {
+                                        "allowed_provider_ids": provider_ids,
+                                    },
                                     "retry": {
                                         "max_attempts": 1,
                                         "backoff_ms": 0,
@@ -248,6 +251,7 @@ def test_runtime_uses_published_model_profile_and_records_usage_identity_without
                     "model_type": "chat",
                     "model_name": f"runtime-governed-model-{suffix}",
                     "is_default": True,
+                    "parameters": {"timeout_seconds": 0.25},
                 },
             )
             assert profile.status_code == 201, profile.text
