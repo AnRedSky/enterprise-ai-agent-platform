@@ -60,6 +60,8 @@ class FallbackPolicy:
     def __post_init__(self) -> None:
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be >= 1")
+        if self.max_attempts > 2:
+            raise ValueError("max_attempts must be <= 2")
 
 
 @dataclass(frozen=True)

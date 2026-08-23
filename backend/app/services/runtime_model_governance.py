@@ -14,7 +14,7 @@ from app.models.organization import Organization
 from app.runtime.model_gateway import ModelGateway
 from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.model_provider import ModelProviderService
-from app.services.model_provider_governance_contract import FallbackReason
+from app.services.model_provider_governance_contract import FallbackPolicy, FallbackReason
 
 
 @dataclass(frozen=True)
@@ -90,11 +90,17 @@ class RuntimeModelGovernanceService:
         user_id: UUID,
         messages: list[dict],
         *,
-        max_attempts: int = 2,
+        max_attempts: int | None = None,
+        fallback_policy: FallbackPolicy | None = None,
         on_attempt: RuntimeInvocationAttemptCallback | None = None,
     ):
-        if max_attempts < 1:
+        policy = fallback_policy or FallbackPolicy()
+        attempts_limit = policy.max_attempts if max_attempts is None else max_attempts
+        if attempts_limit < 1:
             raise ValueError("max_attempts must be >= 1")
+        if attempts_limit > policy.max_attempts:
+            raise ValueError("max_attempts must not exceed fallback policy")
+
         candidates = await self.resolve(request, user_id)
         if not candidates:
             raise HTTPException(404, "没有符合治理策略的 Model Provider/Profile")
@@ -102,7 +108,7 @@ class RuntimeModelGovernanceService:
         attempts = 0
         last_error: BaseException | None = None
         for candidate in candidates:
-            if attempts >= max_attempts:
+            if attempts >= attempts_limit:
                 break
             attempts += 1
             request_id = str(uuid4())
@@ -121,7 +127,7 @@ class RuntimeModelGovernanceService:
                 reason = self.fallback_reason(exc)
                 if on_attempt is not None:
                     await on_attempt(candidate, request_id, "failed", reason, None)
-                if reason is None:
+                if not policy.enabled or reason is None or reason not in policy.eligible_reasons:
                     raise
 
         if last_error is not None:

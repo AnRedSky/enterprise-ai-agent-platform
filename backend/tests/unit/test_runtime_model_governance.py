@@ -5,7 +5,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.services.model_provider_governance_contract import FallbackReason
+from app.services.model_provider_governance_contract import FallbackPolicy, FallbackReason
 from app.services.runtime_model_governance import RuntimeModelGovernanceService, RuntimeProviderCandidate
 
 
@@ -24,6 +24,11 @@ from app.services.runtime_model_governance import RuntimeModelGovernanceService,
 )
 def test_fallback_reason_is_bounded_to_governance_contract(error, expected):
     assert RuntimeModelGovernanceService.fallback_reason(error) == expected
+
+
+def test_fallback_policy_rejects_attempts_above_governance_bound():
+    with pytest.raises(ValueError, match="max_attempts must be <= 2"):
+        FallbackPolicy(max_attempts=3)
 
 
 @pytest.mark.asyncio
@@ -54,6 +59,41 @@ async def test_invoke_tries_next_governed_candidate_without_mock_fallback(monkey
 
     assert result.content == "real provider success"
     assert [item[0] for item in calls] == ["provider-model-1", "provider-model-2"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_honors_fallback_eligible_reasons(monkeypatch):
+    calls = 0
+
+    class Gateway:
+        async def generate(self, model, messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise HTTPException(503, "provider unavailable")
+
+    service = RuntimeModelGovernanceService(None, gateway=Gateway())
+    first = RuntimeProviderCandidate(SimpleNamespace(id=uuid4(), model_name="model-1"), SimpleNamespace(id=uuid4()))
+    second = RuntimeProviderCandidate(SimpleNamespace(id=uuid4(), model_name="model-2"), SimpleNamespace(id=uuid4()))
+
+    async def resolve(_request, _user_id):
+        return [first, second]
+
+    monkeypatch.setattr(service, "resolve", resolve)
+    policy = FallbackPolicy(eligible_reasons=frozenset({FallbackReason.TIMEOUT}))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.invoke(SimpleNamespace(), uuid4(), [{"role": "user", "content": "hello"}], fallback_policy=policy)
+
+    assert exc_info.value.status_code == 503
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_invoke_rejects_attempt_limit_above_fallback_policy(monkeypatch):
+    service = RuntimeModelGovernanceService(None, gateway=SimpleNamespace())
+    monkeypatch.setattr(service, "resolve", lambda *_args: None)
+    with pytest.raises(ValueError, match="must not exceed fallback policy"):
+        await service.invoke(SimpleNamespace(), uuid4(), [], max_attempts=3)
 
 
 @pytest.mark.asyncio
