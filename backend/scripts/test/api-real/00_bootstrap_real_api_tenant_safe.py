@@ -8,6 +8,7 @@ import uuid
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 # The tenant-safe bootstrap is executed as a standalone script by PowerShell.
@@ -27,6 +28,31 @@ _BOOTSTRAP = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BOOTSTRAP)
 
 
+def _run_fixture_db(operation):
+    """Run one fixture-only DB operation on a fresh async engine/loop.
+
+    The bootstrap script is intentionally synchronous at its public boundary and
+    calls these recovery helpers sequentially. Reusing the application's global
+    async engine across multiple ``asyncio.run`` calls can leave asyncpg pooled
+    connections attached to the previous Windows ProactorEventLoop. The next
+    helper then fails with ``Event loop is closed`` / ``proactor is None``.
+    Keep each short recovery operation isolated and dispose its pool before the
+    event loop closes.
+    """
+    from app.core.config import settings
+
+    async def _run():
+        engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with session_factory() as db:
+                return await operation(db)
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_run())
+
+
 def _existing_tenant_organization(tenant_id: str):
     """Read the tenant's singleton Organization for fixture recovery.
 
@@ -37,18 +63,16 @@ def _existing_tenant_organization(tenant_id: str):
     repair this bootstrap boundary; all subsequent governance operations remain
     real HTTP API calls.
     """
-    from app.dependencies.db import SessionLocal
     from app.models.organization import Organization
     from uuid import UUID
 
-    async def _load():
-        async with SessionLocal() as db:
-            result = await db.execute(
-                select(Organization).where(Organization.tenant_id == UUID(tenant_id))
-            )
-            return result.scalar_one_or_none()
+    async def _load(db):
+        result = await db.execute(
+            select(Organization).where(Organization.tenant_id == UUID(tenant_id))
+        )
+        return result.scalar_one_or_none()
 
-    return asyncio.run(_load())
+    return _run_fixture_db(_load)
 
 
 def _ensure_existing_organization_membership(organization_id: str, user_id: str) -> str:
@@ -59,37 +83,35 @@ def _ensure_existing_organization_membership(organization_id: str, user_id: str)
     to users who are not members, so the test harness must establish the initial
     membership before it can continue through the real HTTP surface.
     """
-    from app.dependencies.db import SessionLocal
     from app.models.organization import OrganizationMembership
     from uuid import UUID
 
-    async def _ensure():
-        async with SessionLocal() as db:
-            result = await db.execute(
-                select(OrganizationMembership).where(
-                    OrganizationMembership.organization_id == UUID(organization_id),
-                    OrganizationMembership.user_id == UUID(user_id),
-                )
+    async def _ensure(db):
+        result = await db.execute(
+            select(OrganizationMembership).where(
+                OrganizationMembership.organization_id == UUID(organization_id),
+                OrganizationMembership.user_id == UUID(user_id),
             )
-            membership = result.scalar_one_or_none()
-            if membership is None:
-                membership = OrganizationMembership(
-                    id=uuid.uuid4(),
-                    organization_id=UUID(organization_id),
-                    user_id=UUID(user_id),
-                    status="active",
-                    role="admin",
-                )
-                db.add(membership)
-            else:
-                membership.status = "active"
-                if membership.role == "member":
-                    membership.role = "admin"
-            await db.commit()
-            await db.refresh(membership)
-            return str(membership.id)
+        )
+        membership = result.scalar_one_or_none()
+        if membership is None:
+            membership = OrganizationMembership(
+                id=uuid.uuid4(),
+                organization_id=UUID(organization_id),
+                user_id=UUID(user_id),
+                status="active",
+                role="admin",
+            )
+            db.add(membership)
+        else:
+            membership.status = "active"
+            if membership.role == "member":
+                membership.role = "admin"
+        await db.commit()
+        await db.refresh(membership)
+        return str(membership.id)
 
-    return asyncio.run(_ensure())
+    return _run_fixture_db(_ensure)
 
 
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
