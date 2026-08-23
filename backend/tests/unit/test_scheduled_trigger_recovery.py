@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi import HTTPException
 
-from app.services.scheduled_trigger_scheduler import ScheduledTriggerScheduler
+from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 
 def test_recovery_slots_are_bounded_and_include_current_slot():
