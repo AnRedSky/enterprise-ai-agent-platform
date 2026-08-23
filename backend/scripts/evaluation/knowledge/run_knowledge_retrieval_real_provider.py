@@ -1,3 +1,10 @@
+"""真实 Provider 检索质量评估脚本。
+
+职责：使用受治理的 Embedding Provider、PostgreSQL/pgvector 与知识检索领域服务执行真实质量评估。
+边界：仅负责评估场景编排与结果记录，不复制 Provider 或数据库基础设施实现。
+关键依赖：`app.infrastructure.db`、`app.infrastructure.providers` 与 Knowledge 检索领域服务。
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +25,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from sqlalchemy import select, text
 
 from app.core.config import settings
-from app.dependencies.db import SessionLocal
+from app.infrastructure.db import SessionLocal
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
 from app.infrastructure.providers import (
