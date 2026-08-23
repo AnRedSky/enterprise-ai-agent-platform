@@ -8,10 +8,10 @@ from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.db import get_db as _get_db
+from app.infrastructure.db import get_db_session as _get_db_session
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
     """提供 API 请求范围内的异步数据库会话。"""
-    async for session in _get_db():
+    async for session in _get_db_session():
         yield session
