@@ -29,8 +29,8 @@ docs/
 
 当前 Backend 模块架构正式文档：
 
-- `00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 目录、职责、依赖方向和通用开发模板。
-- `00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前项目从远端 `main` 实际目录到目标模块的迁移映射，仅作为迁移设计依据，不代表迁移已经完成。
+- `00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 目录、职责、依赖方向、完整重构规则和通用开发模板。
+- `00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前项目从远端 `main` 实际目录到目标模块的迁移映射与完整重构验收要求。
 
 ### 01-governance/
 
@@ -47,6 +47,28 @@ docs/
 ### 04-errors/
 
 只记录已经发生并完成分析的工程错误。错误必须有实际现象、根因、影响、修复、验证和防重复措施。
+
+本次 Backend 模块重构兼容垫片方案已记录：
+
+```text
+04-errors/2026-08-23-backend-module-refactor-compatibility-shim.md
+```
+
+### Backend 模块化整改测试
+
+模块化整改测试编排统一位于：
+
+```text
+backend/scripts/test/module-refactor/
+```
+
+当前固定入口：
+
+```text
+01_backend_module_refactor_gate.ps1
+```
+
+测试实现仍必须位于 `backend/tests/unit`、`integration`、`api_contract`、`api_real`，脚本只负责 Gate 和顺序编排。
 
 ## 4. 命名
 
@@ -87,7 +109,7 @@ PROJECT_STATUS.md
     = 当前状态与下一步
 
 BACKEND_MODULE_MIGRATION_MAP.md
-    = 架构迁移设计与目标映射，不记录已经完成的测试事实
+    = 架构迁移设计、目标映射与迁移规则；不虚构测试事实
 ```
 
 不得把未执行测试写成通过；不得把历史状态覆盖当前状态。
