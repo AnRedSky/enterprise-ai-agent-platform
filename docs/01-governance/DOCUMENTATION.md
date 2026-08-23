@@ -25,7 +25,12 @@ docs/
 
 ### 00-architecture/
 
-记录长期稳定的系统、领域、Runtime、数据、安全和 Observability 架构。不得记录单次任务的临时执行结果。
+记录长期稳定的系统、领域、Runtime、数据、安全、Observability 和 Backend 模块架构。不得记录单次任务的临时执行结果。
+
+当前 Backend 模块架构正式文档：
+
+- `00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 目录、职责、依赖方向和通用开发模板。
+- `00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前项目从远端 `main` 实际目录到目标模块的迁移映射，仅作为迁移设计依据，不代表迁移已经完成。
 
 ### 01-governance/
 
@@ -51,6 +56,8 @@ PHASE_1_8_ACCEPTANCE.md
 ERR-0001-real-api-register-500.md
 SYSTEM_ARCHITECTURE.md
 RUNTIME_ARCHITECTURE.md
+BACKEND_MODULE_ARCHITECTURE.md
+BACKEND_MODULE_MIGRATION_MAP.md
 DEVELOPMENT.md
 DOCUMENTATION.md
 ```
@@ -78,6 +85,9 @@ PHASE_x_y_ACCEPTANCE.md
 
 PROJECT_STATUS.md
     = 当前状态与下一步
+
+BACKEND_MODULE_MIGRATION_MAP.md
+    = 架构迁移设计与目标映射，不记录已经完成的测试事实
 ```
 
 不得把未执行测试写成通过；不得把历史状态覆盖当前状态。
