@@ -14,21 +14,34 @@
 
 ## 当前开发阶段
 
-**Phase 1.9 — Runtime Reliability / Production Hardening，进行中。**
+**Phase 2.3 — Model Provider Governance，进行中。**
 
-`1.9-A Circuit Breaker HALF_OPEN Concurrent Recovery` 已完成代码修复以及开发者本地实际 Unit / Backend / Migration / Real API Gate；当前进入 `1.9-B Runtime Failure / Retry / Circuit Boundary Audit`。
+2.3-A / B / C / D / E / F 已实现并完成对应验收；当前推进 **2.3-G Cost / Usage Accounting**。2.3-G 已提交 PostgreSQL usage/cost 持久化、查询 API、Migration 与 Real API 验证脚本，等待开发者本地执行 acceptance gate。
 
-## 当前 1.9-A 验证结果
+## 当前 2.3-F 验证结果
 
 ```text
-Circuit Breaker targeted tests: 16 passed in 0.68s
-Backend Regression: 262 passed, 20 deselected in 3.64s
-Alembic head: 0022_workflow_trigger
-Real API via Backend Gate: 20 passed in 32.99s
-Standalone Real API Gate: 20 passed in 33.26s
+Targeted runtime governance tests: 33 passed
+Backend Regression: 351 passed, 34 deselected
+Alembic head: passed
+Tenant Safe Real API Gate: 34 passed
 ```
 
-以上均来自开发者本地实际执行结果，不使用 GitHub Actions 作为验收依据。
+以上来自开发者本地实际执行结果，不使用 GitHub Actions 作为验收依据。
+
+## 当前 2.3-G 验证要求
+
+```text
+Targeted usage accounting tests
+        ↓
+Backend Regression
+        ↓
+Alembic upgrade head
+        ↓
+Tenant Safe Real API Gate
+```
+
+2.3-G 在开发者本地实际通过前不得标记为 Passed。
 
 ## 目录
 
