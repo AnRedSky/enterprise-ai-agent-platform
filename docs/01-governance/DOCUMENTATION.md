@@ -68,7 +68,7 @@ backend/scripts/test/module-refactor/
 01_backend_module_refactor_gate.ps1
 ```
 
-测试实现仍必须位于 `backend/tests/unit`、`integration`、`api_contract`、`api_real`，脚本只负责 Gate 和顺序编排。
+Gate 同时检查旧文件、旧 import、重复实现、目标目录以及 Agent / Knowledge / Infrastructure Provider targeted tests，最终再执行 Backend Regression。测试实现仍必须位于 `backend/tests/unit`、`integration`、`api_contract`、`api_real`，脚本只负责 Gate 和顺序编排。
 
 ## 4. 命名
 

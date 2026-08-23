@@ -120,12 +120,31 @@ infrastructure/
 │   └── types.py
 ├── redis/
 ├── providers/
+│   ├── __init__.py
+│   ├── embedding.py
+│   └── ...
 └── http/
 ```
 
 Repository 必须属于对应业务领域，不进入 `infrastructure/db/`；数据库 Session、Transaction 等技术能力属于 Infrastructure。
 
-## 8. Middleware 与 Dependencies 边界
+Provider 必须集中在 `infrastructure/providers/`。同一外部能力只能有一个正式技术适配实现；业务 Service 只能依赖稳定 Contract，禁止在 `services/` 再复制 Provider。
+
+## 8. 模块说明与注释规则
+
+每个新增或重构的 Python 模块必须在文件顶部提供简短中文模块说明，至少说明：
+
+```text
+模块职责
+边界 / 不负责什么
+关键外部依赖（存在时）
+```
+
+类、公共方法和复杂算法只在需要时补充中文 docstring/comment，解释业务意图、约束或技术原因。禁止使用无意义的“初始化服务”“处理数据”等空洞注释，也禁止用大量注释掩盖职责混乱。
+
+测试模块同样应通过模块级 docstring 说明测试对象与验证范围。
+
+## 9. Middleware 与 Dependencies 边界
 
 ```text
 middleware
@@ -137,7 +156,7 @@ dependencies
 
 二者禁止合并为通用工具层。
 
-## 9. Utils 使用规则
+## 10. Utils 使用规则
 
 `utils/` 只能放没有领域语义的通用纯工具，例如时间、ID、JSON 等。
 
@@ -150,7 +169,7 @@ workflow_utils.py    → services/workflow/
 scheduler_utils.py   → services/scheduler/
 ```
 
-## 10. 新功能标准开发模板
+## 11. 新功能标准开发模板
 
 ```text
 ① 需求与架构确认
@@ -182,7 +201,9 @@ scheduler_utils.py   → services/scheduler/
 ⑭ 直接提交 main
 ```
 
-## 11. Contract 规则
+开发过程中必须先检查是否已经存在同一能力；禁止为了新功能方便而新增第二个 Service、Provider、Repository、Runtime 或工具实现。
+
+## 12. Contract 规则
 
 后端 Contract 是前后端唯一业务契约。
 
@@ -196,7 +217,7 @@ Service
 
 ORM Model 不得直接成为前后端业务契约。
 
-## 12. 测试模板
+## 13. 测试模板
 
 测试实现与测试编排严格分离：
 
@@ -216,13 +237,13 @@ backend/scripts/test/
 
 Backend 根测试目录不得新增 `test_*.py`。
 
-## 13. 数据与外部资源规则
+## 14. 数据与外部资源规则
 
 线上业务数据必须通过 Repository / Infrastructure 访问真实 PostgreSQL / Redis / Provider。
 
 Evaluation 数据集、Baseline、Result 可以使用版本化 JSON / JSONL，但不得反向充当线上业务数据库。
 
-## 14. 完全重构原则
+## 15. 完全重构原则
 
 目录重构必须是完整重构，不允许使用垫片、代理文件、旧入口转发或双实现掩盖迁移未完成。
 
@@ -234,12 +255,14 @@ Evaluation 数据集、Baseline、Result 可以使用版本化 JSON / JSONL，�
 4. 修改所有测试 import；
 5. 删除旧文件；
 6. 全仓搜索并清除旧模块路径；
-7. 执行对应测试 Gate；
-8. 更新迁移矩阵、Phase、Acceptance、Status 与必要的 Error 记录。
+7. 检查重复实现；
+8. 为新增/重构模块补充必要职责说明；
+9. 执行对应测试 Gate；
+10. 更新迁移矩阵、Phase、Acceptance、Status 与必要的 Error 记录。
 
 只有以上步骤全部完成，该领域才允许标记为“迁移完成”。迁移期间可以在一个原子提交中完成文件新增、调用方切换和旧文件删除，但不得留下兼容实现。
 
-## 15. 业务不变原则
+## 16. 业务不变原则
 
 目录重构不得改变既有业务行为：
 
@@ -266,7 +289,7 @@ import 路径
 
 如果为了完成目录重构发现必须改变业务行为，必须先暂停迁移并单独形成设计变更。
 
-## 16. 迁移验收模板
+## 17. 迁移验收模板
 
 每个领域完成后必须执行：
 
@@ -275,14 +298,17 @@ import 路径
 ② API Contract（涉及 API 时）
 ③ 全仓旧 import 搜索
 ④ 目标目录结构检查
-⑤ Backend Regression
-⑥ Alembic head/current（仅当任务涉及数据库时）
-⑦ Real API Gate（范围需要时）
-⑧ 更新 Phase / Acceptance / Status / Error
+⑤ 重复实现检查
+⑥ Backend Regression
+⑦ Alembic head/current（仅当任务涉及数据库时）
+⑧ Real API Gate（范围需要时）
+⑨ 更新 Phase / Acceptance / Status / Error
 ```
 
 测试结果只能记录本地实际执行结果，禁止预填通过。
 
-## 17. 当前项目参考实现
+## 18. 当前项目参考实现
 
-当前 `services/workflow_scheduler/` 已采用领域子模块方式，并通过 `__init__.py` 暴露稳定入口；内部已经拆分 Contract、模型、时间、lease、misfire、Repository、Runtime。该结构可作为职责拆分参考，但后续重构必须遵守本文件第 14 节的完全重构原则。
+当前 `services/workflow_scheduler/` 已采用领域子模块方式，并通过 `__init__.py` 暴露稳定入口；内部已经拆分 Contract、模型、时间、lease、misfire、Repository、Runtime。该结构可作为职责拆分参考，但后续重构必须遵守本文件第 15 节的完全重构原则。
+
+当前 Knowledge Provider 已完成从 `services` 到 `infrastructure/providers` 的物理迁移，可作为“领域业务 + 技术适配分离且无重复实现”的参考实现。

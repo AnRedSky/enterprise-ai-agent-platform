@@ -42,6 +42,7 @@ backend/app/
 ```text
 app/infrastructure/
 app/infrastructure/db/
+app/infrastructure/providers/
 app/middleware/
 app/utils/
 ```
@@ -59,9 +60,9 @@ app/services/agent/
 
 此前曾采用兼容入口方式进行 Agent 迁移，该做法已判定不符合最终重构要求并纠正，工程错误已记录在 `docs/04-errors/`。
 
-### Knowledge：本轮已完成彻底领域重构
+### Knowledge：领域与 Provider 均已完成彻底重构
 
-目标领域已经建立：
+领域模块：
 
 ```text
 app/services/knowledge/
@@ -76,9 +77,29 @@ app/services/knowledge/
 └── hybrid_service.py
 ```
 
-生产 API 与受影响测试已经切换到新领域路径；旧 Knowledge Service / Contract / Hybrid / Vector Retrieval 文件已经删除。
+技术 Provider：
 
-本轮**没有复制 Provider 实现到新目录**。以下 Provider 技术实现仍属于下一独立迁移单元：
+```text
+app/infrastructure/providers/
+├── __init__.py
+├── embedding.py
+├── mock_embedding.py
+├── ollama_embedding.py
+└── vector_retrieval.py
+```
+
+已完成：
+
+- Knowledge 领域 Service / Contract / Retrieval / Indexing 已集中到 `services/knowledge/`；
+- Embedding Contract 与 Provider 实现集中到 `infrastructure/providers/`；
+- pgvector / InMemory Vector Provider 集中到 `infrastructure/providers/`；
+- 生产代码和受影响测试已切换新 import；
+- 旧 Provider 文件已删除；
+- 未复制第二套 Provider 实现；
+- 新增/重构模块补充中文职责说明；
+- 模块化 Gate 已增加 Provider 旧路径、重复实现和 Provider targeted tests 检查。
+
+旧 Provider 路径已删除：
 
 ```text
 app/services/embedding_provider.py
@@ -87,20 +108,18 @@ app/services/ollama_embedding_provider.py
 app/services/vector_retrieval_provider.py
 ```
 
-后续统一迁移到 `app/infrastructure/providers/`，完成后删除旧 Provider 文件，禁止新旧双实现。
+**注意：本轮代码重构已提交，但当前远端工具环境没有执行 pytest，因此不能记录 targeted tests 或 Backend Regression Passed。**
 
 ### 当前未完成
 
-- Knowledge Provider 尚未完成 `infrastructure/providers` 迁移；
-- Model / Provider 尚未完成 Service、Runtime、Infrastructure 边界重构；
+- Model / Provider 尚未完成 Service、Runtime、Infrastructure 全边界重构；
 - Tool 尚未完成领域与技术实现分离；
 - Workflow / Trigger 尚未完成；
 - Scheduler 尚未完成最终目录收敛；
 - Memory / Organization / Governance / Observability 尚未完成；
 - Runtime 尚未完成分域；
 - API 尚未完成 `api/v1/<domain>` 收敛；
-- **本轮 Knowledge/Agent 迁移尚未在当前远端环境实际执行 pytest，因此不得记录 targeted tests 或 Backend Regression Passed。**
-- **不得记录整个模块化整改 Passed。**
+- **整个 Backend 模块化整改不得标记 Passed。**
 
 ### 完整重构原则
 
@@ -121,6 +140,8 @@ app/services/vector_retrieval_provider.py
  ↓
 重复实现检查 = 0
  ↓
+模块职责说明检查 = 0
+ ↓
 领域测试
  ↓
 Backend Regression
@@ -133,6 +154,7 @@ Backend Regression
 旧实现 + 新实现并存
 旧目录长期保留
 只改目录名不改职责
+复制 Provider 形成第二套实现
 ```
 
 ### 业务不变原则
@@ -221,7 +243,9 @@ backend/app/services/workflow_scheduler/
 - Secret 不进入 Git、数据库明文、报告或 trace/audit。
 - 代码、Phase、Acceptance、Error、Status 必须保持可追溯。
 - 代码中的功能说明和注释统一使用中文；技术标识保持原文。
+- **每个新增或重构 Python 模块必须提供必要的中文职责说明；类和复杂方法按需补充说明约束与技术原因。**
 - 同一业务功能必须按领域职责组织为子模块包，禁止继续向公共 `services` 目录新增同功能零散文件。
 - **禁止以兼容垫片、旧入口转发或双实现方式完成模块迁移；领域迁移完成后旧文件必须删除。**
 - **每个迁移单元必须执行功能重复实现检查；同一能力只能保留一个正式实现。**
+- **Provider 只能在 `app/infrastructure/providers/` 保留正式技术适配实现，禁止在 `services/` 复制第二套 Provider。**
 - Backend 模块化设计与后续新功能开发统一参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`；具体迁移按 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 执行。

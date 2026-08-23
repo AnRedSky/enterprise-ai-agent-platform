@@ -49,6 +49,7 @@ backend/app/
 6. **测试跟随迁移**：受影响测试同步修改 import 与模块路径，不通过兼容代码维持旧测试。
 7. **数据库不因目录重构产生 Migration**：只有真实数据库结构变化才允许新增 Alembic Migration。
 8. **功能重复实现检查必须是每个迁移单元的 Gate**：新旧文件、同职责 Service、重复 Provider、重复 Runtime 均必须检查。
+9. **模块说明必须随代码迁移**：每个新增或重构模块文件必须有简短中文模块说明，说明职责、边界及必要的外部依赖；不得用无意义注释堆砌代码。
 
 ## 4. 一级目录迁移
 
@@ -77,9 +78,9 @@ app/services/agent/
 
 原 `app/services/agent_registry.py` 与 `app/services/agent/registry.py` 已删除；生产代码直接使用 `app.services.agent`，不存在兼容垫片或双实现。
 
-## 6. Knowledge：本轮彻底迁移
+## 6. Knowledge：领域与 Provider 已完成物理迁移
 
-### 已完成
+### 领域模块
 
 ```text
 app/services/knowledge/
@@ -94,40 +95,29 @@ app/services/knowledge/
 └── hybrid_service.py
 ```
 
-生产 API 已切换到：
-
-```python
-from app.services.knowledge import (
-    KnowledgeRegistry,
-    KnowledgeIngestionService,
-    KnowledgeVectorIndexingService,
-    KnowledgeRetrievalRouterService,
-    HybridKnowledgeRetrievalService,
-)
-```
-
-已删除的旧业务实现：
-
-```text
-app/services/knowledge_ingestion.py
-app/services/knowledge_registry.py
-app/services/knowledge_retrieval.py
-app/services/knowledge_retrieval_contract.py
-app/services/knowledge_vector_indexing.py
-app/services/hybrid_knowledge_retrieval.py
-app/services/hybrid_knowledge_retrieval_service.py
-app/services/vector_knowledge_retrieval.py
-```
-
-### Provider 边界
-
-当前 `embedding_provider.py`、`mock_embedding_provider.py`、`ollama_embedding_provider.py`、`vector_retrieval_provider.py` 仍属于待处理的技术 Provider 迁移单元；它们本轮没有复制到新目录，避免产生重复实现。后续统一迁移至：
+### Provider 技术适配
 
 ```text
 app/infrastructure/providers/
+├── __init__.py
+├── embedding.py
+├── mock_embedding.py
+├── ollama_embedding.py
+└── vector_retrieval.py
 ```
 
-完成 Provider 迁移后，旧 `app/services/*provider*.py` 必须删除。
+Embedding Contract 只保留 `infrastructure/providers/embedding.py` 一份正式定义；Knowledge 领域仅引用该 Contract，不再复制 Provider 实现。
+
+已删除：
+
+```text
+app/services/embedding_provider.py
+app/services/mock_embedding_provider.py
+app/services/ollama_embedding_provider.py
+app/services/vector_retrieval_provider.py
+```
+
+Knowledge 的 `vector_indexing.py` 与 `vector_retrieval.py` 已直接依赖 `app.infrastructure.providers`，因此不存在旧 Service Provider 与新 Infrastructure Provider 双实现。
 
 ## 7. Model
 
@@ -158,7 +148,7 @@ app/infrastructure/providers/
 └── <具体外部 Provider 适配>
 ```
 
-必须先建立调用关系，再进行物理迁移；不得通过旧路径垫片完成迁移。
+必须先建立调用关系，再进行物理迁移；不得通过旧路径垫片完成迁移，也不得复制一套新 Provider。
 
 ## 8. Memory
 
@@ -270,10 +260,11 @@ API URL、HTTP Method、Request/Response Contract 不变；迁移完成后旧 Ro
 3. 不存在重复实现；
 4. 生产代码只存在一个正式入口；
 5. 受影响测试已切换；
-6. targeted tests；
-7. Backend Regression；
-8. 必要时 Real API / Tenant Safe Real API；
-9. Alembic `upgrade heads` / `current`，确认没有因目录重构产生数据库变化；
-10. 更新 Migration Map、PROJECT_STATUS 与开发记录。
+6. 每个新增/重构模块有必要的中文职责说明；
+7. targeted tests；
+8. Backend Regression；
+9. 必要时 Real API / Tenant Safe Real API；
+10. Alembic `upgrade heads` / `current`，确认没有因目录重构产生数据库变化；
+11. 更新 Migration Map、PROJECT_STATUS 与开发记录。
 
-**只有代码、import、测试、重复实现检查、文档全部完成，才能将领域标记为迁移完成。**
+**只有代码、import、测试、重复实现检查、模块说明和文档全部完成，才能将领域标记为迁移完成。**
