@@ -4,17 +4,17 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前架构基线：远端 `main` 提交 `e2f71dbfdb1e038e50f16d034442690d22fd1c37`。
+- 当前架构基线：远端 `main` 已进入 Backend 模块化整改实施阶段。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成 Contract、持久化模型、Migration 与原子仓储第一版，尚未完成本地 Persistence Gate、API Contract 与 Scheduler Runtime 闭环。**
-- 下一正式工作：**完成 Scheduler Persistence Gate，然后进入 API Contract 与 Real API。**
+- Backend 模块化整改与 Phase 2.4 并行但职责独立；目录重构不得改变既有业务行为。
 
 ## Backend 模块化架构整改
 
-本次暂停功能开发，先完成 Backend 模块化架构设计确认，并以远端 `main` 实际目录为基线建立迁移设计。
+本次整改以远端 `main` 实际目录为基线，已完成架构设计确认，并进入“兼容优先、分阶段迁移、每阶段可验证”的实施方式。
 
-已形成正式架构文档：
+正式架构文档：
 
 - `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 长期目录、职责、依赖方向、新功能开发模板。
 - `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前实际文件到目标领域模块的迁移映射。
@@ -44,9 +44,55 @@ backend/app/
 - `models/` 继续承担 ORM 持久化模型，不因目录重构迁入 `infrastructure/db`；
 - `middleware/` 与 `dependencies/` 保持 HTTP 生命周期和 FastAPI DI 的职责分离。
 
-当前 `services/workflow_scheduler/` 已经具备领域子模块形态，可作为后续迁移的参考模板。fileciteturn21file0L2-L2
+### 已实施的第一阶段
 
-**当前仅完成架构设计与文档基线，不代表代码目录迁移已经完成。**
+当前已完成第一批低风险结构化迁移：
+
+1. 建立 `app/infrastructure/`、`app/infrastructure/db/`；
+2. 建立 `app/middleware/` 模块边界；
+3. 建立 `app/utils/` 模块边界；
+4. 建立 `app/services/agent/` 领域模块；
+5. 将 `AgentRegistry` 实现迁入 `services/agent/registry.py`；
+6. `services/agent/__init__.py` 暴露稳定 `AgentRegistry` 入口；
+7. 原 `app/services/agent_registry.py` 保留为薄兼容入口；
+8. `app/api/agents.py` 已切换到 `app.services.agent` 稳定入口。
+
+本阶段没有删除原有业务入口，没有修改 API 路径、HTTP Method、数据库模型或业务规则，目标是先验证“领域子模块 + 稳定兼容入口”的迁移方式。
+
+### 当前尚未完成
+
+- `dependencies/db.py` 尚未完成到 Infrastructure 的最终引用收敛；当前新增 Infrastructure DB 模块仅作为基础设施边界，避免在未完成全仓依赖核查前直接切换数据库运行时入口。
+- Knowledge、Model、Tool、Workflow、Trigger 等领域尚未迁移。
+- Runtime 尚未进行分域迁移。
+- API 尚未进行 `api/v1/<domain>` 目录收敛。
+- 尚未执行本阶段完整 Backend Regression / API Contract Gate，因此**不得记录本次模块化整改 Passed**。
+
+### 业务不变原则
+
+目录重构必须满足：
+
+```text
+API Path 不变
+HTTP Method 不变
+Request / Response Contract 不变
+权限行为不变
+Tenant Isolation 不变
+数据库模型与 Migration 不变
+Runtime 行为不变
+Provider 行为不变
+错误语义不变
+```
+
+仅允许改变：
+
+```text
+文件位置
+模块入口
+import 路径
+内部组织方式
+```
+
+旧入口仅在确有兼容价值时保留为薄转发层，禁止保留重复业务实现。
 
 ## Phase 2.3 最终本地验收结果
 
