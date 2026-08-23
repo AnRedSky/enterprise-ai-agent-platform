@@ -35,24 +35,6 @@ def login_token(client, username: str, password: str) -> str:
     return token
 
 
-def create_organization_fixture(client, owner_user_id: str) -> dict[str, str]:
-    organization = request(client, "POST", "/organizations", json={
-        "name": f"API Real Organization {uuid.uuid4().hex[:8]}",
-    }).json()
-    member_user_id, member_password = create_user_fixture(client, "api_real_org_member")
-    membership = request(client, "POST", f"/organizations/{organization['id']}/members", json={
-        "user_id": member_user_id,
-        "role": "admin",
-    }).json()
-    member_username = None
-    # The registration helper intentionally returns only the stable user id and
-    # password; login for the member is performed directly with the generated
-    # credentials retained in the fixture context below.
-    # Reconstructing the username is not possible, so register the member again
-    # is forbidden. Instead create a dedicated login token before returning.
-    raise RuntimeError("create_organization_fixture requires member username")
-
-
 def create_executable_fixture(client):
     workflow = request(client, "POST", "/workflows", json={
         "name": f"API Real Validation {uuid.uuid4().hex[:8]}",
@@ -279,18 +261,6 @@ def create_circuit_breaker_fixtures(client):
     }
 
 
-def find_executable_published_workflow(client, workflows):
-    for workflow in workflows:
-        published_version_id = workflow.get("published_version_id")
-        if not published_version_id:
-            continue
-        versions = request(client, "GET", f"/workflows/{workflow['id']}/versions").json()
-        published = next((item for item in versions if str(item.get("id")) == str(published_version_id)), None)
-        if ((published or {}).get("definition") or {}).get("nodes"):
-            return workflow["id"]
-    return None
-
-
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
     organization = request(client, "POST", "/organizations", json={
         "name": f"API Real Organization {uuid.uuid4().hex[:8]}",
@@ -323,14 +293,17 @@ def main():
         token = login_token(client, username, password)
         client.headers["Authorization"] = f"Bearer {token}"
 
-        workflows = request(client, "GET", "/workflows").json()
-        workflow_id = find_executable_published_workflow(client, workflows) or create_executable_fixture(client)
+        # Runtime execution now requires an active Organization membership.
+        # Create the organization before creating/running any workflow fixture so
+        # the fixture workflows inherit a valid tenant boundary.
+        organization = create_organization_fixture(client, username, password)
+
+        workflow_id = create_executable_fixture(client)
         trigger_id = create_trigger_fixture(client, workflow_id)
         execution = request(client, "POST", f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "real_api_validation"}}).json()
         retry_agent_id = create_retry_agent(client)
         boundary = create_retry_boundary_fixtures(client, retry_agent_id)
         circuit = create_circuit_breaker_fixtures(client)
-        organization = create_organization_fixture(client, username, password)
 
     context = {
         "ACCESS_TOKEN": token,
