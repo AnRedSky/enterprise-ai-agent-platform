@@ -2,15 +2,16 @@
 
 ## 1. 问题
 
-开发者本地基于旧工作区执行 Backend Regression 时出现：
+开发者本地基于旧工作区执行 Backend Regression 与模块化 Gate 时出现：
 
 - `tests/api_contract/test_runtime_http_rbac.py` 仍从已废弃的 `app.api.dependencies` 导入数据库依赖；
 - `tests/api_real/test_scheduled_trigger_api.py` 与 `test_webhook_trigger_api.py` 仍从 `app.dependencies.db` 获取 `engine`；
 - `scripts/evaluation/knowledge/run_governed_embedding_profile_smoke.py` 仍从 `app.dependencies.db` 获取 `SessionLocal`；
 - unit 与 integration 层存在同名 `test_workflow_scheduler_repository.py`，pytest 以非包模式收集时产生 `import file mismatch`；
 - 模块化 Gate 在开发者本地还发现多个 Embedding / Knowledge 验证脚本存在旧 Provider import 路径；
-- 修复后完整 pytest 已消除业务测试中的两个 `AsyncMock` 未等待警告，但本地仍报告 `asyncio_default_test_loop_scope` 配置项未知；
-- 上述旧 Provider 路径处理后，模块化 Gate 继续发现 `scripts/test_ollama_embedding.py` 仍引用已删除的 `app.services.ollama_embedding_provider`。
+- 修复后完整 pytest 已消除业务测试中的两个 `AsyncMock` 未等待警告，并移除当前 `pytest-asyncio` 版本不支持的未知配置项；
+- 上述旧 Provider 路径处理后，模块化 Gate 又发现 `scripts/test_ollama_embedding.py` 引用已删除的 `app.services.ollama_embedding_provider`；
+- Ollama 路径处理后，模块化 Gate 继续发现 `scripts/dev/validate_pgvector.py` 引用已删除的 `app.services.vector_retrieval_provider`。
 
 ## 2. 根因
 
@@ -49,37 +50,32 @@ Provider 正式边界为：
 7. Knowledge Retrieval 评估脚本统一使用 `app.infrastructure.db.session` 与 `app.infrastructure.providers`，不再引用已删除的旧 Provider 路径；
 8. Scheduler Repository 单元测试把数据库执行结果从 `AsyncMock` 改为 `Mock`，避免把同步 Result API 模拟成 coroutine；
 9. Ollama Embedding 验证脚本切换到唯一正式入口 `app.infrastructure.providers.ollama_embedding`，并补充中文模块职责、边界和外部依赖说明；
-10. 移除仓库当前声明的 `pytest-asyncio==0.25.0` 不支持的 `asyncio_default_test_loop_scope` 配置项，保留会话级 fixture loop 配置，避免本地产生未知配置警告。
+10. 移除仓库当前声明的 `pytest-asyncio==0.25.0` 不支持的 `asyncio_default_test_loop_scope` 配置项，保留会话级 fixture loop 配置，避免本地产生未知配置警告；
+11. pgvector 验证脚本切换到唯一正式入口 `app.infrastructure.providers.vector_retrieval`，并补充中文模块职责、边界及关键外部依赖说明。
 
 ## 4. 当前实际验证结果
 
-开发者本地最新反馈为：
+开发者本地在本轮修复前反馈为：
 
 ```text
 APP_IMPORT_OK
-378 passed, 2 skipped, 35 deselected, 1 warning
+378 passed, 2 skipped, 35 deselected
 ```
 
-当前唯一已反馈警告为：
+模块化 Gate 在该结果之后暴露的最后一个旧 Provider import 为：
 
 ```text
-PytestConfigWarning: Unknown config option: asyncio_default_test_loop_scope
-```
-
-模块化 Gate 随后暴露的旧 Provider import 为：
-
-```text
-scripts/test_ollama_embedding.py
--> app.services.ollama_embedding_provider
+scripts/dev/validate_pgvector.py
+-> app.services.vector_retrieval_provider
 ```
 
 本轮已将该脚本切换到：
 
 ```text
-app.infrastructure.providers.ollama_embedding.OllamaEmbeddingProvider
+app.infrastructure.providers.vector_retrieval
 ```
 
-**以上代码修复尚未由开发者本地重新验证，因此不得记录模块化 Gate Passed 或 Backend Regression Passed。**
+**以上最新代码修复尚未由开发者本地重新验证，因此不得记录模块化 Gate Passed 或 Backend Regression Passed。**
 
 ## 5. 预防
 
