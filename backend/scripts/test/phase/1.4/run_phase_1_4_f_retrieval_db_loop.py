@@ -1,9 +1,8 @@
-"""Local end-to-end Retrieval API -> Vector -> Hybrid -> Citation validation.
+"""Phase 1.4-F 检索数据库闭环验证脚本。
 
-The script uses a real PostgreSQL/pgvector database and the real application
-services. When EMBEDDING_PROVIDER=mock, only the embedding generation step is
-deterministic/local; indexing, SQL retrieval, RBAC scope, hybrid fusion,
-FastAPI routing, and citation hydration remain real application paths.
+职责：使用真实 PostgreSQL/pgvector、FastAPI Retrieval API 和 Knowledge Ingestion Service 验证检索闭环。
+边界：只负责本地场景编排与断言，不复制数据库连接、Provider 或领域业务实现。
+关键依赖：Infrastructure 数据库、FastAPI 数据库依赖与 Knowledge 检索领域服务。
 """
 
 from __future__ import annotations
@@ -13,9 +12,7 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
-# Running ``python scripts/<script>.py`` sets sys.path[0] to ``scripts/``.
-# Add the backend project root explicitly so the same validation command works
-# from a clean local checkout without requiring PYTHONPATH to be configured.
+# 直接执行脚本时 sys.path 默认指向脚本目录；这里补充 backend 根目录，保证验证命令可从干净检出运行。
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -25,7 +22,8 @@ from sqlalchemy import delete, select, text
 
 from app.core.auth import current_claims
 from app.core.config import settings
-from app.dependencies.db import SessionLocal, engine, get_db
+from app.dependencies.db import get_db
+from app.infrastructure.db import SessionLocal, engine
 from app.main import app
 from app.models.core import User
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion
