@@ -9,7 +9,7 @@
 
 ```text
 13 targeted tests passed
-Migration head: 0027_alretrieval_evaluation_vector_space
+Migration head: 0027_retrieval_evaluation_vector_space
 Backend regression: 323 passed, 31 deselected
 Real HTTP API: 31 passed
 Standalone Real API Gate: 31 passed
