@@ -358,7 +358,7 @@ def test_runtime_uses_published_model_profile_and_records_usage_identity_without
             assert identity["request_id"]
             assert identity["trace_id"] == execution_id
             assert identity["outcome"] == "failed"
-            assert identity["fallback_reason"] == "connectivity"
+            assert identity["fallback_reason"] == "timeout"
             serialized_trace = str(trace_items)
             assert "RUNTIME_GOVERNANCE_TEST_SECRET" not in serialized_trace
 
