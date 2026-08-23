@@ -2,7 +2,7 @@
 
 职责：基于真实 PostgreSQL/pgvector 和 FastAPI Retrieval API 验证 lexical、vector、hybrid 三种检索路径。
 边界：只负责阶段质量评估编排，不复制数据库 Session、Provider 或 Knowledge 领域实现。
-关键依赖：Infrastructure 数据库、Knowledge Ingestion Service 与 Retrieval API Contract。
+关键依赖：Infrastructure 数据库、FastAPI 数据库依赖、Knowledge Ingestion Service 与 Retrieval API Contract。
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from sqlalchemy import delete, select, text
 
 from app.core.auth import current_claims
 from app.core.config import settings
+from app.dependencies.db import get_db
 from app.infrastructure.db import SessionLocal, engine
-from app.api.dependencies import get_db
 from app.main import app
 from app.models.core import User
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
