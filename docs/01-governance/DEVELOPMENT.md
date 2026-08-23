@@ -133,7 +133,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 ⑥ Real API Gate
 ⑦ Backend Gate 与 Frontend Gate 分别执行
 ⑧ Frontend / Backend 联调
-⑨ Browser / Frontend-Backend E2E（若涉及用户链路）
+⑨ Browser / Frontend-Backend E2E（如范围需要）
 ⑩ 更新开发 / 验收文档
 ⑪ 提交 main
 ```
@@ -161,7 +161,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 19. 文档批量提交前应一次性完成 Phase、Acceptance、Project Status、治理规则及错误记录的评估；只有确有独立工程意义的后续事实变化，才允许再次单独提交文档。
 20. 代码与其对应的 Phase/Acceptance/错误记录属于同一交付单元时，应尽量在同一个提交中完成；若测试反馈导致后续修复，则按新的实际修复形成下一原子提交。
 21. **代码中的功能说明、设计意图和注释统一使用中文表述；Python docstring、TypeScript/Vue 注释、数据库 migration 说明以及复杂业务规则注释均不得使用英文自然语言作为主要说明。协议字段名、类名、函数名、异常码、第三方库名称等代码标识按技术约定保留原文，不要求翻译。**
-22. **功能相关代码必须采用模块化子模块包组织；同一功能的 Contract、Service、Repository、API、Runtime、Schema 等应优先归入明确的功能包目录，不得持续向 `app/services`、`app/api` 等公共目录零散堆放同一功能文件。跨功能通用能力只有在确有复用边界时才允许保留在公共目录。**
+22. **当前阶段临时模块化规则：同一业务功能的代码必须按领域职责组织为子模块包；禁止继续把 Contract、Service、Repository、Runtime 等同一功能的代码零散堆放在 `app/services/` 或其他公共目录。子模块包应通过 `__init__.py` 暴露稳定入口，内部按职责拆分文件；仅保留确有兼容价值的薄入口文件，不得在入口文件重复实现业务逻辑。**
 
 ## 6. 分层原则
 
