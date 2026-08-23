@@ -27,6 +27,8 @@ if _SPEC is None or _SPEC.loader is None:
 _BOOTSTRAP = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BOOTSTRAP)
 
+_BOOTSTRAP_ORGANIZATION_ID: str | None = None
+
 
 def _run_fixture_db(operation):
     """Run one fixture-only DB operation on a fresh async engine/loop.
@@ -123,6 +125,8 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
     rerunnable Real API gate must reuse the existing Organization instead of
     treating HTTP 409 as a bootstrap failure.
     """
+    global _BOOTSTRAP_ORGANIZATION_ID
+
     with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as owner_client:
         owner_login = _BOOTSTRAP.request(
             owner_client,
@@ -178,6 +182,8 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
             f"organization={organization['tenant_id']} owner={owner_tenant_id}"
         )
 
+    _BOOTSTRAP_ORGANIZATION_ID = str(organization["id"])
+
     member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
     member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
     member = _BOOTSTRAP.request(
@@ -204,7 +210,72 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
     }
 
 
+def create_governed_mock_agent(client, *, model_id: str, name_prefix: str) -> str:
+    """Create a deterministic mock agent through the governed Provider/Profile path.
+
+    Phase 2.3 runtime no longer permits an ungoverned legacy model_id to reach the
+    runtime. The Real API bootstrap therefore creates the mock Provider/Profile
+    through the real HTTP API and binds the fixture Agent to that Profile. The
+    model gateway still uses its deterministic MockProvider because the governed
+    provider type is explicitly ``mock``; this is test fixture behavior, not a
+    production fallback.
+    """
+    if not _BOOTSTRAP_ORGANIZATION_ID:
+        raise RuntimeError("Governed mock agent requires an initialized Organization fixture")
+
+    suffix = uuid.uuid4().hex[:8]
+    provider = _BOOTSTRAP.request(
+        client,
+        "POST",
+        "/model-providers",
+        json={
+            "organization_id": _BOOTSTRAP_ORGANIZATION_ID,
+            "name": f"API Real Mock Provider {suffix}",
+            "provider_type": "mock",
+            "provider_name": f"api-real-mock-{suffix}",
+            "enabled": True,
+        },
+    ).json()
+    profile = _BOOTSTRAP.request(
+        client,
+        "POST",
+        f"/model-providers/{provider['id']}/profiles",
+        json={
+            "name": f"api-real-{model_id}-{suffix}",
+            "model_type": "chat",
+            "model_name": model_id,
+            "is_default": True,
+        },
+    ).json()
+    agent = _BOOTSTRAP.request(
+        client,
+        "POST",
+        "/agents",
+        json={
+            "name": f"{name_prefix} {suffix}",
+            "description": "Automated real API governed model fixture agent",
+            "system_prompt": "You are a deterministic validation agent.",
+            "model_id": model_id,
+            "model_profile_id": profile["id"],
+        },
+    ).json()
+    versions = _BOOTSTRAP.request(client, "GET", f"/agents/{agent['id']}/versions").json()
+    if not versions:
+        raise RuntimeError(f"Agent {agent['id']} was created without a version")
+    _BOOTSTRAP.request(
+        client,
+        "POST",
+        f"/agents/{agent['id']}/publish",
+        json={"version_id": versions[0]["id"]},
+    )
+    return agent["id"]
+
+
+# Runtime retry/circuit fixtures must all use an explicit governed Profile now
+# that Phase 2.3 runtime resolution rejects ungoverned legacy model_id values.
+_BOOTSTRAP.create_retry_agent = create_governed_mock_agent
 _BOOTSTRAP.create_organization_fixture = create_organization_fixture
+
 
 if __name__ == "__main__":
     _BOOTSTRAP.main()
