@@ -1,6 +1,6 @@
 # Phase 2.3 — Model Provider Governance
 
-> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D 已实现；2.3-E 已补充真实 HTTP Provider fallback success 测试，待本地 acceptance。**
+> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D 已实现；2.3-E 已补充真实 HTTP Provider fallback success 测试，Real API acceptance 仍阻塞。**
 
 Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之上建立独立、可测试的 Provider Governance Runtime 能力。
 
@@ -75,8 +75,6 @@ Runtime 主链路：
 
 当前 Real API 场景覆盖 governed Profile + connectivity failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
 
-本轮没有新增数据库表/字段，因此不需要 Migration。
-
 ## 2.3-E Governed fallback success path + deterministic multi-provider acceptance — 测试已实现
 
 已新增 Real API 场景：
@@ -94,20 +92,25 @@ Runtime 主链路：
 开发者本轮实际执行并反馈：
 
 ```text
-2.3-C/D targeted unit tests: 28 passed
-Backend default regression: 344 passed, 33 deselected
+2.3-C/D targeted unit tests: 30 passed, 2 deselected
+Backend default regression: 346 passed, 34 deselected
+Migration/head verification: uv run alembic upgrade head completed
 Real API Gate: blocked during bootstrap before test execution
 ```
 
-Real API bootstrap 问题已定位并修复：bootstrap 原先在创建可执行 Workflow/Execution retry/circuit fixtures 后才创建 Organization；Runtime execution 已要求 active Organization membership，因此 fixture run 从预期的 `404` 变为 `403 当前用户没有有效的 Organization membership`。
+Real API bootstrap 当前已确认并修复到两个边界：
 
-修复已直接提交 `main`：bootstrap 先建立 Organization tenant，再创建所有需要运行的 Workflow fixtures；同时使用本次 bootstrap 专用 executable workflow，避免复用可能来自旧 tenant 状态的历史 workflow。
+1. bootstrap 必须先建立与 owner tenant 对齐的 Organization，再创建需要执行的 Workflow fixtures；否则 Runtime execution 会因缺少 active Organization membership 返回 `403`。
+2. 可重复执行时 `POST /organizations` 的 `409 当前 Tenant 已存在 Organization` 是正确的 tenant singleton 约束；tenant-safe bootstrap 已改为优先复用 owner tenant 的既有 Organization，并在 GET/POST 竞态时通过 fixture-only DB recovery 建立 owner membership。
+3. 当前最新失败发生在 circuit breaker fixture：Organization 已存在且 membership 已恢复，但 retry/circuit Agent 仍只写入 legacy `model_id`，没有绑定 Phase 2.3 的 governed Model Provider/Profile，因此执行时正确返回 `404 没有符合治理策略的 Model Provider/Profile`。已修复 tenant-safe bootstrap：mock fixture Agent 现在通过真实 HTTP `POST /model-providers` + `POST /model-providers/{id}/profiles` 创建 governed `mock` Provider/Profile，并把 `model_profile_id` 写入 Agent，再由 Runtime 解析真实 PostgreSQL governance 数据。
 
-本轮 Real API 尚未重新执行，2.3-E 新增测试也尚未执行，因此均不得标记为 Passed。Migration/head verification 本轮未收到执行结果，保持 Pending。
+对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-bootstrap-ungoverned-mock-agent.md`。
+
+本轮 Real API 尚未重新执行，2.3-E 新增测试也尚未执行，因此均不得标记为 Passed。
 
 ## 下一执行任务
 
-**2.3-E Acceptance Gate**：重新执行修复后的 Real API Gate；若失败，按实际失败继续修复并补充 `docs/04-errors/`；若通过，再执行完整 Backend Gate 与 migration/head verification，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
+**2.3-E Acceptance Gate**：重新执行修复后的 Tenant Safe Real API Gate，重点验证 retry/circuit fixtures 已经从 legacy model_id 迁移到 governed Provider/Profile 后能够进入 Runtime；若继续失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
 
 若后续引入持久化 routing policy / pricing / usage record，必须先新增 Alembic Migration，再实现依赖该结构的业务代码。
 
@@ -118,7 +121,7 @@ cd backend
 uv run pytest -q tests/unit/test_model_provider_governance_contract.py tests/api_contract/test_api_model_provider_governance.py tests/unit/test_runtime_model_governance.py tests/unit/test_workflow_runtime.py
 uv run pytest -q
 uv run alembic upgrade head
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
 ```
 
 上述命令必须由开发者本地实际执行；未执行的结果不得标记为 Passed。

@@ -101,18 +101,19 @@ Migration/head verification: uv run alembic upgrade head completed
 Real API Gate: blocked during bootstrap before test execution
 ```
 
-Real API bootstrap 已连续暴露两个独立问题：
+Real API bootstrap 已连续暴露并处理以下边界：
 
-1. 早期 bootstrap 在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，Runtime execution 因缺少 active Organization membership 返回 `403`；已修复为先建立与 owner tenant 对齐的 Organization governance boundary。
-2. 后续在已有本地治理数据上重复执行时，`POST /organizations` 正确返回 `409 当前 Tenant 已存在 Organization`；该唯一性约束本身正确，但 tenant-safe bootstrap 将其错误视为不可恢复失败。
+1. bootstrap 在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，导致 Runtime execution 因缺少 active Organization membership 返回 `403`；已修复为先建立与 owner tenant 对齐的 Organization governance boundary。
+2. 在已有本地治理数据上重复执行时，`POST /organizations` 正确返回 `409 当前 Tenant 已存在 Organization`；tenant-safe bootstrap 已改为复用 owner tenant 的既有 Organization，并在 GET/POST 竞态时恢复 owner membership。
+3. 恢复 membership 后，circuit fixture 继续失败于 `404 没有符合治理策略的 Model Provider/Profile`；原因是 bootstrap 的 mock retry/circuit Agent 仍只携带 legacy `model_id`，没有绑定 Phase 2.3 governed Model Provider/Profile。已修复为通过真实 HTTP API 创建 `provider_type=mock` 的 Provider/Profile，并把 Profile 绑定到 fixture Agent。
 
-本轮已修复 `00_bootstrap_real_api_tenant_safe.py`：优先通过真实 `GET /organizations` 复用 owner tenant 的既有 Organization；首次运行才创建；并处理 GET/POST 之间的 409 竞态后重新查询，同时继续强制校验 `Organization.tenant_id == owner.tenant_id`。对应工程错误已记录在 `docs/04-errors/2026-08-23-phase-2-3-real-api-bootstrap-existing-organization-409.md`。
+对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-bootstrap-ungoverned-mock-agent.md`。
 
-本轮新增的 2.3-E Real HTTP Provider success/fallback 测试尚未由开发者本地执行；不得记录为 Passed。
+本轮 Real API 尚未重新执行；2.3-E 新增测试也尚未由开发者本地执行，因此均不得记录为 Passed。
 
 ## 下一执行任务
 
-**2.3-E Acceptance Gate**：先重新执行修复后的 Tenant Safe Real API Gate，确认“新环境创建 Organization”和“已有 Organization 重复运行”两种 bootstrap 路径均能通过；随后根据实际结果修复 2.3-E 测试或 Runtime contract 问题，完成 Backend regression + Migration/head + Real API 三层 Backend Gate，之后再进入 Phase 2.3 Acceptance / 2.3-F 后续任务。
+**2.3-E Acceptance Gate**：重新执行 Tenant Safe Real API Gate，确认 retry/circuit fixtures 已进入 governed Provider/Profile Runtime 路径；若失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
 
 ## 开发纪律
 
