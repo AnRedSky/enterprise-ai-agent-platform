@@ -65,17 +65,18 @@ class ScheduledTriggerScheduler:
     def idempotency_key(cls, trigger_id, now: datetime, interval_seconds: int) -> str:
         return cls.slot_idempotency_key(trigger_id, cls.interval_slot(now, interval_seconds))
 
-    @classmethod
     def recovery_slots(
-        cls,
+        self,
         now: datetime,
         interval_seconds: int,
-        max_recovery_slots: int = DEFAULT_RECOVERY_SLOTS,
+        max_recovery_slots: int | None = None,
     ) -> list[int]:
-        if isinstance(max_recovery_slots, bool) or not 1 <= max_recovery_slots <= cls.MAX_RECOVERY_SLOTS:
-            raise ValueError(f"max_recovery_slots 必须在 1-{cls.MAX_RECOVERY_SLOTS} 范围内")
-        current = cls.interval_slot(now, interval_seconds)
-        return list(range(current - max_recovery_slots + 1, current + 1))
+        """计算当前实例需要恢复的槽位，并默认遵循构造函数配置。"""
+        limit = self.max_recovery_slots if max_recovery_slots is None else max_recovery_slots
+        if isinstance(limit, bool) or not 1 <= limit <= self.MAX_RECOVERY_SLOTS:
+            raise ValueError(f"max_recovery_slots 必须在 1-{self.MAX_RECOVERY_SLOTS} 范围内")
+        current = self.interval_slot(now, interval_seconds)
+        return list(range(current - limit + 1, current + 1))
 
     @staticmethod
     def is_concurrent_runtime_claim(exc: BaseException) -> bool:
