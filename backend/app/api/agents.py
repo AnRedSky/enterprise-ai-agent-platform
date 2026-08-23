@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
 from app.models.core import AgentVersion
-from app.services.agent import AgentRegistry
+from app.services.agent import AgentService
 
 router = APIRouter()
 
@@ -53,7 +53,7 @@ def _version_payload(version):
 
 @router.post("")
 async def create_agent(p: AgentCreate, claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
-    agent, version = await AgentRegistry(db).create(
+    agent, version = await AgentService(db).create(
         UUID(claims["sub"]),
         name=p.name,
         description=p.description,
@@ -77,8 +77,8 @@ async def create_agent(p: AgentCreate, claims=Depends(require_roles("user", "adm
 
 @router.get("")
 async def list_agents(claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
-    registry = AgentRegistry(db)
-    agents = await registry.list(UUID(claims["sub"]))
+    service = AgentService(db)
+    agents = await service.list(UUID(claims["sub"]))
     if not agents:
         return []
     versions_result = await db.execute(select(AgentVersion).where(AgentVersion.agent_id.in_([agent.id for agent in agents])).order_by(AgentVersion.created_at.desc()))
@@ -87,7 +87,7 @@ async def list_agents(claims=Depends(current_claims), db: AsyncSession = Depends
         latest_versions.setdefault(version.agent_id, version)
     result = []
     for agent in agents:
-        published = await registry.published_version(agent)
+        published = await service.published_version(agent)
         latest = latest_versions.get(agent.id)
         selected = published or latest
         result.append({
@@ -107,28 +107,27 @@ async def list_agents(claims=Depends(current_claims), db: AsyncSession = Depends
 
 @router.get("/{agent_id}/versions")
 async def list_versions(agent_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
-    registry = AgentRegistry(db)
-    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    service = AgentService(db)
+    agent = await service.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
     published_id = agent.published_version_id
-    return [{**_version_payload(v), "is_published": v.id == published_id} for v in await registry.versions(agent_id)]
+    return [{**_version_payload(v), "is_published": v.id == published_id} for v in await service.versions(agent_id)]
 
 
 @router.get("/{agent_id}/published-version")
 async def get_published_version(agent_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
-    registry = AgentRegistry(db)
-    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
-    version = await registry.published_version(agent)
+    service = AgentService(db)
+    agent = await service.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    version = await service.published_version(agent)
     if not version:
-        from fastapi import HTTPException
         raise HTTPException(404, "Agent 尚未发布版本")
     return {**_version_payload(version), "is_published": True}
 
 
 @router.post("/{agent_id}/versions")
 async def create_version(agent_id: UUID, p: VersionCreate, claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
-    registry = AgentRegistry(db)
-    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
-    version = await registry.create_version(
+    service = AgentService(db)
+    agent = await service.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    version = await service.create_version(
         agent,
         p.system_prompt,
         p.model_id,
@@ -140,15 +139,15 @@ async def create_version(agent_id: UUID, p: VersionCreate, claims=Depends(requir
 
 @router.post("/{agent_id}/publish")
 async def publish_agent(agent_id: UUID, p: PublishRequest, claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
-    registry = AgentRegistry(db)
-    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
-    agent, version = await registry.publish(agent, p.version_id)
+    service = AgentService(db)
+    agent = await service.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    agent, version = await service.publish(agent, p.version_id)
     return {"id": agent.id, "status": agent.status, "published_version_id": agent.published_version_id, "version": version.version, "model_id": version.model_id, "model_profile_id": version.model_profile_id, "knowledge_config": version.knowledge_config}
 
 
 @router.post("/{agent_id}/archive")
 async def archive_agent(agent_id: UUID, claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
-    registry = AgentRegistry(db)
-    agent = await registry.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
-    agent = await registry.archive(agent)
+    service = AgentService(db)
+    agent = await service.get(agent_id, UUID(claims["sub"]), "admin" in claims.get("roles", []))
+    agent = await service.archive(agent)
     return {"id": agent.id, "status": agent.status, "published_version_id": agent.published_version_id}
