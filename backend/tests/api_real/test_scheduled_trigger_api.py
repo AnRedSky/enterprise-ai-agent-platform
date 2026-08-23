@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
-from app.dependencies.db import engine as app_engine
+from app.infrastructure.db.session import engine as app_engine
 from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
@@ -22,14 +22,7 @@ pytestmark = pytest.mark.real_api
 
 @pytest.fixture(scope="module")
 def scheduler_event_loop():
-    """Keep one event loop alive for AsyncEngine connections used by scheduler tests.
-
-    The real API tests are synchronous HTTP tests, but the scheduler contract calls
-    the application's AsyncEngine directly. Repeated asyncio.run() calls create and
-    close different loops while SQLAlchemy's AsyncEngine pool may retain a connection
-    bound to the previous loop. A module-scoped loop keeps that test-owned async work
-    on one lifecycle and disposes the imported application engine before the loop closes.
-    """
+    """为直接使用应用 AsyncEngine 的真实 API 测试保持单一事件循环生命周期。"""
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
@@ -194,8 +187,6 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
                 now, config["interval_seconds"]
             )
             assert rows[0]["input_data"]["recovery"] is False
-            # This test intentionally uses a one-slot recovery window so both workers
-            # contend for exactly the same durable scheduled slot.
             assert sum(item["dispatched"] for item in counters) == 1
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
@@ -218,9 +209,6 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         assert created.status_code == 201, created.text
         trigger_id = created.json()["id"]
 
-        # Use a historical current slot so the application background scheduler
-        # cannot claim the same slot while this test explicitly validates the
-        # bounded recovery persistence contract.
         now = datetime(2020, 1, 1, 0, 0, 37, tzinfo=UTC)
         scheduler = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
         current_slot = scheduler.interval_slot(now, config["interval_seconds"])
@@ -238,14 +226,8 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
             assert len(current_rows) == 1, current_rows
             assert recovery_rows[0]["status"] == "completed", recovery_rows
             assert current_rows[0]["status"] == "completed", current_rows
-            assert recovery_rows[0]["input_data"] == {
-                "scheduled_slot": recovery_slot,
-                "recovery": True,
-            }
-            assert current_rows[0]["input_data"] == {
-                "scheduled_slot": current_slot,
-                "recovery": False,
-            }
+            assert recovery_rows[0]["input_data"] == {"scheduled_slot": recovery_slot, "recovery": True}
+            assert current_rows[0]["input_data"] == {"scheduled_slot": current_slot, "recovery": False}
 
             restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
             second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))
