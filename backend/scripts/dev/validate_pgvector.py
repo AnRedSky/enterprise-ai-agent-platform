@@ -1,3 +1,10 @@
+"""pgvector 开发验证脚本。
+
+职责：在开发者本地验证 PostgreSQL/pgvector 与唯一向量 Provider 的真实往返。
+边界：只负责开发辅助与场景复现，不实现新的向量检索能力；正式 Provider 统一由
+`app.infrastructure.providers.vector_retrieval` 提供。外部依赖为项目配置、PostgreSQL/pgvector 与 SQLAlchemy。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +19,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
-from app.services.vector_retrieval_provider import (
+from app.infrastructure.providers.vector_retrieval import (
     PgVectorRetrievalProvider,
     VectorRecord,
     VectorRetrievalProviderError,
@@ -20,6 +27,7 @@ from app.services.vector_retrieval_provider import (
 
 
 async def validate() -> int:
+    """执行真实 PostgreSQL/pgvector 往返验证，并清理本次探针数据。"""
     if settings.vector_provider != "pgvector":
         print("pgvector probe skipped: set VECTOR_PROVIDER=pgvector in backend/.env.")
         return 0
