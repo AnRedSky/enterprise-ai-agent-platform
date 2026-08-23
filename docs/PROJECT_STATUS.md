@@ -7,26 +7,32 @@
 - 当前架构基线：远端 `main` 已进入 Backend 模块化整改实施阶段。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；Persistence Gate 尚未闭环，当前优先修复模块化迁移后的测试/评估入口残留，再重新执行 Backend Regression 与 Scheduler Persistence Gate。**
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；Persistence Gate 尚未闭环。当前先完成模块化迁移残留修复、测试警告清理，再重新执行 Backend Regression 与 Scheduler Persistence Gate。**
 
-## 本轮修复事实
+## 本轮新增修复事实
 
-基于远端 `main` 的开发准则执行了测试边界与重复模块清理：
+基于远端 `main` 的开发准则继续处理上一轮模块化 Gate 与测试反馈：
 
-1. Runtime HTTP Contract 测试改用唯一 FastAPI 数据库依赖 `app.dependencies.db.get_db`，不再引用不存在的 `app.api.dependencies`。
-2. Scheduled/Webhook Real API 测试直接引用 `app.infrastructure.db.session.engine`；Application Service、Runtime、Evaluation 不通过 API Dependency 获取 Engine。
-3. governed Embedding Profile smoke 直接引用 `app.infrastructure.db.session.SessionLocal`，不复制数据库 Session 实现。
-4. Scheduler Repository unit 测试改为唯一文件名 `test_workflow_scheduler_repository_unit.py`，删除与 integration 层冲突的旧同名 unit 文件，避免 pytest module identity 冲突。
-5. 受影响脚本/测试补充中文模块职责、边界和关键依赖说明。
-6. Embedding Provider 验证脚本统一引用 `app.infrastructure.providers.embedding`，不保留旧 `services` Provider 路径或第二套实现。
-7. 本轮测试边界问题记录为 `docs/04-errors/ERR-0024-backend-module-refactor-test-boundary.md`。
+1. `backend/scripts/evaluation/knowledge/run_knowledge_retrieval_evaluation.py` 已从已删除的 `app.services.mock_embedding_provider` / `app.services.vector_retrieval_provider` 切换到唯一正式入口 `app.infrastructure.providers`。
+2. Knowledge Retrieval 评估脚本的数据库 Session 已统一使用 `app.infrastructure.db.session.SessionLocal`，不复制数据库连接实现。
+3. 该评估运行器补充中文模块职责、边界及关键外部依赖说明，并将 fixture、Provider 和质量评估职责保持分离。
+4. `tests/unit/test_workflow_scheduler_repository_unit.py` 的数据库执行结果改用同步 `Mock`，仅数据库执行入口保持 `AsyncMock`，避免 `AsyncMock.scalar_one_or_none()` 被误当作同步 Result API 导致 `coroutine was never awaited`。
+5. `docs/04-errors/ERR-0024-backend-module-refactor-test-boundary.md` 已同步记录本轮旧 Provider import 与测试警告处理事实。
 
-**以上均为代码/文档修复事实；开发者尚未在本地重新执行完整验证，因此不得记录为 Passed。**
+**以上为代码/文档修复事实，不代表开发者本地最新验证已经通过。**
 
-## 当前必须执行的本地验证
+## 当前待执行本地验证
+
+先同步开发依赖，确保本地 `uv` 环境与仓库声明的 `pytest-asyncio==0.25.0` 一致：
 
 ```powershell
 cd backend
+uv sync --dev
+```
+
+然后按固定顺序执行：
+
+```powershell
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 uv run pytest -q
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
@@ -36,8 +42,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 若 Scheduler PostgreSQL Integration 仍出现 Windows Proactor / asyncpg `Event loop is closed`，只能依据最新失败栈修复测试生命周期；不得通过 JSON/JSONL 替代真实 PostgreSQL Persistence。
 
 ## Backend 模块化整改纪律
-
-本次整改继续遵守：
 
 ```text
 远端 main 唯一基线
@@ -55,10 +59,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\0
 
 ## Phase 2.4 下一执行任务
 
-1. 开发者本地重新执行 Backend Regression，确认本轮 5 个 collection error 已消失；
-2. 执行模块化 Gate，确认旧 Provider import、旧领域文件、重复实现搜索为 0；
+1. 开发者本地重新执行 Backend Regression，确认本轮 collection error 与单元测试 warning 已消失，并确认 pytest-asyncio 配置不再产生未知选项警告；
+2. 执行模块化 Gate，确认 Knowledge Retrieval 评估脚本不存在旧 Provider import；
 3. 执行 Scheduler Persistence Gate，确认 Migration、Repository targeted tests、真实 PostgreSQL integration 与 Backend Regression；
-4. 若 Gate 通过，再继续 Scheduler API Contract；
+4. **只有 Persistence Gate 本地实际通过后**，继续 Scheduler API Contract；
 5. 接入 Runtime persistence / lease / slot，补充 tenant isolation、misfire、Audit / Trace；
 6. 完成 Tenant Safe Real API Gate 后再进入前端/API 联调。
 
