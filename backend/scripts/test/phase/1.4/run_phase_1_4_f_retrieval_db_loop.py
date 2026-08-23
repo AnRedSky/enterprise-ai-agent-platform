@@ -29,7 +29,7 @@ from app.dependencies.db import SessionLocal, engine, get_db
 from app.main import app
 from app.models.core import User
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion
-from app.services.knowledge_ingestion import KnowledgeIngestionService
+from app.services.knowledge.ingestion import KnowledgeIngestionService
 
 
 async def run() -> None:
