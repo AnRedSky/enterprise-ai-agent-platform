@@ -135,6 +135,17 @@ def test_model_provider_profile_governance_lifecycle_real_http():
         assert "model_profile.created" in actions
         assert "model_profile.updated" in actions
 
+        # The shared real-API bootstrap fixture currently provisions the secondary
+        # organization membership as admin because organization governance tests
+        # later exercise owner transfer. This provider boundary test must establish
+        # its own member state before asserting management denial.
+        demoted = client.patch(
+            f"/organizations/{ORGANIZATION_ID}/members/{os.getenv('ORGANIZATION_MEMBERSHIP_ID')}",
+            json={"role": "member"},
+        )
+        assert demoted.status_code == 200, demoted.text
+        assert demoted.json()["role"] == "member"
+
     with _client(MEMBER_TOKEN) as member_client:
         forbidden_provider = member_client.patch(
             f"/model-providers/{provider_id}",
