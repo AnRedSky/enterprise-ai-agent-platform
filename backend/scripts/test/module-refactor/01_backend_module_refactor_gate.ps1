@@ -8,50 +8,53 @@ $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 Set-Location $backendRoot
 
 function Invoke-GateStep {
-    param(
-        [string]$Name,
-        [scriptblock]$Action
-    )
-
+    param([string]$Name, [scriptblock]$Action)
     Write-Host "[Gate] $Name"
     & $Action
-    if ($LASTEXITCODE -ne 0) {
-        throw "Gate failed: $Name (exit=$LASTEXITCODE)"
-    }
+    if ($LASTEXITCODE -ne 0) { throw "Gate failed: $Name (exit=$LASTEXITCODE)" }
 }
 
-# 1. 基础目标目录检查
 $requiredDirectories = @(
     'app/services/agent',
+    'app/services/knowledge',
     'app/infrastructure',
     'app/infrastructure/db',
     'app/middleware',
     'app/utils'
 )
-
 foreach ($directory in $requiredDirectories) {
-    if (-not (Test-Path $directory -PathType Container)) {
-        throw "Required module directory is missing: $directory"
-    }
+    if (-not (Test-Path $directory -PathType Container)) { throw "Required module directory is missing: $directory" }
 }
 
-# 2. Agent 完整迁移检查：禁止旧文件、旧路径和兼容入口
+# 完整迁移 Gate：旧实现、旧 import、兼容入口和根目录重复实现均禁止存在。
 $forbiddenPaths = @(
     'app/services/agent_registry.py',
-    'app/services/agent/registry.py'
+    'app/services/agent/registry.py',
+    'app/services/knowledge_ingestion.py',
+    'app/services/knowledge_registry.py',
+    'app/services/knowledge_retrieval.py',
+    'app/services/knowledge_retrieval_contract.py',
+    'app/services/knowledge_vector_indexing.py',
+    'app/services/hybrid_knowledge_retrieval.py',
+    'app/services/hybrid_knowledge_retrieval_service.py',
+    'app/services/vector_knowledge_retrieval.py'
 )
-
 foreach ($path in $forbiddenPaths) {
-    if (Test-Path $path) {
-        throw "Forbidden legacy module still exists: $path"
-    }
+    if (Test-Path $path) { throw "Forbidden legacy module still exists: $path" }
 }
 
 $legacyImportPatterns = @(
     'app\.services\.agent_registry',
-    'app\.services\.agent\.registry'
+    'app\.services\.agent\.registry',
+    'app\.services\.knowledge_ingestion',
+    'app\.services\.knowledge_registry',
+    'app\.services\.knowledge_retrieval',
+    'app\.services\.knowledge_retrieval_contract',
+    'app\.services\.knowledge_vector_indexing',
+    'app\.services\.hybrid_knowledge_retrieval',
+    'app\.services\.hybrid_knowledge_retrieval_service',
+    'app\.services\.vector_knowledge_retrieval'
 )
-
 foreach ($pattern in $legacyImportPatterns) {
     $matches = @(git grep -n -E $pattern -- '*.py' 2>$null)
     if ($matches.Count -gt 0) {
@@ -60,38 +63,36 @@ foreach ($pattern in $legacyImportPatterns) {
     }
 }
 
-# 3. 检查 Agent 正式入口
-if (-not (Test-Path 'app/services/agent/__init__.py' -PathType Leaf)) {
-    throw 'Agent domain package entry is missing: app/services/agent/__init__.py'
-}
-if (-not (Test-Path 'app/services/agent/service.py' -PathType Leaf)) {
-    throw 'Agent service implementation is missing: app/services/agent/service.py'
-}
-if (-not (Test-Path 'app/services/agent/repository.py' -PathType Leaf)) {
-    throw 'Agent repository implementation is missing: app/services/agent/repository.py'
+if (-not (Test-Path 'app/services/agent/service.py' -PathType Leaf)) { throw 'Agent service implementation is missing.' }
+if (-not (Test-Path 'app/services/agent/repository.py' -PathType Leaf)) { throw 'Agent repository implementation is missing.' }
+if (-not (Test-Path 'app/services/knowledge/__init__.py' -PathType Leaf)) { throw 'Knowledge domain entry is missing.' }
+foreach ($file in @('registry.py','ingestion.py','retrieval.py','vector_indexing.py','vector_retrieval.py','hybrid.py','hybrid_service.py')) {
+    if (-not (Test-Path "app/services/knowledge/$file" -PathType Leaf)) { throw "Knowledge implementation is missing: $file" }
 }
 
-# 4. 禁止在公共 services 根目录继续新增 Agent 领域实现
-$agentRootFiles = @(Get-ChildItem 'app/services' -File -Filter '*agent*' -ErrorAction SilentlyContinue)
-if ($agentRootFiles.Count -gt 0) {
-    $agentRootFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
-    throw 'Agent domain implementation remains in app/services root.'
+# 公共 services 根目录不得残留已迁移 Agent / Knowledge 领域实现。
+$forbiddenRootNames = @('*agent*','*knowledge*','*retrieval*')
+foreach ($filter in $forbiddenRootNames) {
+    $rootFiles = @(Get-ChildItem 'app/services' -File -Filter $filter -ErrorAction SilentlyContinue)
+    if ($rootFiles.Count -gt 0) {
+        $rootFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
+        throw "Duplicate domain implementation remains in app/services root: $filter"
+    }
 }
 
-# 5. 运行 Agent 相关测试；不存在对应测试时不虚构通过
 $agentTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*agent*.py' -ErrorAction SilentlyContinue)
 if ($agentTests.Count -gt 0) {
-    Invoke-GateStep 'Agent targeted tests' {
-        uv run pytest -q @($agentTests.FullName)
-    }
-} else {
-    Write-Warning 'No Agent-specific test files were found. Targeted functional coverage was not executed.'
+    Invoke-GateStep 'Agent targeted tests' { uv run pytest -q @($agentTests.FullName) }
 }
 
-# 6. 全量 Backend regression
-Invoke-GateStep 'Backend default regression' {
-    uv run pytest -q
+$knowledgeTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*knowledge*.py' -ErrorAction SilentlyContinue)
+if ($knowledgeTests.Count -gt 0) {
+    Invoke-GateStep 'Knowledge targeted tests' { uv run pytest -q @($knowledgeTests.FullName) }
+} else {
+    Write-Warning 'No Knowledge-specific test files were found.'
 }
+
+Invoke-GateStep 'Backend default regression' { uv run pytest -q }
 
 Write-Host '============================================================'
 Write-Host 'Backend Module Refactor Gate completed.'
