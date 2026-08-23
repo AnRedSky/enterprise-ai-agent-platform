@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过此前开发者本地验证；2.2-E Model Provider / Model Profile Governance Foundation 已进入实现与前端验收。**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过此前开发者本地验证；2.2-E Model Provider / Model Profile Governance Foundation 的 E-1、E-2 已完成，E-3 Frontend 已通过本轮开发者本地 Gate，当前进入 E-4 Acceptance。**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -18,7 +18,7 @@ Phase 2.2 的目标不是重新建设 Retrieval，而是把现有 Retrieval 能�
 
 ## 2.2-E Model Provider / Model Profile Governance Foundation
 
-当前进入 2.2-E，目标是把 Chat / Embedding 模型从 runner、环境变量和业务代码中的具体模型名称进一步提升为可治理的 Provider / Profile 身份。
+当前进入 E-4 Acceptance，目标是把 Chat / Embedding 模型从 runner、环境变量和业务代码中的具体模型名称进一步提升为可治理的 Provider / Profile 身份。
 
 ### Model Provider
 
@@ -66,7 +66,7 @@ Embedding Profile 必须声明 dimension；Chat Profile 不声明 embedding dime
 - API contract 自动化测试。
 - Frontend Provider/Profile 管理 UI 与对应 Vitest。
 
-下一步才接入 Runtime 与 Evaluation 的 `model_profile_id` 选择和 trace identity；不在本阶段引入 Reranker / Hybrid / Fallback / 路由 / 成本治理。
+Runtime 与 Evaluation 的 `model_profile_id` 选择和 trace identity 已在 E-1 / E-2 当前定义范围接入；本阶段不引入 Reranker / Hybrid / Fallback / 路由 / 成本治理。
 
 详细 Contract 见 `PHASE_2_2_E_MODEL_PROVIDER_PROFILE.md`。
 
@@ -182,31 +182,30 @@ Citation correctness + Debug / Audit / Observability traceability
     ↓
 Frontend Provider/Profile Management
     ↓
-Acceptance
+E-4 Acceptance
 ```
 
 ## 8. 既有实际验证证据
 
+E-2 与此前 Retrieval evidence 已由开发者本地实际执行，详见 `PROJECT_STATUS.md` 与 Acceptance 文档。本轮新增的 E-3 evidence 为：
+
 ```text
-API Runtime Contract: 2 passed
-Real HTTP API: 31 passed
-Backend regression: 309 passed, 31 deselected
-Migration head: 0024_embedding_dimension_contract
-Real Provider:
-  provider=ollama
-  model=nomic-embed-text:latest
-  embedding_dimension=768
-  cases=5
-  provider_error_rate=0
-  recall@3=0.6
-  precision@3=0.333333
-  mrr=0.6
-  citation_correctness=0.333333
-  quality_gate=passed
-Backend Release / Regression Gate: passed
+Targeted Vitest:
+  2 test files passed
+  6 tests passed
+
+Frontend Regression Gate:
+  18 test files passed
+  75 tests passed
+  vue-tsc -b passed
+  Vite production build passed
+  built in 5.41s
+
+Existing Organization Browser E2E:
+  3 tests passed
 ```
 
-以上为此前开发者实际反馈，不作为本次 2.2-E 已重新执行的证据。
+Existing Organization Browser E2E 不作为 Model Provider/Profile 专项 Browser evidence。
 
 ## 9. Definition of Done
 
@@ -221,7 +220,7 @@ Phase 2.2 当前扩展任务完成前至少必须满足：
 7. Retrieval quality 结果与现有 Citation / Audit / Observability 可追踪。
 8. Evaluation model/provider 与 quality parameters 可显式配置并进入 trace。
 9. Model Provider / Model Profile 具备组织范围数据模型、CRUD API、权限、Audit 与 migration。
-10. Runtime / Evaluation 后续接入 Profile 后必须保留 Provider/Profile/model/dimension identity。
+10. Runtime / Evaluation Profile 接入后必须保留 Provider/Profile/model/dimension identity。
 11. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
 
-当前 1-8 已形成既有工程实现与 Gate 证据；第 9 项基础设施已完成，第 10 项尚未完成。当前 E-3 前端代码已完成并正在进行本地 Gate 验收；E-3 通过后进入 2.2-E-4 Acceptance，再评估 Phase 2.2 是否关闭。
+当前 1-10 已形成既有工程实现与 Gate 证据；E-3 Frontend 已通过本轮开发者本地 Gate。当前剩余任务是 E-4 Acceptance evidence 汇总与最终关闭决策；不得因 Frontend Gate 通过而提前关闭 Phase 2.2。
