@@ -1,6 +1,6 @@
 # Phase 2.2 — Retrieval Production Quality
 
-> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过此前开发者本地验证；2.2-E Model Provider / Model Profile Governance Foundation 已进入实现。**
+> 状态：**进行中 / 2.2-B Dataset / Runner、2.2-C Real Provider Quality Gate 与 2.2-D Retrieval Quality Regression / Traceability 当前定义范围已完成并通过此前开发者本地验证；2.2-E Model Provider / Model Profile Governance Foundation 已进入实现与前端验收。**
 > 前置：Phase 2.1 已正式关闭
 > 产品主题：企业知识问答的真实语义检索质量、可量化评测与 Provider 回归
 
@@ -64,6 +64,7 @@ Embedding Profile 必须声明 dimension；Chat Profile 不声明 embedding dime
 - Provider / Profile AuditLog。
 - default Profile 管理。
 - API contract 自动化测试。
+- Frontend Provider/Profile 管理 UI 与对应 Vitest。
 
 下一步才接入 Runtime 与 Evaluation 的 `model_profile_id` 选择和 trace identity；不在本阶段引入 Reranker / Hybrid / Fallback / 路由 / 成本治理。
 
@@ -179,6 +180,8 @@ Citation correctness + Debug / Audit / Observability traceability
     ↓
 2.2-E Model Provider / Profile Governance Foundation
     ↓
+Frontend Provider/Profile Management
+    ↓
 Acceptance
 ```
 
@@ -221,4 +224,4 @@ Phase 2.2 当前扩展任务完成前至少必须满足：
 10. Runtime / Evaluation 后续接入 Profile 后必须保留 Provider/Profile/model/dimension identity。
 11. `PROJECT_STATUS.md`、Phase、Acceptance、错误记录同步。
 
-当前 1-8 已形成既有工程实现与 Gate 证据；本次先完成第 9 项基础设施，后续完成第 10 项后再评估 Phase 2.2 是否关闭。
+当前 1-8 已形成既有工程实现与 Gate 证据；第 9 项基础设施已完成，第 10 项尚未完成。当前 E-3 前端代码已完成并正在进行本地 Gate 验收；E-3 通过后进入 2.2-E-4 Acceptance，再评估 Phase 2.2 是否关闭。

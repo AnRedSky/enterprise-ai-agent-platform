@@ -83,6 +83,9 @@ function openEditProfile(profile: ModelProfile) {
   profileForm.value = { name: profile.name, model_type: profile.model_type, model_name: profile.model_name, dimension: profile.dimension, capabilities: profile.capabilities, parameters: profile.parameters, enabled: profile.enabled, is_default: profile.is_default };
   profileDialog.value = true;
 }
+function editProfileFromTableRow(row: unknown) {
+  openEditProfile(row as ModelProfile);
+}
 async function saveProfile() {
   if (!profileForm.value.name.trim() || !profileForm.value.model_name.trim() || !selectedProviderId.value) return;
   const payload = { ...profileForm.value, dimension: profileForm.value.model_type === "embedding" ? profileForm.value.dimension : null };
@@ -98,6 +101,9 @@ async function removeProfile(profile: ModelProfile) {
   try { await ElMessageBox.confirm("删除 Profile 后不能再用于 Runtime / Evaluation。", "删除 Profile", { type: "warning" }); await deleteModelProfile(profile.id); await loadProfiles(profile.provider_id); ElMessage.success("Profile 已删除"); }
   catch (e) { if (e !== "cancel" && e !== "close") ElMessage.error(e instanceof Error ? e.message : "Profile 删除失败"); }
 }
+function removeProfileFromTableRow(row: unknown) {
+  void removeProfile(row as ModelProfile);
+}
 
 onMounted(load);
 </script>
@@ -111,7 +117,7 @@ onMounted(load);
       <template #header><div class="provider-header"><div><strong>{{ provider.name }}</strong><div class="meta">{{ provider.provider_type }} · {{ provider.provider_name }}</div></div><div><el-tag :type="provider.enabled ? 'success' : 'info'">{{ provider.enabled ? 'enabled' : 'disabled' }}</el-tag><el-button link type="primary" @click="openEditProvider(provider)">编辑</el-button><el-button link type="danger" @click="removeProvider(provider)">删除</el-button></div></div></template>
       <el-descriptions :column="2" border><el-descriptions-item label="Endpoint">{{ provider.endpoint || '未配置' }}</el-descriptions-item><el-descriptions-item label="Credential Ref">{{ provider.credential_ref || '未配置' }}</el-descriptions-item></el-descriptions>
       <div class="profiles-header"><h2>Profiles</h2><el-button size="small" type="primary" @click="openCreateProfile(provider.id)">创建 Profile</el-button></div>
-      <el-table :data="profiles[provider.id] ?? []" border><el-table-column prop="name" label="名称" min-width="160" /><el-table-column prop="model_type" label="类型" width="120" /><el-table-column prop="model_name" label="模型" min-width="220" /><el-table-column prop="dimension" label="Dimension" width="110" /><el-table-column label="默认" width="90"><template #default="{ row }"><el-tag v-if="row.is_default" type="success">default</el-tag></template></el-table-column><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? 'enabled' : 'disabled' }}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="{ row }"><el-button link type="primary" @click="openEditProfile(row)">编辑</el-button><el-button link type="danger" @click="removeProfile(row)">删除</el-button></template></el-table-column></el-table>
+      <el-table :data="profiles[provider.id] ?? []" border><el-table-column prop="name" label="名称" min-width="160" /><el-table-column prop="model_type" label="类型" width="120" /><el-table-column prop="model_name" label="模型" min-width="220" /><el-table-column prop="dimension" label="Dimension" width="110" /><el-table-column label="默认" width="90"><template #default="{ row }"><el-tag v-if="row.is_default" type="success">default</el-tag></template></el-table-column><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? 'enabled' : 'disabled' }}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="{ row }"><el-button link type="primary" @click="editProfileFromTableRow(row)">编辑</el-button><el-button link type="danger" @click="removeProfileFromTableRow(row)">删除</el-button></template></el-table-column></el-table>
     </el-card>
 
     <el-dialog v-model="providerDialog" :title="editingProvider ? '编辑 Provider' : '创建 Provider'" width="620px"><el-form label-width="120px"><el-form-item label="名称" required><el-input v-model="providerForm.name" /></el-form-item><el-form-item label="Provider Type" required><el-input v-model="providerForm.provider_type" /></el-form-item><el-form-item label="Provider Name" required><el-input v-model="providerForm.provider_name" /></el-form-item><el-form-item label="Endpoint"><el-input v-model="providerForm.endpoint" /></el-form-item><el-form-item label="Credential Ref"><el-input v-model="providerForm.credential_ref" placeholder="仅填写 Secret / 环境变量引用" /></el-form-item><el-form-item label="启用"><el-switch v-model="providerForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="providerDialog=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProvider">保存</el-button></template></el-dialog>
