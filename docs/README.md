@@ -14,34 +14,48 @@
 
 ## 当前开发阶段
 
-**Phase 2.3 — Model Provider Governance，进行中。**
+**无进行中的正式 Phase。Phase 2.3 — Model Provider Governance 已正式关闭。**
 
-2.3-A / B / C / D / E / F 已实现并完成对应验收；当前推进 **2.3-G Cost / Usage Accounting**。2.3-G 已提交 PostgreSQL usage/cost 持久化、查询 API、Migration 与 Real API 验证脚本，等待开发者本地执行 acceptance gate。
+2.3-A / B / C / D / E / F / G 均已完成对应本地验收。当前下一项正式工作不是直接编码 Scheduler，而是确认 **Phase 2.4 Durable Scheduler Contract**；Contract 未确认前，不创建 Scheduler Migration 或业务代码。
 
-## 当前 2.3-F 验证结果
-
-```text
-Targeted runtime governance tests: 33 passed
-Backend Regression: 351 passed, 34 deselected
-Alembic head: passed
-Tenant Safe Real API Gate: 34 passed
-```
-
-以上来自开发者本地实际执行结果，不使用 GitHub Actions 作为验收依据。
-
-## 当前 2.3-G 验证要求
+## Phase 2.3 最终本地验收结果
 
 ```text
-Targeted usage accounting tests
-        ↓
-Backend Regression
-        ↓
-Alembic upgrade head
-        ↓
-Tenant Safe Real API Gate
+Targeted usage/governance tests: 40 passed
+Backend Regression: 358 passed, 35 deselected
+Alembic upgrade heads: passed
+Alembic current: 0023_model_usage_accounting (head), 0027_retrieval_evaluation_vector_space (head)
+Tenant Safe Real API Gate: 35 passed
 ```
 
-2.3-G 在开发者本地实际通过前不得标记为 Passed。
+以上结果来自开发者本地实际执行，不使用 GitHub Actions 作为开发测试、质量门禁或验收依据。
+
+## Phase 2.4 进入条件
+
+正式进入代码开发前必须确认：
+
+1. `next_run_at` 的计算、时区与时钟语义；
+2. 多实例 scheduler lease / ownership 语义；
+3. lease 过期、抢占与重复执行边界；
+4. misfire policy 与可接受延迟；
+5. 执行幂等键与重复触发语义；
+6. paused / enabled / disabled 状态转换；
+7. 调度状态与 WorkflowExecution 的审计、trace 关系；
+8. PostgreSQL migration 与 Real API acceptance 场景。
+
+Contract 确认后，按开发准则进入：
+
+```text
+Backend Domain + API Contract
+        ↓
+PostgreSQL Migration + Backend tests
+        ↓
+Real API Gate
+        ↓
+Frontend API Types + Vitest / UI（如范围需要）
+        ↓
+Browser E2E（如范围需要）
+```
 
 ## 目录
 
