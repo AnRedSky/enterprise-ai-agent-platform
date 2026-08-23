@@ -1,3 +1,8 @@
+"""Embedding Provider 技术适配。
+
+定义统一的 Embedding Contract，并提供 OpenAI-compatible 远程适配器；具体业务领域不在此实现。
+"""
+
 from __future__ import annotations
 
 from typing import Protocol, Sequence
@@ -6,6 +11,8 @@ import httpx
 
 
 class EmbeddingProvider(Protocol):
+    """外部 Embedding 服务的最小稳定契约。"""
+
     async def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
 
 
@@ -14,7 +21,7 @@ class EmbeddingProviderError(RuntimeError):
 
 
 class OpenAICompatibleEmbeddingProvider:
-    """Embedding adapter for providers exposing an OpenAI-compatible /embeddings API."""
+    """OpenAI-compatible ``/embeddings`` API 的纯技术适配器。"""
 
     def __init__(
         self,

@@ -1,3 +1,8 @@
+"""离线 Embedding 测试适配器。
+
+提供确定性的本地向量实现，仅用于离线检索验证和单元测试，不代表真实模型语义质量。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,21 +10,14 @@ import math
 import re
 from typing import Sequence
 
-from app.services.embedding_provider import EmbeddingProviderError
+from .embedding import EmbeddingProviderError
 
 
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", re.UNICODE)
 
 
 def _tokenize(text: str) -> list[str]:
-    """Build deterministic lexical-semantic features for offline evaluation.
-
-    English identifiers/words remain whole tokens. Chinese runs additionally
-    emit overlapping bigrams so a short Chinese query such as ``报销规则`` can
-    match a longer sentence such as ``报销规则规定...``. This is intentionally
-    a deterministic fixture strategy, not a substitute for a real embedding
-    model.
-    """
+    """Build deterministic lexical-semantic features for offline evaluation."""
     tokens: list[str] = []
     for part in _TOKEN_PATTERN.findall(text.lower()):
         tokens.append(part)
@@ -29,14 +27,7 @@ def _tokenize(text: str) -> list[str]:
 
 
 class MockEmbeddingProvider:
-    """Deterministic local embedding adapter for offline retrieval validation.
-
-    Shared lexical features contribute to shared vector dimensions, so related
-    evaluation queries and chunks can be ranked deterministically. Chinese
-    text uses character bigram features to avoid treating an entire sentence
-    as one token. It must not be used as evidence of real model semantic
-    quality.
-    """
+    """Deterministic local embedding adapter for offline retrieval validation."""
 
     def __init__(self, dimension: int = 1536) -> None:
         if dimension <= 0:

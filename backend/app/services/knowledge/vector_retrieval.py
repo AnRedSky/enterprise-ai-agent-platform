@@ -1,3 +1,8 @@
+"""Knowledge 向量检索领域服务。
+
+负责检索策略、租户权限和结果水合；Embedding 与向量数据库均通过唯一 Infrastructure Provider 实现。
+"""
+
 from __future__ import annotations
 
 from uuid import UUID
@@ -7,15 +12,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.infrastructure.providers import (
+    EmbeddingProvider,
+    EmbeddingProviderError,
+    MockEmbeddingProvider,
+    OllamaEmbeddingProvider,
+    OpenAICompatibleEmbeddingProvider,
+    PgVectorRetrievalProvider,
+    VectorRetrievalProviderError,
+)
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
-from app.services.embedding_provider import EmbeddingProvider, EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
 from app.services.knowledge.retrieval import KnowledgeRetrievalService
-from app.services.mock_embedding_provider import MockEmbeddingProvider
-from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
-from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRetrievalProviderError
 
 
 class VectorKnowledgeRetrievalService:
+    """使用受治理的 Embedding/Vector Provider 执行 Knowledge 向量检索。"""
+
     RETRIEVAL_MODE = "vector"
 
     def __init__(self, db: AsyncSession, *, embedding_provider: EmbeddingProvider | None = None, embedding_dimension: int | None = None):
@@ -84,6 +96,8 @@ class VectorKnowledgeRetrievalService:
 
 
 class KnowledgeRetrievalRouterService:
+    """在词法与向量检索之间执行显式策略选择及可配置降级。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 

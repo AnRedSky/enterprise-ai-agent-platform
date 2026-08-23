@@ -1,3 +1,8 @@
+"""Knowledge 业务领域入口。
+
+统一导出 Knowledge 的领域服务与契约；外部技术 Provider 不在本包重复实现。
+"""
+
 from .contract import EmbeddingProvider, Reranker, RetrievalCandidate, Retriever
 from .hybrid import HybridCandidate, HybridRetrievalConfig, HybridRetrievalService
 from .hybrid_service import HybridKnowledgeRetrievalService

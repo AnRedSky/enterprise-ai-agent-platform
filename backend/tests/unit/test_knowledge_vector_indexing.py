@@ -1,10 +1,12 @@
+"""Knowledge 向量索引服务的领域记录构造测试。"""
+
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+from app.infrastructure.providers.vector_retrieval import VectorRetrievalProviderError
 from app.services.knowledge import KnowledgeVectorIndexingService
-from app.services.vector_retrieval_provider import VectorRetrievalProviderError
 
 
 def _chunk(index: int):

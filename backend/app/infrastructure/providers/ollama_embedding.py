@@ -1,3 +1,8 @@
+"""Ollama Embedding 技术适配器。
+
+负责 Ollama ``/api/embed`` HTTP 调用、重试和维度校验；不包含 Knowledge 领域业务规则。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,7 +11,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.services.embedding_provider import EmbeddingProviderError
+from .embedding import EmbeddingProviderError
 
 
 class OllamaEmbeddingProvider:
@@ -80,11 +85,7 @@ class OllamaEmbeddingProvider:
             raise EmbeddingProviderError("Ollama embedding provider returned an invalid data length")
         if not all(isinstance(item, list) for item in embeddings):
             raise EmbeddingProviderError("Ollama embedding provider returned an invalid embedding item")
-        if not all(
-            isinstance(value, (int, float))
-            for embedding in embeddings
-            for value in embedding
-        ):
+        if not all(isinstance(value, (int, float)) for embedding in embeddings for value in embedding):
             raise EmbeddingProviderError("embedding vector contains a non-numeric value")
 
         vectors = [[float(value) for value in embedding] for embedding in embeddings]
@@ -103,20 +104,13 @@ class OllamaEmbeddingProvider:
         return vectors
 
     def _create_client(self) -> httpx.AsyncClient:
-        # Local Docker Ollama should not inherit a machine-wide HTTP(S) proxy.
-        # A proxy can return a synthetic 503 before the request reaches Ollama;
-        # this is especially misleading because the Ollama container then has no
-        # corresponding request in its logs. Remote Ollama endpoints retain the
-        # normal httpx environment-proxy behavior.
+        """为本地 Ollama 禁用环境代理，避免 Docker 请求被代理拦截。"""
         hostname = urlparse(self.base_url).hostname
         trust_env = hostname not in {"localhost", "127.0.0.1", "::1"}
         return httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=trust_env)
 
-    async def _post_with_retry(
-        self,
-        client: httpx.AsyncClient,
-        payload: dict[str, object],
-    ) -> httpx.Response:
+    async def _post_with_retry(self, client: httpx.AsyncClient, payload: dict[str, object]) -> httpx.Response:
+        """对临时 HTTP/网络错误执行有限指数退避重试。"""
         for attempt in range(self.retry_attempts + 1):
             try:
                 response = await client.post(f"{self.base_url}/api/embed", json=payload)

@@ -1,3 +1,8 @@
+"""Knowledge 向量索引领域服务。
+
+负责将已持久化 Chunk 转换为向量并交给唯一的 Infrastructure Provider 写入；不实现外部模型或向量数据库协议。
+"""
+
 from __future__ import annotations
 
 from typing import Sequence
@@ -8,11 +13,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.infrastructure.providers import (
+    EmbeddingProviderError,
+    MockEmbeddingProvider,
+    OllamaEmbeddingProvider,
+    OpenAICompatibleEmbeddingProvider,
+    PgVectorRetrievalProvider,
+    VectorRecord,
+    VectorRetrievalProviderError,
+)
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
-from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
-from app.services.mock_embedding_provider import MockEmbeddingProvider
-from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
-from app.services.vector_retrieval_provider import VectorRecord, VectorRetrievalProviderError, PgVectorRetrievalProvider
 
 
 class KnowledgeVectorIndexingService:
