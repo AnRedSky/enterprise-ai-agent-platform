@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**已进入 Contract-first 实现阶段；纯领域 Contract 与 Contract Test 已提交，尚未进入 Migration、API、Scheduler Runtime 业务实现**
+> 状态：**Contract-first 已完成结构整理；下一步进入 Backend Domain + API Contract 与 PostgreSQL Migration 设计，尚未实现 Scheduler Runtime worker。**
 > 评估日期：2026-08-23
 > 优先级：**P1**
 > 产品主题：Durable Scheduler
@@ -122,7 +122,7 @@ Scheduler 本身不得记录 Secret；日志与 Audit 不得泄露 credential、
 
 ## 4. Contract-first 当前实现
 
-已新增纯领域 Contract：`backend/app/services/workflow_scheduler_contract.py`，当前只负责边界定义，不访问数据库、不创建 WorkflowExecution、不实现 worker loop。
+已新增纯领域 Contract，并按功能子模块包组织：`backend/app/services/workflow_scheduler/contract.py`。`__init__.py` 负责模块公共导出，避免 Scheduler 领域代码继续散落到 `app/services/`。
 
 当前 Contract 已覆盖：
 
@@ -138,12 +138,36 @@ Scheduler 本身不得记录 Secret；日志与 Audit 不得泄露 credential、
 
 对应 Contract Test：`backend/tests/unit/test_workflow_scheduler_contract.py`。
 
-> 当前尚未宣称 Scheduler 业务能力已实现；Migration、数据库 lease、Execution 创建、Real API Gate 仍必须在 Contract Gate 全部确认后按顺序推进。
+## 5. 下一步：Backend Domain + API Contract / Migration 设计
 
-## 5. 推荐实现顺序
+在 Contract Gate 本地验证通过后，创建 Scheduler 功能子模块的持久化模型与 API Contract：
 
 ```text
-Phase 2.4 Contract
+backend/app/services/workflow_scheduler/
+├── contract.py
+├── service.py
+├── repository.py
+├── schemas.py
+└── api.py（若最终采用 Router 子包）
+backend/app/models/workflow_scheduler/
+└── schedule.py
+```
+
+首个 Migration 只负责持久化 Contract，不实现 worker loop：
+
+- 调度字段与默认值；
+- `schedule_slot_key` 唯一约束；
+- lease owner / expiry；
+- `enabled / paused / disabled` 状态；
+- Workflow / Trigger 外键；
+- tenant scope 与必要索引。
+
+Migration 完成后再增加 repository 的原子 lease 操作和 API Contract tests。
+
+## 6. 推荐实现顺序
+
+```text
+Phase 2.4 Contract Gate
       ↓
 Backend Domain + API Contract
       ↓
@@ -164,7 +188,7 @@ Frontend API / UI（只有存在明确用户操作范围时）
 Browser E2E（只有存在对应 UI 用户链路时）
 ```
 
-## 6. 暂不纳入范围
+## 7. 暂不纳入范围
 
 以下内容保持候选状态，不因为 Phase 2.4 自动进入开发：
 
@@ -177,9 +201,9 @@ Browser E2E（只有存在对应 UI 用户链路时）
 - Multi-Agent
 - Marketplace
 
-## 7. 进入代码开发的 Gate
+## 8. 进入业务代码 Gate
 
-只有以下条件全部确认，才允许创建 Migration 和业务代码：
+只有以下条件全部确认，才允许进入 Scheduler Runtime：
 
 1. Contract 字段与状态语义确认；
 2. `next_run_at` / timezone / clock 语义确认；
@@ -189,4 +213,4 @@ Browser E2E（只有存在对应 UI 用户链路时）
 6. Audit / Trace 关联字段确认；
 7. PostgreSQL migration 与 Real API acceptance 场景确认。
 
-> 本阶段已经开始实现纯 Contract 与 Contract Test，但仍未越过 Migration / Scheduler Runtime 业务代码 Gate。
+> 当前已越过“是否进入 Contract 实现”的决策门，但尚未宣称 Scheduler Runtime 业务能力完成。

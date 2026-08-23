@@ -7,8 +7,8 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.3-A 至 2.3-G：**均已完成对应本地验收**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；尚未进入 Migration / Scheduler Runtime 业务实现**。
-- 下一正式工作：**完成 Phase 2.4 Contract Gate，然后进入 Backend Domain + API Contract**。
+- 当前：**Phase 2.4 Durable Scheduler Contract-first 实现中；已完成领域 Contract，下一步进入模块化 Backend Domain + API Contract 与 PostgreSQL Migration 设计。**
+- 下一正式工作：**完成 Scheduler Contract Gate 后，创建 Scheduler 功能子模块的持久化模型与 API Contract；不在公共 service 目录继续新增零散 Scheduler 文件。**
 
 ## Phase 2.3 最终本地验收结果
 
@@ -68,42 +68,29 @@ Phase 2.4 首版只解决：持久化调度、`next_run_at`、多实例 lease、
 
 ## Phase 2.4 Contract-first 当前进度
 
-已完成第一步纯领域 Contract 实现：
+已完成第一步纯领域 Contract 实现，并已按模块化规则整理为 `backend/app/services/workflow_scheduler/` 功能子模块：
 
-- `backend/app/services/workflow_scheduler_contract.py`：定义状态、misfire、时间、lease、slot 幂等键与可注入 clock 边界；
+- `contract.py`：定义状态、misfire、时间、lease、slot 幂等键与可注入 clock 边界；
+- `__init__.py`：对外暴露 Scheduler 领域 Contract；
 - `backend/tests/unit/test_workflow_scheduler_contract.py`：覆盖 UTC、IANA timezone、DST、lease、misfire、状态与幂等边界；
-- 当前实现不访问 PostgreSQL、不创建 WorkflowExecution、不启动 scheduler worker，因此没有越过业务代码 Gate。
+- 当前实现不访问 PostgreSQL、不创建 WorkflowExecution、不启动 scheduler worker，因此没有越过业务 Runtime Gate。
 
-当前未宣称通过 Phase 2.4 Acceptance。下一步必须完成 Contract Gate 的完整确认后，再创建 Migration / API / Runtime 实现。
+## Phase 2.4 下一执行任务
 
-## Phase 2.4 Contract 进入条件
-
-正式创建 Migration 或业务代码前必须确认：
-
-1. `next_run_at` 的计算、时区与时钟语义；
-2. 多实例 scheduler lease / ownership；
-3. lease 过期、抢占与重复执行边界；
-4. misfire policy 与可接受延迟；
-5. 调度槽位幂等键与重复触发语义；
-6. paused / enabled / disabled 状态转换；
-7. 调度状态与 WorkflowExecution 的 Audit / Trace 关系；
-8. PostgreSQL migration 与 Real API acceptance 场景。
-
-Contract 确认后，按开发准则执行：
+下一步进入 **Backend Domain + API Contract / Migration 设计**，但必须先完成 Contract Gate 的本地实际验证。设计必须保持 Scheduler 功能子模块边界：
 
 ```text
-Backend Domain + API Contract
-        ↓
-PostgreSQL Migration + Backend tests
-        ↓
-Real API Gate
-        ↓
-Backend Regression Gate
-        ↓
-Frontend API / UI（如存在明确用户操作范围）
-        ↓
-Browser E2E（如存在对应 UI 用户链路）
+backend/app/services/workflow_scheduler/
+├── contract.py
+├── service.py
+├── repository.py
+├── schemas.py
+└── api.py（若最终采用 Router 子包）
 ```
+
+数据库模型可进入 `backend/app/models/workflow_scheduler/`；Migration 保持 Alembic 标准目录，但 migration 说明使用中文。
+
+首个持久化迭代只覆盖：调度字段、`schedule_slot_key` 唯一约束、lease 字段、状态字段及 Workflow/Trigger 外键；暂不实现 worker loop 和真实 WorkflowExecution 创建。
 
 ## 开发纪律
 
@@ -114,3 +101,4 @@ Browser E2E（如存在对应 UI 用户链路）
 - Secret 不进入 Git、数据库明文、报告或 trace/audit。
 - 代码、Phase、Acceptance、Error、Status 必须保持可追溯。
 - 代码中的功能说明和注释统一使用中文；技术标识保持原文。
+- 功能相关模块按子模块包组织，避免在公共目录零散新增同一功能文件。

@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.workflow_scheduler_contract import (
+from app.services.workflow_scheduler import (
     MisfirePolicy,
     ScheduleSlot,
     SchedulerState,
