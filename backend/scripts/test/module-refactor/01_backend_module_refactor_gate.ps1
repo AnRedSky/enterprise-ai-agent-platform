@@ -14,47 +14,17 @@ function Invoke-GateStep {
     if ($LASTEXITCODE -ne 0) { throw "Gate failed: $Name (exit=$LASTEXITCODE)" }
 }
 
-$requiredDirectories = @(
-    'app/services/agent',
-    'app/services/knowledge',
-    'app/infrastructure',
-    'app/infrastructure/db',
-    'app/middleware',
-    'app/utils'
-)
+$requiredDirectories = @('app/services/agent','app/services/knowledge','app/infrastructure','app/infrastructure/db','app/middleware','app/utils')
 foreach ($directory in $requiredDirectories) {
     if (-not (Test-Path $directory -PathType Container)) { throw "Required module directory is missing: $directory" }
 }
 
-# 完整迁移 Gate：旧实现、旧 import、兼容入口和根目录重复实现均禁止存在。
-$forbiddenPaths = @(
-    'app/services/agent_registry.py',
-    'app/services/agent/registry.py',
-    'app/services/knowledge_ingestion.py',
-    'app/services/knowledge_registry.py',
-    'app/services/knowledge_retrieval.py',
-    'app/services/knowledge_retrieval_contract.py',
-    'app/services/knowledge_vector_indexing.py',
-    'app/services/hybrid_knowledge_retrieval.py',
-    'app/services/hybrid_knowledge_retrieval_service.py',
-    'app/services/vector_knowledge_retrieval.py'
-)
+$forbiddenPaths = @('app/services/agent_registry.py','app/services/agent/registry.py','app/services/knowledge_ingestion.py','app/services/knowledge_registry.py','app/services/knowledge_retrieval.py','app/services/knowledge_retrieval_contract.py','app/services/knowledge_vector_indexing.py','app/services/hybrid_knowledge_retrieval.py','app/services/hybrid_knowledge_retrieval_service.py','app/services/vector_knowledge_retrieval.py')
 foreach ($path in $forbiddenPaths) {
     if (Test-Path $path) { throw "Forbidden legacy module still exists: $path" }
 }
 
-$legacyImportPatterns = @(
-    'app\.services\.agent_registry',
-    'app\.services\.agent\.registry',
-    'app\.services\.knowledge_ingestion',
-    'app\.services\.knowledge_registry',
-    'app\.services\.knowledge_retrieval',
-    'app\.services\.knowledge_retrieval_contract',
-    'app\.services\.knowledge_vector_indexing',
-    'app\.services\.hybrid_knowledge_retrieval',
-    'app\.services\.hybrid_knowledge_retrieval_service',
-    'app\.services\.vector_knowledge_retrieval'
-)
+$legacyImportPatterns = @('app\.services\.agent_registry','app\.services\.agent\.registry','app\.services\.knowledge_ingestion','app\.services\.knowledge_registry','app\.services\.knowledge_retrieval','app\.services\.knowledge_retrieval_contract','app\.services\.knowledge_vector_indexing','app\.services\.hybrid_knowledge_retrieval','app\.services\.hybrid_knowledge_retrieval_service','app\.services\.vector_knowledge_retrieval')
 foreach ($pattern in $legacyImportPatterns) {
     $matches = @(git grep -n -E $pattern -- '*.py' 2>$null)
     if ($matches.Count -gt 0) {
@@ -70,9 +40,8 @@ foreach ($file in @('registry.py','ingestion.py','retrieval.py','vector_indexing
     if (-not (Test-Path "app/services/knowledge/$file" -PathType Leaf)) { throw "Knowledge implementation is missing: $file" }
 }
 
-# 公共 services 根目录不得残留已迁移 Agent / Knowledge 领域实现。
-$forbiddenRootNames = @('*agent*','*knowledge*','*retrieval*')
-foreach ($filter in $forbiddenRootNames) {
+# 领域已迁移后，services 根目录不得存在同领域实现。
+foreach ($filter in @('*agent*','*knowledge*')) {
     $rootFiles = @(Get-ChildItem 'app/services' -File -Filter $filter -ErrorAction SilentlyContinue)
     if ($rootFiles.Count -gt 0) {
         $rootFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
@@ -81,16 +50,10 @@ foreach ($filter in $forbiddenRootNames) {
 }
 
 $agentTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*agent*.py' -ErrorAction SilentlyContinue)
-if ($agentTests.Count -gt 0) {
-    Invoke-GateStep 'Agent targeted tests' { uv run pytest -q @($agentTests.FullName) }
-}
+if ($agentTests.Count -gt 0) { Invoke-GateStep 'Agent targeted tests' { uv run pytest -q @($agentTests.FullName) } }
 
 $knowledgeTests = @(Get-ChildItem 'tests' -Recurse -File -Filter '*knowledge*.py' -ErrorAction SilentlyContinue)
-if ($knowledgeTests.Count -gt 0) {
-    Invoke-GateStep 'Knowledge targeted tests' { uv run pytest -q @($knowledgeTests.FullName) }
-} else {
-    Write-Warning 'No Knowledge-specific test files were found.'
-}
+if ($knowledgeTests.Count -gt 0) { Invoke-GateStep 'Knowledge targeted tests' { uv run pytest -q @($knowledgeTests.FullName) } } else { Write-Warning 'No Knowledge-specific test files were found.' }
 
 Invoke-GateStep 'Backend default regression' { uv run pytest -q }
 
