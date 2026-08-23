@@ -1,3 +1,10 @@
+"""Workflow Scheduler Runtime：负责已启用 Scheduled Trigger 的轮询、恢复与幂等分发。
+
+模块职责：读取可调度 Trigger、计算恢复槽位，并委托既有 WorkflowTriggerService 执行调度。
+边界：不创建第二套数据库 Session、不实现新的 Workflow 执行逻辑；数据库 Session 统一由 Infrastructure 层提供，实际执行继续复用 WorkflowTriggerService。
+关键依赖：`app.infrastructure.db.SessionLocal`、`WorkflowTriggerService` 与 Scheduler Contract。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +14,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.dependencies.db import SessionLocal
+from app.infrastructure.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外键元数据
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
