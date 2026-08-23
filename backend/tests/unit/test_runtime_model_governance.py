@@ -5,8 +5,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-from app.services.model_provider_governance_contract import FallbackPolicy, FallbackReason
-from app.services.runtime_model_governance import RuntimeModelGovernanceService, RuntimeProviderCandidate
+from app.services.model import FallbackPolicy, FallbackReason, RuntimeModelGovernanceService, RuntimeProviderCandidate
 
 
 @pytest.mark.parametrize(
