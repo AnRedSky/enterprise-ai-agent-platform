@@ -30,6 +30,10 @@ backend/app/
 │   ├── governance/
 │   └── observability/
 ├── runtime/
+│   ├── agent/
+│   ├── workflow/
+│   ├── memory/
+│   └── trigger/
 ├── infrastructure/
 │   ├── db/
 │   ├── redis/
@@ -48,26 +52,50 @@ backend/app/
 5. **import 必须彻底切换**：所有调用方直接引用新模块；全仓搜索确认旧路径不存在。
 6. **测试跟随迁移**：受影响测试同步修改 import 与模块路径，不通过兼容代码维持旧测试。
 7. **数据库不因目录重构产生 Migration**：只有真实数据库结构变化才允许新增 Alembic Migration。
-8. **功能重复实现检查必须是每个迁移单元的 Gate**：新旧文件、同职责 Service、重复 Provider、重复 Runtime 均必须检查。
-9. **模块说明必须随代码迁移**：每个新增或重构模块文件必须有简短中文模块说明，说明职责、边界及必要的外部依赖；不得用无意义注释堆砌代码。
+8. **功能重复实现检查必须是每个迁移单元的 Gate**。
+9. **模块说明必须随代码迁移**：每个新增或重构模块文件必须有简短中文模块说明。
 
-## 4. 一级目录迁移
+## 4. 当前迁移状态
 
-| 当前 | 目标 | 动作 | 状态 |
+| 领域 | 目标模块 | 状态 | 说明 |
 |---|---|---|---|
-| `app/api/` | `app/api/v1/` | 按 Domain 收敛 | 待迁移 |
-| `app/core/` | `app/core/` | 保留并清理 | 进行中 |
-| `app/dependencies/` | `app/dependencies/` | 保留，技术实现下沉 | 待迁移 |
-| 不存在 | `app/middleware/` | 新建 | 已建立基础目录 |
-| `app/models/` | `app/models/` | 保留 | 不迁移 |
-| `app/schemas/` | `app/schemas/` | 保留并整理 | 待迁移 |
-| `app/services/*.py` | `app/services/<domain>/` | 彻底分领域迁移 | 进行中 |
-| `app/runtime/` | `app/runtime/<domain>/` | 按执行职责分域 | 待迁移 |
-| 不存在 | `app/infrastructure/` | 新建 | 已建立基础目录 |
-| 不存在 | `app/utils/` | 新建并严格限制 | 已建立基础目录 |
-| `app/tools/` | `app/tools/` | 保留技术实现与注册机制 | 待细化 |
+| Agent | `app/services/agent/` | 已完成 | Service / Repository 已物理迁移，旧入口删除 |
+| Knowledge | `app/services/knowledge/` + `app/infrastructure/providers/` | 已完成 | 领域与 Provider 已分离，无旧 Provider 实现 |
+| Memory | `app/services/memory/` + `app/runtime/memory/` | **本次完成** | Service 与 Runtime 上下文均已迁移，旧 `memory_service.py` / `memory_context.py` 删除 |
+| Model | `app/services/model/` + Provider | 待迁移 | 当前仍存在根目录旧 Service / Runtime Provider 组合 |
+| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | 待迁移 | Registry / Execution / Governance 仍待领域收敛 |
+| Trigger | `app/services/trigger/` | 待迁移 | Scheduled / Webhook Trigger 仍待统一领域入口 |
+| Organization / Governance / Observability | 对应领域子模块 | 待迁移 | 当前仍存在多个根目录 Service 文件 |
+| Tool | `app/services/tool/` | 待迁移 | `app/tools/` 技术实现需与领域 Runtime 边界继续收敛 |
+| API | `app/api/v1/<domain>/` | 待迁移 | 当前 Router 仍位于 `app/api/*.py` |
 
-## 5. Agent：彻底迁移完成
+## 5. Memory：彻底迁移完成
+
+```text
+app/services/memory_service.py
+        ↓
+app/services/memory/
+├── __init__.py
+└── service.py
+
+app/runtime/memory_context.py
+        ↓
+app/runtime/memory/
+├── __init__.py
+└── context.py
+```
+
+迁移要求已完成：
+
+- 生产入口统一为 `app.services.memory`；
+- Runtime 入口统一为 `app.runtime.memory`；
+- 删除旧 Service / Runtime 文件，不保留兼容垫片；
+- Memory 单元测试 import 已同步切换；
+- Module Refactor Gate 已加入旧路径、目录和 Memory targeted tests 检查；
+- 新增/重构模块补充中文职责、边界与关键依赖说明；
+- 本轮未新增数据库 Migration，Memory 数据结构保持不变。
+
+## 6. Agent：彻底迁移完成
 
 ```text
 app/services/agent/
@@ -78,9 +106,7 @@ app/services/agent/
 
 原 `app/services/agent_registry.py` 与 `app/services/agent/registry.py` 已删除；生产代码直接使用 `app.services.agent`，不存在兼容垫片或双实现。
 
-## 6. Knowledge：领域与 Provider 已完成物理迁移
-
-### 领域模块
+## 7. Knowledge：领域与 Provider 已完成物理迁移
 
 ```text
 app/services/knowledge/
@@ -93,33 +119,17 @@ app/services/knowledge/
 ├── vector_retrieval.py
 ├── hybrid.py
 └── hybrid_service.py
-```
 
-### Provider 技术适配
-
-```text
 app/infrastructure/providers/
-├── __init__.py
 ├── embedding.py
 ├── mock_embedding.py
 ├── ollama_embedding.py
 └── vector_retrieval.py
 ```
 
-Embedding Contract 只保留 `infrastructure/providers/embedding.py` 一份正式定义；Knowledge 领域仅引用该 Contract，不再复制 Provider 实现。
+Embedding Contract 只保留 `infrastructure/providers/embedding.py` 一份正式定义；Knowledge 领域不复制 Provider 实现。
 
-已删除：
-
-```text
-app/services/embedding_provider.py
-app/services/mock_embedding_provider.py
-app/services/ollama_embedding_provider.py
-app/services/vector_retrieval_provider.py
-```
-
-Knowledge 的 `vector_indexing.py` 与 `vector_retrieval.py` 已直接依赖 `app.infrastructure.providers`，因此不存在旧 Service Provider 与新 Infrastructure Provider 双实现。
-
-## 7. Model
+## 8. Model
 
 ### 当前
 
@@ -150,110 +160,11 @@ app/infrastructure/providers/
 
 必须先建立调用关系，再进行物理迁移；不得通过旧路径垫片完成迁移，也不得复制一套新 Provider。
 
-## 8. Memory
+## 9. Workflow / Trigger / Organization / Governance / Observability / Tool
 
-```text
-app/services/memory_service.py
-        ↓
-app/services/memory/service.py
+这些领域继续遵循目标结构与“完整迁移、删除旧文件、旧路径搜索为 0、重复实现为 0”的统一验收规则。具体迁移必须基于当前实际职责，不机械归类。
 
-app/runtime/memory_context.py
-        ↓
-app/runtime/memory/...
-```
-
-Service 与 Runtime 必须彻底分离，旧 `memory_service.py` 完成迁移后删除。
-
-## 9. Workflow
-
-```text
-app/services/workflow_registry.py
-app/services/workflow_execution.py
-app/services/workflow_governance.py
-        ↓
-app/services/workflow/
-
-app/runtime/workflow_runtime.py
-        ↓
-app/runtime/workflow/...
-```
-
-## 10. Trigger
-
-```text
-app/services/workflow_trigger.py
-app/services/workflow_trigger_schedule.py
-app/services/webhook_trigger.py
-        ↓
-app/services/trigger/
-```
-
-## 11. Scheduler
-
-当前 `app/services/workflow_scheduler/` 已经满足领域模块化要求，暂不重命名。若后续收敛到 `scheduler`，必须一次性完成全部 import、测试、文档迁移并删除旧目录。
-
-## 12. Organization / Governance / Observability
-
-```text
-app/services/organization.py
-app/services/session_service.py
-app/services/observability_service.py
-app/services/usage_accounting.py
-        ↓
-app/services/organization/
-app/services/governance/
-app/services/observability/
-```
-
-最终领域归属必须基于实际职责判断，不得机械归类。
-
-## 13. Tool
-
-```text
-app/services/tool_audit.py
-app/services/tool_observability.py
-app/services/tool_rbac.py
-app/services/tool_repository.py
-app/services/tool_runtime_service.py
-        ↓
-app/services/tool/
-```
-
-`app/tools/` 保留 Tool Registry、Schema、HTTP Executor 等技术实现；不得形成第二套 Tool Runtime。
-
-## 14. Runtime
-
-```text
-app/runtime/
-├── agent/
-├── workflow/
-├── memory/
-├── trigger/
-└── ...
-```
-
-Runtime 只负责执行编排；外部 Provider 技术适配归 `infrastructure/providers/`。
-
-## 15. API
-
-最终收敛为：
-
-```text
-app/api/v1/
-├── agents/
-├── auth/
-├── knowledge/
-├── models/
-├── organizations/
-├── runtime/
-├── tools/
-├── triggers/
-└── workflows/
-```
-
-API URL、HTTP Method、Request/Response Contract 不变；迁移完成后旧 Router 删除，不保留转发 Router。
-
-## 16. 每个迁移单元验收
+## 10. 每个迁移单元验收
 
 1. 全仓搜索旧 import 路径，结果为 0；
 2. 旧文件已删除；
@@ -265,6 +176,6 @@ API URL、HTTP Method、Request/Response Contract 不变；迁移完成后旧 Ro
 8. Backend Regression；
 9. 必要时 Real API / Tenant Safe Real API；
 10. Alembic `upgrade heads` / `current`，确认没有因目录重构产生数据库变化；
-11. 更新 Migration Map、PROJECT_STATUS 与开发记录。
+11. 更新 Migration Map、PROJECT_STATUS 与必要的 Error 记录。
 
 **只有代码、import、测试、重复实现检查、模块说明和文档全部完成，才能将领域标记为迁移完成。**
