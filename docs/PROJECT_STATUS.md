@@ -6,17 +6,18 @@
 - Branch: `main`
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**进行中**。
-- 2.3-A Provider Governance Contract：**已实现，待开发者本地验证**。
-- 2.3-B Backend Domain + API Contract：**已实现，待开发者本地验证**。
+- 2.3-A Provider Governance Contract：**已实现**。
+- 2.3-B Backend Domain + API Contract：**已实现**。
+- 2.3-C Runtime Governance Invocation Service：**已实现基础服务，WorkflowRuntime 主链路接入待本地验证后继续推进**。
 
 ## Phase 2.2 最终验证证据
 
-开发者在上一基线实际执行并反馈：
+开发者实际执行并反馈：
 
 ```text
-Backend Real API Gate: 32 passed in 58.51s
+Backend Real API Gate: 32 passed
 Frontend Regression Gate: 18 test files / 75 tests passed; vue-tsc + Vite build passed
-Model Provider/Profile Browser E2E: 2 passed in 8.1s
+Model Provider/Profile Browser E2E: 2 passed
 ```
 
 因此 **E-4 Passed / Phase 2.2 Closed**。不得继续向 2.2 塞入新的 Provider routing / fallback / cost / usage 功能。
@@ -41,43 +42,44 @@ Model Provider/Profile Browser E2E: 2 passed in 8.1s
 
 `POST /api/v1/model-providers/routing/resolve`
 
-该接口：
+该接口使用 PostgreSQL Provider/Profile 数据，强制 Organization membership scope，并不返回 endpoint、credential_ref 等敏感连接信息。
 
-- 使用 PostgreSQL Provider/Profile 数据；
-- 强制 Organization membership scope；
-- 支持 explicit profile 与 organization default；
-- 强制 enabled/model_type/capability/provider allowlist；
-- 不返回 endpoint、credential_ref 等敏感连接信息；
-- 未新增数据库表或字段，因此当前不需要 Migration。
+### 2.3-C Runtime Governance Invocation Service
 
-新增代码/测试：
+新增：
 
-- `backend/app/services/model_provider_governance_contract.py`
-- `backend/tests/unit/test_model_provider_governance_contract.py`
-- `backend/app/schemas/model_provider.py`
-- `backend/app/services/model_provider.py`
-- `backend/app/api/model_providers.py`
-- `backend/tests/api_contract/test_api_model_provider_governance.py`
+- `backend/app/services/runtime_model_governance.py`
+- `backend/tests/unit/test_runtime_model_governance.py`
 
-## 验证状态
+服务职责：
 
-本轮代码尚未由开发者在本地 uv/PostgreSQL/真实 Provider 环境执行，因此**以下全部 Pending**：
+- 调用既有 routing resolver 获取治理候选；
+- 将候选重新绑定到真实 PostgreSQL ModelProfile/ModelProvider；
+- 调用 `ModelGateway` 时显式传入 profile/provider；
+- fallback 仅接受 2.3-A 定义的 connectivity / timeout / rate limit / provider 5xx；
+- 非治理允许错误直接失败；
+- 不使用 Mock Provider 伪造 governed Provider 成功。
+
+本轮没有新增数据库表/字段，因此不需要 Migration。
+
+## 当前验证状态
+
+本轮代码已提交远端 `main`，但新增 2.3-C 代码尚未由开发者本地 uv/PostgreSQL 环境执行，因此保持 Pending：
 
 ```text
-2.3-A targeted unit test: Pending
-2.3-B API Contract test: Pending
-Backend default regression: Pending
-Migration/head verification: Pending
-Real API Gate: Pending
+2.3-A targeted unit test: developer previously executed 11 passed
+2.3-B API Contract test: developer previously included in 334-test regression
+Backend default regression after 2.3-C: Pending
+Migration/head verification after 2.3-C: Pending
+Real API after 2.3-C: Pending
+Runtime governed invocation integration: Pending
 ```
-
-不得把上述 Pending 写成 Passed。
 
 ## 下一执行任务
 
-**2.3-C Runtime Routing Integration**：把治理候选接入现有 `SessionService.load_runtime()` 与 `ModelGateway`，形成真实 candidate → provider invocation 链路；fallback 必须遵守 2.3-A failure semantics，不得使用 Mock fallback 伪造 Provider 成功。
+**2.3-C RuntimeWorkflow 主链路接入**：把 `RuntimeModelGovernanceService` 接入 `WorkflowRuntime.execute_node()`，让已发布 AgentVersion 的 `model_profile_id` 真正驱动 candidate → provider invocation；无 `model_profile_id` 时按明确的 organization routing strategy 处理，不允许静默 Mock fallback。
 
-若 2.3-C 引入持久化 routing policy / pricing / usage record，必须先 Alembic Migration。
+随后新增 Real API Runtime governance 场景，验证真实数据库 Provider/Profile、fallback failure semantics 与 usage/trace identity。
 
 ## 开发纪律
 
