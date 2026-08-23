@@ -1,4 +1,9 @@
-"""Phase 1.4-F-03 real database-backed hybrid retrieval quality evaluation."""
+"""Phase 1.4-F-03 混合检索质量评估脚本。
+
+职责：基于真实 PostgreSQL/pgvector 和 FastAPI Retrieval API 验证 lexical、vector、hybrid 三种检索路径。
+边界：只负责阶段质量评估编排，不复制数据库 Session、Provider 或 Knowledge 领域实现。
+关键依赖：Infrastructure 数据库、Knowledge Ingestion Service 与 Retrieval API Contract。
+"""
 
 from __future__ import annotations
 
@@ -18,7 +23,8 @@ from sqlalchemy import delete, select, text
 
 from app.core.auth import current_claims
 from app.core.config import settings
-from app.dependencies.db import SessionLocal, engine, get_db
+from app.infrastructure.db import SessionLocal, engine
+from app.api.dependencies import get_db
 from app.main import app
 from app.models.core import User
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
