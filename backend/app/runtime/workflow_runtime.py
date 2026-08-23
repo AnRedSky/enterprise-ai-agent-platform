@@ -183,7 +183,7 @@ class WorkflowRuntime:
                 failure: BaseException | None = None
                 try:
                     output = await asyncio.wait_for(
-                        self.execute_node(node, current_data, actor_id, is_admin, execution.id, execution.tenant_id),
+                        self.execute_node(node, current_data, actor_id, is_admin, execution.id, execution.tenant_id, execution=execution),
                         timeout=timeout_seconds,
                     )
                     current_data = output
@@ -293,7 +293,7 @@ class WorkflowRuntime:
         )
 
     async def execute_node(self, node: dict, input_data: dict, actor_id: UUID, is_admin: bool,
-                           session_id: UUID, tenant_id: UUID | None = None) -> dict:
+                           session_id: UUID, tenant_id: UUID | None = None, execution=None) -> dict:
         node_type = node["type"]
         config = node["config"]
         if node_type in {"input", "output"}:
@@ -328,7 +328,7 @@ class WorkflowRuntime:
             raise HTTPException(422, "agent node 输入必须提供 prompt 或 input/content")
 
         circuit_config = self.resolve_circuit_breaker(config)
-        circuit_key = circuit_config.get("key") or f"agent:{agent.id}:model:{version.model_id}"
+        circuit_key = circuit_config.get("key") or f"agent:{agent.id}:model:{version.model_profile_id or version.model_id}"
         if not isinstance(circuit_key, str) or not circuit_key or len(circuit_key) > 200:
             raise HTTPException(422, "circuit_breaker.key 必须为 1-200 字符字符串")
         circuit_tenant_id = tenant_id
@@ -339,10 +339,41 @@ class WorkflowRuntime:
         try:
             organization_id = await self._resolve_organization_id(tenant_id)
             governance_request = self._governance_request(config, organization_id, version.model_profile_id)
+
+            async def on_governed_attempt(candidate, request_id, outcome, fallback_reason, result):
+                if self.execution_service is None or execution is None:
+                    return
+                data = {
+                    "organization_id": str(organization_id),
+                    "provider_id": str(candidate.provider.id),
+                    "profile_id": str(candidate.profile.id),
+                    "model_type": candidate.profile.model_type,
+                    "request_id": request_id,
+                    "trace_id": str(execution.id),
+                    "outcome": outcome,
+                }
+                if fallback_reason is not None:
+                    data["fallback_reason"] = fallback_reason.value
+                if result is not None and result.usage is not None:
+                    data["usage"] = {
+                        "prompt_tokens": result.usage.prompt_tokens,
+                        "completion_tokens": result.usage.completion_tokens,
+                        "total_tokens": result.usage.total_tokens,
+                    }
+                await self.execution_service.governance.trace(
+                    execution,
+                    actor_id,
+                    "model.invocation",
+                    outcome,
+                    node_id=node["id"],
+                    data=data,
+                )
+
             result = await self.governance.invoke(
                 governance_request,
                 actor_id,
                 messages,
+                on_attempt=on_governed_attempt,
             )
         except Exception as exc:
             if circuit_tenant_id is not None and self.classify_error(exc) in self.CIRCUIT_FAILURE_CODES:
