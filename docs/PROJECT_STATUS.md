@@ -9,11 +9,16 @@
 - 2.2-B Dataset / Runner：已完成既有交付范围，并已有开发者实际执行验证。
 - 2.2-C Real Provider Quality Gate：已通过当前 main 的真实 Provider baseline regression。
 - 2.2-D Retrieval Quality Regression / Traceability：当前定义范围已完成并有 Real API evidence。
-- 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2 已完成当前代码实现；E-2 cross-dimension 本地 evidence 已由开发者实际执行通过；E-3 Frontend Provider/Profile Management 已由开发者实际执行 targeted Vitest 与 Frontend Regression Gate 并通过，当前进入 E-4 Acceptance evidence 汇总阶段。
+- 2.2-E Model Provider / Model Profile Governance Foundation：E-1、E-2 已完成当前代码实现；E-2 cross-dimension 本地 evidence 已由开发者实际执行通过；E-3 Frontend Provider/Profile Management 已通过 targeted Vitest 与 Frontend Regression Gate；E-4 当前存在两个已定位并已修复、等待开发者本地重新执行确认的 Gate 阻塞。
 
 ## 当前 main 基线
 
-开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建功能分支。当前远端 main 最新基线为 `0a4462a92f78f19bc9746d1a167add87b062905a`，包含 Model Provider/Profile production build 类型冲突修复。
+开发严格基于最新 `main`，所有修复与开发直接提交 `main`，不创建功能分支。E-4 本轮修复依次提交：
+
+- `bfe6512`：修复组织成员无法查看 Model Provider / Model Profile AuditLog 的查询范围问题。
+- `04c23de`：修复 Model Provider/Profile Browser E2E 中 Profile“名称”字段 locator 的 strict mode 冲突。
+- `9b7ae04`：记录本轮 E-4 错误与修复要求。
+- 当前 `PROJECT_STATUS.md` 更新记录本轮本地反馈；不得将未重新执行的修复结果标记为 Passed。
 
 ## E-2 实际验证证据
 
@@ -71,15 +76,40 @@ E-3 已完成代码实现、测试阻塞修复，并由开发者本地实际执�
 - vue-router test environment 缺少 route/router injection，导致 `route.params` 崩溃；已由 `ba830da` 修复。
 - Element Plus `el-table` `DefaultRow` 与 `ModelProfile` handler 参数冲突，导致 production `vue-tsc` 失败；已由 `0a4462a` 修复。
 
-## 当前 E-4 任务
+## E-4 本轮实际反馈与修复状态
 
-进入 **2.2-E-4 Acceptance**：
+开发者在当前本地环境执行：
 
-1. 核对 E-2 Runtime / Evaluation Profile Resolution、cross-dimension Real Provider、CRUD / Organization scope / Audit / Trace evidence。
-2. 核对 E-3 Frontend targeted Vitest 与 production build 的本轮实际 evidence。
-3. 保持 Backend / Frontend / Browser Gate 独立，不用某一 Gate 替代另一 Gate。
-4. Acceptance 文档不得使用未重新执行的旧结果冒充当前 evidence。
-5. E-4 完成后再决定 Phase 2.2 是否关闭。
+```text
+Real API Gate: 31 passed, 1 failed
+  test_model_provider_profile_governance_lifecycle_real_http
+  Failure: /runtime/audit-logs 未返回 model_provider.created
+
+Frontend Regression Gate:
+  18 test files passed
+  75 tests passed
+  production build passed
+
+Model Provider/Profile Browser E2E:
+  1 passed, 1 failed
+  Failure: profileDialog.getByLabel("名称") strict mode violation，匹配“名称”和“模型名称”两个 textbox
+```
+
+两个失败均已定位并修复：
+
+1. Backend：`RuntimeQueryService.audit_logs()` 增加 Model Provider / Model Profile 的 organization membership scoped resource-id 查询，保持跨组织隔离。
+2. Browser：Profile 名称字段使用精确 accessible name locator，避免“名称”与“模型名称”前缀匹配。
+
+详细记录：`docs/04-errors/2026-08-23-phase-2-2-e-4-audit-and-browser-gate.md`。
+
+**注意：以上修复尚未由开发者重新执行 Gate 验证，因此 E-4 仍为 Blocked / Pending Re-test，不得标记 Passed。**
+
+## 下一执行顺序
+
+1. 重新执行 Real API Gate，确认 AuditLog organization scope 修复。
+2. 保持 Frontend Regression Gate 独立执行，确认前端回归仍为 18 files / 75 tests + production build。
+3. 重新执行 Model Provider/Profile Browser E2E，确认 owner CRUD、organization scope 与 member UI boundary。
+4. 三层 Gate 全部重新执行通过后，再更新 E-4 Acceptance evidence 与 Phase 2.2 关闭决策。
 
 ## 开发纪律
 
