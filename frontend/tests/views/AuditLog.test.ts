@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 
 const { auditLogs } = vi.hoisted(() => ({ auditLogs: vi.fn() }));
@@ -34,11 +34,11 @@ describe("AuditLogPanel", () => {
   });
 
   it("renders error state", async () => {
-    // Do not create a rejected transport Promise here. Vitest treats the
-    // rejected mock as an unhandled rejection in this component mount path,
-    // even though load() catches it. A malformed successful envelope still
-    // deterministically exercises load()'s catch/finally path without making
-    // the test depend on Promise rejection scheduling.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    afterEach(() => consoleError.mockRestore());
+
+    // Keep the transport envelope malformed so the component exercises its
+    // error path without creating an unhandled rejected Promise in Vitest.
     auditLogs.mockResolvedValue(undefined);
 
     const wrapper = mount(AuditLog, { global });
@@ -47,5 +47,6 @@ describe("AuditLogPanel", () => {
 
     expect(wrapper.find(".alert").exists()).toBe(true);
     expect(wrapper.text()).toContain("Audit 查询失败");
+    expect(consoleError).toHaveBeenCalledTimes(1);
   });
 });
