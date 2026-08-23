@@ -83,7 +83,7 @@ test("Model Provider/Profile owner browser contract uses organization scoped rea
     await providerCard.getByRole("button", { name: "创建 Profile" }).click();
     const profileDialog = page.getByRole("dialog", { name: "创建 Profile" });
     await profileDialog.getByRole("textbox", { name: /^\* 名称$/ }).fill(profileName);
-    await profileDialog.getByRole("combobox").click();
+    await profileDialog.locator(".el-select__wrapper").click();
     await page.getByRole("option", { name: "Embedding" }).click();
     await profileDialog.getByLabel("模型名称").fill("governed-e2e-embedding");
     await profileDialog.getByLabel("Dimension").fill("768");
