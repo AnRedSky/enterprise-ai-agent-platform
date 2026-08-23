@@ -1,10 +1,10 @@
 # Phase 2.3 — Model Provider Governance
 
-> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D / 2.3-E / 2.3-F 已实现并完成对应验收；2.3-G Cost / Usage Accounting 已实现第一版，待本地验证。**
+> 状态：**2.3-A / 2.3-B / 2.3-C / 2.3-D / 2.3-E / 2.3-F / 2.3-G 已实现并完成对应本地验收；Phase 2.3 已正式关闭。**
 
-Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之上建立独立、可测试的 Provider Governance Runtime 能力。
+Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之上建立独立、可测试、可追溯的 Provider Governance Runtime 能力。
 
-## 2.3-A Provider Governance Contract — 已实现
+## 2.3-A Provider Governance Contract — 已实现并验收
 
 - `explicit_profile` / `organization_default` routing strategy；
 - fallback eligible reasons：connectivity / timeout / rate limit / provider 5xx；
@@ -14,7 +14,7 @@ Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之�
 - usage identity：organization/provider/profile/model_type/request/trace/outcome；
 - Secret 不进入 usage/audit identity。
 
-## 2.3-B Backend Domain + API Contract — 已实现
+## 2.3-B Backend Domain + API Contract — 已实现并验收
 
 新增：`POST /api/v1/model-providers/routing/resolve`
 
@@ -27,7 +27,7 @@ Phase 2.2 已正式关闭。Phase 2.3 在现有 Provider/Profile foundation 之�
 
 本任务没有新增数据库表/字段，因此不需要 Migration。
 
-## 2.3-C Runtime Governance Invocation Service + WorkflowRuntime 接入 — 已实现
+## 2.3-C Runtime Governance Invocation Service + WorkflowRuntime 接入 — 已实现并验收
 
 Runtime 主链路：
 
@@ -40,7 +40,7 @@ Runtime 主链路：
 7. fallback 仅接受 2.3-A 定义的 failure semantics；
 8. 不允许静默 Mock fallback。
 
-## 2.3-D Runtime Usage / Trace Identity — 已实现基础能力
+## 2.3-D Runtime Usage / Trace Identity — 已实现并验收
 
 已实现：
 
@@ -61,15 +61,6 @@ Real API 场景覆盖：
 - 第二候选返回 `200` + usage，验证 bounded fallback success；
 - 验证 deterministic candidate ordering、独立 request identity、统一 execution trace identity、usage identity 与 Secret boundary。
 
-开发者实际执行并通过：
-
-```text
-Targeted runtime governance tests: 33 passed
-Backend default regression: 351 passed, 34 deselected
-Alembic upgrade head: passed
-Tenant Safe Real API Gate: 34 passed
-```
-
 ## 2.3-F Fallback Policy Enforcement — 已验收
 
 `dd037f8` 已将 Contract 中的 fallback policy 提升为 Runtime 强制规则：
@@ -79,20 +70,9 @@ Tenant Safe Real API Gate: 34 passed
 - `enabled=false` 时失败立即返回，不进行 fallback；
 - 只有 `eligible_reasons` 中的失败原因允许继续尝试；
 - 调用方不能通过 `max_attempts` 绕过 policy 上限；
-- 新增对应 unit tests，覆盖上限、eligible reasons 与 attempt limit。
+- 补充 HTTPX write/pool timeout 分类与 provider timeout fallback 测试。
 
-开发者随后在 `843e19d` 实际执行：
-
-```text
-Targeted runtime governance tests: 33 passed
-Backend default regression: 351 passed, 34 deselected
-Alembic upgrade head: passed
-Tenant Safe Real API Gate: 34 passed
-```
-
-因此 2.3-F acceptance 已关闭。
-
-## 2.3-G Cost / Usage Accounting — 已实现，待本地验证
+## 2.3-G Cost / Usage Accounting — 已验收
 
 本任务把已有 Contract 的 cost/usage 定义真正落到 PostgreSQL，而不是继续只记录在 trace JSON 中。
 
@@ -133,20 +113,22 @@ token cost 按每 1,000 tokens 计算；request cost 按 provider attempt 计算
 - 返回 durable usage records 与 organization scoped `total_cost`；
 - 不返回 endpoint / credential_ref / Secret。
 
-### 当前本地验证状态
+### 本地 Acceptance 证据
 
-代码、Migration、unit、API contract 与 Real API tests 已提交；**本轮新增 2.3-G 代码尚未由开发者本地执行，因此当前不得标记 Passed。**
+开发者在最新 `main`（`14fd450`）实际执行：
 
-## 下一执行任务
-
-**2.3-G Acceptance Gate**：
-
-```powershell
-cd backend
-uv run pytest -q tests/unit/test_usage_accounting.py tests/api_contract/test_api_usage_accounting.py tests/unit/test_model_provider_governance_contract.py tests/api_contract/test_api_model_provider_governance.py tests/unit/test_runtime_model_governance.py tests/unit/test_workflow_runtime.py
-uv run pytest -q
-uv run alembic upgrade head
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
+```text
+2.3-G targeted tests: 40 passed
+Backend default regression: 358 passed, 35 deselected
+Alembic upgrade heads: passed
+Alembic current: 0023_model_usage_accounting (head), 0027_retrieval_evaluation_vector_space (head)
+Tenant Safe Real API Gate: 35 passed
 ```
 
-全部通过后关闭 2.3-G，并重新评估 Phase 2.3 是否还有明确剩余能力；不要在未完成 Provider Governance acceptance 前切换到候选 Phase 2.4。
+因此 2.3-G 已通过本地 Acceptance，并与 2.3-A 至 2.3-F 一起关闭 Phase 2.3。
+
+## Phase 2.3 关闭结论
+
+Provider routing、governed fallback、fallback policy、usage identity、真实 PostgreSQL usage persistence、pricing/cost calculation 与 organization scoped usage query 已完成并通过本地 Gate。当前没有新的已确认 Provider Governance 开发缺口。
+
+下一阶段只能先完成 Phase 2.4 Durable Scheduler 的产品 / Contract 确认，再进入代码开发。

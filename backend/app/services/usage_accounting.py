@@ -15,7 +15,7 @@ from app.services.organization import OrganizationService
 
 
 class UsageAccountingService:
-    """Persist governed provider usage and calculate deterministic configured costs."""
+    """持久化受治理 Provider 的调用用量，并按已配置价格执行确定性成本计算。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db

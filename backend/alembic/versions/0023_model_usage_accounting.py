@@ -1,4 +1,4 @@
-"""add model usage accounting
+"""新增模型用量与成本核算表
 
 Revision ID: 0023_model_usage_accounting
 Revises: 0022_workflow_trigger

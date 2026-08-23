@@ -11,7 +11,7 @@ from app.models.core import Base, utcnow_naive
 
 
 class ModelUsageRecord(Base):
-    """Durable, tenant-scoped accounting record for one governed provider attempt."""
+    """单次受治理 Provider 调用的持久化、租户隔离用量记录。"""
 
     __tablename__ = "model_usage_records"
     __table_args__ = (
