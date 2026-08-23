@@ -9,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_claims
 from app.dependencies.db import get_db
-from app.runtime.memory_context import build_memory_context
-from app.runtime.model_gateway import ModelGateway
+from app.runtime.memory import build_memory_context
+from app.runtime.model import ModelGateway
 from app.services.knowledge.retrieval import KnowledgeRetrievalService
-from app.services.memory_service import MemoryService
+from app.services.memory import MemoryService
 from app.services.observability_service import ObservabilityService
 from app.services.session_service import SessionService
 
