@@ -1,3 +1,10 @@
+"""Real API 管理员测试夹具。
+
+职责：为本地 Real API 测试准备管理员访问令牌。
+边界：只修改测试数据库中的角色关系并生成测试令牌，不承载生产鉴权逻辑。
+关键依赖：Infrastructure 数据库 Session 与核心安全令牌实现。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,8 +13,7 @@ import sys
 from pathlib import Path
 from uuid import UUID
 
-# Direct execution places this script directory on sys.path, not backend/.
-# Keep the fixture runnable both as `uv run python <script>` and from pytest.
+# 直接执行脚本时 sys.path 默认指向脚本目录；这里补充 backend 根目录，保证脚本和 pytest 均可运行。
 BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
@@ -15,7 +21,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from sqlalchemy import select
 
 from app.core.security import create_token
-from app.dependencies.db import SessionLocal
+from app.infrastructure.db import SessionLocal
 from app.models.core import Role, User, UserRole
 
 ENV_FILE = Path(__file__).with_name(".real_api_context.json")
