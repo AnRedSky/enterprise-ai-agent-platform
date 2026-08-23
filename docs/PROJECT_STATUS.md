@@ -12,14 +12,14 @@
 
 ## Backend 模块化架构整改
 
-本次整改以远端 `main` 实际目录为基线，已完成架构设计确认，并进入“兼容优先、分阶段迁移、每阶段可验证”的实施方式。
+本次整改以远端 `main` 当前真实目录为基线，现执行原则已经统一调整为：**完整重构、无兼容垫片、无双实现、无旧入口保留**。
 
 正式架构文档：
 
-- `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 长期目录、职责、依赖方向、新功能开发模板。
-- `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前实际文件到目标领域模块的迁移映射。
+- `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 长期目录、职责、依赖方向、新功能开发模板及完整重构规则。
+- `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前文件到目标领域模块的迁移映射与验收要求。
 
-目标结构采用：
+目标结构：
 
 ```text
 backend/app/
@@ -35,37 +35,72 @@ backend/app/
 └── utils/
 ```
 
-其中：
+### 已完成 / 已纠偏
 
-- `services/<domain>/` 承担领域业务规则；
-- `runtime/` 承担执行与运行时编排；
-- `infrastructure/` 承担 DB、Redis、外部 Provider、HTTP 等技术适配；
-- `utils/` 仅允许无业务语义的纯工具；
-- `models/` 继续承担 ORM 持久化模型，不因目录重构迁入 `infrastructure/db`；
-- `middleware/` 与 `dependencies/` 保持 HTTP 生命周期和 FastAPI DI 的职责分离。
+基础目录已经建立：
 
-### 已实施的第一阶段
+```text
+app/infrastructure/
+app/infrastructure/db/
+app/middleware/
+app/utils/
+```
 
-当前已完成第一批低风险结构化迁移：
+Agent 已完成第一轮**彻底领域重构**：
 
-1. 建立 `app/infrastructure/`、`app/infrastructure/db/`；
-2. 建立 `app/middleware/` 模块边界；
-3. 建立 `app/utils/` 模块边界；
-4. 建立 `app/services/agent/` 领域模块；
-5. 将 `AgentRegistry` 实现迁入 `services/agent/registry.py`；
-6. `services/agent/__init__.py` 暴露稳定 `AgentRegistry` 入口；
-7. 原 `app/services/agent_registry.py` 保留为薄兼容入口；
-8. `app/api/agents.py` 已切换到 `app.services.agent` 稳定入口。
+```text
+app/services/agent/
+├── __init__.py
+├── service.py
+└── repository.py
+```
 
-本阶段没有删除原有业务入口，没有修改 API 路径、HTTP Method、数据库模型或业务规则，目标是先验证“领域子模块 + 稳定兼容入口”的迁移方式。
+生产代码已经直接引用新领域入口；旧 `agent_registry.py` 与旧 `agent/registry.py` 不得重新建立。
 
-### 当前尚未完成
+此前曾采用兼容入口方式进行 Agent 迁移，该做法已判定不符合当前最终重构要求并予以纠正。该工程错误已记录在 `docs/04-errors/`。
 
-- `dependencies/db.py` 尚未完成到 Infrastructure 的最终引用收敛；当前新增 Infrastructure DB 模块仅作为基础设施边界，避免在未完成全仓依赖核查前直接切换数据库运行时入口。
-- Knowledge、Model、Tool、Workflow、Trigger 等领域尚未迁移。
-- Runtime 尚未进行分域迁移。
-- API 尚未进行 `api/v1/<domain>` 目录收敛。
-- 尚未执行本阶段完整 Backend Regression / API Contract Gate，因此**不得记录本次模块化整改 Passed**。
+### 当前未完成
+
+- Knowledge 尚未完成完整领域重构；
+- Model / Provider 尚未完成 Service、Runtime、Infrastructure 边界重构；
+- Tool 尚未完成领域与技术实现分离；
+- Workflow / Trigger 尚未完成；
+- Scheduler 尚未完成最终目录收敛；
+- Memory / Organization / Governance / Observability 尚未完成；
+- Runtime 尚未完成分域；
+- API 尚未完成 `api/v1/<domain>` 收敛；
+- 尚未执行本轮模块化整改完整 Backend Regression / API Contract Gate，因此**不得记录模块化整改 Passed**。
+
+### 完整重构原则
+
+每个领域必须一次性完成：
+
+```text
+建立目标领域
+ ↓
+职责拆分
+ ↓
+生产代码 import 全量切换
+ ↓
+测试 import 全量切换
+ ↓
+删除旧文件
+ ↓
+全仓旧路径搜索 = 0
+ ↓
+领域测试
+ ↓
+Backend Regression
+```
+
+禁止：
+
+```text
+旧文件 → 新模块转发
+旧实现 + 新实现并存
+旧目录长期保留
+只改目录名不改职责
+```
 
 ### 业务不变原则
 
@@ -87,12 +122,12 @@ Provider 行为不变
 
 ```text
 文件位置
-模块入口
+模块边界
 import 路径
-内部组织方式
+内部职责组织
 ```
 
-旧入口仅在确有兼容价值时保留为薄转发层，禁止保留重复业务实现。
+如果发现必须改变业务行为才能完成目录迁移，必须暂停该迁移单元并单独形成设计变更。
 
 ## Phase 2.3 最终本地验收结果
 
@@ -122,8 +157,6 @@ backend/app/services/workflow_scheduler/
 ├── repository.py
 └── runtime.py
 ```
-
-其中 `contract.py` 仅保留薄兼容入口；领域 Contract 按模型、时间、lease、misfire 拆分，Repository 与 Runtime 继续保持独立职责。
 
 当前已经完成：
 
@@ -155,5 +188,6 @@ backend/app/services/workflow_scheduler/
 - Secret 不进入 Git、数据库明文、报告或 trace/audit。
 - 代码、Phase、Acceptance、Error、Status 必须保持可追溯。
 - 代码中的功能说明和注释统一使用中文；技术标识保持原文。
-- 当前阶段同一业务功能必须按领域职责组织为子模块包，禁止继续向公共 services 目录新增同功能零散文件；仅允许保留薄兼容入口。
+- 同一业务功能必须按领域职责组织为子模块包，禁止继续向公共 `services` 目录新增同功能零散文件。
+- **禁止以兼容垫片、旧入口转发或双实现方式完成模块迁移；领域迁移完成后旧文件必须删除。**
 - Backend 模块化设计与后续新功能开发统一参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`；具体迁移按 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 执行。
