@@ -121,6 +121,10 @@ app/services/vector_retrieval_provider.py
 - API 尚未完成 `api/v1/<domain>` 收敛；
 - **整个 Backend 模块化整改不得标记 Passed。**
 
+### 最新模块化 Gate 纠偏
+
+开发者在 `main` 上一次实际执行中，模块化 Gate 已通过脚本解析修复、Knowledge targeted tests 与 Provider targeted tests，但旧路径搜索仍在 `scripts/evaluation/knowledge/run_knowledge_retrieval_real_provider.py` 发现 `app.services.vector_knowledge_retrieval`。该路径不属于正式 Provider / Knowledge 入口，已按无兼容垫片、无重复实现原则修复为 `app.services.knowledge.vector_retrieval`，并将相关 Provider 导入统一收敛到 `app.infrastructure.providers`。该修复后的模块化 Gate 与 Backend Regression 尚未由开发者重新执行，因此不得记录为 Passed。
+
 ### 完整重构原则
 
 每个领域必须一次性完成：
@@ -228,8 +232,8 @@ backend/app/services/workflow_scheduler/
 
 ## Phase 2.4 下一执行任务
 
-1. 开发者本地执行 Scheduler Persistence Gate；
-2. 根据真实 PostgreSQL 结果修复 lease / slot repository 的竞态或 tenant 边界问题；
+1. 开发者本地重新执行 Backend 模块化 Gate，确认旧路径搜索、重复实现和模块职责说明均通过；
+2. 执行 Scheduler Persistence Gate；若仍失败，仅根据最新 PostgreSQL 实际结果修复 repository / fixture / tenant 边界，不回退到 JSON 模拟数据；
 3. 完成 Scheduler API Contract；
 4. 将 Runtime 接入 persistence / lease / slot；
 5. 增加 Tenant Safe Real API Gate，覆盖多实例 lease、重复 claim、misfire、状态与 tenant isolation；

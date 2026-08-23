@@ -21,15 +21,19 @@ from app.core.config import settings
 from app.dependencies.db import SessionLocal
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
-from app.services.embedding_provider import EmbeddingProviderError, OpenAICompatibleEmbeddingProvider
-from app.services.ollama_embedding_provider import OllamaEmbeddingProvider
+from app.infrastructure.providers import (
+    EmbeddingProviderError,
+    OllamaEmbeddingProvider,
+    OpenAICompatibleEmbeddingProvider,
+    PgVectorRetrievalProvider,
+    VectorRecord,
+)
 from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
 from app.services.retrieval_evaluation_baseline import build_baseline, build_regression_report, compare_baseline, write_baseline
 from app.services.retrieval_evaluation_config import RetrievalEvaluationConfig, config_from_settings, resolve_api_key, validate_config
 from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
 from app.services.retrieval_evaluation_trace import RetrievalEvaluationTraceService
-from app.services.vector_knowledge_retrieval import VectorKnowledgeRetrievalService
-from app.services.vector_retrieval_provider import PgVectorRetrievalProvider, VectorRecord
+from app.services.knowledge.vector_retrieval import VectorKnowledgeRetrievalService
 from scripts.evaluation.knowledge.run_knowledge_retrieval_evaluation import KB_ID, VERSION_ID, actual_chunk_id, cleanup_fixture, load_jsonl, prepare_fixture
 
 BASELINE = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_real_baseline.json"
