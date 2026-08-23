@@ -65,7 +65,10 @@ class RuntimeModelGovernanceService:
     def fallback_reason(exc: BaseException) -> FallbackReason | None:
         if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, ConnectionError)):
             return FallbackReason.CONNECTIVITY
-        if isinstance(exc, (httpx.ReadTimeout, TimeoutError)):
+        # Provider calls may time out while connecting, writing, reading, or waiting
+        # for a pooled connection. ConnectTimeout is intentionally classified above
+        # as connectivity; every other HTTPX timeout remains timeout-eligible.
+        if isinstance(exc, (httpx.TimeoutException, TimeoutError)):
             return FallbackReason.TIMEOUT
         if isinstance(exc, HTTPException):
             if exc.status_code == 429:
