@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
 from app.models.core import AgentVersion
-from app.services.agent_registry import AgentRegistry
+from app.services.agent import AgentRegistry
 
 router = APIRouter()
 
