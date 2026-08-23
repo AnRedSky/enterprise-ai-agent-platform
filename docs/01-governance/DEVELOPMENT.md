@@ -171,6 +171,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refact
 22. **当前阶段同一业务功能的代码必须按领域职责组织为子模块包；禁止继续把 Contract、Service、Repository、Runtime 等同一功能的代码零散堆放在 `app/services/` 或其他公共目录。子模块通过 `__init__.py` 暴露正式入口。领域迁移完成后必须删除旧文件、旧目录和旧模块路径；禁止使用兼容垫片、旧入口转发、代理文件或双实现维持旧路径。**
 23. **Backend 领域模块的目录、职责、迁移规则和新项目开发模板统一参照 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md`；当前项目具体旧文件到目标模块的迁移以 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。**
 24. **模块重构属于完整交付单元：生产代码 import、测试 import、旧文件删除、旧路径搜索、领域测试和 Backend Regression 必须全部完成后，才允许将该领域标记为迁移完成。**
+25. **每个新增或重构的 Python 模块必须提供简短中文职责说明，至少说明模块负责什么、明确边界以及必要的关键外部依赖；复杂业务规则和非显然技术约束必须在对应类/方法附近补充中文 docstring 或注释。禁止用空洞注释替代清晰职责设计。**
+26. **同一外部能力只能保留一个正式 Provider 实现入口。Provider 技术适配统一进入 `app/infrastructure/providers/`；领域 Service 不得复制第二套 Provider，也不得以不同文件名实现相同外部协议。每个 Provider 迁移单元必须执行旧路径、重复实现和 targeted tests Gate。**
 
 ## 6. 分层原则
 
