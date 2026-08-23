@@ -1,8 +1,8 @@
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = "Stop"
 
-Write-Host '============================================================'
-Write-Host 'Enterprise AI Agent Platform - Backend Module Refactor Gate'
-Write-Host '============================================================'
+Write-Host "============================================================"
+Write-Host "Enterprise AI Agent Platform - Backend Module Refactor Gate"
+Write-Host "============================================================"
 
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 Set-Location $backendRoot
@@ -45,9 +45,9 @@ foreach ($pattern in $legacyImportPatterns) {
     }
 }
 
-if (-not (Test-Path 'app/services/agent/service.py' -PathType Leaf)) { throw 'Agent service implementation is missing.' }
-if (-not (Test-Path 'app/services/agent/repository.py' -PathType Leaf)) { throw 'Agent repository implementation is missing.' }
-if (-not (Test-Path 'app/services/knowledge/__init__.py' -PathType Leaf)) { throw 'Knowledge domain entry is missing.' }
+if (-not (Test-Path 'app/services/agent/service.py' -PathType Leaf)) { throw "Agent service implementation is missing." }
+if (-not (Test-Path 'app/services/agent/repository.py' -PathType Leaf)) { throw "Agent repository implementation is missing." }
+if (-not (Test-Path 'app/services/knowledge/__init__.py' -PathType Leaf)) { throw "Knowledge domain entry is missing." }
 foreach ($file in @('registry.py','ingestion.py','retrieval.py','vector_indexing.py','vector_retrieval.py','hybrid.py','hybrid_service.py')) {
     if (-not (Test-Path "app/services/knowledge/$file" -PathType Leaf)) { throw "Knowledge implementation is missing: $file" }
 }
@@ -82,7 +82,7 @@ if ($existingProviderTests.Count -gt 0) { Invoke-GateStep 'Infrastructure provid
 
 Invoke-GateStep 'Backend default regression' { uv run pytest -q }
 
-Write-Host '============================================================'
-Write-Host 'Backend Module Refactor Gate completed.'
-Write-Host '注意：脚本只报告实际执行结果；未执行的测试不会被标记为通过。'
-Write-Host '============================================================'
+Write-Host "============================================================"
+Write-Host "Backend Module Refactor Gate completed."
+Write-Host "注意：脚本只报告实际执行结果；未执行的测试不会被标记为通过。"
+Write-Host "============================================================"
