@@ -73,7 +73,7 @@ Runtime 主链路：
 - identity 记录通过 Workflow Trace 落库，不写入 endpoint/credential_ref；
 - `RuntimeModelGovernanceService` 通过 attempt callback 将每次 provider attempt 暴露给 Runtime governance trace。
 
-当前 Real API 场景覆盖 governed Profile + connectivity failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
+当前 Real API 场景覆盖 governed Profile + connectivity/timeout failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
 
 ## 2.3-E Governed fallback success path + deterministic multi-provider acceptance — 测试已实现
 
@@ -85,32 +85,26 @@ Runtime 主链路：
 - 第二候选返回 `200` + prompt/completion/total token usage；
 - 验证 bounded fallback、`provider_5xx` fallback reason、独立 request identity、统一 execution trace identity、usage identity 与 Secret boundary。
 
-该测试实现尚未由开发者本地执行，因此不能标记为 acceptance passed。
+该测试实现尚未由开发者本地重新执行，因此不能标记为 acceptance passed。
 
 ## 当前验证状态
 
-开发者本轮实际执行并反馈：
+开发者最新实际执行结果：
 
 ```text
-2.3-C/D targeted unit tests: 30 passed, 2 deselected
 Backend default regression: 346 passed, 34 deselected
-Migration/head verification: uv run alembic upgrade head completed
-Real API Gate: blocked during bootstrap before test execution
+Real API Gate: 33 passed, 1 failed
+Failure: test_runtime_uses_published_model_profile_and_records_usage_identity_without_mock_fallback
+Expected fallback_reason=connectivity; actual fallback_reason=timeout
 ```
 
-Real API bootstrap 当前已确认并修复到两个边界：
+该失败已经分析为测试契约与实际 timeout 分类不一致。提交 `43f9e683d00d936db94f249b4e587654e9517914` 已将断言从 `connectivity` 修正为 `timeout`；对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-provider-timeout-fallback-reason.md`。修复提交后尚未由开发者重新执行完整 Tenant Safe Real API Gate，因此仍不得标记为 Passed。
 
-1. bootstrap 必须先建立与 owner tenant 对齐的 Organization，再创建需要执行的 Workflow fixtures；否则 Runtime execution 会因缺少 active Organization membership 返回 `403`。
-2. 可重复执行时 `POST /organizations` 的 `409 当前 Tenant 已存在 Organization` 是正确的 tenant singleton 约束；tenant-safe bootstrap 已改为优先复用 owner tenant 的既有 Organization，并在 GET/POST 竞态时通过 fixture-only DB recovery 建立 owner membership。
-3. 当前最新失败发生在 circuit breaker fixture：Organization 已存在且 membership 已恢复，但 retry/circuit Agent 仍只写入 legacy `model_id`，没有绑定 Phase 2.3 的 governed Model Provider/Profile，因此执行时正确返回 `404 没有符合治理策略的 Model Provider/Profile`。已修复 tenant-safe bootstrap：mock fixture Agent 现在通过真实 HTTP `POST /model-providers` + `POST /model-providers/{id}/profiles` 创建 governed `mock` Provider/Profile，并把 `model_profile_id` 写入 Agent，再由 Runtime 解析真实 PostgreSQL governance 数据。
-
-对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-bootstrap-ungoverned-mock-agent.md`。
-
-本轮 Real API 尚未重新执行，2.3-E 新增测试也尚未执行，因此均不得标记为 Passed。
+此前 Real API bootstrap 的 Organization/membership 与 governed mock fixture 边界均已完成修复：bootstrap 先建立或复用 owner tenant Organization，恢复 owner membership，并通过真实 HTTP API 创建 governed `mock` Provider/Profile 后绑定 fixture Agent。
 
 ## 下一执行任务
 
-**2.3-E Acceptance Gate**：重新执行修复后的 Tenant Safe Real API Gate，重点验证 retry/circuit fixtures 已经从 legacy model_id 迁移到 governed Provider/Profile 后能够进入 Runtime；若继续失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
+**2.3-E Acceptance Gate**：拉取最新 `main`（至少包含 `43f9e683` 及错误记录提交），重新执行修复后的 Tenant Safe Real API Gate；若继续失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
 
 若后续引入持久化 routing policy / pricing / usage record，必须先新增 Alembic Migration，再实现依赖该结构的业务代码。
 

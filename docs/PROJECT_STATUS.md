@@ -78,7 +78,7 @@ Runtime 主链路现在：
 - identity 记录通过 Workflow Trace 落库，不写入 endpoint/credential_ref；
 - `RuntimeModelGovernanceService` 通过 attempt callback 将每次 provider attempt 暴露给 Runtime governance trace。
 
-当前 Real API 场景覆盖 governed Profile + connectivity failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
+当前 Real API 场景覆盖 governed Profile + connectivity/timeout failure + identity/secret boundary；尚未宣称真实外部 Provider 成功调用路径已验收。
 
 ### 2.3-E Governed fallback success path + deterministic multi-provider acceptance
 
@@ -87,7 +87,7 @@ Runtime 主链路现在：
 - `backend/tests/api_real/test_runtime_model_governance_api.py`
 - 本地测试 HTTP server 使用真实 `OpenAICompatibleProvider` 协议，不使用 `MockProvider` 伪造 governed success；
 - 第一候选真实 HTTP 返回 `503`，验证 `provider_5xx` fallback eligibility；
-- 第二候选真实 HTTP 返回 `200`，验证 bounded fallback success；
+- 第二候选返回 `200`，验证 bounded fallback success；
 - 验证 candidate deterministic ordering、独立 request_id、同一 execution trace_id、成功 usage identity 与 Secret boundary。
 
 ## 当前验证状态
@@ -95,25 +95,19 @@ Runtime 主链路现在：
 开发者本轮实际执行并反馈：
 
 ```text
-2.3-C/D targeted unit tests: 30 passed, 2 deselected
 Backend default regression: 346 passed, 34 deselected
-Migration/head verification: uv run alembic upgrade head completed
-Real API Gate: blocked during bootstrap before test execution
+Real API Gate: 33 passed, 1 failed
+Failure: test_runtime_uses_published_model_profile_and_records_usage_identity_without_mock_fallback
+Expected fallback_reason=connectivity; actual fallback_reason=timeout
 ```
 
-Real API bootstrap 已连续暴露并处理以下边界：
+此前 Real API bootstrap 的 tenant/membership 与 governed mock fixture 边界已完成修复。当前阻塞点已收敛为测试断言与 timeout 分类契约不一致；提交 `43f9e683d00d936db94f249b4e587654e9517914` 已将断言调整为 `timeout`。该提交之后尚未由开发者重新执行完整 Real API Gate，因此不得标记为 Passed。
 
-1. bootstrap 在创建 Workflow/Execution retry/circuit fixtures 后才创建 Organization，导致 Runtime execution 因缺少 active Organization membership 返回 `403`；已修复为先建立与 owner tenant 对齐的 Organization governance boundary。
-2. 在已有本地治理数据上重复执行时，`POST /organizations` 正确返回 `409 当前 Tenant 已存在 Organization`；tenant-safe bootstrap 已改为复用 owner tenant 的既有 Organization，并在 GET/POST 竞态时恢复 owner membership。
-3. 恢复 membership 后，circuit fixture 继续失败于 `404 没有符合治理策略的 Model Provider/Profile`；原因是 bootstrap 的 mock retry/circuit Agent 仍只携带 legacy `model_id`，没有绑定 Phase 2.3 governed Model Provider/Profile。已修复为通过真实 HTTP API 创建 `provider_type=mock` 的 Provider/Profile，并把 Profile 绑定到 fixture Agent。
-
-对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-bootstrap-ungoverned-mock-agent.md`。
-
-本轮 Real API 尚未重新执行；2.3-E 新增测试也尚未由开发者本地执行，因此均不得记录为 Passed。
+对应工程错误已记录到 `docs/04-errors/2026-08-23-phase-2-3-real-api-provider-timeout-fallback-reason.md`。
 
 ## 下一执行任务
 
-**2.3-E Acceptance Gate**：重新执行 Tenant Safe Real API Gate，确认 retry/circuit fixtures 已进入 governed Provider/Profile Runtime 路径；若失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
+**2.3-E Acceptance Gate**：拉取最新 `main`（至少包含 `43f9e683` 及其后的错误记录提交），重新执行 Tenant Safe Real API Gate；若失败，按实际失败继续修复并记录 `docs/04-errors/`；若通过，再执行完整 Backend regression + Migration/head + Real API 三层 Backend Gate，最终更新 Phase 2.3 Acceptance 记录并进入下一项任务。
 
 ## 开发纪律
 
