@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
-from app.dependencies.db import engine as app_engine
+from app.infrastructure.db.session import engine as app_engine
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -21,6 +21,7 @@ pytestmark = pytest.mark.real_api
 
 @pytest.fixture(scope="module")
 def webhook_event_loop():
+    """为直接使用应用 AsyncEngine 的真实 Webhook API 测试保持单一事件循环生命周期。"""
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
@@ -88,11 +89,7 @@ def test_webhook_trigger_real_http_accepts_duplicate_and_rejects_invalid_secret(
             json={
                 "name": name,
                 "trigger_type": "webhook",
-                "config": {
-                    "auth_mode": "secret",
-                    "secret": secret,
-                    "event_id_field": "event_id",
-                },
+                "config": {"auth_mode": "secret", "secret": secret, "event_id_field": "event_id"},
             },
         )
         assert created.status_code == 201, created.text
@@ -177,15 +174,7 @@ def test_webhook_trigger_real_http_requires_event_identity():
     with _client() as client:
         created = client.post(
             f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers",
-            json={
-                "name": name,
-                "trigger_type": "webhook",
-                "config": {
-                    "auth_mode": "secret",
-                    "secret": secret,
-                    "event_id_field": "event_id",
-                },
-            },
+            json={"name": name, "trigger_type": "webhook", "config": {"auth_mode": "secret", "secret": secret, "event_id_field": "event_id"}},
         )
         assert created.status_code == 201, created.text
         trigger_id = created.json()["id"]
@@ -213,15 +202,7 @@ def test_webhook_trigger_real_http_bounds_long_idempotency_key_deterministically
     with _client() as client:
         created = client.post(
             f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers",
-            json={
-                "name": name,
-                "trigger_type": "webhook",
-                "config": {
-                    "auth_mode": "secret",
-                    "secret": secret,
-                    "event_id_field": "event_id",
-                },
-            },
+            json={"name": name, "trigger_type": "webhook", "config": {"auth_mode": "secret", "secret": secret, "event_id_field": "event_id"}},
         )
         assert created.status_code == 201, created.text
         trigger_id = created.json()["id"]
