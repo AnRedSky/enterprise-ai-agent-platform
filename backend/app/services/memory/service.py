@@ -1,3 +1,10 @@
+"""Memory 领域业务服务。
+
+模块职责：负责 MemoryRecord 的写入、读取、更新、删除、上下文列表与文本检索。
+边界：只处理 Memory 领域规则，不负责 HTTP 协议、Runtime 编排或数据库 Session 创建。
+关键外部依赖：SQLAlchemy AsyncSession 与 MemoryRecord ORM 模型；时间字段按 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 的朴素 UTC 约定落库。
+"""
+
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -8,16 +15,18 @@ from app.models.memory import MemoryRecord
 
 
 class MemoryNotFoundError(Exception):
-    pass
+    """Memory 记录不存在或不属于当前用户与 Agent 范围。"""
 
 
 class MemoryService:
+    """封装 Memory 的领域读写规则与租户/主体范围约束。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
     @staticmethod
     def _utc_naive(value: datetime | None) -> datetime | None:
-        """Normalize timestamps to naive UTC for PostgreSQL TIMESTAMP columns."""
+        """将时间归一为朴素 UTC，匹配 PostgreSQL 无时区时间列。"""
         if value is None:
             return None
         if value.tzinfo is None:
@@ -26,9 +35,7 @@ class MemoryService:
 
     @classmethod
     def _visible_clause(cls):
-        # MemoryRecord.expires_at is mapped to TIMESTAMP WITHOUT TIME ZONE.
-        # asyncpg rejects aware datetimes for that column, so all DB-bound
-        # timestamps must use the same naive-UTC representation.
+        """构造当前仍有效的 Memory 可见性条件。"""
         now = datetime.now(UTC).replace(tzinfo=None)
         return and_(
             MemoryRecord.is_active.is_(True),

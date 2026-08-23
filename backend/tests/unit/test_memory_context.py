@@ -1,4 +1,11 @@
-from app.runtime.memory_context import build_memory_context
+"""Memory Runtime 上下文单元测试。
+
+模块职责：验证 Memory 记录向模型参考上下文的有界渲染行为。
+边界：不访问数据库、不验证 Memory Service；只覆盖纯函数格式化逻辑。
+关键外部依赖：app.runtime.memory.context。
+"""
+
+from app.runtime.memory import build_memory_context
 
 
 class Record:

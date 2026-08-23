@@ -1,13 +1,15 @@
+"""Memory Runtime 上下文模块。
+
+模块职责：把已由 Memory Service 筛选出的记录渲染为有长度上限的模型参考上下文。
+边界：不查询数据库、不执行 Memory 读写，也不改变系统指令优先级。
+关键外部依赖：MemoryRecord ORM 数据对象。
+"""
+
 from app.models.memory import MemoryRecord
 
 
 def build_memory_context(records: list[MemoryRecord], max_chars: int = 6000) -> str | None:
-    """Render bounded memory records as model context.
-
-    Memory is explicitly marked as reference context so it does not override
-    system instructions. The final prompt is bounded by character count to
-    avoid unbounded context growth in the first implementation.
-    """
+    """渲染有长度上限的 Memory 参考上下文，避免无界增长。"""
     if not records:
         return None
 

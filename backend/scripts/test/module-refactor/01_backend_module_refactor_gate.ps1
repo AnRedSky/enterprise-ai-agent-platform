@@ -18,11 +18,13 @@ function Invoke-GateStep {
 $requiredDirectories = @(
     'app/services/agent',
     'app/services/knowledge',
+    'app/services/memory',
     'app/infrastructure',
     'app/infrastructure/db',
     'app/infrastructure/providers',
     'app/middleware',
-    'app/utils'
+    'app/utils',
+    'app/runtime/memory'
 )
 foreach ($directory in $requiredDirectories) {
     if (-not (Test-Path $directory -PathType Container)) {
@@ -41,10 +43,12 @@ $forbiddenPaths = @(
     'app/services/hybrid_knowledge_retrieval.py',
     'app/services/hybrid_knowledge_retrieval_service.py',
     'app/services/vector_knowledge_retrieval.py',
+    'app/services/memory_service.py',
     'app/services/embedding_provider.py',
     'app/services/mock_embedding_provider.py',
     'app/services/ollama_embedding_provider.py',
-    'app/services/vector_retrieval_provider.py'
+    'app/services/vector_retrieval_provider.py',
+    'app/runtime/memory_context.py'
 )
 foreach ($path in $forbiddenPaths) {
     if (Test-Path $path) { throw "Forbidden legacy module still exists: $path" }
@@ -61,6 +65,8 @@ $legacyImportPatterns = @(
     'app\.services\.hybrid_knowledge_retrieval',
     'app\.services\.hybrid_knowledge_retrieval_service',
     'app\.services\.vector_knowledge_retrieval',
+    'app\.services\.memory_service',
+    'app\.runtime\.memory_context',
     'app\.services\.embedding_provider',
     'app\.services\.mock_embedding_provider',
     'app\.services\.ollama_embedding_provider',
@@ -88,9 +94,18 @@ foreach ($pattern in $forbiddenDatabaseDependencyPatterns) {
     }
 }
 
-if (-not (Test-Path 'app/services/agent/service.py' -PathType Leaf)) { throw 'Agent service implementation is missing.' }
-if (-not (Test-Path 'app/services/agent/repository.py' -PathType Leaf)) { throw 'Agent repository implementation is missing.' }
-if (-not (Test-Path 'app/services/knowledge/__init__.py' -PathType Leaf)) { throw 'Knowledge domain entry is missing.' }
+foreach ($path in @(
+    'app/services/agent/service.py',
+    'app/services/agent/repository.py',
+    'app/services/knowledge/__init__.py',
+    'app/services/memory/__init__.py',
+    'app/services/memory/service.py',
+    'app/runtime/memory/__init__.py',
+    'app/runtime/memory/context.py'
+)) {
+    if (-not (Test-Path $path -PathType Leaf)) { throw "Required migrated implementation is missing: $path" }
+}
+
 foreach ($file in @('registry.py','ingestion.py','retrieval.py','vector_indexing.py','vector_retrieval.py','hybrid.py','hybrid_service.py')) {
     if (-not (Test-Path "app/services/knowledge/$file" -PathType Leaf)) {
         throw "Knowledge implementation is missing: $file"
@@ -104,7 +119,7 @@ foreach ($file in @('embedding.py','mock_embedding.py','ollama_embedding.py','ve
 }
 
 # 已迁移领域禁止在 services 根目录保留第二套实现；Provider 也必须只存在于 infrastructure/providers。
-foreach ($filter in @('*agent*','*knowledge*','*embedding_provider*','*vector_retrieval_provider*')) {
+foreach ($filter in @('*agent*','*knowledge*','*memory*','*embedding_provider*','*vector_retrieval_provider*')) {
     $rootFiles = @(Get-ChildItem 'app/services' -File -Filter $filter -ErrorAction SilentlyContinue)
     if ($rootFiles.Count -gt 0) {
         $rootFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
@@ -122,6 +137,15 @@ if ($knowledgeTests.Count -gt 0) {
     Invoke-GateStep 'Knowledge targeted tests' { uv run pytest -q @($knowledgeTests.FullName) }
 } else {
     Write-Warning 'No Knowledge-specific test files were found.'
+}
+
+$memoryTests = @(
+    'tests/unit/test_memory_service.py',
+    'tests/unit/test_memory_context.py'
+)
+$existingMemoryTests = @($memoryTests | Where-Object { Test-Path $_ })
+if ($existingMemoryTests.Count -gt 0) {
+    Invoke-GateStep 'Memory targeted tests' { uv run pytest -q @($existingMemoryTests) }
 }
 
 $providerTests = @(

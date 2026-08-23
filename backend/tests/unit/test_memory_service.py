@@ -1,9 +1,16 @@
+"""Memory 领域服务单元测试。
+
+模块职责：验证 MemoryService 的领域读写行为与时间边界。
+边界：只使用轻量 FakeDB，不访问真实 PostgreSQL；真实持久化由 integration Gate 覆盖。
+关键外部依赖：MemoryService、MemoryRecord 与 pytest-asyncio。
+"""
+
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 
-from app.services.memory_service import MemoryService
+from app.services.memory import MemoryService
 
 
 class FakeResult:
