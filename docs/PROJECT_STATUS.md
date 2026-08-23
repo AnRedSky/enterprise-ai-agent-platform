@@ -8,7 +8,7 @@
 - Phase 2.3 Model Provider Governance：**进行中**。
 - 2.3-A Provider Governance Contract：**已实现**。
 - 2.3-B Backend Domain + API Contract：**已实现**。
-- 2.3-C Runtime Governance Invocation Service：**已实现基础服务，WorkflowRuntime 主链路接入待本地验证后继续推进**。
+- 2.3-C Runtime Governance Invocation Service：**已实现并接入 WorkflowRuntime 主链路，待本地验证**。
 
 ## Phase 2.2 最终验证证据
 
@@ -44,42 +44,58 @@ Model Provider/Profile Browser E2E: 2 passed
 
 该接口使用 PostgreSQL Provider/Profile 数据，强制 Organization membership scope，并不返回 endpoint、credential_ref 等敏感连接信息。
 
-### 2.3-C Runtime Governance Invocation Service
+### 2.3-C Runtime Governance Invocation Service + WorkflowRuntime 接入
 
-新增：
+已实现：
 
 - `backend/app/services/runtime_model_governance.py`
+- `backend/app/runtime/workflow_runtime.py`
 - `backend/tests/unit/test_runtime_model_governance.py`
+- `backend/tests/unit/test_workflow_runtime.py`
+- `backend/tests/api_real/test_runtime_model_governance_api.py`
 
-服务职责：
+Runtime 主链路现在：
 
-- 调用既有 routing resolver 获取治理候选；
-- 将候选重新绑定到真实 PostgreSQL ModelProfile/ModelProvider；
-- 调用 `ModelGateway` 时显式传入 profile/provider；
-- fallback 仅接受 2.3-A 定义的 connectivity / timeout / rate limit / provider 5xx；
-- 非治理允许错误直接失败；
-- 不使用 Mock Provider 伪造 governed Provider 成功。
+1. 读取已发布 `AgentVersion.model_profile_id`；
+2. 有 `model_profile_id` 时使用 `explicit_profile`；
+3. 无 `model_profile_id` 时使用 `organization_default`；
+4. organization scope 从 Workflow execution tenant 对应的 active Organization 获取；
+5. 通过 `RuntimeModelGovernanceService` 解析真实 PostgreSQL Provider/Profile；
+6. 调用 `ModelGateway` 时显式传入 governed profile/provider；
+7. fallback 仅接受 2.3-A 定义的 connectivity / timeout / rate limit / provider 5xx；
+8. 不允许静默 Mock fallback。
 
 本轮没有新增数据库表/字段，因此不需要 Migration。
 
+同时新增 Real API 场景，验证：
+
+- 已发布 AgentVersion 的 `model_profile_id` 能进入 Runtime governed invocation；
+- 无法连接 governed Provider 时按失败语义结束，不切换到 Mock success；
+- trace/audit 不泄漏 credential_ref。
+
+### 当前尚未宣称完成的部分
+
+2.3-A 中定义的 usage identity 维度已经作为 Contract 存在，但本轮没有虚构“usage persistence 已完成”的状态；需要下一步把 provider/profile/model_type/request/trace/outcome 接入实际 runtime usage/trace 记录后，再进行验收。
+
 ## 当前验证状态
 
-本轮代码已提交远端 `main`，但新增 2.3-C 代码尚未由开发者本地 uv/PostgreSQL 环境执行，因此保持 Pending：
+本轮代码已提交远端 `main`，但本次会话无法直接执行开发者本地 uv/PostgreSQL 环境，因此不得把以下项目标记为 Passed：
 
 ```text
 2.3-A targeted unit test: developer previously executed 11 passed
 2.3-B API Contract test: developer previously included in 334-test regression
+2.3-C targeted unit tests: Pending local execution after WorkflowRuntime integration
 Backend default regression after 2.3-C: Pending
-Migration/head verification after 2.3-C: Pending
-Real API after 2.3-C: Pending
-Runtime governed invocation integration: Pending
+Migration/head verification after 2.3-C: Pending (no migration expected)
+Real API after 2.3-C: Pending local execution
+Runtime governed invocation integration: Implemented, validation Pending
 ```
 
 ## 下一执行任务
 
-**2.3-C RuntimeWorkflow 主链路接入**：把 `RuntimeModelGovernanceService` 接入 `WorkflowRuntime.execute_node()`，让已发布 AgentVersion 的 `model_profile_id` 真正驱动 candidate → provider invocation；无 `model_profile_id` 时按明确的 organization routing strategy 处理，不允许静默 Mock fallback。
+**2.3-D Runtime Usage / Trace Identity**：把 `organization/provider/profile/model_type/request_id/trace_id/outcome` 按 2.3-A `UsageIdentity` Contract 接入实际 runtime usage/trace 记录，并新增 Real API 验证；继续保持 Secret 不进入 usage/audit/trace。
 
-随后新增 Real API Runtime governance 场景，验证真实数据库 Provider/Profile、fallback failure semantics 与 usage/trace identity。
+随后再推进 governed fallback 的成功路径与多 Provider deterministic candidate 顺序验证。
 
 ## 开发纪律
 
