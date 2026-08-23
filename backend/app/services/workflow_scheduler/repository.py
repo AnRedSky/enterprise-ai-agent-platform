@@ -3,11 +3,15 @@
 职责：封装 Scheduler 状态、租约和执行槽位的 PostgreSQL 原子操作。
 边界：不负责时间计算、Trigger 校验或 Workflow 执行；这些职责分别由 Scheduler Contract 与 WorkflowTriggerService 承担。
 关键依赖：SQLAlchemy AsyncSession、PostgreSQL ON CONFLICT，以及 Scheduler 持久化模型。
+
+时间边界：Scheduler Runtime 可以使用带 UTC 时区信息的 datetime；本仓储统一在数据库边界
+转换为 UTC naive datetime，以匹配 PostgreSQL TIMESTAMP WITHOUT TIME ZONE 字段，避免 asyncpg
+在不同 timezone-aware/naive 值之间执行非法运算。
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import or_, select, update
@@ -22,6 +26,13 @@ class WorkflowSchedulerRepository:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def _db_datetime(value: datetime) -> datetime:
+        """将调度层 datetime 规范化为 UTC naive，匹配 PostgreSQL 无时区字段。"""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(UTC).replace(tzinfo=None)
 
     async def get_schedule_for_trigger(self, *, tenant_id: UUID, trigger_id: UUID) -> WorkflowSchedule | None:
         """按 tenant + trigger 获取唯一 Scheduler 状态。"""
@@ -48,6 +59,7 @@ class WorkflowSchedulerRepository:
         existing = await self.get_schedule_for_trigger(tenant_id=tenant_id, trigger_id=trigger_id)
         if existing is not None:
             return existing
+        db_now = self._db_datetime(now)
         statement = (
             pg_insert(WorkflowSchedule)
             .values(
@@ -58,10 +70,10 @@ class WorkflowSchedulerRepository:
                 status="enabled" if enabled else "disabled",
                 timezone=timezone,
                 schedule_expression=f"interval:{interval_seconds}",
-                next_run_at=now,
+                next_run_at=db_now,
                 misfire_policy="skip",
                 catch_up_limit=10,
-                updated_at=now,
+                updated_at=db_now,
             )
             .on_conflict_do_nothing(constraint="uq_workflow_schedule_tenant_trigger")
             .returning(WorkflowSchedule.id)
@@ -98,7 +110,7 @@ class WorkflowSchedulerRepository:
                 status="enabled" if enabled else "disabled",
                 timezone=timezone,
                 schedule_expression=f"interval:{interval_seconds}",
-                updated_at=now,
+                updated_at=self._db_datetime(now),
             )
             .returning(WorkflowSchedule)
             .execution_options(synchronize_session=False)
@@ -115,6 +127,7 @@ class WorkflowSchedulerRepository:
         lease_expires_at: datetime,
     ) -> WorkflowSchedule | None:
         """使用单条 UPDATE 原子抢占到期调度，避免先查询再更新产生竞态。"""
+        db_now = self._db_datetime(now)
         statement = (
             update(WorkflowSchedule)
             .where(
@@ -122,10 +135,10 @@ class WorkflowSchedulerRepository:
                 WorkflowSchedule.tenant_id == tenant_id,
                 WorkflowSchedule.enabled.is_(True),
                 WorkflowSchedule.status == "enabled",
-                WorkflowSchedule.next_run_at <= now,
-                or_(WorkflowSchedule.lease_expires_at.is_(None), WorkflowSchedule.lease_expires_at <= now),
+                WorkflowSchedule.next_run_at <= db_now,
+                or_(WorkflowSchedule.lease_expires_at.is_(None), WorkflowSchedule.lease_expires_at <= db_now),
             )
-            .values(lease_owner=owner, lease_expires_at=lease_expires_at, updated_at=now)
+            .values(lease_owner=owner, lease_expires_at=self._db_datetime(lease_expires_at), updated_at=db_now)
             .returning(WorkflowSchedule)
             .execution_options(synchronize_session=False)
         )
@@ -151,12 +164,12 @@ class WorkflowSchedulerRepository:
                 WorkflowSchedule.lease_owner == owner,
             )
             .values(
-                next_run_at=next_run_at,
-                last_run_at=last_run_at,
+                next_run_at=self._db_datetime(next_run_at),
+                last_run_at=self._db_datetime(last_run_at),
                 last_execution_id=last_execution_id,
                 lease_owner=None,
                 lease_expires_at=None,
-                updated_at=now,
+                updated_at=self._db_datetime(now),
             )
             .returning(WorkflowSchedule)
             .execution_options(synchronize_session=False)
@@ -172,7 +185,7 @@ class WorkflowSchedulerRepository:
                 WorkflowSchedule.tenant_id == tenant_id,
                 WorkflowSchedule.lease_owner == owner,
             )
-            .values(lease_owner=None, lease_expires_at=None, updated_at=now)
+            .values(lease_owner=None, lease_expires_at=None, updated_at=self._db_datetime(now))
             .execution_options(synchronize_session=False)
         )
         result = await self.db.execute(statement)
@@ -196,7 +209,7 @@ class WorkflowSchedulerRepository:
                 trigger_id=trigger_id,
                 workflow_id=workflow_id,
                 schedule_slot_key=schedule_slot_key,
-                planned_at=planned_at,
+                planned_at=self._db_datetime(planned_at),
                 scheduler_owner=scheduler_owner,
             )
             .on_conflict_do_nothing(index_elements=[WorkflowScheduleSlot.schedule_slot_key])
