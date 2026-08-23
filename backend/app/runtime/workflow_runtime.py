@@ -9,8 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import Agent, AgentVersion, User
+from app.models.organization import Organization
 from app.runtime.model_gateway import ModelGateway
+from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
+from app.services.runtime_model_governance import RuntimeModelGovernanceService
 
 
 class WorkflowRuntime:
@@ -33,6 +36,7 @@ class WorkflowRuntime:
     def __init__(self, db: AsyncSession, execution_service=None):
         self.db = db
         self.gateway = ModelGateway()
+        self.governance = RuntimeModelGovernanceService(db, gateway=self.gateway)
         self.circuit_breaker = CircuitBreakerService(db)
         self.execution_service = execution_service
 
@@ -253,6 +257,41 @@ class WorkflowRuntime:
         await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
         return current_data
 
+    async def _resolve_organization_id(self, tenant_id: UUID | None) -> UUID:
+        if tenant_id is None:
+            raise HTTPException(409, "Workflow Runtime 缺少 organization scope")
+        organization_id = (await self.db.execute(
+            select(Organization.id).where(
+                Organization.tenant_id == tenant_id,
+                Organization.status == "active",
+            )
+        )).scalar_one_or_none()
+        if organization_id is None:
+            raise HTTPException(409, "Workflow Runtime 所属 Organization 不存在或未启用")
+        return organization_id
+
+    @staticmethod
+    def _governance_request(config: dict, organization_id: UUID, model_profile_id: UUID | None) -> ModelProviderRoutingRequest:
+        governance = config.get("model_governance") or {}
+        if not isinstance(governance, dict):
+            raise HTTPException(422, "model_governance config 必须为对象")
+        required_capabilities = governance.get("required_capabilities") or []
+        allowed_provider_ids = governance.get("allowed_provider_ids") or []
+        if not isinstance(required_capabilities, list) or any(not isinstance(item, str) or not item for item in required_capabilities):
+            raise HTTPException(422, "model_governance.required_capabilities 必须为字符串数组")
+        try:
+            allowed_provider_ids = [UUID(str(item)) for item in allowed_provider_ids]
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(422, "model_governance.allowed_provider_ids 必须为 UUID 数组") from exc
+        return ModelProviderRoutingRequest(
+            organization_id=organization_id,
+            model_type="chat",
+            routing_strategy="explicit_profile" if model_profile_id is not None else "organization_default",
+            profile_id=model_profile_id,
+            required_capabilities=required_capabilities,
+            allowed_provider_ids=allowed_provider_ids,
+        )
+
     async def execute_node(self, node: dict, input_data: dict, actor_id: UUID, is_admin: bool,
                            session_id: UUID, tenant_id: UUID | None = None) -> dict:
         node_type = node["type"]
@@ -298,7 +337,13 @@ class WorkflowRuntime:
             circuit_state = await self.circuit_breaker.before_call(circuit_tenant_id, circuit_key, config)
         messages = [{"role": "system", "content": version.system_prompt}, {"role": "user", "content": prompt}]
         try:
-            result = await self.gateway.generate(version.model_id, messages, session_id)
+            organization_id = await self._resolve_organization_id(tenant_id)
+            governance_request = self._governance_request(config, organization_id, version.model_profile_id)
+            result = await self.governance.invoke(
+                governance_request,
+                actor_id,
+                messages,
+            )
         except Exception as exc:
             if circuit_tenant_id is not None and self.classify_error(exc) in self.CIRCUIT_FAILURE_CODES:
                 await self.circuit_breaker.record_failure(circuit_tenant_id, circuit_key, config)
@@ -310,7 +355,7 @@ class WorkflowRuntime:
         usage = result.usage
         return {
             "content": result.content,
-            "model_id": version.model_id,
+            "model_id": result.model,
             "agent_id": str(agent.id),
             "agent_version": agent.published_version_id and version.version,
             "usage": {
