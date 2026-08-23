@@ -8,7 +8,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.services.knowledge_retrieval import KnowledgeRetrievalService
+from app.services.knowledge.retrieval import KnowledgeRetrievalService
 from app.services.retrieval_evaluation import RetrievalEvaluationCase, aggregate_evaluation, evaluate_case
 
 DATASET = BACKEND_ROOT / "evaluation" / "knowledge_retrieval_dataset.jsonl"
