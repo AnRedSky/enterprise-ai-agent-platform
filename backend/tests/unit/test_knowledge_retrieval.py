@@ -1,4 +1,4 @@
-from app.services.knowledge_retrieval import KnowledgeRetrievalService
+from app.services.knowledge import KnowledgeRetrievalService
 
 
 def test_retrieval_score_is_deterministic_and_bounded():
