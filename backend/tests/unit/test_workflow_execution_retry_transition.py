@@ -1,3 +1,9 @@
+"""验证 Workflow 执行重试过程中节点状态转换保持既有运行时语义。
+
+测试范围：验证 WorkflowExecutionService 在节点执行失败并进入重试时，
+通过 canonical WorkflowRuntime 执行入口，并按 running → failed → running → failed 顺序推进状态。
+"""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -7,7 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.runtime.workflow_runtime import WorkflowRuntime
+from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 
 

@@ -12,64 +12,46 @@
 
 ## 最新 main 基线
 
-本轮直接基于远端 `main` 继续提交，不创建兼容分支或兼容垫片。用户当前本地基线反馈为：
+本轮直接基于远端 `main` 继续提交，不创建兼容分支或兼容垫片。远端最新基线为：
 
 ```text
-1a9d195 fix(refactor): complete vector retrieval provider module description
-6ac3112 fix(refactor): restore ollama embedding client type annotation
-ed57fa8 fix(refactor): correct ollama embedding provider adapter signature
-2b7f7c7 fix(refactor): complete ollama embedding provider module description
+af7a127 fix(refactor): update workflow retry policy import
+84e4550 fix(refactor): update workflow retry budget import
+5ac383f fix(refactor): update workflow retry transition import
+399946a fix(refactor): update workflow runtime test import
+1b42b26 fix(refactor): use canonical workflow runtime import
+2a29e09 fix(refactor): use canonical workflow runtime import
+6bc137a test(refactor): update dependency gate for unit test boundary
 ```
 
-用户此前本地 Module Refactor Gate：
+本轮用户本地实际反馈：
 
 ```text
 APP_IMPORT_OK
-Tool targeted tests: 8 passed
-Workflow and trigger tests: 101 passed, 191 deselected
-Backend regression: 383 passed, 2 skipped, 35 deselected
+Module Refactor Gate: 失败，发现 tests/unit/test_workflow_execution_retry_transition.py 仍引用旧 WorkflowRuntime 路径
+Dependency Boundary Gate: 失败，Gate 将 canonical app.dependencies.db.get_db 错误识别为 legacy
+pytest: 1 个 collection error，原因同为旧 WorkflowRuntime 测试 import
 ```
 
-以上结果是用户实际反馈；本轮新增提交后的 Gate / Regression **尚未由本地环境重新执行，不预填通过**。
+以上结果来自用户本地实际执行；修复后的 Module Refactor Gate / Dependency Boundary Gate / Backend Regression **尚未由本地环境重新执行，不预填通过**。
 
-## 本轮新增整改
+## 本轮整改
 
-1. **Workflow Runtime canonical 化**
-   - `app/runtime/workflow_runtime.py` 已物理删除。
-   - `WorkflowRuntime` 已归位到 `app/runtime/workflow/runtime.py`。
-   - `app/runtime/workflow/__init__.py` 统一暴露 `WorkflowRuntime`、Circuit Breaker。
-   - `WorkflowExecutionService` 与 Workflow Runtime 测试全部切换到 canonical import。
-   - 不增加兼容转发文件，不新增第二套 Runtime 实现。
+1. **修复遗漏的 Workflow Runtime 测试 import**
+   - `tests/unit/test_workflow_execution_retry_transition.py` 切换为 `from app.runtime.workflow import WorkflowRuntime`。
+   - 补充测试模块中文职责与验证范围说明。
+   - 不增加 `app/runtime/workflow_runtime.py` 兼容垫片。
 
-2. **清理失效 Agent Runtime 残留**
-   - 删除 `app/runtime/agent_runtime.py`。
-   - 该旧模块未形成生产唯一执行入口，并引用已不存在的旧模型入口；继续保留会制造错误/重复 Runtime 边界。
-   - 本轮不为目录结构制造空壳 `runtime/agent` 实现，后续仅在存在明确生产职责时建立 canonical Runtime。
+2. **修正 Dependency Boundary Gate 的错误判定**
+   - `app.dependencies.db` 是当前架构定义的 canonical FastAPI 数据库依赖入口，不属于 legacy 路径。
+   - Gate 删除对 `app.dependencies.db` 的错误 legacy 匹配。
+   - 保留旧 `app/api/dependencies.py`、`app.core.database`、`app.core.db`、`app.database` 等历史路径检查。
+   - canonical implementation 继续要求 `app/dependencies` 复用 `app.infrastructure.db` Session。
 
-3. **清理 Tool 重复实现**
-   - 删除 `app/tools/registry.py`。
-   - Tool 正式领域入口保持 `app.services.tool`。
-   - `app.tools` 继续只承担 HTTP / Schema 等技术执行能力。
-
-4. **测试目录边界整改**
-   - `tests/test_dependency_boundary.py` 已迁移到 `tests/unit/test_dependency_boundary.py`。
-   - Module Refactor Gate 新增 root `tests/test_*.py` 禁止检查。
-
-5. **开发验证脚本目录整改**
-   - `scripts/test_ollama_embedding.py` 已迁移为 `scripts/dev/validate_ollama_embedding.py`。
-   - 修正脚本从新目录运行时的 Backend Root 定位。
-   - Module Refactor Gate 增加 root-level Ollama 验证脚本残留检查。
-
-6. **Module Refactor Gate 收紧**
-   - 增加 canonical Workflow Runtime required file 检查。
-   - 增加 `agent_runtime.py`、`workflow_runtime.py`、`app/tools/registry.py` 等旧路径检查。
-   - 增加旧 import 搜索。
-   - 增加 root `tests` 与开发脚本目录边界检查。
-   - 继续强制 `职责：` / `边界：` 模块说明检查。
-
-7. **文档同步**
-   - 更新 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`，记录 Workflow Runtime、Tool Registry、测试与脚本目录的本轮归位。
-   - 当前文档仍明确：API `v1/<domain>`、Governance、Runtime 其余领域等重构未完成，不得转入主线。
+3. **保持单一 Runtime / Provider / Service 入口**
+   - Workflow Runtime 继续唯一使用 `app.runtime.workflow`。
+   - 不恢复旧 Runtime 路径，不复制 Runtime 实现。
+   - Provider 继续集中在 `app.infrastructure.providers`。
 
 ## 当前模块重构完成度
 
@@ -89,8 +71,8 @@ Backend regression: 383 passed, 2 skipped, 35 deselected
 
 ### 正在整改 / 尚未最终验收
 
-- Workflow：canonical Runtime 已完成，本地 Gate / Regression 待重新执行
-- Tool：重复 Registry 已清理，本地 Gate / Regression 待重新执行
+- Workflow：canonical Runtime 已完成；本轮补齐最后遗漏测试 import 后，待本地 Gate / Regression 实际验收
+- Tool：重复 Registry 已清理，待本地 Gate / Regression 实际验收
 - Runtime：继续检查其他 Runtime 领域边界
 
 ### 尚未完成
@@ -105,22 +87,13 @@ Backend regression: 383 passed, 2 skipped, 35 deselected
 
 **因此当前仍不得恢复 Phase 2.4 主线任务。**
 
-## 本轮提交
+## 文档与错误记录
 
-- `95496b1`：move workflow runtime into canonical module
-- `4b2a748`：expose canonical workflow runtime entrypoint
-- `6308d9c`：use canonical workflow runtime import
-- `6ac279c`：update workflow runtime timeout test import
-- `2a87a7e`：update workflow runtime unit test import
-- `bbfac6a`：remove legacy workflow runtime module
-- `e7cb8d8`：remove stale unused agent runtime module
-- `a027cc5`：remove duplicate legacy tool registry
-- `ed4a981` / `241a0bd`：move dependency boundary test to unit tests
-- `01bf1d6`：enforce canonical runtime and test module boundaries
-- `4cc2e44` / `054c74a`：move Ollama validation to `scripts/dev` and remove root-level script
-- `616a59f`：update module migration documentation
+本轮新增错误记录：
 
-当前远端 `main` 最新提交为 `616a59f6c89d61dcd05070a4cd63143bf322a18f`。
+- `docs/04-errors/2026-08-24-backend-module-refactor-gate-false-positive-and-workflow-test-import.md`
+
+错误记录说明：本轮本地反馈暴露了一个真实遗漏的测试旧 import，以及 Dependency Boundary Gate 对 canonical `app.dependencies.db` 的错误规则匹配。两者均属于模块重构 Gate 本身的工程问题，已在本轮修正。
 
 ## 本地自动化验证流程
 
@@ -141,19 +114,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refact
 
 # 3. 全量回归（Gate 已执行，可单独再次确认）
 uv run pytest -q
-
-# 4. Ollama 本地 Embedding 环境验证（仅在配置并启动 Ollama 后执行）
-uv run python .\scripts\dev\validate_ollama_embedding.py
 ```
 
 如果 Gate 报告任何旧 import、旧模块路径、重复实现或模块说明缺失，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
 
 ## 下一执行任务
 
-1. 开发者本地同步最新 `main`。
-2. 执行 `01_backend_module_refactor_gate.ps1`，取得本轮真实 blocker。
-3. 执行 `02_backend_dependency_boundary_gate.ps1`。
-4. 对 Workflow / Tool / Runtime 其余领域完成 targeted tests、旧路径搜索、重复实现审查。
+1. 开发者本地同步本轮最新 `main`。
+2. 重新执行 Module Refactor Gate，确认 Workflow 测试旧 import 已归零。
+3. 执行 Dependency Boundary Gate，确认 canonical `app.dependencies.db` 不再被误报。
+4. 若上述 Gate 通过，继续对 Workflow / Tool / Runtime 其余领域执行 targeted tests、旧路径搜索、重复实现审查。
 5. 完成 Governance 与 API `v1/<domain>` 收敛。
 6. 全部重构领域通过 Module Refactor Gate + Backend Regression 后，才恢复 Phase 2.4 主线。
 

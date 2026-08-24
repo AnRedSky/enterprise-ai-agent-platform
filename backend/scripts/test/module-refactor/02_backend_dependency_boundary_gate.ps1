@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
 
 Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Dependency Boundary Gate"
@@ -17,9 +18,11 @@ if ($LASTEXITCODE -ne 0) { throw "Dependency boundary test failed (exit=$LASTEXI
 
 Write-Host "[Gate] Legacy dependency path search"
 $legacyPatterns = @(
-    "app\.dependencies\.db",
     "app/api/dependencies.py",
-    "app\\api\\dependencies.py"
+    "app\\api\\dependencies.py",
+    "app\.core\.database",
+    "app\.core\.db",
+    "app\.database"
 )
 
 $matches = Get-ChildItem -Path "app" -Recurse -File -Include *.py |

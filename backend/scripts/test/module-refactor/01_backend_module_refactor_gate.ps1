@@ -50,7 +50,7 @@ $legacyImportPatterns = @(
     "app\.services\.memory_service", "app\.runtime\.memory_context", "app\.services\.embedding_provider", "app\.services\.mock_embedding_provider",
     "app\.services\.ollama_embedding_provider", "app\.services\.vector_retrieval_provider", "app\.services\.model_provider",
     "app\.services\.model_provider_governance_contract", "app\.services\.runtime_model_governance", "app\.services\.circuit_breaker",
-    "app\.runtime\.model_gateway", "app\.runtime\.provider", "app\.runtime\.openai_provider", "app\.runtime\.agent_runtime", "app\.runtime\.workflow_runtime",
+    "app\.runtime\.model_gateway", "app\.runtime\.provider", "app\.runtime\.openai_provider", "app\.runtime\.agent_runtime",
     "app\.services\.workflow_execution", "app\.services\.workflow_governance", "app\.services\.workflow_registry", "app\.services\.workflow_trigger",
     "app\.services\.workflow_trigger_schedule", "app\.services\.webhook_trigger", "app\.services\.observability_service",
     "app\.services\.retrieval_evaluation_", "app\.services\.session_service\.service", "app\.tools\.registry",
