@@ -62,8 +62,8 @@ backend/app/
 | Agent | `app/services/agent/` | 已完成 | Service / Repository 已物理迁移，旧入口删除 |
 | Knowledge | `app/services/knowledge/` + `app/infrastructure/providers/` | 已完成 | 领域与 Provider 已分离，无旧 Provider 实现 |
 | Memory | `app/services/memory/` + `app/runtime/memory/` | 已完成 | Service 与 Runtime 上下文均已迁移，旧入口删除 |
-| Model | `app/services/model/` + `app/runtime/model/` + Provider | **本轮完成** | Service / Contract / Routing / Governance / Runtime Gateway / Provider 已收敛，旧 Service / Runtime Provider 入口删除 |
-| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | 待迁移 | Registry / Execution / Governance 仍待领域收敛 |
+| Model | `app/services/model/` + `app/runtime/model/` + Provider | 已完成 | Service / Contract / Routing / Governance / Runtime Gateway / Provider 已收敛，旧 Service / Runtime Provider 入口删除 |
+| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | **整改中** | Canonical import 与循环依赖已修复，40 个 Workflow targeted tests 已在本地反馈通过；Module Refactor Gate 曾因 PowerShell ParserError 未进入执行，待修复脚本后重新本地验收 |
 | Trigger | `app/services/trigger/` | 待迁移 | Scheduled / Webhook Trigger 仍待统一领域入口 |
 | Organization / Governance / Observability | 对应领域子模块 | 待迁移 | 当前仍存在多个根目录 Service 文件 |
 | Tool | `app/services/tool/` | 待迁移 | `app/tools/` 技术实现需与领域 Runtime 边界继续收敛 |
@@ -166,7 +166,7 @@ app/infrastructure/providers/
 
 - `ModelProviderService` 已归入 `app.services.model.provider`；
 - Provider Governance Contract、Fallback/Cost/Usage 领域值对象已归入 `app.services.model.contract`；
-- Provider 路由筛选规则已归入 `app.services.model.routing`，不再由 API 或 Runtime 重复实现；
+- Provider 路由筛选规则已归入 `app.services.model.routing`，不再由 API 或 Runtime 重复实现路由规则；
 - `RuntimeModelGovernanceService` 已归入 `app.services.model.governance`；
 - `ModelGateway` 已归入 `app.runtime.model.gateway`，作为 Runtime 唯一模型调用入口；
 - OpenAI-compatible、Mock Provider 及统一 Provider Contract 已归入 `app.infrastructure.providers`；
@@ -176,13 +176,25 @@ app/infrastructure/providers/
 - 新增/重构 Model 模块均补充中文职责、边界和关键依赖说明；
 - 本轮未新增数据库 Migration，Model 数据结构保持不变。
 
-**重要验收要求：本地必须执行 Module Refactor Gate，通过 Gate 的 Model targeted tests 与 Backend Regression 后，才能将 Model 视为开发者本地已验证完成。**
+## 9. Workflow：当前整改状态
 
-## 9. Workflow / Trigger / Organization / Governance / Observability / Tool
+Workflow 已完成旧入口物理删除与 canonical import 切换。随后发现 `WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 的模块初始化循环，已通过 Runtime 仅在未注入 Execution Service 时延迟解析正式入口的方式修复；不恢复旧文件、不增加第二套实现。
+
+当前用户本地反馈：
+
+- `uv run python -c "from app.main import app; print('APP_IMPORT_OK')"`：`APP_IMPORT_OK`；
+- Workflow targeted tests：`40 passed in 1.40s`；
+- 旧 Workflow import grep：无输出；
+- Module Refactor Gate：因 PowerShell ParserError 未执行，修复后必须重新执行；
+- Backend Regression：必须在 Gate 成功后重新执行并记录实际结果。
+
+因此 Workflow 暂不能标记“迁移完成”。
+
+## 10. Trigger / Organization / Governance / Observability / Tool / API / Runtime
 
 这些领域继续遵循目标结构与“完整迁移、删除旧文件、旧路径搜索为 0、重复实现为 0”的统一验收规则。具体迁移必须基于当前实际职责，不机械归类。
 
-## 10. 每个迁移单元验收
+## 11. 每个迁移单元验收
 
 1. 全仓搜索旧 import 路径，结果为 0；
 2. 旧文件已删除；
@@ -196,4 +208,4 @@ app/infrastructure/providers/
 10. Alembic `upgrade heads` / `current`，确认没有因目录重构产生数据库变化；
 11. 更新 Migration Map、PROJECT_STATUS 与必要的 Error 记录。
 
-**只有代码、import、测试、重复实现检查、模块说明和文档全部完成，才能将领域标记为迁移完成。**
+**只有代码、import、测试、重复实现检查、模块说明和文档全部完成，才能将领域标记为“迁移完成”。**

@@ -30,7 +30,9 @@
 11. 未新增数据库 Migration；Model 数据结构不因目录重构发生变化。
 12. 修复 Model 迁移后 `UsageAccountingService` 对已删除旧 Contract 路径的残留引用，切换到 `app.services.model.contract` 正式入口。
 13. 修复 Memory 治理测试对已删除 `app.services.memory_service` 的旧入口引用，切换到 `app.services.memory` 正式入口，并补充中文测试模块说明。
-14. 将本次迁移后旧入口残留记录到 `docs/04-errors/2026-08-24-model-memory-module-import-boundary.md`。
+14. 修复 Workflow canonical import 后形成的 `WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 循环依赖；Runtime 在未注入 Execution Service 时才延迟解析正式入口，不恢复旧模块。
+15. 修复 Module Refactor Gate 的 PowerShell ParserError：统一明确字符串、数组、函数参数与 Gate 调用结构，并保留失败退出码传播。
+16. 新增 `docs/04-errors/2026-08-24-backend-module-refactor-gate-parser-error.md`，记录 Gate 脚本解析错误及修复方案。
 
 ## 当前模块重构完成度
 
@@ -41,9 +43,11 @@
 - Memory
 - Model + Provider
 
+Workflow 当前状态：**代码迁移与 canonical import 已完成，领域 targeted tests 已恢复，但 Module Refactor Gate 因脚本 ParserError 尚未完成本地验收，因此暂不标记为迁移完成。**
+
 仍未完成：
 
-- Workflow
+- Workflow Gate 最终验收
 - Trigger
 - Organization
 - Governance
@@ -56,22 +60,37 @@
 
 ## 本地验证原则
 
-本轮代码修复由远端仓库直接完成，当前不能声称新增修复已经在开发者本地执行通过。必须以用户本地实际输出作为测试结论。
+本轮代码修复不能由仓库端代替开发者本地测试。当前用户已实际反馈 Workflow targeted tests：`40 passed in 1.40s`，并确认 `from app.main import app` 返回 `APP_IMPORT_OK`；Module Refactor Gate 当前反馈为 PowerShell ParserError，因此 Gate 结果不得记录为通过。
 
-### Model / Memory 边界修复后的完整本地验证流程
+### 当前修复后的完整本地验证流程
 
 ```powershell
 cd backend
-uv sync --dev
+
+git fetch origin
+git reset --hard origin/main
+git log -3 --oneline
+
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-# 1. Model + Memory 定向测试
-uv run pytest -q tests/unit/test_model_gateway.py tests/unit/test_model_provider_governance_contract.py tests/unit/test_runtime_model_governance.py tests/unit/test_memory_governance.py
+git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry" -- "*.py"
 
-# 2. 模块重构 Gate：检查旧文件、旧 import、重复实现、Provider 边界及 Backend Regression
+uv run pytest -q `
+  tests/unit/test_workflow_execution_state_machine.py `
+  tests/unit/test_workflow_execution_concurrency.py `
+  tests/unit/test_workflow_execution_idempotency.py `
+  tests/unit/test_workflow_execution_governance.py `
+  tests/unit/test_workflow_execution_retry_transition.py `
+  tests/unit/test_workflow_governance.py `
+  tests/unit/test_workflow_publish_governance.py `
+  tests/unit/test_workflow_retry_budget.py `
+  tests/unit/test_workflow_retry_policy.py `
+  tests/unit/test_workflow_runtime.py `
+  tests/unit/test_workflow_runtime_timeout.py `
+  tests/unit/test_webhook_trigger.py
+
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
 
-# 3. 全量回归
 uv run pytest -q
 ```
 
@@ -81,7 +100,7 @@ uv run pytest -q
 
 优先顺序保持：
 
-1. Workflow 领域物理迁移：Registry / Execution / Governance 与 Runtime 分离；
+1. Workflow：先完成修复后 Module Refactor Gate 本地验收并完成迁移记录；
 2. Trigger 领域物理迁移：Scheduled / Webhook Trigger 统一进入 Trigger 子模块；
 3. Organization / Governance / Observability 按实际职责完成领域收敛；
 4. Tool Service 与 `app/tools/` 技术实现完成唯一 Runtime 边界；
