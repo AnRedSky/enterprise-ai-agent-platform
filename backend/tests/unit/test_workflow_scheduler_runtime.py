@@ -30,6 +30,16 @@ def test_planned_slot_key_matches_public_idempotency_key() -> None:
     )
 
 
+def test_current_interval_slot_is_not_marked_as_recovery() -> None:
+    """当前 interval 槽位即使其计划时间早于 now，也不能被误标为历史 recovery。"""
+    now = datetime(2026, 8, 23, 12, 0, 37, tzinfo=UTC)
+    current_slot = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+    historical_slot = current_slot - timedelta(seconds=60)
+
+    assert ScheduledTriggerScheduler.is_recovery_slot(current_slot, now, 60) is False
+    assert ScheduledTriggerScheduler.is_recovery_slot(historical_slot, now, 60) is True
+
+
 def test_next_run_after_skip_drops_historical_backlog() -> None:
     """首版 skip 策略不得因为 worker 停机而连续补发历史槽位。"""
     now = datetime(2026, 8, 23, 12, 10, tzinfo=UTC)

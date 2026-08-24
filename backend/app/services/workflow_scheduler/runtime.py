@@ -87,6 +87,13 @@ class ScheduledTriggerScheduler:
     def idempotency_key(cls, trigger_id, now: datetime, interval_seconds: int) -> str:
         return cls.slot_idempotency_key(trigger_id, cls.interval_slot(now, interval_seconds))
 
+    @staticmethod
+    def is_recovery_slot(planned_at: datetime, now: datetime, interval_seconds: int) -> bool:
+        """仅把早于当前 interval 槽位的历史计划标记为 recovery，当前槽位不继承 misfire 状态。"""
+        return ScheduledTriggerScheduler.interval_slot(planned_at, interval_seconds) < ScheduledTriggerScheduler.interval_slot(
+            now, interval_seconds
+        )
+
     recovery_slots = _RecoverySlotsDescriptor()
 
     @staticmethod
@@ -236,7 +243,7 @@ class ScheduledTriggerScheduler:
                     latest_execution = None
                     for slot in selected_slots:
                         slot_key = self.planned_slot_key(trigger.id, slot.planned_at, config["interval_seconds"])
-                        slot_recovery = slot.planned_at < now
+                        slot_recovery = self.is_recovery_slot(slot.planned_at, now, config["interval_seconds"])
                         slot_record = await repository.claim_schedule_slot(
                             tenant_id=trigger.tenant_id,
                             trigger_id=trigger.id,
