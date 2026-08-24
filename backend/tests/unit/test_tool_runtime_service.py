@@ -1,8 +1,14 @@
+"""Tool Runtime 服务单元测试。
+
+职责：验证 Tool 绑定、启用状态、权限与调用次数上限。
+边界：不测试 HTTP 技术执行实现。
+"""
+
 from types import SimpleNamespace
 
 import pytest
 
-from app.services.tool_runtime_service import ToolExecutionContext, ToolRuntimeService
+from app.services.tool import ToolExecutionContext, ToolRuntimeService
 from app.tools.exceptions import ToolExecutionError
 
 
