@@ -1,3 +1,10 @@
+"""Workflow Trigger 领域服务。
+
+职责：管理 manual/scheduled/webhook Trigger 生命周期、配置校验与触发执行入口。
+边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；分别复用对应领域模块。
+关键依赖：Workflow/WorkflowTrigger ORM、Workflow Execution/治理服务与 Trigger 配置校验器。
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -12,8 +19,7 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow_runtime import WorkflowRuntime
-from app.services.workflow_execution import WorkflowExecutionService
-from app.services.workflow_governance import WorkflowGovernanceService
+from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
 from app.services.workflow_trigger_schedule import validate_trigger_config
 
 
@@ -85,15 +91,8 @@ class WorkflowTriggerService:
         if not name:
             raise HTTPException(422, "Trigger name 不能为空")
         config = self.validate_config(trigger_type, config)
-        trigger = WorkflowTrigger(
-            tenant_id=workflow.tenant_id,
-            workflow_id=workflow.id,
-            name=name,
-            trigger_type=trigger_type,
-            status="enabled",
-            created_by=actor_id,
-            config=config,
-        )
+        trigger = WorkflowTrigger(tenant_id=workflow.tenant_id, workflow_id=workflow.id, name=name,
+                                  trigger_type=trigger_type, status="enabled", created_by=actor_id, config=config)
         self.db.add(trigger)
         try:
             await self.db.commit()
@@ -119,8 +118,7 @@ class WorkflowTriggerService:
             if trigger.trigger_type == "webhook" and "secret" not in candidate and "secret_hash" not in candidate:
                 candidate["secret_hash"] = (trigger.config or {}).get("secret_hash")
             candidate.pop("secret_configured", None)
-            config = self.validate_config(trigger.trigger_type, candidate)
-            trigger.config = config
+            trigger.config = self.validate_config(trigger.trigger_type, candidate)
         try:
             await self.db.commit()
         except Exception as exc:
@@ -139,14 +137,9 @@ class WorkflowTriggerService:
     async def _get_published_version(self, workflow: Workflow) -> WorkflowVersion:
         if workflow.status != "published" or workflow.published_version_id is None:
             raise HTTPException(409, "Trigger 只能调用已发布 Workflow")
-        version = (
-            await self.db.execute(
-                select(WorkflowVersion).where(
-                    WorkflowVersion.id == workflow.published_version_id,
-                    WorkflowVersion.workflow_id == workflow.id,
-                )
-            )
-        ).scalar_one_or_none()
+        version = (await self.db.execute(select(WorkflowVersion).where(
+            WorkflowVersion.id == workflow.published_version_id, WorkflowVersion.workflow_id == workflow.id
+        ))).scalar_one_or_none()
         if version is None or version.status != "published":
             raise HTTPException(409, "Workflow Published Version 不可用")
         return version
