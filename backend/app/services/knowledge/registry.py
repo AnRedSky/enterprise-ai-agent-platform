@@ -1,3 +1,10 @@
+"""知识库注册与持久化模块。
+
+职责：负责知识库、文档及文档版本的查询、创建、更新、删除与版本切换，并执行所属关系校验。
+边界：只处理 Knowledge 领域的数据库注册表操作，不负责内容解析、检索排序、向量索引或外部 Provider 调用。
+关键依赖：SQLAlchemy AsyncSession 与 app.models.knowledge 中的知识领域持久化模型。
+"""
+
 from uuid import UUID
 
 from fastapi import HTTPException
