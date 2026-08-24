@@ -1,6 +1,8 @@
 """Knowledge 领域契约。
 
-只定义检索领域的稳定业务接口；外部 Embedding 技术契约统一由 infrastructure/providers 提供，避免重复定义。
+职责：定义知识检索领域稳定的业务契约与检索结果表示，供知识服务及其适配器复用。
+边界：不实现向量检索、Embedding 或 Provider 技术能力；外部技术契约统一复用 infrastructure/providers，避免重复定义。
+关键依赖：infrastructure/providers.embedding.EmbeddingProvider。
 """
 
 from __future__ import annotations
