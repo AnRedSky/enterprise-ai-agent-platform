@@ -30,6 +30,7 @@
 | ERR-0022 | 2026-08-22 | Real Provider baseline 缺失导致 Real API trace gate 阻塞 |
 | ERR-0023 | 2026-08-23 | Knowledge Retrieval Real Provider 评估脚本旧 Provider 导入路径 |
 | ERR-0024 | 2026-08-23 | Backend 模块重构后的测试边界残留 |
+| ERR-0025 | 2026-08-24 | Backend Refactor Closure Gate 将 canonical Service 包入口误判为旧 import |
 
 ## 迁移规则
 
