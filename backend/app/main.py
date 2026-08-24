@@ -1,3 +1,10 @@
+"""FastAPI 应用入口与进程级生命周期管理。
+
+职责：注册 HTTP 路由、中间件以及应用启动/停止时的 Scheduler 生命周期。
+边界：不承载具体业务规则；业务能力继续由 API、领域 Service、Runtime 与 Infrastructure 模块负责。
+关键依赖：FastAPI、项目配置以及 `ScheduledTriggerScheduler`。
+"""
+
 import asyncio
 from contextlib import asynccontextmanager
 
@@ -24,6 +31,17 @@ from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """管理应用级 Scheduler 生命周期。
+
+    参数：
+        app: 当前 FastAPI 应用实例，用于暴露 Scheduler 状态对象。
+
+    返回值：
+        异步上下文管理器本身；进入上下文完成启动准备，退出上下文负责停止后台任务。
+
+    重要副作用：当 `scheduler_enabled` 开启时创建后台 Scheduler 任务；应用退出时先请求
+    Scheduler 停止，再取消并等待后台任务，避免遗留进程级轮询任务。
+    """
     scheduler = ScheduledTriggerScheduler(settings.scheduler_poll_interval_seconds)
     task: asyncio.Task | None = None
     if settings.scheduler_enabled:
@@ -39,7 +57,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(agents_router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(chat_router, prefix="/api/v1/agents", tags=["chat"])
@@ -58,4 +82,5 @@ app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"]
 
 @app.get("/health")
 async def health():
+    """返回应用存活状态与当前运行环境。"""
     return {"status": "ok", "version": "0.2.0", "environment": settings.app_env}
