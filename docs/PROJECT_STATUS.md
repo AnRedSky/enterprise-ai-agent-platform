@@ -7,102 +7,58 @@
 - 当前架构基线：远端 `main` 持续执行 Backend 模块化整改。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler Contract-first + Persistence：**第一版已完成**。
-- 当前：**继续执行 Backend 模块化整改，主线任务暂停，必须完成全部既有重构任务后才能恢复主线。**
+- Phase 2.4 Durable Scheduler Contract-first + Persistence：**第一版已完成，继续执行 Runtime Gate**。
+- 当前：**Backend 模块化整改已完成最终 Closure Gate，主线任务恢复，当前进入 Phase 2.4 Durable Scheduler Runtime Gate。**
 
 ## 最新 main 基线
 
-本轮继续直接基于远端 `main`。用户本地已反馈 API v1、模块重构、依赖边界、Runtime Boundary 与 Backend Regression 全部通过；当前继续执行全部重构的最终静态收口。
+本轮继续直接基于远端 `main`。用户本地已反馈 Closure Gate、API v1、Runtime Boundary、模块重构、依赖边界与 Backend Regression 全部通过；Backend 重构最终静态收口已完成。
 
-本轮新增工程变更：
+本轮 Closure Gate 实际验收结果：
 
 ```text
-fix(refactor): correct closure gate canonical API import assertion
+05_backend_refactor_closure_gate.ps1：Backend Refactor Closure Gate completed.
+REFACTOR_CLOSURE_IMPORT_OK
 ```
 
-本轮针对用户本地 Closure Gate 的实际失败进行修复：Gate 错误假设 `app.api.v1` 应暴露聚合 `router`，而当前架构由 `app.main` 统一注册各 `app.api.v1/<domain>/` Router。修复后不增加聚合 Router，不创建兼容垫片，不复制 API 实现。
-
-用户本地在本轮修复前实际验收结果：
+用户此前实际验收的重构 Gate 结果：
 
 ```text
-API v1 Module Gate：79 passed
+API v1 Module Gate：79 passed；Backend Regression：384 passed, 2 skipped, 35 deselected
 Runtime Boundary Gate：79 passed, 215 deselected
 Backend Module Refactor Gate：384 passed, 2 skipped, 35 deselected
 Dependency Boundary Gate：PASS
 Backend default regression：384 passed, 2 skipped, 35 deselected
 ```
 
-本轮 Closure Gate 在修复前实际失败于：
+因此本轮不再把 Closure Gate 标记为“等待执行”。重构收口已经具备用户本地实际通过结果。
 
-```text
-ImportError: cannot import name 'router' from 'app.api.v1'
-```
+## Backend 模块化重构收口
 
-该错误已记录至 `docs/04-errors/2026-08-24-backend-refactor-closure-gate-api-v1-router-assertion.md`。修复后的 Closure Gate 尚未由用户本地重新执行，因此当前仍不能记录为通过。
+API v1、Runtime Boundary 以及各领域 Service / Runtime / Provider 迁移已经完成；最终 Closure Gate 已确认：
 
-## API v1 重构
+- 旧扁平领域实现文件不存在；
+- API / Runtime 旧 import 路径不存在；
+- `services` / `runtime` 根目录没有重新堆放领域实现；
+- Provider 技术适配保持 `app/infrastructure/providers/` 唯一正式入口，并排除 ORM `app/models` 与 canonical Model Provider Service 的合理命名；
+- Runtime 没有重复 Model Provider Governance / 路由实现；
+- 正式领域包具备中文“职责 / 边界”说明；
+- canonical 应用入口与 Runtime 导出可正常导入。
 
-API v1 物理模块归位已经完成，并已通过用户本地 Module Gate：
+**状态：Backend 模块化重构全部 Closure Gate 已完成，不再阻塞主线。**
 
-- `app/api/*.py` → `app/api/v1/<domain>/`；
-- `main.py` 已切换为 canonical API v1 import；
-- 原 `/api/v1/*` 路由前缀保持不变；
-- 删除旧 API 文件，不创建兼容转发；
-- 各 API 领域包具备中文职责、边界和关键依赖说明；
-- 受影响 API Contract / Integration 测试已切换到 canonical API v1 入口；
-- Workflow v1 Router 明确 API 层不复制 Workflow / Trigger 领域业务规则。
+## Phase 2.4 当前推进
 
-**状态：API v1 已具备用户本地最终 Gate 结果，等待全量 Refactor Closure Gate 统一收口。**
+Durable Scheduler 已完成 Contract-first + Persistence 第一版：
 
-## Runtime / Governance 当前收口
+- `WorkflowSchedule` / `WorkflowScheduleSlot` 持久化；
+- lease / slot 幂等；
+- PostgreSQL 原子 claim / release；
+- Scheduled Trigger Runtime 已切换到持久化 Scheduler 状态；
+- 首版 `misfire=skip` 边界保持明确；
+- Scheduler 领域代码已按 `services/workflow_scheduler/` 子模块组织，避免新增第二套调度实现。
 
-当前正式 Runtime 仅保留：
-
-- `app/runtime/memory/`：执行期 Memory 上下文构造；
-- `app/runtime/model/`：唯一 Model Gateway 执行入口；
-- `app/runtime/workflow/`：Workflow 节点执行、重试、超时与熔断。
-
-用户本地已实际执行 `04_backend_runtime_boundary_gate.ps1` 并通过，验证：
-
-- Runtime 根目录不存在旧单文件实现；
-- 已删除的 Runtime / Governance 旧 import 未重新出现；
-- Runtime 不复制 Model Provider Governance、路由或 Service 实现；
-- Runtime 关键模块具备中文“职责 / 边界”说明；
-- `ModelGateway` / `WorkflowRuntime` canonical import 可用；
-- Runtime targeted unit tests：79 passed，215 deselected。
-
-**状态：Runtime Boundary 已通过用户本地验收，但尚未通过全部重构 Closure Gate，因此仍不能恢复主线。**
-
-## 当前模块重构状态
-
-### 已完成代码迁移 / 已通过对应领域 Gate
-
-- Agent
-- Knowledge + Provider
-- Memory
-- Model + Provider
-- Workflow
-- Trigger
-- Organization
-- Observability
-- Retrieval Evaluation
-- Runtime Query
-- Session
-- Tool + Tool 技术执行层
-- Usage Accounting
-- API v1
-- Runtime Boundary
-
-### 最终收口中
-
-- `05_backend_refactor_closure_gate.ps1`：检查旧文件、旧 import、根目录边界、Provider 唯一实现入口、Runtime Governance 重复实现与中文模块职责说明。
-- 已修复 Closure Gate 在 Windows PowerShell 管道中的中文编码 false negative / `SyntaxError`。
-- 本轮继续修复 Closure Gate 对 `app.api.v1.router` 的错误 canonical import 假设；实际应用入口为 `app.main`，API v1 领域 Router 由 `main.py` 统一注册。
-- 修复后的 Closure Gate 尚未由用户本地执行。
-- Closure Gate 通过后仍需再次执行 Backend Regression，确认最终收口没有回归。
-- 仍需更新 Migration Map、Acceptance / Error（仅在实际产生对应事实变化时）并最终确认全部重构领域完成。
-
-**因此当前仍不得恢复 Phase 2.4 主线任务。**
+**当前唯一下一步：先由开发者本地执行 Scheduler Runtime Gate，确认 Runtime 接入没有回归，再推进 API Contract / 状态可观测性与 tenant isolation / misfire integration。**
 
 ## 本地自动化验证流程
 
@@ -115,7 +71,7 @@ git log -8 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-# 1. 全部重构最终静态收口 Gate
+# 1. 重构最终收口（已通过，后续作为回归 Gate 保留）
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\05_backend_refactor_closure_gate.ps1
 
 # 2. API v1 迁移 Gate
@@ -130,20 +86,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refact
 # 5. 数据库依赖边界 Gate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\02_backend_dependency_boundary_gate.ps1
 
-# 6. Backend default regression
+# 6. Phase 2.4 Scheduler Runtime Gate（当前主线下一步）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
+
+# 7. Backend default regression
 uv run pytest -q
 ```
 
-本轮仍未新增 Alembic Migration；目录重构没有数据库结构变更。如数据库 Gate 发现异常，应先记录错误并停止继续迁移。
+本轮未新增 Alembic Migration；重构收口没有数据库结构变更。Phase 2.4 已有持久化 Migration，Scheduler Runtime Gate 会通过 Persistence Gate 实际验证 PostgreSQL 与 Migration。
 
 ## 下一执行任务
 
-1. 用户本地同步最新 `main`。
-2. 执行修复后的 `05_backend_refactor_closure_gate.ps1`。
-3. 若 Closure Gate 仍暴露问题，只修复 canonical 模块边界、唯一实现入口或模块说明，不创建兼容垫片或第二实现。
-4. Closure Gate 通过后重新执行 API v1、Runtime Boundary、Module Refactor、Dependency Boundary 与 Backend Regression。
-5. 全部 Gate 通过后进行最终旧路径 / 重复实现扫描。
-6. 更新 Migration Map、PROJECT_STATUS 与必要的 Acceptance / Error 记录。
-7. **全部重构验收完成后，才恢复 Phase 2.4 主线任务。**
+1. 开发者本地同步最新 `main`。
+2. 执行 `scripts/test/integration/02_scheduler_runtime_gate.ps1`。
+3. 若 Runtime Gate 暴露问题，只修复 Scheduler canonical 模块，不创建兼容垫片或第二套调度实现。
+4. Runtime Gate 通过后，推进 Scheduler API Contract / 状态可观测性。
+5. 继续 tenant isolation / misfire integration。
+6. 按 Phase 2.4 顺序执行 Tenant Safe Real API、Backend Regression，以及需要时 Frontend / E2E。
+7. 根据实际本地结果更新 Phase / Acceptance / Error / Status；未执行结果不得预填“通过”。
 
 模块化目录、职责与迁移规则继续以 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md` 与 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。
