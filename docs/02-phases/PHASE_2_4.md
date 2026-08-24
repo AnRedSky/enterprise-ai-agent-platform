@@ -1,7 +1,7 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Contract-first 与 Persistence 第一版已完成；Scheduler Runtime 已接入持久化 lease / slot，当前等待开发者本地 Runtime Gate 验证。API Contract 与完整 Durable Scheduler 验收尚未完成。**
-> 评估日期：2026-08-23
+> 状态：**Contract-first、Persistence 第一版与 Scheduler Runtime 已完成本地 Gate；当前推进 Scheduler API Contract / 状态可观测性。**
+> 评估日期：2026-08-24
 > 优先级：**P1**
 
 ## 1. 方案决策
@@ -56,11 +56,11 @@ backend/app/services/workflow_scheduler/
 - `tests/integration/test_workflow_scheduler_repository.py`：真实 PostgreSQL Repository lease / release、tenant isolation 与 slot idempotency 测试；
 - `scripts/test/integration/01_scheduler_persistence_gate.ps1`：Migration、Contract targeted、Repository PostgreSQL integration、Backend Regression 固定编排。
 
-Persistence Gate 已由开发者本地实际执行并通过：Migration heads、13 个 Contract tests、2 个 Repository PostgreSQL integration tests、378 个 Backend Regression tests 均通过，且该次结果未报告警告。
+开发者本地已实际执行 Persistence Gate：Migration heads/current、13 个 Contract tests、2 个 Repository PostgreSQL integration tests、Backend Regression 均通过，未报告警告。
 
 ## 5. Durable Runtime 接入
 
-本轮已将 Runtime 从“进程内 interval recovery”切换为持久化 Scheduler 状态驱动：
+Runtime 已从“进程内 interval recovery”切换为持久化 Scheduler 状态驱动：
 
 1. Scheduled Trigger 首次进入 Runtime 时由 Repository 确保唯一 `WorkflowSchedule`；
 2. 每个 Scheduler 实例拥有唯一 owner，通过 PostgreSQL 原子 lease claim 取得执行权；
@@ -68,34 +68,53 @@ Persistence Gate 已由开发者本地实际执行并通过：Migration heads、
 4. Execution 创建继续复用既有 `WorkflowTriggerService.invoke_scheduled`；
 5. Execution 与 slot 绑定后，由 lease owner 原子推进 `next_run_at / last_run_at / last_execution_id` 并释放 lease；
 6. 首版 `misfire=skip` 保持明确边界：历史积压不逐槽补发，下一次运行从未来时间重新计算；
-7. 新增 `tests/unit/test_workflow_scheduler_runtime.py` 与 `scripts/test/integration/02_scheduler_runtime_gate.ps1`。
+7. `tests/unit/test_workflow_scheduler_runtime.py` 与 `scripts/test/integration/02_scheduler_runtime_gate.ps1` 已完成。
 
-**以上为代码实现事实，不代表开发者本地已验证本轮 Runtime 修改。**
+## 6. Runtime Gate 实际结果
 
-## 6. Runtime Gate
-
-必须由开发者本地实际执行：
+开发者本地已执行：
 
 ```powershell
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
 ```
 
-该 Gate 固定执行：
+实际结果：
 
 ```text
-Scheduler Runtime targeted tests
-        ↓
-Scheduler Persistence Gate
+Scheduler Runtime targeted tests：4 passed
+Alembic current：0028_durable_scheduler_persistence (head) (mergepoint)
+Scheduler contract targeted tests：13 passed
+Scheduler repository PostgreSQL integration：2 passed
+Backend default regression：384 passed, 2 skipped, 35 deselected
 ```
 
-Persistence Gate 仍负责真实 PostgreSQL、Migration、Repository integration 与 Backend Regression，不允许使用 JSON/JSONL 替代 Runtime 持久化路径。
+**Runtime Gate 已关闭。**
 
-## 7. 下一执行顺序
+## 7. Scheduler API Contract / 状态可观测性
+
+本轮新增只读状态查询：
 
 ```text
-Runtime Gate
-      ↓
+GET /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/schedule
+```
+
+职责边界：
+
+- API 只负责认证、tenant/workflow/trigger scope 校验和响应转换；
+- Scheduler 状态读取统一复用 `WorkflowSchedulerRepository.get_schedule_for_trigger`；
+- 不在 API 层复制 next_run、lease、misfire 或 slot 计算；
+- 不暴露 Scheduler worker owner，仅返回 `lease_active` 与 `lease_expires_at`；
+- 非 Scheduled Trigger 或尚未初始化的 Scheduler 状态返回 404。
+
+对应 Contract 测试：`backend/tests/api_contract/test_api_scheduled_triggers.py`。
+固定 Gate：`backend/scripts/test/integration/03_scheduler_api_contract_gate.ps1`。
+
+**当前 API Contract 尚待开发者本地执行 Gate，不预填通过结果。**
+
+## 8. 下一执行顺序
+
+```text
 Scheduler API Contract / 状态可观测性
       ↓
 Tenant isolation / misfire integration

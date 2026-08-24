@@ -1,13 +1,14 @@
 """Workflow API 路由模块。
 
-职责：提供 Workflow、Version 与 Trigger 的 HTTP 协议适配、鉴权和响应转换。
-边界：不实现 Workflow 生命周期或 Trigger 业务规则；业务规则统一委托给对应领域 Service。
-关键依赖：FastAPI、WorkflowRegistry、WorkflowTriggerService、认证依赖与数据库 Session。
+职责：提供 Workflow、Version、Trigger 以及 Scheduler 状态查询的 HTTP 协议适配、鉴权和响应转换。
+边界：不实现 Workflow 生命周期、Trigger 业务规则或 Scheduler 调度算法；业务规则统一委托给对应领域 Service / Repository。
+关键依赖：FastAPI、WorkflowRegistry、WorkflowTriggerService、WorkflowSchedulerRepository、认证依赖与数据库 Session。
 """
 
+from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
 from app.services.trigger import WorkflowTriggerService
 from app.services.workflow import WorkflowRegistry
+from app.services.workflow_scheduler import WorkflowSchedulerRepository
 
 router = APIRouter()
 
@@ -122,6 +124,33 @@ def _execution_response(execution):
     }
 
 
+def _scheduler_status_response(schedule):
+    """将持久化 Scheduler 状态转换为只读 API Contract，隐藏 worker owner。"""
+    if schedule is None:
+        return None
+    lease_expires_at = schedule.lease_expires_at
+    if lease_expires_at is not None and lease_expires_at.tzinfo is None:
+        lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
+    return {
+        "id": schedule.id,
+        "trigger_id": schedule.trigger_id,
+        "workflow_id": schedule.workflow_id,
+        "tenant_id": schedule.tenant_id,
+        "enabled": schedule.enabled,
+        "status": schedule.status,
+        "timezone": schedule.timezone,
+        "schedule_expression": schedule.schedule_expression,
+        "next_run_at": schedule.next_run_at,
+        "last_run_at": schedule.last_run_at,
+        "last_execution_id": schedule.last_execution_id,
+        "lease_expires_at": schedule.lease_expires_at,
+        "lease_active": lease_expires_at is not None and lease_expires_at > datetime.now(UTC),
+        "misfire_policy": schedule.misfire_policy,
+        "catch_up_limit": schedule.catch_up_limit,
+        "updated_at": schedule.updated_at,
+    }
+
+
 @router.get("")
 async def list_workflows(claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     registry = WorkflowRegistry(db)
@@ -192,6 +221,32 @@ async def create_workflow_trigger(
 async def get_workflow_trigger(workflow_id: UUID, trigger_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     workflow = await WorkflowRegistry(db).get(workflow_id, _tenant_id(claims), UUID(claims["sub"]), "admin" in claims.get("roles", []))
     return _trigger_response(await WorkflowTriggerService(db).get(workflow, trigger_id))
+
+
+@router.get("/{workflow_id}/triggers/{trigger_id}/schedule")
+async def get_workflow_trigger_schedule(
+    workflow_id: UUID,
+    trigger_id: UUID,
+    claims=Depends(current_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询 Scheduled Trigger 的持久化状态，不复制 Scheduler 调度逻辑。"""
+    workflow = await WorkflowRegistry(db).get(
+        workflow_id,
+        _tenant_id(claims),
+        UUID(claims["sub"]),
+        "admin" in claims.get("roles", []),
+    )
+    trigger = await WorkflowTriggerService(db).get(workflow, trigger_id)
+    if trigger.trigger_type != "scheduled":
+        raise HTTPException(status_code=404, detail="只有 scheduled Trigger 存在 Scheduler 状态")
+    schedule = await WorkflowSchedulerRepository(db).get_schedule_for_trigger(
+        tenant_id=_tenant_id(claims),
+        trigger_id=trigger.id,
+    )
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="Scheduler 状态尚未初始化")
+    return _scheduler_status_response(schedule)
 
 
 @router.patch("/{workflow_id}/triggers/{trigger_id}")

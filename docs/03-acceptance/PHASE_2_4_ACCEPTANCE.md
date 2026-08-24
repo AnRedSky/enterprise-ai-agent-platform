@@ -1,48 +1,81 @@
 # Phase 2.4 Durable Scheduler Acceptance
 
-> 当前状态：**Persistence Gate 待本地验收，尚未进入功能 Acceptance。**
+> 当前状态：**Persistence 与 Runtime Gate 已本地关闭；Scheduler API Contract / 状态可观测性待本地验收，尚未进入完整功能 Acceptance。**
 > 验收基线：`main`
+> 评估日期：2026-08-24
 
 ## 1. 当前 Gate
 
 | 项目 | 状态 |
 |---|---|
-| Contract / timezone / DST | 已实现，待本地 Gate |
-| Scheduler 持久化模型 | 已实现，待本地 Migration Gate |
-| Alembic `0028_durable_scheduler_persistence` | 已实现，待本地执行 |
-| 原子 lease claim / release | 已实现，待 Repository Gate |
-| schedule slot 幂等 claim | 已实现，待 Repository Gate |
-| WorkflowExecution 绑定 | 已实现基础能力，待竞态验证 |
-| Tenant / Organization scope | 待 API / Runtime 验证 |
-| Scheduler API Contract | 待实现 |
-| Scheduler Runtime persistence 闭环 | 待实现 |
-| Real API acceptance | 待创建 |
+| Contract / timezone / DST | 本地 Gate 已通过：13 passed |
+| Scheduler 持久化模型 | 本地 Migration Gate 已通过 |
+| Alembic `0028_durable_scheduler_persistence` | 本地 `current` 为 head |
+| 原子 lease claim / release | PostgreSQL Repository integration 已通过：2 passed |
+| schedule slot 幂等 claim | PostgreSQL Repository integration 已通过 |
+| WorkflowExecution 绑定 | Runtime Gate 已覆盖并通过 |
+| Tenant / Organization scope | Repository 已验证，API / Real API 仍待完整验收 |
+| Scheduler Runtime persistence 闭环 | Runtime Gate 已通过：4 passed |
+| Scheduler API Contract / 状态可观测性 | **本轮实现，待本地 Gate** |
+| Real API acceptance | 待完成 |
 
-## 2. 当前本地测试流程
+## 2. 已实际执行的本地 Runtime 流程
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_workflow_scheduler_contract.py tests/unit/test_workflow_scheduler_persistence_contract.py tests/unit/test_workflow_scheduler_runtime_module.py tests/unit/test_workflow_scheduler_repository.py
-uv run alembic upgrade heads
-uv run alembic current
-uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
 ```
 
-以上命令仅作为验收入口，未由当前执行者实际运行前不得记录 Passed。
+实际结果：
 
-## 3. Persistence Gate 关闭标准
+```text
+Scheduler Runtime targeted tests：4 passed
+Alembic current：0028_durable_scheduler_persistence (head) (mergepoint)
+Scheduler contract targeted tests：13 passed
+Scheduler repository PostgreSQL integration：2 passed
+Backend default regression：384 passed, 2 skipped, 35 deselected
+```
 
-1. targeted tests 全部通过；
-2. Alembic heads 升级成功且 current 状态正确；
-3. 默认 Backend Regression 通过；
-4. PostgreSQL 原子 lease claim / release 真实行为符合 Contract；
-5. slot 唯一键重复 claim 不产生重复有效槽位；
-6. Execution 绑定在并发条件下保持唯一关联；
-7. tenant isolation 在 Repository / API 层成立。
+以上结果为开发者本地实际反馈，不代表 API Contract 或 Real API 已通过。
 
-Gate 关闭后才能进入 Scheduler API Contract 与 Runtime persistence 接入。
+## 3. Scheduler API Contract
 
-## 4. Real API Gate 目标
+本轮新增：
+
+```text
+GET /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/schedule
+```
+
+验收范围：
+
+1. Bearer authentication；
+2. workflow / trigger tenant scope；
+3. 仅 Scheduled Trigger 可查询；
+4. 尚未初始化 Scheduler 状态返回 404；
+5. 返回 enabled/status、timezone、schedule expression、next/last run、last execution、lease 状态、misfire policy；
+6. 不暴露 Scheduler worker owner；
+7. API 不复制 Scheduler Repository / Runtime 领域规则。
+
+固定本地 Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\03_scheduler_api_contract_gate.ps1
+```
+
+该 Gate 执行：
+
+```text
+Application import
+        ↓
+Scheduler API Contract tests
+        ↓
+Backend default regression
+```
+
+**本地 Gate 未执行前不得记录 Passed。**
+
+## 4. 后续 Acceptance 目标
 
 至少覆盖：
 
@@ -54,6 +87,7 @@ Gate 关闭后才能进入 Scheduler API Contract 与 Runtime persistence 接入
 - WorkflowExecution 关联；
 - Tenant Safe organization scope；
 - Audit / Trace 关联；
-- 服务重启后的 next_run_at / lease 恢复语义。
+- 服务重启后的 next_run_at / lease 恢复语义；
+- Scheduler 状态 API 的 tenant isolation 与错误边界。
 
 **当前不记录 Phase 2.4 Passed。**
