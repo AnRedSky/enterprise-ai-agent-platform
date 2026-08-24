@@ -1,4 +1,4 @@
-"""FastAPI 生命周期测试：验证 Scheduler 后台任务按配置启动并在退出时停止。"""
+"""FastAPI 生命周期测试：验证 Scheduler 后台任务按配置启动、停止并完成退出。"""
 
 import asyncio
 
@@ -15,14 +15,16 @@ class _FakeScheduler:
     def __init__(self, poll_interval_seconds: float):
         self.poll_interval_seconds = poll_interval_seconds
         self.started = asyncio.Event()
+        self.finished = asyncio.Event()
         self.stopped = False
         self.__class__.instances.append(self)
 
     async def run_forever(self) -> None:
-        """等待停止事件，模拟真实 Scheduler 的后台生命周期。"""
+        """等待停止请求并明确标记后台任务已经完成。"""
         self.started.set()
         while not self.stopped:
             await asyncio.sleep(0)
+        self.finished.set()
 
     def stop(self) -> None:
         """记录生命周期退出请求。"""
@@ -31,7 +33,7 @@ class _FakeScheduler:
 
 @pytest.mark.asyncio
 async def test_lifespan_starts_scheduler_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Scheduler 开启时必须创建后台任务，并在应用退出时停止。"""
+    """Scheduler 开启时必须创建后台任务，并在应用退出时停止且完成任务退出。"""
     _FakeScheduler.instances.clear()
     monkeypatch.setattr(main_module, "ScheduledTriggerScheduler", _FakeScheduler)
     monkeypatch.setattr(main_module.settings, "scheduler_enabled", True)
@@ -45,6 +47,7 @@ async def test_lifespan_starts_scheduler_when_enabled(monkeypatch: pytest.Monkey
         assert not main_module.app.state.scheduled_trigger_scheduler is None
 
     assert scheduler.stopped is True
+    assert scheduler.finished.is_set() is True
 
 
 @pytest.mark.asyncio
@@ -61,3 +64,4 @@ async def test_lifespan_does_not_start_scheduler_when_disabled(monkeypatch: pyte
         assert main_module.app.state.scheduled_trigger_scheduler is scheduler
 
     assert scheduler.stopped is True
+    assert scheduler.finished.is_set() is False
