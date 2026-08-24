@@ -17,9 +17,10 @@
 
 截至本轮：
 
+- `7053f448`：补齐 `app/services/observability/service.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明，并为类及关键方法补充中文设计意图说明；不改变既有 Execution / ExecutionEvent 持久化职责，也未引入新的可观测性实现入口。
 - `0c828a0e`：补齐 `app/services/knowledge/hybrid_service.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明，保持既有 Knowledge 服务复用关系不变。
-- `4f44fb64`：记录本轮 `hybrid_service.py` 模块说明 Gate 阻塞、分析与本地验证要求。
-- `087d3d8f`：补齐 `app/services/workflow_scheduler/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明；该问题是在按 Gate 规则进行静态检查时提前发现并修复，尚未作为本地实际失败结果记录。
+- `4f44fb64`：记录 `hybrid_service.py` 模块说明 Gate 阻塞、分析与本地验证要求。
+- `087d3d8f`：补齐 `app/services/workflow_scheduler/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明；该问题是在按 Gate 规则进行静态检查时提前发现并修复，未作为本地实际失败结果记录。
 
 ## 本轮实际代码变更
 
@@ -37,6 +38,7 @@
 12. 修复 Knowledge 模块说明 Gate 阻塞：`app/services/knowledge/__init__.py` 增加固定 `职责：`、`边界：` 与 `关键依赖：` 声明，不改变 Knowledge 与 Provider 的职责边界。
 13. 按现有 Gate 的固定 `职责：` / `边界：` 校验规则持续补齐 Knowledge、Workflow Scheduler 等 required module description 文件。
 14. 修复 `app/services/knowledge/hybrid_service.py` 的模块说明缺失，仅增加职责、边界与关键依赖说明；该服务继续复用既有词法检索、向量检索和混合融合服务，没有新增重复实现。
+15. 修复 `app/services/observability/service.py` 模块说明缺失，补充职责、边界、关键依赖及关键方法中文 docstring；保持现有可观测性唯一服务入口与 Execution / ExecutionEvent 数据模型不变。
 
 ## 当前模块重构完成度
 
@@ -65,7 +67,7 @@
 - Runtime 其他领域目录收敛
 - 全部重构领域的重复实现审查与 targeted tests
 
-**当前最新用户反馈的直接 blocker 已修复：`app/services/knowledge/hybrid_service.py` 缺少固定职责/边界模块说明。修复后尚未获得开发者新的 Gate 实际执行结果，因此不得预填 Gate Passed。**
+**当前最新用户反馈的直接 blocker 已修复：`app/services/observability/service.py` 缺少固定职责/边界/关键依赖模块说明。修复后尚未获得开发者新的 Gate 实际执行结果，因此不得预填 Gate Passed。**
 
 因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移、旧路径清理、测试收敛与 Gate 验收，直到全部重构单元满足验收条件。
 
