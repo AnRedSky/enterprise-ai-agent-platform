@@ -1,5 +1,13 @@
+"""定时 Trigger API Contract 测试。
+
+职责：验证 Workflow Trigger 路由、认证要求及请求模型契约。
+边界：只验证 HTTP Contract 与 Pydantic 请求模型，不实现 Trigger 业务逻辑。
+关键依赖：FastAPI TestClient 与 Workflow v1 API Router。
+"""
+
 from fastapi.testclient import TestClient
 
+from app.api.v1.workflows.router import WorkflowTriggerCreate, WorkflowTriggerUpdate
 from app.main import app
 
 client = TestClient(app)
@@ -44,8 +52,6 @@ def test_scheduled_trigger_invoke_requires_bearer_authentication():
 
 
 def test_scheduled_trigger_request_shape_is_documented_by_route_payload_contract():
-    from app.api.workflows import WorkflowTriggerCreate, WorkflowTriggerUpdate
-
     create = WorkflowTriggerCreate.model_validate({
         "name": "nightly",
         "trigger_type": "scheduled",
