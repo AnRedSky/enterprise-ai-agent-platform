@@ -7,25 +7,15 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.services.workflow_execution import WorkflowExecutionService
+from app.services.workflow import WorkflowExecutionService
 
 
 def _execution(*, status: str) -> SimpleNamespace:
     """Build a test execution that satisfies the WorkflowExecution governance contract."""
     return SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        created_by=uuid4(),
-        status=status,
-        current_node_id=None,
-        started_at=None,
-        ended_at=None,
-        output_data=None,
-        error_code=None,
-        error_message=None,
-        input_data={},
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), created_by=uuid4(),
+        status=status, current_node_id=None, started_at=None, ended_at=None, output_data=None,
+        error_code=None, error_message=None, input_data={},
     )
 
 
