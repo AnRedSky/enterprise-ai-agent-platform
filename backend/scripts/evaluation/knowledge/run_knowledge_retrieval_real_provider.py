@@ -36,10 +36,8 @@ from app.infrastructure.providers import (
     VectorRecord,
 )
 from app.services.retrieval_evaluation import RetrievalEvaluationObservation, aggregate_observations
-from app.services.retrieval_evaluation_baseline import build_baseline, build_regression_report, compare_baseline, write_baseline
-from app.services.retrieval_evaluation_config import RetrievalEvaluationConfig, config_from_settings, resolve_api_key, validate_config
-from app.services.retrieval_evaluation_dataset import load_retrieval_evaluation_dataset
-from app.services.retrieval_evaluation_trace import RetrievalEvaluationTraceService
+from app.services.retrieval_evaluation import RetrievalEvaluationConfig, build_baseline, build_regression_report, compare_baseline, config_from_settings, resolve_api_key, validate_config, write_baseline, load_retrieval_evaluation_dataset
+from app.services.retrieval_evaluation import RetrievalEvaluationTraceService
 from app.services.knowledge.vector_retrieval import VectorKnowledgeRetrievalService
 from scripts.evaluation.knowledge.run_knowledge_retrieval_evaluation import KB_ID, VERSION_ID, actual_chunk_id, cleanup_fixture, load_jsonl, prepare_fixture
 
@@ -57,19 +55,10 @@ def _require_real_provider(config: RetrievalEvaluationConfig) -> None:
 
 
 def _build_embedding_provider(config: RetrievalEvaluationConfig):
-    common = {
-        "model": config.embedding_model,
-        "timeout_seconds": config.embedding_timeout_seconds,
-        "expected_dimension": config.embedding_dimension,
-    }
+    common = {"model": config.embedding_model, "timeout_seconds": config.embedding_timeout_seconds, "expected_dimension": config.embedding_dimension}
     if config.embedding_provider == "ollama":
         return OllamaEmbeddingProvider(base_url=config.embedding_base_url, **common)
-    return OpenAICompatibleEmbeddingProvider(
-        base_url=config.embedding_base_url,
-        api_key=config.embedding_api_key or "",
-        dimensions=config.embedding_dimension if config.embedding_dimensions_parameter_enabled else None,
-        **common,
-    )
+    return OpenAICompatibleEmbeddingProvider(base_url=config.embedding_base_url, api_key=config.embedding_api_key or "", dimensions=config.embedding_dimension if config.embedding_dimensions_parameter_enabled else None, **common)
 
 
 async def _resolve_governed_embedding_profile(db, profile_id: UUID, user_id: UUID) -> tuple[ModelProfile, ModelProvider]:
@@ -78,15 +67,7 @@ async def _resolve_governed_embedding_profile(db, profile_id: UUID, user_id: UUI
         .join(ModelProvider, ModelProvider.id == ModelProfile.provider_id)
         .join(Organization, Organization.id == ModelProvider.organization_id)
         .join(OrganizationMembership, OrganizationMembership.organization_id == Organization.id)
-        .where(
-            ModelProfile.id == profile_id,
-            ModelProfile.model_type == "embedding",
-            ModelProfile.enabled.is_(True),
-            ModelProvider.enabled.is_(True),
-            Organization.status == "active",
-            OrganizationMembership.user_id == user_id,
-            OrganizationMembership.status == "active",
-        )
+        .where(ModelProfile.id == profile_id, ModelProfile.model_type == "embedding", ModelProfile.enabled.is_(True), ModelProvider.enabled.is_(True), Organization.status == "active", OrganizationMembership.user_id == user_id, OrganizationMembership.status == "active")
     )
     row = result.first()
     if row is None:
@@ -104,30 +85,14 @@ async def _resolve_governed_embedding_profile(db, profile_id: UUID, user_id: UUI
 def _config_from_profile(config: RetrievalEvaluationConfig, profile: ModelProfile, provider: ModelProvider) -> RetrievalEvaluationConfig:
     parameters = profile.parameters or {}
     credential = resolve_api_key(provider.credential_ref)
-    dimensions_parameter_enabled = bool(
-        parameters.get("dimensions_parameter_enabled", config.embedding_dimensions_parameter_enabled)
-    )
+    dimensions_parameter_enabled = bool(parameters.get("dimensions_parameter_enabled", config.embedding_dimensions_parameter_enabled))
     timeout_seconds = float(parameters.get("timeout_seconds", config.embedding_timeout_seconds))
-    return replace(
-        config,
-        embedding_provider=provider.provider_type,
-        embedding_base_url=provider.endpoint,
-        embedding_api_key=credential,
-        embedding_model=profile.model_name,
-        embedding_timeout_seconds=timeout_seconds,
-        embedding_dimension=profile.dimension or 0,
-        embedding_dimensions_parameter_enabled=dimensions_parameter_enabled,
-    )
+    return replace(config, embedding_provider=provider.provider_type, embedding_base_url=provider.endpoint, embedding_api_key=credential, embedding_model=profile.model_name, embedding_timeout_seconds=timeout_seconds, embedding_dimension=profile.dimension or 0, embedding_dimensions_parameter_enabled=dimensions_parameter_enabled)
 
 
 def _configured_threshold_failures(config: RetrievalEvaluationConfig, metrics: dict[str, float | int]) -> list[str]:
     failures: list[str] = []
-    for metric, minimum in (
-        ("recall_at_k", config.min_recall_at_k),
-        ("precision_at_k", config.min_precision_at_k),
-        ("mrr", config.min_mrr),
-        ("citation_correctness", config.min_citation_correctness),
-    ):
+    for metric, minimum in (("recall_at_k", config.min_recall_at_k), ("precision_at_k", config.min_precision_at_k), ("mrr", config.min_mrr), ("citation_correctness", config.min_citation_correctness)):
         if minimum is not None and float(metrics[metric]) < minimum:
             failures.append(f"{metric} below configured minimum: {metrics[metric]} < {minimum}")
     if float(metrics["error_rate"]) > config.max_error_rate:
@@ -144,7 +109,6 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
     missing = sorted({chunk_id for case in dataset.cases for chunk_id in case.relevant_chunk_ids if chunk_id not in fixture_by_id})
     if missing:
         raise SystemExit(f"evaluation fixture missing relevant chunks: {missing}")
-
     evaluation_run_id = str(uuid.uuid4())
     async with SessionLocal() as db:
         owner_row = (await db.execute(text("SELECT id, tenant_id FROM users ORDER BY id LIMIT 1"))).first()
@@ -152,7 +116,6 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
             raise SystemExit("evaluation runner requires at least one user in the database")
         owner = uuid.UUID(str(owner_row[0]))
         tenant_id = uuid.UUID(str(owner_row[1])) if owner_row[1] else None
-
         profile = None
         model_provider = None
         effective_config = config
@@ -161,39 +124,10 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
             effective_config = _config_from_profile(config, profile, model_provider)
         _require_real_provider(effective_config)
         provider = _build_embedding_provider(effective_config)
-
-        evaluation_parameters = {
-            "top_k": effective_config.top_k,
-            "min_score": effective_config.min_score,
-            "min_recall_at_k": effective_config.min_recall_at_k,
-            "min_precision_at_k": effective_config.min_precision_at_k,
-            "min_mrr": effective_config.min_mrr,
-            "min_citation_correctness": effective_config.min_citation_correctness,
-            "max_error_rate": effective_config.max_error_rate,
-            "embedding_dimensions_parameter_enabled": effective_config.embedding_dimensions_parameter_enabled,
-        }
-        metadata = {
-            "evaluation_run_id": evaluation_run_id,
-            "provider": effective_config.embedding_provider,
-            "model": effective_config.embedding_model,
-            "embedding_dimension": effective_config.embedding_dimension,
-            "dataset_version": dataset.schema_version,
-            "dataset_sha256": _dataset_sha256(config.dataset_path),
-            "retrieval_mode": "real-provider-pgvector",
-            "retrieval_execution_path": "runtime-service",
-            "top_k": effective_config.top_k,
-            "citation_source": "runtime-retrieval-result",
-            "evaluation_parameters": evaluation_parameters,
-        }
+        evaluation_parameters = {"top_k": effective_config.top_k, "min_score": effective_config.min_score, "min_recall_at_k": effective_config.min_recall_at_k, "min_precision_at_k": effective_config.min_precision_at_k, "min_mrr": effective_config.min_mrr, "min_citation_correctness": effective_config.min_citation_correctness, "max_error_rate": effective_config.max_error_rate, "embedding_dimensions_parameter_enabled": effective_config.embedding_dimensions_parameter_enabled}
+        metadata = {"evaluation_run_id": evaluation_run_id, "provider": effective_config.embedding_provider, "model": effective_config.embedding_model, "embedding_dimension": effective_config.embedding_dimension, "dataset_version": dataset.schema_version, "dataset_sha256": _dataset_sha256(config.dataset_path), "retrieval_mode": "real-provider-pgvector", "retrieval_execution_path": "runtime-service", "top_k": effective_config.top_k, "citation_source": "runtime-retrieval-result", "evaluation_parameters": evaluation_parameters}
         if profile is not None and model_provider is not None:
-            metadata.update({
-                "model_profile_id": str(profile.id),
-                "provider_id": str(model_provider.id),
-                "provider_name": model_provider.provider_name,
-                "provider_type": model_provider.provider_type,
-                "model_profile_name": profile.name,
-            })
-
+            metadata.update({"model_profile_id": str(profile.id), "provider_id": str(model_provider.id), "provider_name": model_provider.provider_name, "provider_type": model_provider.provider_type, "model_profile_name": profile.name})
         await prepare_fixture(db, fixtures, owner)
         try:
             observations: list[RetrievalEvaluationObservation] = []
@@ -234,7 +168,6 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
                     latency_ms = round((time.perf_counter() - started) * 1000, 3)
                     observations.append(RetrievalEvaluationObservation(tuple(ranking), latency_ms, error, tuple(cited_chunk_ids)))
                     case_reports.append({"query": case.query, "relevant_chunk_ids": sorted(case.relevant_chunk_ids), "expected_citation_targets": sorted(case.expected_citation_targets), "retrieved_chunk_ids": ranking, "cited_chunk_ids": cited_chunk_ids, "citations": citations, "latency_ms": latency_ms, "error": error})
-
             metrics = aggregate_observations(dataset.cases, observations, k=effective_config.top_k)
             baseline_status = "not_checked"
             failures = _configured_threshold_failures(effective_config, metrics)
@@ -255,7 +188,6 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
                 regression = build_regression_report(metadata, metrics, baseline)
                 failures.extend(compare_baseline(metadata, metrics, baseline))
                 baseline_status = "checked"
-
             quality_gate = "passed" if baseline_status == "checked" and not failures else ("baseline_created" if baseline_status == "created" and not failures else "failed")
             report = {"dataset": {"path": str(dataset.source), "schema_version": dataset.schema_version, "sha256": metadata["dataset_sha256"]}, **metadata, "source": "postgresql/pgvector", "fallback_count": 0, "fallback_used": False, "baseline": {"path": str(effective_config.baseline_path), "status": baseline_status}, "regression": regression, **metrics, "cases_detail": case_reports, "quality_gate": quality_gate, "failures": failures}
             await RetrievalEvaluationTraceService(db).record_run(evaluation_run_id=evaluation_run_id, owner_id=owner, tenant_id=tenant_id, metadata=metadata, case_reports=case_reports, metrics=metrics, regression=regression, quality_gate=quality_gate, failures=failures)
@@ -267,26 +199,7 @@ async def run(config: RetrievalEvaluationConfig, freeze_baseline: bool) -> int:
 
 def _build_config(args: argparse.Namespace) -> RetrievalEvaluationConfig:
     defaults = config_from_settings(backend_root=BACKEND_ROOT, settings=settings)
-    return RetrievalEvaluationConfig(
-        embedding_provider=args.embedding_provider or defaults.embedding_provider,
-        embedding_base_url=args.embedding_base_url or defaults.embedding_base_url,
-        embedding_api_key=resolve_api_key(args.embedding_api_key_env) if args.embedding_api_key_env else defaults.embedding_api_key,
-        embedding_model=args.embedding_model or defaults.embedding_model,
-        embedding_timeout_seconds=args.embedding_timeout_seconds if args.embedding_timeout_seconds is not None else defaults.embedding_timeout_seconds,
-        embedding_dimension=args.embedding_dimension if args.embedding_dimension is not None else defaults.embedding_dimension,
-        embedding_dimensions_parameter_enabled=args.embedding_dimensions_parameter_enabled if args.embedding_dimensions_parameter_enabled is not None else defaults.embedding_dimensions_parameter_enabled,
-        dataset_path=args.dataset or defaults.dataset_path,
-        fixture_path=args.fixture or defaults.fixture_path,
-        baseline_path=args.baseline,
-        top_k=args.k,
-        min_score=args.min_score,
-        model_profile_id=UUID(args.model_profile_id) if args.model_profile_id else None,
-        min_recall_at_k=args.min_recall_at_k,
-        min_precision_at_k=args.min_precision_at_k,
-        min_mrr=args.min_mrr,
-        min_citation_correctness=args.min_citation_correctness,
-        max_error_rate=args.max_error_rate,
-    )
+    return RetrievalEvaluationConfig(embedding_provider=args.embedding_provider or defaults.embedding_provider, embedding_base_url=args.embedding_base_url or defaults.embedding_base_url, embedding_api_key=resolve_api_key(args.embedding_api_key_env) if args.embedding_api_key_env else defaults.embedding_api_key, embedding_model=args.embedding_model or defaults.embedding_model, embedding_timeout_seconds=args.embedding_timeout_seconds if args.embedding_timeout_seconds is not None else defaults.embedding_timeout_seconds, embedding_dimension=args.embedding_dimension if args.embedding_dimension is not None else defaults.embedding_dimension, embedding_dimensions_parameter_enabled=args.embedding_dimensions_parameter_enabled if args.embedding_dimensions_parameter_enabled is not None else defaults.embedding_dimensions_parameter_enabled, dataset_path=args.dataset or defaults.dataset_path, fixture_path=args.fixture or defaults.fixture_path, baseline_path=args.baseline, top_k=args.k, min_score=args.min_score, model_profile_id=UUID(args.model_profile_id) if args.model_profile_id else None, min_recall_at_k=args.min_recall_at_k, min_precision_at_k=args.min_precision_at_k, min_mrr=args.min_mrr, min_citation_correctness=args.min_citation_correctness, max_error_rate=args.max_error_rate)
 
 
 def main() -> int:
