@@ -32,10 +32,12 @@
 13. 修复 Memory 治理测试对已删除 `app.services.memory_service` 的旧入口引用，切换到 `app.services.memory` 正式入口，并补充中文测试模块说明。
 14. 修复 Workflow canonical import 后形成的 `WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 循环依赖；Runtime 在未注入 Execution Service 时才延迟解析正式入口，不恢复旧模块。
 15. 修复 Module Refactor Gate 的 PowerShell ParserError：重新明确脚本结构、失败退出码传播、旧路径检查、模块说明检查与 targeted tests 编排。
-16. 新增 `docs/04-errors/2026-08-24-backend-module-refactor-gate-parser-error.md`，记录 Gate 脚本解析错误及修复方案。
+16. 新增错误记录，记录 Workflow/Trigger canonical import 残留及本轮修复要求。
 17. 完成 Trigger 领域物理迁移：`WorkflowTriggerService`、scheduled/webhook 配置契约、`WebhookTriggerService` 统一归入 `app.services.trigger/`，删除三个旧根目录 Service 文件。
 18. 更新 Workflow API、Webhook API 与 Trigger 单元测试的正式 import 路径，并为 Trigger 新模块补充中文职责、边界和关键依赖说明。
 19. Module Refactor Gate 进一步收紧为全域 legacy path、重复实现、模块职责/边界说明、Trigger targeted tests 与 Backend Regression 的统一验收入口。
+20. 修复 Trigger Scheduler 对已删除 `app.services.workflow_trigger` 的残留引用，切换到 `app.services.trigger` 正式入口。
+21. 修复 CircuitBreaker 并发测试对已删除 `app.services.circuit_breaker` 的残留引用，切换到 `app.runtime.workflow.circuit_breaker`，并补充中文测试模块说明。
 
 ## 当前模块重构完成度
 
@@ -48,26 +50,25 @@
 
 代码迁移完成、待 Gate 验收：
 
+- Workflow
 - Trigger
-
-Workflow 当前状态：**代码迁移与 canonical import 已完成，领域 targeted tests 已恢复，但 Module Refactor Gate 仍未获得本地成功结果，因此暂不标记为迁移完成。**
 
 仍未完成：
 
-- Workflow Gate 最终验收
-- Trigger Gate 最终验收
+- Workflow / Trigger Module Refactor Gate 最终验收
 - Organization
 - Governance
 - Observability
 - Tool
 - API `v1/<domain>` 收敛
 - Runtime 其他领域目录收敛
+- `app/services/` 根目录遗留领域服务清理
 
 因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移，直到全部重构单元满足验收条件。
 
 ## 本地验证原则
 
-本轮代码修复不能由仓库端代替开发者本地测试。当前用户已实际反馈 Workflow targeted tests：`40 passed in 1.40s`，并确认 `from app.main import app` 返回 `APP_IMPORT_OK`；此前 Module Refactor Gate 为 PowerShell ParserError，当前远端已提交 Gate 修复版本。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
+本轮代码修复不能由仓库端代替开发者本地测试。用户此前已实际反馈 Workflow targeted tests：`56 passed in 1.25s`，并确认 `from app.main import app` 在前一基线返回 `APP_IMPORT_OK`；当前最新提交修复了新的 canonical import 残留，尚无新的本地 Gate 通过结果。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
 
 ### 当前完整本地验证流程
 
@@ -76,13 +77,15 @@ cd backend
 
 git fetch origin
 git reset --hard origin/main
-git log -3 --oneline
+git log -4 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger" -- "*.py"
+git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.circuit_breaker" -- "*.py"
 
 uv run pytest -q `
+  tests/unit/test_circuit_breaker.py `
+  tests/unit/test_circuit_breaker_half_open_concurrency.py `
   tests/unit/test_workflow_execution_state_machine.py `
   tests/unit/test_workflow_execution_concurrency.py `
   tests/unit/test_workflow_execution_idempotency.py `
@@ -109,10 +112,10 @@ uv run pytest -q
 
 优先顺序保持：
 
-1. 先在本地执行新版 Module Refactor Gate，取得第一个真实结构性 blocker；
+1. 先在本地执行新版 Module Refactor Gate，取得新的真实结构性 blocker；
 2. Workflow：完成 Gate 最终验收并完成迁移记录；
 3. Trigger：完成 Gate 最终验收后标记迁移完成；
-4. Organization / Governance / Observability 按实际职责完成领域收敛；
+4. 清理 `app/services/` 根目录遗留服务，并按职责迁移 Organization / Governance / Observability / Evaluation 等领域；
 5. Tool Service 与 `app/tools/` 技术实现完成唯一 Runtime 边界；
 6. API 收敛到 `app/api/v1/<domain>/`，保持现有 HTTP Contract 不变；
 7. Runtime 其他领域目录完成职责收敛；

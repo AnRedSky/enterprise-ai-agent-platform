@@ -1,93 +1,48 @@
-# Backend 模块重构：Canonical Import 残留与循环依赖导致应用与测试无法收集
+# 2026-08-24 Backend 模块重构 canonical import 残留
 
-## 1. 发生时间
+## 1. 错误
 
-2026-08-24
+Workflow Runtime 与 Trigger 领域完成物理迁移后，远端 `main` 仍存在两处已删除旧模块路径的残留引用：
 
-## 2. 问题范围
+- `app/services/workflow_scheduler/runtime.py` 仍引用已删除的 `app.services.workflow_trigger`；
+- `tests/unit/test_circuit_breaker_half_open_concurrency.py` 仍引用已删除的 `app.services.circuit_breaker`。
 
-Workflow 领域完成旧入口物理删除后，调用方仍存在两类迁移残留：
-
-- 生产代码引用已删除的 `app.services.workflow_execution` 与 `app.services.workflow_governance`；
-- Canonical import 切换后，`WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 又形成新的循环依赖。
-
-## 3. 实际表现
-
-第一阶段本地执行 `uv run python -c "from app.main import app; print('APP_IMPORT_OK')"` 时出现 `ModuleNotFoundError`；Workflow targeted tests、Webhook tests 以及 Backend Regression 在测试收集阶段因此失败。
-
-完成 canonical import 清理后，第二阶段出现：
+因此出现：
 
 ```text
-ImportError: cannot import name 'WorkflowExecutionService' from partially initialized module 'app.services.workflow'
-ImportError: cannot import name 'WorkflowRuntime' from partially initialized module 'app.runtime.workflow_runtime'
+ModuleNotFoundError: No module named 'app.services.workflow_trigger'
 ```
 
-这说明旧入口残留已经清除，但直接把两个高层模块改成互相顶层 import 仍然违反依赖方向。
-
-同时，模块重构 Gate 的目标是旧模块路径必须为 0，因此不能通过重新创建兼容垫片解决。
-
-## 4. 根因
-
-本次 Workflow 完整迁移涉及两个不同层级：
-
-- `WorkflowExecutionService` 是 Workflow 领域服务，负责 Execution / Node Execution 状态机，并委托 Runtime 执行节点；
-- `WorkflowRuntime` 是运行时编排层，需要在没有显式注入 Execution Service 的测试/调用场景下创建正式 Workflow Execution Service。
-
-如果两者都在模块加载阶段通过顶层 import 互相依赖，就形成：
+以及 Module Refactor Gate 报告：
 
 ```text
-services.workflow.__init__
-  -> services.workflow.execution
-      -> runtime.workflow_runtime
-          -> services.workflow
+Legacy import path still exists: app\.services\.circuit_breaker
 ```
 
-因此问题不是缺少业务实现，而是 canonical module migration 后暴露出的循环依赖。
+## 2. 根因
 
-## 5. 修复原则
+领域代码完成物理迁移后，部分调度器和并发测试没有同步切换到新的正式入口。旧模块文件已删除，兼容垫片也被治理规则明确禁止，因此旧 import 不能继续工作。
 
-按照 `docs/01-governance/DEVELOPMENT.md` 与 Backend Module Architecture 的完全重构原则：
+## 3. 修复
 
-1. 生产代码统一使用 `app.services.workflow` 正式入口；
-2. 不恢复 `workflow_execution.py`、`workflow_governance.py`、`workflow_registry.py` 等旧入口；
-3. 不创建兼容垫片，不复制第二套 Workflow Execution / Governance / Runtime 实现；
-4. Runtime 保留 `execution_service` 依赖注入；只有未注入时才在 `execute()` 内延迟解析正式 `app.services.workflow` 入口，从而避免模块初始化循环；
-5. 保持 API Contract、数据库结构和 Runtime 业务语义不变；
-6. 相关模块继续补充中文职责、边界和关键依赖说明。
+- `app.services.workflow_trigger` → `app.services.trigger`；
+- `app.services.circuit_breaker` → `app.runtime.workflow.circuit_breaker`；
+- 为 CircuitBreaker 并发测试补充中文模块职责、边界和关键依赖说明；
+- 不恢复旧文件、不新增兼容转发、不复制第二套实现。
 
-## 6. 验证要求
+对应提交：`0d3dba6 fix(refactor): finish canonical trigger and circuit imports`
 
-本地必须重新执行：
+## 4. 验证要求
+
+本错误的修复结果必须由本地开发环境实际执行确认，不以 GitHub Actions 作为验收依据：
 
 ```powershell
 cd backend
-
-git fetch origin
-git reset --hard origin/main
-
-git log -3 --oneline
-
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
-
-git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry" -- "*.py"
-
-uv run pytest -q `
-  tests/unit/test_workflow_execution_state_machine.py `
-  tests/unit/test_workflow_execution_concurrency.py `
-  tests/unit/test_workflow_execution_idempotency.py `
-  tests/unit/test_workflow_execution_governance.py `
-  tests/unit/test_workflow_execution_retry_transition.py `
-  tests/unit/test_workflow_governance.py `
-  tests/unit/test_workflow_publish_governance.py `
-  tests/unit/test_workflow_retry_budget.py `
-  tests/unit/test_workflow_retry_policy.py `
-  tests/unit/test_workflow_runtime.py `
-  tests/unit/test_workflow_runtime_timeout.py `
-  tests/unit/test_webhook_trigger.py
-
+git grep -n -E "app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.circuit_breaker" -- "*.py"
+uv run pytest -q tests/unit/test_circuit_breaker.py tests/unit/test_circuit_breaker_half_open_concurrency.py tests/unit/test_workflow_trigger.py tests/unit/test_workflow_trigger_schedule.py tests/unit/test_webhook_trigger.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
-
 uv run pytest -q
 ```
 
-记录以上命令的实际本地结果；未执行的结果不得标记为通过。
+在上述命令未由本地实际执行并反馈前，不得记录 Module Refactor Gate 或 Backend Regression 已通过。
