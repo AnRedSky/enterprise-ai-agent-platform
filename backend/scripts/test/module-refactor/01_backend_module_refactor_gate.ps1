@@ -127,7 +127,7 @@ $legacyImportPatterns = @(
     "app\.services\.workflow_trigger_schedule",
     "app\.services\.webhook_trigger",
     "app\.services\.observability_service",
-    "app\.services\.retrieval_evaluation(?:_baseline|_config|_dataset|_trace)?",
+    "app\.services\.retrieval_evaluation_",
     "app\.services\.runtime_query",
     "app\.services\.tool_audit",
     "app\.services\.tool_observability",
