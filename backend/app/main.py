@@ -40,7 +40,8 @@ async def lifespan(app: FastAPI):
         异步上下文管理器本身；进入上下文完成启动准备，退出上下文负责停止后台任务。
 
     重要副作用：当 `scheduler_enabled` 开启时创建后台 Scheduler 任务；应用退出时先请求
-    Scheduler 停止，再取消并等待后台任务，避免遗留进程级轮询任务。
+    Scheduler 停止并等待其自然退出，只有后台任务未能响应停止请求时才取消任务，避免正常关闭
+    路径依赖强制取消而跳过 Scheduler 自身的清理边界。
     """
     scheduler = ScheduledTriggerScheduler(settings.scheduler_poll_interval_seconds)
     task: asyncio.Task | None = None
@@ -52,8 +53,13 @@ async def lifespan(app: FastAPI):
     finally:
         scheduler.stop()
         if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            try:
+                # run_forever() 在 stop() 后会结束当前轮询，不应把正常退出当成取消任务处理。
+                await asyncio.wait_for(asyncio.shield(task), timeout=max(settings.scheduler_poll_interval_seconds, 1.0) + 1.0)
+            except asyncio.TimeoutError:
+                # 兜底仅用于异常卡住的后台任务；正常退出路径必须先完成 stop + wait。
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
 
 app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
