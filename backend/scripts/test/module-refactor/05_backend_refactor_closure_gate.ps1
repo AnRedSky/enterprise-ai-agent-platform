@@ -141,9 +141,12 @@ $env:REFACTOR_CLOSURE_DESCRIPTION_FILES = $descriptionFiles -join "|"
 $descriptionCheck = @"
 from pathlib import Path
 import os
+
+# 使用 Unicode 转义避免 PowerShell 管道在不同代码页下破坏中文字符串，保证 Gate 在 Windows 本地环境稳定执行。
+required_markers = ("\u804c\u8d23\uff1a", "\u8fb9\u754c\uff1a")
 for name in os.environ["REFACTOR_CLOSURE_DESCRIPTION_FILES"].split("|"):
     text = Path(name).read_text(encoding="utf-8")
-    if "职责：" not in text or "边界：" not in text:
+    if any(marker not in text for marker in required_markers):
         raise SystemExit(f"Canonical module description or boundary is missing: {name}")
 "@
 $descriptionCheck | uv run python -
