@@ -4,20 +4,20 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.agents import router as agents_router
-from app.api.auth import router as auth_router
-from app.api.chat import router as chat_router
-from app.api.knowledge import router as knowledge_router
-from app.api.knowledge_ingestion import router as knowledge_ingestion_router
-from app.api.knowledge_retrieval import router as knowledge_retrieval_router
-from app.api.model_providers import router as model_providers_router
-from app.api.organizations import router as organizations_router
-from app.api.runtime import router as runtime_router
-from app.api.tools import router as tools_router
-from app.api.usage import router as usage_router
-from app.api.webhooks import router as webhooks_router
-from app.api.workflow_executions import router as workflow_executions_router
-from app.api.workflows import router as workflows_router
+from app.api.v1.agents.chat import router as chat_router
+from app.api.v1.agents.router import router as agents_router
+from app.api.v1.auth.router import router as auth_router
+from app.api.v1.knowledge.ingestion import router as knowledge_ingestion_router
+from app.api.v1.knowledge.retrieval import router as knowledge_retrieval_router
+from app.api.v1.knowledge.router import router as knowledge_router
+from app.api.v1.model_providers.router import router as model_providers_router
+from app.api.v1.organizations.router import router as organizations_router
+from app.api.v1.runtime.router import router as runtime_router
+from app.api.v1.tools.router import router as tools_router
+from app.api.v1.usage.router import router as usage_router
+from app.api.v1.webhooks.router import router as webhooks_router
+from app.api.v1.workflows.executions import router as workflow_executions_router
+from app.api.v1.workflows.router import router as workflows_router
 from app.core.config import settings
 from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
