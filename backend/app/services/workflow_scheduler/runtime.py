@@ -2,7 +2,7 @@
 
 职责：从 PostgreSQL Scheduler 状态恢复到期任务，使用 lease + slot 完成多实例 ownership 与执行幂等。
 边界：不创建第二套数据库 Session、不复制 Workflow 执行逻辑；实际执行继续复用 WorkflowTriggerService。
-关键依赖：`app.infrastructure.db.SessionLocal`、WorkflowSchedulerRepository、WorkflowTriggerService 与 Scheduler Contract。
+关键依赖：`app.infrastructure.db.SessionLocal`、WorkflowSchedulerRepository、Trigger 领域服务与 Scheduler Contract。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外�
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.workflow_scheduler.repository import WorkflowSchedulerRepository
-from app.services.workflow_trigger import WorkflowTriggerService
+from app.services.trigger import WorkflowTriggerService
 
 logger = logging.getLogger(__name__)
 

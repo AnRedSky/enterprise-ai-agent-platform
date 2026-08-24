@@ -1,3 +1,10 @@
+"""Workflow Runtime 熔断器并发行为测试。
+
+职责：验证 HALF_OPEN 探针配额、策略一致性及恢复窗口隔离。
+边界：只验证 Workflow Runtime CircuitBreaker，不覆盖其他 Workflow 执行逻辑。
+关键依赖：`app.runtime.workflow.circuit_breaker.CircuitBreakerService`。
+"""
+
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -6,7 +13,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError, _probe_context
+from app.runtime.workflow.circuit_breaker import CircuitBreakerService, CircuitOpenError, _probe_context
 
 
 def _service(state):
