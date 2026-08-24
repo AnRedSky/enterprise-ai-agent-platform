@@ -17,33 +17,16 @@
 
 ## 本轮实际代码变更
 
-1. 完成 Model Service 从 `app/services/model_provider.py` 到 `app/services/model/` 的物理迁移。
-2. 完成 Model Governance Contract 从 `app/services/model_provider_governance_contract.py` 到 `app/services/model/contract.py` 的迁移。
-3. 完成 Model Routing 从旧 Contract 文件中独立归位到 `app/services/model/routing.py`，避免 API/Runtime 重复实现路由规则。
-4. 完成 Runtime Model Governance 从 `app/services/runtime_model_governance.py` 到 `app/services/model/governance.py` 的迁移。
-5. 完成 Model Gateway 从 `app/runtime/model_gateway.py` 到 `app/runtime/model/gateway.py` 的迁移。
-6. 将 Model Provider Contract、OpenAI-compatible Provider、Mock Provider 统一收敛到 `app/infrastructure/providers/`。
-7. 删除旧 Model Service、Governance、Runtime Provider 文件，不保留兼容垫片。
-8. 更新 Chat、Workflow Runtime、Model Provider API 与 Model 相关测试的正式 import 路径。
-9. Module Refactor Gate 增加 Model 目录、旧路径、旧 import、Provider 文件及 Model targeted tests 检查。
-10. 新增/重构 Model 模块补充中文职责、边界和关键依赖说明。
-11. 未新增数据库 Migration；Model 数据结构不因目录重构发生变化。
-12. 修复 Model 迁移后 `UsageAccountingService` 对已删除旧 Contract 路径的残留引用，切换到 `app.services.model.contract` 正式入口。
-13. 修复 Memory 治理测试对已删除 `app.services.memory_service` 的旧入口引用，切换到 `app.services.memory` 正式入口，并补充中文测试模块说明。
-14. 修复 Workflow canonical import 后形成的 `WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 循环依赖；Runtime 在未注入 Execution Service 时才延迟解析正式入口，不恢复旧模块。
-15. 修复 Module Refactor Gate 的 PowerShell ParserError：重新明确脚本结构、失败退出码传播、旧路径检查、模块说明检查与 targeted tests 编排。
-16. 新增错误记录，记录 Workflow/Trigger canonical import 残留及本轮修复要求。
-17. 完成 Trigger 领域物理迁移：`WorkflowTriggerService`、scheduled/webhook 配置契约、`WebhookTriggerService` 统一归入 `app.services.trigger/`，删除三个旧根目录 Service 文件。
-18. 更新 Workflow API、Webhook API 与 Trigger 单元测试的正式 import 路径，并为 Trigger 新模块补充中文职责、边界和关键依赖说明。
-19. Module Refactor Gate 进一步收紧为全域 legacy path、重复实现、模块职责/边界说明、Trigger targeted tests 与 Backend Regression 的统一验收入口。
-20. 修复 Trigger Scheduler 对已删除 `app.services.workflow_trigger` 的残留引用，切换到 `app.services.trigger` 正式入口。
-21. 修复 CircuitBreaker 并发测试对已删除 `app.services.circuit_breaker` 的残留引用，切换到 `app.runtime.workflow.circuit_breaker`，并补充中文测试模块说明。
-22. 修复剩余两个 Trigger 测试收集阶段旧 import：`test_webhook_trigger_integration.py` 与 `test_webhook_trigger_config.py` 统一切换到正式 `app.services.trigger` 入口，并记录错误原因。
-23. 完成 Organization Service 物理迁移到 `app/services/organization/`，删除 `app/services/organization.py`，保留单一实现并通过 `__init__.py` 暴露正式入口。
-24. 完成 Observability Service 物理迁移到 `app/services/observability/`，并同步将 Retrieval Evaluation Trace 的依赖切换到正式 Observability 入口。
-25. 完成 `app/services/` 根目录剩余 Retrieval Evaluation、Runtime Query、Session、Tool Audit/Observability/RBAC/Repository/Runtime、Usage Accounting 的物理迁移为领域子模块包；原实现通过 blob 原样迁移，未新增第二套功能实现。
-26. 为本轮新增领域包补充中文职责、边界与关键依赖说明；Retrieval Evaluation 统一通过 `app.services.retrieval_evaluation` 暴露质量指标、dataset、baseline、config 与 trace 能力。
-27. 删除上述 root service 文件，不使用旧文件转发或兼容实现；当前尚未宣称 Module Refactor Gate / Backend Regression 已通过，必须由开发者本地实际执行确认。
+1. 完成 Model Service、Governance Contract、Routing、Runtime Governance、Model Gateway 与 Provider 的物理迁移。
+2. 完成 Memory、Agent、Knowledge、Workflow、Trigger、Organization、Observability、Retrieval Evaluation、Runtime Query、Session、Usage Accounting 等既有迁移单元的代码归位，并持续执行最终 Gate 验收。
+3. 修复 Workflow canonical import 循环依赖；修复 Trigger Scheduler、CircuitBreaker 与 Trigger 测试的旧入口残留。
+4. 修复 Module Refactor Gate 的 PowerShell ParserError，并持续收紧旧路径、重复实现与模块说明检查。
+5. 完成 Tool 领域的最终代码归位：`app.services.tool` 统一承载 Tool Runtime、RBAC、Audit、Observability 与 Repository；`app.tools` 仅承载 HTTP/Schema 技术执行。
+6. 删除 `app/services/tool_audit`、`tool_observability`、`tool_rbac`、`tool_repository`、`tool_runtime_service` 五个旧领域包，不保留兼容转发。
+7. 更新 Tool API 与受影响单元/集成测试到 `app.services.tool` 正式入口，避免测试通过旧模块名继续维持双入口。
+8. 为 Tool 新模块补充中文职责、边界和关键依赖说明，并把 Tool 模块纳入 Module Refactor Gate 的 required files、legacy paths 与 targeted tests 检查。
+9. 修复 Module Refactor Gate 的中文源码编码问题：模块说明检查改由 Python 按 UTF-8 读取，避免 Windows PowerShell 5.1 默认代码页导致正则字符串损坏。
+10. 本轮没有新增数据库 Migration；目录重构不改变 Tool 数据结构。
 
 ## 当前模块重构完成度
 
@@ -76,7 +59,7 @@
 
 ## 本地验证原则
 
-本轮代码修复不能由仓库端代替开发者测试。用户此前已实际反馈 Workflow/Trigger targeted tests：`74 passed in 1.97s`，并确认前一基线 `from app.main import app` 返回 `APP_IMPORT_OK`；本轮新增的 root service 物理迁移尚无新的本地 Gate / Regression 通过结果。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
+仓库端不能代替开发者本地测试。本轮用户此前反馈的 Workflow/Trigger targeted tests `74 passed` 仅证明上一基线；Tool 合并后的新 Gate / Regression 尚无用户本地通过结果。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
 
 ### 当前完整本地验证流程
 
@@ -89,9 +72,14 @@ git log -8 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.circuit_breaker" -- "*.py"
+git grep -n -E "app\.services\.circuit_breaker|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.tool_audit|app\.services\.tool_observability|app\.services\.tool_rbac|app\.services\.tool_repository|app\.services\.tool_runtime_service|app\.services\.observability_service" -- "*.py"
 
 uv run pytest -q `
+  tests/unit/test_tool_audit.py `
+  tests/unit/test_tool_runtime.py `
+  tests/unit/test_tool_runtime_service.py `
+  tests/unit/test_tool_runtime_failures.py `
+  tests/unit/test_tool_runtime_security.py `
   tests/unit/test_circuit_breaker.py `
   tests/unit/test_circuit_breaker_half_open_concurrency.py `
   tests/unit/test_workflow_execution_state_machine.py `
@@ -122,7 +110,7 @@ uv run pytest -q
 
 1. 先在本地执行新版 Module Refactor Gate，取得本轮真实结构性 blocker；
 2. 修复 Gate 暴露的生产/测试 import、模块说明或重复实现问题，并补充对应错误记录；
-3. Workflow / Trigger / Organization / Observability / Retrieval Evaluation / Runtime Query / Session / Tool / Usage Accounting 逐领域完成 targeted tests 与迁移记录；
+3. 对 Workflow、Trigger、Organization、Observability、Retrieval Evaluation、Runtime Query、Session、Tool、Usage Accounting 逐领域完成 targeted tests 与迁移记录；
 4. 完成 Governance 领域及 API `v1/<domain>` 收敛，保持现有 HTTP Contract 不变；
 5. Runtime 其他领域目录完成职责收敛；
 6. 全部重构领域逐一通过 Module Refactor Gate 与 Backend Regression 后，才恢复 Phase 2.4 主线后续任务。
