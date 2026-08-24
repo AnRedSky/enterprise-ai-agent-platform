@@ -18,7 +18,7 @@ from app.infrastructure.providers.openai_model import OpenAICompatibleProvider
 
 
 class ModelGateway:
-    """Unified model entrypoint; provider details must not leak into Agent Runtime."""
+    """模型统一调用入口，禁止将 Provider 技术细节泄漏到 Agent Runtime。"""
 
     def __init__(self, provider=None):
         self.provider = provider or (
