@@ -1,6 +1,8 @@
 """Ollama Embedding 技术适配器。
 
-负责 Ollama ``/api/embed`` HTTP 调用、重试和维度校验；不包含 Knowledge 领域业务规则。
+职责：负责 Ollama ``/api/embed`` HTTP 调用、有限重试和向量维度校验。
+边界：只负责 Ollama 技术协议适配，不包含 Knowledge 领域业务规则或 Provider 路由治理。
+关键依赖：httpx、asyncio，以及统一 EmbeddingProviderError。
 """
 
 from __future__ import annotations
@@ -103,8 +105,7 @@ class OllamaEmbeddingProvider:
         self.dimension = actual_dimension
         return vectors
 
-    def _create_client(self) -> httpx.AsyncClient:
-        """为本地 Ollama 禁用环境代理，避免 Docker 请求被代理拦截。"""
+    def _create_client(self) ->n        """为本地 Ollama 禁用环境代理，避免 Docker 请求被代理拦截。"""
         hostname = urlparse(self.base_url).hostname
         trust_env = hostname not in {"localhost", "127.0.0.1", "::1"}
         return httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=trust_env)
