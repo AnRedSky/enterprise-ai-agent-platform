@@ -105,7 +105,7 @@ class OllamaEmbeddingProvider:
         self.dimension = actual_dimension
         return vectors
 
-    def _create_client(self) -> None:
+    def _create_client(self) -> httpx.AsyncClient:
         """为本地 Ollama 禁用环境代理，避免 Docker 请求被代理拦截。"""
         hostname = urlparse(self.base_url).hostname
         trust_env = hostname not in {"localhost", "127.0.0.1", "::1"}
