@@ -1,3 +1,10 @@
+"""Runtime 查询服务模块。
+
+职责：提供执行、事件、审计日志和 Workflow Trace 的分页查询、过滤与权限范围控制。
+边界：只负责查询业务规则与访问范围，不负责执行编排、审计写入或数据库 Session 创建。
+关键依赖：SQLAlchemy AsyncSession，以及 Execution、AuditLog、Workflow 和组织治理模型。
+"""
+
 from uuid import UUID
 
 from sqlalchemy import Select, cast, func, or_, select, String
