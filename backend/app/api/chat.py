@@ -13,7 +13,7 @@ from app.runtime.memory import build_memory_context
 from app.runtime.model import ModelGateway
 from app.services.knowledge.retrieval import KnowledgeRetrievalService
 from app.services.memory import MemoryService
-from app.services.observability_service import ObservabilityService
+from app.services.observability import ObservabilityService
 from app.services.session_service import SessionService
 
 router = APIRouter()
