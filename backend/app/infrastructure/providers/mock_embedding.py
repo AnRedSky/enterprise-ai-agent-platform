@@ -1,6 +1,8 @@
 """离线 Embedding 测试适配器。
 
-提供确定性的本地向量实现，仅用于离线检索验证和单元测试，不代表真实模型语义质量。
+职责：提供确定性的本地向量实现，用于离线检索验证和单元测试。
+边界：仅承担测试用 Provider 技术适配，不代表真实模型语义质量，也不参与生产 Provider 路由。
+关键依赖：Python hashlib、math、re 标准库，以及统一 EmbeddingProviderError。
 """
 
 from __future__ import annotations
