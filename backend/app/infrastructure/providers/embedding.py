@@ -1,6 +1,8 @@
 """Embedding Provider 技术适配。
 
-定义统一的 Embedding Contract，并提供 OpenAI-compatible 远程适配器；具体业务领域不在此实现。
+职责：定义统一的 Embedding Contract，并提供 OpenAI-compatible 远程适配器。
+边界：只负责外部 Embedding 协议适配与向量格式校验，不包含 Knowledge 领域业务规则。
+关键依赖：Python typing 与 httpx；具体业务领域不在此实现。
 """
 
 from __future__ import annotations
