@@ -5,27 +5,16 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.services.workflow_execution import WorkflowExecutionService
+from app.services.workflow import WorkflowExecutionService
 
 
 @pytest.mark.asyncio
 async def test_cancel_allows_pending_and_running_only():
-    db = AsyncMock()
-    # AsyncSession.add() is synchronous; keep it as a regular Mock so the
-    # governance audit/trace path does not create un-awaited coroutines.
-    db.add = Mock()
+    db = AsyncMock(); db.add = Mock()
     service = WorkflowExecutionService(db)
     actor_id = uuid4()
-    execution = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        status="pending",
-    )
-
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="pending")
     result = await service.cancel(execution, actor_id)
-
     assert result.status == "cancelled"
     assert db.add.call_count == 2
     db.flush.assert_awaited()
@@ -35,48 +24,22 @@ async def test_cancel_allows_pending_and_running_only():
 async def test_cancel_rejects_terminal_execution():
     service = WorkflowExecutionService(AsyncMock())
     execution = SimpleNamespace(status="completed")
-
     with pytest.raises(HTTPException) as exc:
         await service.cancel(execution, uuid4())
-
     assert exc.value.status_code == 409
 
 
 @pytest.mark.asyncio
 async def test_retry_creates_new_execution_with_lineage():
-    db = AsyncMock()
-    # AsyncSession.add() is synchronous; keep it as a regular Mock so the
-    # test does not create an un-awaited coroutine while asserting persistence.
-    db.add = Mock()
-    version = SimpleNamespace(
-        definition={
-            "nodes": [
-                {"id": "input", "type": "input"},
-                {"id": "output", "type": "output"},
-            ],
-            "edges": [],
-        }
-    )
-    # AsyncSession.execute() is awaited by the service, so configure the
-    # awaited result rather than chaining through AsyncMock.return_value.
+    db = AsyncMock(); db.add = Mock()
+    version = SimpleNamespace(definition={"nodes": [{"id": "input", "type": "input"}, {"id": "output", "type": "output"}], "edges": []})
     db.execute.return_value = SimpleNamespace(scalar_one=lambda: version)
     service = WorkflowExecutionService(db)
-    service.governance.audit = AsyncMock()
-    service.governance.trace = AsyncMock()
-    actor_id = uuid4()
-    original_id = uuid4()
-    execution = SimpleNamespace(
-        id=original_id,
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        created_by=uuid4(),
-        status="failed",
-        input_data={"source": "retry"},
-    )
-
+    service.governance.audit = AsyncMock(); service.governance.trace = AsyncMock()
+    actor_id = uuid4(); original_id = uuid4()
+    execution = SimpleNamespace(id=original_id, tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(),
+                                created_by=uuid4(), status="failed", input_data={"source": "retry"})
     result = await service.retry(execution, actor_id)
-
     assert result.status == "pending"
     assert result.retry_of_execution_id == original_id
     assert result.workflow_id == execution.workflow_id
@@ -91,8 +54,6 @@ async def test_retry_creates_new_execution_with_lineage():
 async def test_retry_rejects_non_failed_execution():
     service = WorkflowExecutionService(AsyncMock())
     execution = SimpleNamespace(status="cancelled")
-
     with pytest.raises(HTTPException) as exc:
         await service.retry(execution, uuid4())
-
     assert exc.value.status_code == 409
