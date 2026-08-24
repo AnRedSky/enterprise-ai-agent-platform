@@ -2,7 +2,7 @@
 
 模块职责：执行已发布 Workflow Definition 的顺序节点、超时、重试、熔断与模型治理调用。
 边界：不实现模型 Provider 或模型路由规则；模型调用统一通过 runtime.model.ModelGateway 和 services.model 治理服务。
-关键外部依赖：SQLAlchemy AsyncSession、WorkflowExecutionService、CircuitBreakerService 与 ModelProviderRoutingRequest。
+关键依赖：SQLAlchemy AsyncSession、WorkflowExecutionService、CircuitBreakerService 与 ModelProviderRoutingRequest。
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from app.runtime.model import ModelGateway
 from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 from app.services.model import RuntimeModelGovernanceService
-from app.services.workflow import WorkflowExecutionService
 
 
 class WorkflowRuntime:
@@ -151,6 +150,12 @@ class WorkflowRuntime:
 
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False) -> dict:
         """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。"""
+        if self.execution_service is None:
+            from app.services.workflow import WorkflowExecutionService
+
+            service = WorkflowExecutionService(self.db)
+        else:
+            service = self.execution_service
         nodes = self.validate_definition(version.definition)
         runtime_config = version.definition.get("config") or {}
         workflow_timeout = self.resolve_timeout_ms(runtime_config)
@@ -161,7 +166,6 @@ class WorkflowRuntime:
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0 or max_retries > 20:
             raise HTTPException(422, "retry_budget.max_retries 必须在 0-20 范围内")
 
-        service = self.execution_service or WorkflowExecutionService(self.db)
         current_data = dict(execution.input_data or {})
         started = asyncio.get_running_loop().time()
         workflow_retries = 0
