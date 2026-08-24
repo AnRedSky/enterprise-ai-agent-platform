@@ -17,7 +17,7 @@ from .embedding import EmbeddingProviderError
 
 
 class OllamaEmbeddingProvider:
-    """Native Ollama embedding adapter with the same dimension contract."""
+    """Ollama Embedding Provider 的统一技术适配器。"""
 
     _RETRYABLE_STATUS_CODES = frozenset({502, 503, 504})
 
@@ -105,7 +105,8 @@ class OllamaEmbeddingProvider:
         self.dimension = actual_dimension
         return vectors
 
-    def _create_client(self) ->n        """为本地 Ollama 禁用环境代理，避免 Docker 请求被代理拦截。"""
+    def _create_client(self) -> None:
+        """为本地 Ollama 禁用环境代理，避免 Docker 请求被代理拦截。"""
         hostname = urlparse(self.base_url).hostname
         trust_env = hostname not in {"localhost", "127.0.0.1", "::1"}
         return httpx.AsyncClient(timeout=self.timeout_seconds, trust_env=trust_env)
