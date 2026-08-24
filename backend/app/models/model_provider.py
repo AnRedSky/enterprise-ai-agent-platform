@@ -1,3 +1,10 @@
+"""模型供应商与模型配置的持久化模型。
+
+职责：定义组织级模型供应商及模型档案的 SQLAlchemy ORM 映射。
+边界：只负责数据库持久化结构，不实现 Provider 技术适配、路由策略或模型调用。
+关键外部依赖：SQLAlchemy ORM，以及项目统一的 Base 与时间类型。
+"""
+
 from datetime import datetime
 from uuid import UUID, uuid4
 

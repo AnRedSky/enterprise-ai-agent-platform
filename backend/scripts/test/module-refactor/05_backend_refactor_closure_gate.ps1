@@ -91,8 +91,10 @@ foreach ($root in @("app/services", "app/runtime")) {
 }
 
 # Provider 是技术适配的唯一入口；同名 Provider 类不得在领域 Service / Runtime 中再次实现。
+# ORM 持久化模型也可能使用 ModelProvider 这一命名，但它属于 app/models，不能被当成 Provider 技术实现。
 $providerDefinitions = @(git grep -n -E "^class [A-Za-z0-9_]*Provider\b" -- "app/*.py" "app/**/*.py" 2>$null)
 $providerOutsideInfrastructure = @($providerDefinitions | Where-Object { $_ -notmatch "^app/infrastructure/providers/" })
+$providerOutsideInfrastructure = @($providerOutsideInfrastructure | Where-Object { $_ -notmatch "^app/models/" })
 $providerOutsideInfrastructure = @($providerOutsideInfrastructure | Where-Object { $_ -notmatch "app/services/model/provider\.py" })
 if ($providerOutsideInfrastructure.Count -gt 0) {
     $providerOutsideInfrastructure | ForEach-Object { Write-Host $_ }
