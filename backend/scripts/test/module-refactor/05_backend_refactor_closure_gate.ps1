@@ -19,7 +19,7 @@ foreach ($path in $requiredRoots) {
     }
 }
 
-# 重构完成后，旧的扁平领域入口不得重新出现。
+# 重构完成后，旧的扁平领域实现文件不得重新出现。
 $forbiddenFiles = @(
     "app/services/agent_registry.py",
     "app/services/knowledge_ingestion.py",
@@ -65,9 +65,11 @@ foreach ($path in $forbiddenFiles) {
     }
 }
 
+# API 与 Runtime 的旧路径可以通过明确的模块名判断；Service 领域则不同：迁移后的正式包保留原领域名，
+# 例如 app.services.organization 现在解析到 app/services/organization/__init__.py，因此不能把该 canonical import
+# 误判为旧路径。Service 是否完成迁移由旧扁平文件检查和根目录边界检查共同保证。
 $forbiddenImports = @(
     "app\.api\.(agents|auth|chat|knowledge|knowledge_ingestion|knowledge_retrieval|model_providers|organizations|runtime|tools|usage|webhooks|workflows|workflow_executions)",
-    "app\.services\.(agent_registry|knowledge_ingestion|knowledge_registry|knowledge_retrieval|knowledge_retrieval_contract|knowledge_vector_indexing|hybrid_knowledge_retrieval|hybrid_knowledge_retrieval_service|vector_knowledge_retrieval|memory_service|embedding_provider|mock_embedding_provider|ollama_embedding_provider|vector_retrieval_provider|model_provider|model_provider_governance_contract|runtime_model_governance|circuit_breaker|workflow_execution|workflow_governance|workflow_registry|workflow_trigger|workflow_trigger_schedule|webhook_trigger|organization|observability_service|retrieval_evaluation|runtime_query|session_service|usage_accounting)",
     "app\.runtime\.(workflow_runtime|model_gateway|memory_context|provider|openai_provider|agent_runtime)",
     "app\.tools\.registry"
 )
