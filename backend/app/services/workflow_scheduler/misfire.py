@@ -2,7 +2,7 @@
 
 职责：根据持久化 next_run_at、当前时间与 misfire policy 计算本轮允许处理的槽位。
 边界：只计算调度槽位，不执行数据库写入、租约操作或 Workflow Execution。
-关键依赖：Scheduler Contract 中的 MisfirePolicy、ScheduleSlot。
+关键依赖：Scheduler 模型定义与统一的时间槽位构造函数。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Sequence
 from uuid import UUID
 
 from .models import MisfirePolicy, ScheduleSlot
-from .contract import build_schedule_slot
+from .time import build_schedule_slot
 
 
 def choose_misfire_slots(
@@ -21,7 +21,7 @@ def choose_misfire_slots(
     *,
     catch_up_limit: int = 10,
 ) -> tuple[ScheduleSlot, ...]:
-    """根据 Contract 决定错过槽位的补偿集合，不执行数据库或 Runtime 操作。"""
+    """根据 misfire 策略决定错过槽位的补偿集合，不执行数据库或 Runtime 操作。"""
     ordered = tuple(sorted(missed_slots, key=lambda item: item.planned_at))
     if not ordered or policy is MisfirePolicy.SKIP:
         return ()
@@ -63,7 +63,7 @@ def next_run_after_misfire(
     now: datetime,
     interval_seconds: int,
 ) -> datetime:
-    """计算本轮补偿后的下一运行时间；fire_once/skip 直接回到未来，catch_up 保留未处理积压。"""
+    """计算本轮补偿后的下一运行时间；不同策略统一回到未来调度轴。"""
     if interval_seconds < 1:
         raise ValueError("interval_seconds 必须大于 0")
     current = now.astimezone(UTC) if now.tzinfo else now.replace(tzinfo=UTC)
