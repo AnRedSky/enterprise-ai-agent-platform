@@ -1,6 +1,8 @@
 """Knowledge 向量检索领域服务。
 
-负责检索策略、租户权限和结果水合；Embedding 与向量数据库均通过唯一 Infrastructure Provider 实现。
+职责：负责向量检索策略编排、租户权限过滤、结果水合以及词法检索降级选择。
+边界：不实现 Embedding 或向量数据库协议；这些外部技术能力只能通过 infrastructure/providers 的正式入口调用。
+关键依赖：SQLAlchemy AsyncSession、KnowledgeRetrievalService 与 infrastructure/providers 的唯一 Embedding / Vector Provider 实现。
 """
 
 from __future__ import annotations
