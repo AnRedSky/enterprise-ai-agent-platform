@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
-from app.runtime.workflow_runtime import WorkflowRuntime
+from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
 from app.services.trigger.schedule import validate_trigger_config
 
