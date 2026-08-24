@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate 已由开发者本地实际执行通过；当前进入 Scheduler 生命周期与生产化 Acceptance 收口。**
+> 状态：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate 已由开发者本地实际执行通过；当前进入真实服务重启与生产化 Acceptance 收口。**
 > 评估日期：2026-08-24
 > 优先级：**P1**
 
@@ -114,52 +114,54 @@ catch_up_limit: 1..100，默认 10
 
 misfire 计算统一位于 `workflow_scheduler/misfire.py`，Runtime 不复制规则。
 
-## 8. 本轮 Gate 结果
+## 8. 已完成 Gate 结果
 
 开发者本地实际反馈：
 
 ```text
 Application import：APP_IMPORT_OK
-Scheduler targeted tests：34 passed
-04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、395 Backend regression 均通过；3 skipped，35 deselected
+05_scheduler_lifecycle_gate.ps1：2 passed
+Scheduler targeted tests：36 passed
+04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、397 Backend regression 均通过；3 skipped，35 deselected
 01_run_real_api_tests_tenant_safe.ps1：35 passed
+uv run pytest -q：397 passed，3 skipped，35 deselected
 ```
 
-因此，前一轮 tenant isolation / misfire 与 Real API blocker 已关闭。Real API 已验证真实 HTTP + PostgreSQL 持久化链路，并验证 Scheduled Trigger 配置、当前槽位、多实例幂等收敛和 recovery slot 元数据 Contract。
+上述结果均为开发者当前本地实际执行结果。新增的真实服务重启 Acceptance 尚未由开发者本地执行，因此不能据此标记 restart recovery 已通过。
 
-## 9. 当前生产化 Acceptance
+## 9. 真实服务重启 Acceptance
 
-下一阶段不新增第二套 Scheduler、slot key、Repository 或 misfire 计算实现，而是在现有正式入口上继续验收：
-
-1. **应用生命周期**：`scheduler_enabled=true` 时 FastAPI lifespan 必须创建唯一后台 Scheduler 任务，退出时停止并等待任务；关闭时不得启动轮询。
-2. **多实例 lease**：继续验证多个 Scheduler worker 在 PostgreSQL ownership 下只能收敛一个 slot 的有效 Execution。
-3. **misfire / catch-up**：验证 skip、fire_once、catch_up 在真实持久化状态上的有界恢复。
-4. **Execution / Audit Trace**：验证 slot、WorkflowExecution、Audit/Trace 的关联保持 tenant scope 与幂等 Contract。
-5. **restart recovery**：验证服务停止后重新启动，持久化 `next_run_at` / slot 状态可以继续恢复，不依赖进程内 recovery 状态。
-
-本轮新增 Scheduler 生命周期单元测试与自动化 Gate：
+生产化 Acceptance 新增独立入口：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\05_scheduler_lifecycle_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
 ```
 
-该 Gate 只验证应用生命周期，不替代 Tenant Safe Real API Gate；两者职责保持独立。
+该 Gate 的验证边界为：
+
+1. 自动启动真实 Uvicorn 进程完成 tenant-safe fixture bootstrap；
+2. 测试自身启动真实 Uvicorn，创建 Scheduled Trigger，并等待真实 PostgreSQL `WorkflowSchedule` 持久化；
+3. 停止真实服务进程；
+4. 在真实 PostgreSQL 中回拨持久化 `next_run_at`，清理旧 lease，模拟服务停止期间形成的历史到期 slot；
+5. 重新启动真实 Uvicorn；
+6. 验证 Scheduler 从持久化状态恢复历史 slot，只产生一个统一幂等键对应的 WorkflowExecution；
+7. 验证 Execution 的 AuditLog / WorkflowTraceEvent 保持 tenant、workflow、execution 关联。
+
+该测试不使用进程内重新实例化 Scheduler 代替真实服务重启，不使用 JSON fixture 替代 PostgreSQL，也不新增第二套 Scheduler Runtime。
 
 ## 10. 下一执行顺序
 
 ```text
-Scheduler 生命周期 Gate
+真实服务 restart recovery Acceptance
       ↓
-多实例 lease / misfire / Execution / Audit Trace Acceptance
+多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
       ↓
-restart recovery Acceptance
-      ↓
-Backend default regression
+Backend default regression + Tenant Safe Real API Gate
       ↓
 Frontend API / UI（如存在明确用户操作范围）
       ↓
 Browser E2E（如存在对应 UI 用户链路）
 ```
 
-在生产化 Acceptance 完成前，不记录 Phase 2.4 Passed。
+在真实服务重启与生产化 Acceptance 全部完成前，不记录 Phase 2.4 Passed。
