@@ -1,3 +1,10 @@
+"""知识文档摄取与分块模块。
+
+职责：负责文档版本的文本规范化、确定性分块、内容持久化及向量索引触发，并维护摄取状态。
+边界：只处理 Knowledge 领域文档摄取流程，不实现检索排序或外部 Embedding / Vector Provider；向量技术能力由 infrastructure/providers 提供。
+关键依赖：SQLAlchemy AsyncSession、Knowledge 持久化模型与 KnowledgeVectorIndexingService。
+"""
+
 from __future__ import annotations
 
 import hashlib
