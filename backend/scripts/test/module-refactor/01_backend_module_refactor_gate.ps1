@@ -53,7 +53,7 @@ $legacyImportPatterns = @(
     "app\.runtime\.model_gateway", "app\.runtime\.provider", "app\.runtime\.openai_provider", "app\.services\.workflow_execution",
     "app\.services\.workflow_governance", "app\.services\.workflow_registry", "app\.services\.workflow_trigger",
     "app\.services\.workflow_trigger_schedule", "app\.services\.webhook_trigger", "app\.services\.observability_service",
-    "app\.services\.retrieval_evaluation_", "app\.services\.runtime_query", "app\.services\.session_service\.service",
+    "app\.services\.retrieval_evaluation_", "app\.services\.session_service\.service",
     "app\.services\.tool_audit", "app\.services\.tool_observability", "app\.services\.tool_rbac", "app\.services\.tool_repository",
     "app\.services\.tool_runtime_service", "app\.services\.usage_accounting\.service"
 )
