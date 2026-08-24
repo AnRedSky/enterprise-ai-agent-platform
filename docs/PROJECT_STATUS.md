@@ -27,6 +27,7 @@
 8. 为 Tool 新模块补充中文职责、边界和关键依赖说明，并把 Tool 模块纳入 Module Refactor Gate 的 required files、legacy paths 与 targeted tests 检查。
 9. 修复 Module Refactor Gate 的中文源码编码问题：模块说明检查改由 Python 按 UTF-8 读取，避免 Windows PowerShell 5.1 默认代码页导致正则字符串损坏。
 10. 本轮没有新增数据库 Migration；目录重构不改变 Tool 数据结构。
+11. 修正 Runtime Query Module Refactor Gate 的 canonical package 误报：删除会匹配正式 `app.services.runtime_query` package 的 legacy grep 规则，同时保留旧根文件 `app/services/runtime_query.py` 的物理路径检查；并为 Runtime Query Service 补充中文模块职责、边界与关键依赖说明。
 
 ## 当前模块重构完成度
 
@@ -59,7 +60,7 @@
 
 ## 本地验证原则
 
-仓库端不能代替开发者本地测试。本轮用户此前反馈的 Workflow/Trigger targeted tests `74 passed` 仅证明上一基线；Tool 合并后的新 Gate / Regression 尚无用户本地通过结果。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
+仓库端不能代替开发者本地测试。本轮用户此前反馈的 Workflow/Trigger targeted tests `74 passed`、Retrieval Evaluation targeted tests `38 passed`、Tool targeted tests `11 passed` 均为用户实际反馈结果；**Module Refactor Gate 与完整 Backend Regression 尚无本轮通过结果，不得预填通过。**
 
 ### 当前完整本地验证流程
 
@@ -72,7 +73,7 @@ git log -8 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-git grep -n -E "app\.services\.circuit_breaker|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.tool_audit|app\.services\.tool_observability|app\.services\.tool_rbac|app\.services\.tool_repository|app\.services\.tool_runtime_service|app\.services\.observability_service" -- "*.py"
+git grep -n -E "app\.services\.circuit_breaker|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.tool_audit|app\.services\.tool_observability|app\.services\.tool_rbac|app\.services\.tool_repository|app\.services\.tool_runtime_service|app\.services\.observability_service|app\.services\.retrieval_evaluation_" -- "*.py"
 
 uv run pytest -q `
   tests/unit/test_tool_audit.py `
@@ -80,6 +81,14 @@ uv run pytest -q `
   tests/unit/test_tool_runtime_service.py `
   tests/unit/test_tool_runtime_failures.py `
   tests/unit/test_tool_runtime_security.py `
+  tests/unit/test_retrieval_evaluation.py `
+  tests/unit/test_retrieval_evaluation_baseline.py `
+  tests/unit/test_retrieval_evaluation_config.py `
+  tests/unit/test_retrieval_evaluation_dataset.py `
+  tests/unit/test_retrieval_evaluation_runner.py `
+  tests/unit/test_retrieval_quality_gate.py `
+  tests/unit/test_retrieval_evaluation_trace_bootstrap.py `
+  tests/unit/test_vector_knowledge_retrieval.py `
   tests/unit/test_circuit_breaker.py `
   tests/unit/test_circuit_breaker_half_open_concurrency.py `
   tests/unit/test_workflow_execution_state_machine.py `
