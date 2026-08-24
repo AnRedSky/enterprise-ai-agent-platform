@@ -9,8 +9,7 @@ from typing import AsyncIterator
 from uuid import UUID
 
 from app.models.agent import Agent
-from app.runtime.model import ModelGateway
-from app.infrastructure.providers.model import ModelResult
+from app.runtime.model import ModelGateway, ModelResult
 
 
 class AgentRuntime:
