@@ -73,7 +73,22 @@ $forbiddenPaths = @(
     "app/services/workflow_registry.py",
     "app/services/workflow_trigger.py",
     "app/services/workflow_trigger_schedule.py",
-    "app/services/webhook_trigger.py"
+    "app/services/webhook_trigger.py",
+    "app/services/organization.py",
+    "app/services/observability_service.py",
+    "app/services/retrieval_evaluation.py",
+    "app/services/retrieval_evaluation_baseline.py",
+    "app/services/retrieval_evaluation_config.py",
+    "app/services/retrieval_evaluation_dataset.py",
+    "app/services/retrieval_evaluation_trace.py",
+    "app/services/runtime_query.py",
+    "app/services/session_service.py",
+    "app/services/tool_audit.py",
+    "app/services/tool_observability.py",
+    "app/services/tool_rbac.py",
+    "app/services/tool_repository.py",
+    "app/services/tool_runtime_service.py",
+    "app/services/usage_accounting.py"
 )
 foreach ($path in $forbiddenPaths) {
     if (Test-Path $path -PathType Leaf) {
@@ -110,7 +125,16 @@ $legacyImportPatterns = @(
     "app\.services\.workflow_registry",
     "app\.services\.workflow_trigger",
     "app\.services\.workflow_trigger_schedule",
-    "app\.services\.webhook_trigger"
+    "app\.services\.webhook_trigger",
+    "app\.services\.observability_service",
+    "app\.services\.retrieval_evaluation(?:_baseline|_config|_dataset|_trace)?",
+    "app\.services\.runtime_query",
+    "app\.services\.tool_audit",
+    "app\.services\.tool_observability",
+    "app\.services\.tool_rbac",
+    "app\.services\.tool_repository",
+    "app\.services\.tool_runtime_service",
+    "app\.services\.usage_accounting"
 )
 foreach ($pattern in $legacyImportPatterns) {
     $matches = @(git grep -n -E $pattern -- "*.py" 2>$null)
@@ -223,10 +247,10 @@ $descriptionFiles = @(
 )
 foreach ($module in $descriptionFiles) {
     $content = Get-Content $module -Raw
-    if ($content -notmatch "\u804c\u8d23\uff1a") {
+    if ($content -notmatch "职责：") {
         throw "Module description is missing: $module"
     }
-    if ($content -notmatch "\u8fb9\u754c\uff1a") {
+    if ($content -notmatch "边界：") {
         throw "Module boundary description is missing: $module"
     }
 }
