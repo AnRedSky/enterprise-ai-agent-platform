@@ -12,17 +12,19 @@
 
 ## 最新 main 基线
 
-本轮基于远端 `main` 最新提交 `bb300a8` 继续开发。此前 Scheduler Tenant / Misfire Gate 已通过，最新开发者本地实际反馈进一步确认 Tenant Safe Real API Gate **35 passed**，Scheduler 的真实 HTTP + PostgreSQL 持久化链路当前无已知阻塞。
+本轮从开发者反馈的 `446a47c` 基线继续推进，随后直接提交到 `main`。当前最新提交为 `b385268`，包含 Scheduler 应用生命周期优雅退出与 Execution / Audit / Trace 真实持久化关联验收增强。
 
-开发者本地最新实际结果：
+开发者此前本地实际结果仍为：
 
 ```text
 uv run python -c "from app.core.config import settings; print('scheduler_enabled=', settings.scheduler_enabled); print('scheduler_poll_interval_seconds=', settings.scheduler_poll_interval_seconds)"：scheduler_enabled=True，poll=5.0
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"：APP_IMPORT_OK
 Scheduler targeted tests：34 passed
-04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、395 Backend regression 均通过；3 skipped，35 deselected
+04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、397 Backend regression 均通过；3 skipped，35 deselected
 01_run_real_api_tests_tenant_safe.ps1：35 passed
 ```
+
+上述结果属于代码修改前开发者实际执行结果；本轮新增代码后的测试尚未由本地开发环境重新执行，因此不得据此宣称本轮变更已通过。
 
 ## Phase 2.4 当前状态
 
@@ -35,25 +37,27 @@ Scheduler targeted tests：34 passed
 5. `input_data.scheduled_slot` 使用数值 interval slot，`idempotency_key` 使用统一 `scheduled:{trigger_id}:{slot}`；
 6. recovery 判断使用统一 `is_recovery_slot()`，当前槽位不继承 recovery；
 7. Scheduler API Contract；
-8. Tenant Safe Real API：35 个真实 HTTP 测试全部通过。
+8. Tenant Safe Real API：35 个真实 HTTP 测试全部通过；
+9. Scheduler 应用生命周期已有独立 Gate，且本轮进一步强化正常关闭路径的 `stop → wait` 语义；
+10. Real API Scheduler 测试增加 Execution 与真实 PostgreSQL AuditLog / WorkflowTraceEvent 的 tenant、workflow、execution 关联断言。
 
-本轮继续推进应用生命周期工程化：
+本轮工程变更：
 
-- `app/main.py` 补充中文模块职责与 `lifespan` / `health` 函数说明，明确 Scheduler 启停副作用和边界；
-- 新增 `tests/unit/test_app_lifespan.py`，验证 `scheduler_enabled=true/false` 两种生命周期行为；
-- 新增 `scripts/test/integration/05_scheduler_lifecycle_gate.ps1`，形成可重复执行的生命周期 Gate；
-- 开发准则进一步强化重复实现前置检索、职责/规则重复检查、代码说明完整性和提交前审查要求。
+- `app/main.py`：Scheduler 正常退出先调用 `stop()` 并等待后台任务自然完成；仅在超时情况下取消任务，避免正常生命周期路径依赖强制取消；
+- `tests/unit/test_app_lifespan.py`：增加后台任务完成态断言，验证生命周期等待语义；
+- `tests/api_real/test_scheduled_trigger_api.py`：增加真实 PostgreSQL Audit / Trace 查询与关联断言，并保持既有多实例、misfire、restart idempotency 验收；
+- 未新增第二套 Scheduler、Repository、slot key、Execution 或 Governance 实现；继续复用现有正式领域入口；
+- 当前 `docs/01-governance/DEVELOPMENT.md` 已包含重复能力前置检索、职责/规则重复检查、中文模块/函数说明、参数/返回值说明等规则，本轮不重复创建并行治理规则文档。
 
 ## 下一任务
 
-当前不再修复已经通过的 Tenant Safe Real API Contract，直接进入 Scheduler 生产化 Acceptance：
+本轮代码完成后，必须由本地开发环境重新执行 Scheduler 生命周期、Backend Regression、Tenant/Misfire Gate 与 Tenant Safe Real API Gate，确认上述新增验收没有破坏既有 Contract。
 
-1. 生命周期 Gate；
-2. 多实例 lease；
-3. skip / fire_once / catch_up 真实持久化恢复；
-4. Execution / Audit Trace 关联；
-5. restart recovery；
-6. 完成后再评估 Phase 2.4 是否可以 Passed。
+通过后继续：
+
+1. 多实例 lease / misfire / Execution / Audit Trace Acceptance；
+2. restart recovery 的真实服务生命周期验收，而不仅是进程内重新实例化 Scheduler；
+3. 完成生产化 Acceptance 后再评估 Phase 2.4 是否可以 Passed。
 
 ## 当前禁止事项
 
