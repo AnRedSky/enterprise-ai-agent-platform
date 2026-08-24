@@ -26,9 +26,9 @@ $forbiddenPaths = @(
     "app/services/mock_embedding_provider.py", "app/services/ollama_embedding_provider.py", "app/services/vector_retrieval_provider.py",
     "app/services/model_provider.py", "app/services/model_provider_governance_contract.py", "app/services/runtime_model_governance.py",
     "app/services/circuit_breaker.py", "app/runtime/memory_context.py", "app/runtime/model_gateway.py", "app/runtime/provider.py",
-    "app/runtime/openai_provider.py", "app/services/workflow_execution.py", "app/services/workflow_governance.py",
-    "app/services/workflow_registry.py", "app/services/workflow_trigger.py", "app/services/workflow_trigger_schedule.py",
-    "app/services/webhook_trigger.py", "app/services/organization.py", "app/services/observability_service.py",
+    "app/runtime/openai_provider.py", "app/runtime/agent_runtime.py", "app/runtime/workflow_runtime.py", "app/tools/registry.py",
+    "app/services/workflow_execution.py", "app/services/workflow_governance.py", "app/services/workflow_registry.py", "app/services/workflow_trigger.py",
+    "app/services/workflow_trigger_schedule.py", "app/services/webhook_trigger.py", "app/services/organization.py", "app/services/observability_service.py",
     "app/services/retrieval_evaluation.py", "app/services/retrieval_evaluation_baseline.py", "app/services/retrieval_evaluation_config.py",
     "app/services/retrieval_evaluation_dataset.py", "app/services/retrieval_evaluation_trace.py", "app/services/runtime_query.py",
     "app/services/session_service.py", "app/services/tool_audit.py", "app/services/tool_observability.py", "app/services/tool_rbac.py",
@@ -50,10 +50,10 @@ $legacyImportPatterns = @(
     "app\.services\.memory_service", "app\.runtime\.memory_context", "app\.services\.embedding_provider", "app\.services\.mock_embedding_provider",
     "app\.services\.ollama_embedding_provider", "app\.services\.vector_retrieval_provider", "app\.services\.model_provider",
     "app\.services\.model_provider_governance_contract", "app\.services\.runtime_model_governance", "app\.services\.circuit_breaker",
-    "app\.runtime\.model_gateway", "app\.runtime\.provider", "app\.runtime\.openai_provider", "app\.services\.workflow_execution",
-    "app\.services\.workflow_governance", "app\.services\.workflow_registry", "app\.services\.workflow_trigger",
+    "app\.runtime\.model_gateway", "app\.runtime\.provider", "app\.runtime\.openai_provider", "app\.runtime\.agent_runtime", "app\.runtime\.workflow_runtime",
+    "app\.services\.workflow_execution", "app\.services\.workflow_governance", "app\.services\.workflow_registry", "app\.services\.workflow_trigger",
     "app\.services\.workflow_trigger_schedule", "app\.services\.webhook_trigger", "app\.services\.observability_service",
-    "app\.services\.retrieval_evaluation_", "app\.services\.session_service\.service",
+    "app\.services\.retrieval_evaluation_", "app\.services\.session_service\.service", "app\.tools\.registry",
     "app\.services\.tool_audit", "app\.services\.tool_observability", "app\.services\.tool_rbac", "app\.services\.tool_repository",
     "app\.services\.tool_runtime_service", "app\.services\.usage_accounting\.service"
 )
@@ -76,7 +76,8 @@ $requiredMigratedFiles = @(
     "app/services/trigger/service.py", "app/services/trigger/schedule.py", "app/services/trigger/webhook.py", "app/services/usage_accounting/__init__.py",
     "app/services/workflow/__init__.py", "app/services/workflow/execution.py", "app/services/workflow/governance.py", "app/services/workflow/registry.py",
     "app/services/workflow_scheduler/__init__.py", "app/runtime/memory/__init__.py", "app/runtime/memory/context.py",
-    "app/runtime/model/__init__.py", "app/runtime/model/gateway.py", "app/runtime/workflow/__init__.py", "app/runtime/workflow/circuit_breaker.py"
+    "app/runtime/model/__init__.py", "app/runtime/model/gateway.py", "app/runtime/workflow/__init__.py", "app/runtime/workflow/circuit_breaker.py",
+    "app/runtime/workflow/runtime.py"
 )
 foreach ($path in $requiredMigratedFiles) {
     if (-not (Test-Path $path -PathType Leaf)) { throw "Required migrated implementation is missing: $path" }
@@ -102,8 +103,8 @@ $descriptionFiles = @(
     "app/services/tool/repository.py", "app/services/tool/runtime.py", "app/services/trigger/__init__.py", "app/services/trigger/service.py",
     "app/services/trigger/schedule.py", "app/services/trigger/webhook.py", "app/services/usage_accounting/__init__.py",
     "app/services/workflow/__init__.py", "app/services/workflow/execution.py", "app/services/workflow/governance.py", "app/services/workflow/registry.py",
-    "app/services/workflow_scheduler/__init__.py", "app/runtime/memory/__init__.py", "app/runtime/memory/context.py",
-    "app/runtime/model/__init__.py", "app/runtime/model/gateway.py", "app/runtime/workflow/__init__.py", "app/runtime/workflow/circuit_breaker.py",
+    "app/runtime/memory/__init__.py", "app/runtime/memory/context.py", "app/runtime/model/__init__.py", "app/runtime/model/gateway.py",
+    "app/runtime/workflow/__init__.py", "app/runtime/workflow/circuit_breaker.py", "app/runtime/workflow/runtime.py",
     "app/infrastructure/providers/__init__.py", "app/infrastructure/providers/embedding.py", "app/infrastructure/providers/mock_embedding.py",
     "app/infrastructure/providers/ollama_embedding.py", "app/infrastructure/providers/vector_retrieval.py", "app/infrastructure/providers/model.py",
     "app/infrastructure/providers/mock_model.py", "app/infrastructure/providers/openai_model.py"
@@ -125,6 +126,16 @@ $rootServiceFiles = @(Get-ChildItem "app/services" -File -ErrorAction SilentlyCo
 if ($rootServiceFiles.Count -gt 0) {
     $rootServiceFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
     throw "Root app/services contains legacy domain implementations."
+}
+
+$rootTestFiles = @(Get-ChildItem "tests" -File -Filter "test_*.py" -ErrorAction SilentlyContinue)
+if ($rootTestFiles.Count -gt 0) {
+    $rootTestFiles | ForEach-Object { Write-Host "Unexpected root test file: $($_.FullName)" }
+    throw "Root tests directory must contain only subdirectories; test modules belong to tests/unit or tests/integration."
+}
+
+if (Test-Path "scripts/test_ollama_embedding.py" -PathType Leaf) {
+    throw "Development validation script must not remain under scripts root: scripts/test_ollama_embedding.py"
 }
 
 Write-Host "[Gate] Application import"
