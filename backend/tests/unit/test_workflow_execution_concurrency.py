@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.workflow_execution import WorkflowExecutionService
+from app.services.workflow import WorkflowExecutionService
 
 
 @pytest.mark.asyncio
@@ -25,20 +25,9 @@ async def test_lock_execution_uses_for_update_for_real_async_session():
 @pytest.mark.asyncio
 async def test_transition_rechecks_locked_state_before_applying_change():
     stale = SimpleNamespace(id=uuid4(), status="pending")
-    locked = SimpleNamespace(
-        id=stale.id,
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        created_by=uuid4(),
-        status="cancelled",
-        current_node_id=None,
-        started_at=None,
-        ended_at=None,
-        output_data=None,
-        error_code=None,
-        error_message=None,
-    )
+    locked = SimpleNamespace(id=stale.id, tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(),
+                             created_by=uuid4(), status="cancelled", current_node_id=None, started_at=None,
+                             ended_at=None, output_data=None, error_code=None, error_message=None)
     db = object.__new__(AsyncSession)
     db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: locked))
     db.commit = AsyncMock()
