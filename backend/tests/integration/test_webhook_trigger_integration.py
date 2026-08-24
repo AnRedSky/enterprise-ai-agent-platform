@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from app.models.workflow_execution import WorkflowExecution
-from app.services.webhook_trigger import WebhookTriggerService
+from app.services.trigger import WebhookTriggerService
 
 
 def test_webhook_durable_idempotency_key_preserves_bounded_public_identity():

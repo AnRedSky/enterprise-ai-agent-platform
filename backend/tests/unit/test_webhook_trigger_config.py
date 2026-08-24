@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from app.services.workflow_trigger_schedule import validate_trigger_config, verify_webhook_secret
+from app.services.trigger import validate_trigger_config, verify_webhook_secret
 
 
 SECRET = "phase-1-8-webhook-secret"
