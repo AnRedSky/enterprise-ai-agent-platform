@@ -1,7 +1,14 @@
-from datetime import datetime, timedelta, UTC
+"""Memory 领域治理测试。
+
+模块职责：验证 Memory 模型默认值、可见性条件与时间边界规则。
+边界：只覆盖 Memory 领域单元行为，不负责 HTTP、Runtime 或数据库联调。
+关键依赖：MemoryRecord ORM 模型与 MemoryService 正式领域入口。
+"""
+
+from datetime import UTC, datetime, timedelta
 
 from app.models.memory import MemoryRecord
-from app.services.memory_service import MemoryService
+from app.services.memory import MemoryService
 
 
 def test_memory_governance_model_defaults():
@@ -23,6 +30,7 @@ def test_memory_visibility_clause_contains_active_and_expiry_rules():
 
 
 def test_expiry_boundary_is_representable():
-    future = datetime.now(UTC) + timedelta(hours=1)
-    past = datetime.now(UTC) - timedelta(hours=1)
-    assert future > datetime.now(UTC) > past
+    now = datetime.now(UTC)
+    future = now + timedelta(hours=1)
+    past = now - timedelta(hours=1)
+    assert future > now > past

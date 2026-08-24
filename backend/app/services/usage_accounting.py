@@ -10,12 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_provider import ModelProfile
 from app.models.usage import ModelUsageRecord
-from app.services.model_provider_governance_contract import CostUnit, PricingSource
+from app.services.model.contract import CostUnit, PricingSource
 from app.services.organization import OrganizationService
 
 
 class UsageAccountingService:
-    """持久化受治理 Provider 的调用用量，并按已配置价格执行确定性成本计算。"""
+    """持久化受治理 Provider 的调用用量，并按已配置价格执行确定性成本计算。
+
+    模块职责：记录模型调用的 Token、请求量、价格版本与成本结果，并提供组织级查询。
+    边界：只负责用量核算领域规则，不负责 Provider 路由、模型调用或数据库 Session 创建。
+    关键依赖：ModelProfile、ModelUsageRecord、OrganizationService，以及 Model 领域正式 Contract。
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
