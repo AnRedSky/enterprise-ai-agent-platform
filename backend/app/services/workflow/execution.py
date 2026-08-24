@@ -19,8 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.models.workflow_trace import WorkflowTraceEvent
-from app.runtime.workflow.circuit_breaker import CircuitOpenError
-from app.runtime.workflow_runtime import WorkflowRuntime
+from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow.governance import WorkflowGovernanceService
 
 
