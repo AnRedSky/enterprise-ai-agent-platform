@@ -10,7 +10,11 @@ from app.services.agent.repository import AgentRepository
 
 
 class AgentService:
-    """Agent 生命周期与版本业务规则。"""
+    """Agent 生命周期与版本业务规则。
+
+    职责：负责 Agent 创建、版本管理、发布与归档等领域业务规则。
+    边界：只处理 Agent 领域状态与持久化编排，不重复实现模型、知识库或运行时能力。
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
