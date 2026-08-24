@@ -1,6 +1,8 @@
 """Knowledge 向量索引领域服务。
 
-负责将已持久化 Chunk 转换为向量并交给唯一的 Infrastructure Provider 写入；不实现外部模型或向量数据库协议。
+职责：负责将已持久化 Chunk 转换为向量并交给唯一的 Infrastructure Provider 写入，同时维护索引状态。
+边界：只负责 Knowledge 领域向量索引编排，不实现 Embedding 模型或向量数据库协议；外部技术能力统一由 infrastructure/providers 提供。
+关键依赖：SQLAlchemy AsyncSession、Knowledge 持久化模型与 infrastructure/providers 中的唯一 Embedding / Vector Provider 实现。
 """
 
 from __future__ import annotations
