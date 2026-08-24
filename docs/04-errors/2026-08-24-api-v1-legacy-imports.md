@@ -12,6 +12,7 @@ API v1 物理迁移完成后，本地 API v1 Module Gate 与 Backend Regression 
 - `app.api.runtime`
 - `app.api.agents`
 - `app.api.chat`
+- `app.api.workflows`
 
 其中生产代码已迁移到 `app.api.v1.<domain>`，旧路径不存在，因此 pytest 出现 `ModuleNotFoundError`。
 
@@ -29,16 +30,29 @@ API v1 物理迁移完成后，本地 API v1 Module Gate 与 Backend Regression 
 - `app.api.v1.agents.router.KnowledgeConfig`
 - `app.api.v1.agents.router.VersionCreate`
 - `app.api.v1.agents.chat.build_knowledge_context`
+- `app.api.v1.workflows.router.WorkflowTriggerCreate`
+- `app.api.v1.workflows.router.WorkflowTriggerUpdate`
 
-同时补充测试模块职责、边界与关键依赖的中文说明，避免通过旧入口恢复兼容层。
+同时为 `app.api.v1.workflows.router`、受影响 Contract 测试补充中文职责、边界与关键依赖说明，保持测试只引用正式 v1 入口，不恢复旧 API 兼容层。
 
-## 5. 验证状态
+## 5. 后续真实反馈
 
-修复已直接提交 `main`。由于当前执行环境无法解析 GitHub 网络地址，无法在本环境重新拉取仓库并执行 pytest；因此本记录不预填测试通过结果。
+用户本地在完成前一轮 API v1 import 修复后重新执行 Gate，又发现 `tests/api_contract/test_api_scheduled_triggers.py` 与 `tests/api_contract/test_api_webhooks.py` 仍存在 `app.api.workflows` 动态 import。该问题已按同一根因继续修复。
 
-开发者本地必须重新执行 API v1 Module Gate、Module Refactor Gate、Dependency Boundary Gate 与 `uv run pytest -q`，以实际结果作为验收依据。
+当前代码修复已经直接提交 `main`，但本环境未执行用户本地 Windows `uv` / PowerShell Gate，因此不预填测试通过结果。
 
-## 6. 相关规则
+## 6. 验证要求
+
+开发者本地必须重新执行：
+
+1. API v1 Module Gate；
+2. Backend Module Refactor Gate；
+3. Dependency Boundary Gate；
+4. `uv run pytest -q`。
+
+只有旧 import 搜索为 0、API Contract 与 Backend Regression 全部实际通过后，API v1 才能进入最终重构 Gate。
+
+## 7. 相关规则
 
 - `docs/01-governance/DEVELOPMENT.md`
 - `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`
