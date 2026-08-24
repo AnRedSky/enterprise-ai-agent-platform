@@ -28,6 +28,9 @@
 9. Module Refactor Gate 增加 Model 目录、旧路径、旧 import、Provider 文件及 Model targeted tests 检查。
 10. 新增/重构 Model 模块补充中文职责、边界和关键依赖说明。
 11. 未新增数据库 Migration；Model 数据结构不因目录重构发生变化。
+12. 修复 Model 迁移后 `UsageAccountingService` 对已删除旧 Contract 路径的残留引用，切换到 `app.services.model.contract` 正式入口。
+13. 修复 Memory 治理测试对已删除 `app.services.memory_service` 的旧入口引用，切换到 `app.services.memory` 正式入口，并补充中文测试模块说明。
+14. 将本次迁移后旧入口残留记录到 `docs/04-errors/2026-08-24-model-memory-module-import-boundary.md`。
 
 ## 当前模块重构完成度
 
@@ -53,26 +56,26 @@
 
 ## 本地验证原则
 
-本轮代码提交由远端仓库直接完成，当前不能声称新增 Model 迁移已经在开发者本地执行通过。必须以用户本地实际输出作为测试结论。
+本轮代码修复由远端仓库直接完成，当前不能声称新增修复已经在开发者本地执行通过。必须以用户本地实际输出作为测试结论。
 
-### Model 本轮完整本地验证流程
+### Model / Memory 边界修复后的完整本地验证流程
 
 ```powershell
 cd backend
 uv sync --dev
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-# 1. Model 定向测试
-uv run pytest -q tests/unit/test_model_gateway.py tests/unit/test_model_provider_governance_contract.py tests/unit/test_runtime_model_governance.py
+# 1. Model + Memory 定向测试
+uv run pytest -q tests/unit/test_model_gateway.py tests/unit/test_model_provider_governance_contract.py tests/unit/test_runtime_model_governance.py tests/unit/test_memory_governance.py
 
-# 2. 模块重构 Gate：会检查旧文件、旧 import、重复实现、Provider 边界及 Backend Regression
+# 2. 模块重构 Gate：检查旧文件、旧 import、重复实现、Provider 边界及 Backend Regression
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
 
-# 3. 全量回归（Gate 已执行一次；如需单独记录则再次执行）
+# 3. 全量回归
 uv run pytest -q
 ```
 
-若 Gate 报告旧 Model import 或旧模块路径，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
+若 Gate 报告任何旧 import、旧模块路径或重复实现，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
 
 ## 下一执行任务：继续模块化整改
 
