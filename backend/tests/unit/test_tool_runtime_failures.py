@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.core import Agent, AgentTool, AuditLog, Base, Tool, User
 from app.models.execution import Execution
-from app.models.model_provider import ModelProfile, ModelProvider
-from app.models.organization import Organization, OrganizationMembership
+import app.models.model_provider  # noqa: F401
+import app.models.organization  # noqa: F401
 from app.services.tool import (
     AuditLogAdapter,
     SqlAlchemyAuditRepository,
