@@ -1,3 +1,9 @@
+"""Retrieval Evaluation 配置模块。
+
+职责：定义离线检索评估的 Provider、数据集、质量阈值与 baseline 配置，并执行配置校验。
+边界：只负责评估运行配置，不保存 Secret，也不执行生产检索。
+"""
+
 from __future__ import annotations
 
 import os
@@ -8,7 +14,7 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class RetrievalEvaluationConfig:
-    """Explicit evaluation-time retrieval configuration."""
+    """离线检索评估运行时的显式配置。"""
 
     embedding_provider: str
     embedding_base_url: str | None

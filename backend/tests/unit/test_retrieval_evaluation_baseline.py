@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.services.retrieval_evaluation_baseline import (
+from app.services.retrieval_evaluation import (
     build_baseline,
     build_regression_report,
     compare_baseline,

@@ -1,7 +1,7 @@
-"""Tool Runtime 失败路径集成单元测试。
+"""Tool Runtime 失败路径测试。
 
 职责：验证 Tool 执行异常能够被统一 Runtime、Audit 与 Observability 处理。
-边界：不保留旧 Tool Service import 作为测试兼容入口。
+边界：不保留旧 Tool Service import 作为测试兼容入口；SQLite 测试需显式加载相关模型元数据。
 """
 
 import uuid
@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.core import Agent, AgentTool, AuditLog, Base, Tool, User
 from app.models.execution import Execution
+from app.models.model_provider import ModelProfile, ModelProvider
+from app.models.organization import Organization, OrganizationMembership
 from app.services.tool import (
     AuditLogAdapter,
     SqlAlchemyAuditRepository,

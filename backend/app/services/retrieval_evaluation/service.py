@@ -1,3 +1,9 @@
+"""Retrieval Evaluation 核心指标与观测聚合模块。
+
+职责：定义评估 Case/Observation，并计算 recall、precision、MRR、引用正确性及错误率等离线指标。
+边界：只计算已提供的检索结果，不负责检索、Embedding 或生产数据访问。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,7 +19,7 @@ class RetrievalEvaluationCase:
 
 @dataclass(frozen=True)
 class RetrievalEvaluationObservation:
-    """One measured retrieval execution used by the offline quality gate."""
+    """用于离线质量门禁的一次检索观测结果。"""
 
     retrieved_chunk_ids: tuple[str, ...]
     latency_ms: float = 0.0
@@ -52,7 +58,7 @@ def citation_correctness(
     retrieved: Sequence[str],
     expected_targets: set[str],
 ) -> float:
-    """Score whether emitted citation targets are traceable and expected."""
+    """计算引用目标是否来自检索结果且属于预期目标。"""
 
     if not cited_targets:
         return 0.0
@@ -118,7 +124,7 @@ def aggregate_observations(
     observations: Sequence[RetrievalEvaluationObservation],
     k: int = 3,
 ) -> dict[str, float | int]:
-    """Aggregate quality, latency, citation and provider-error measurements."""
+    """聚合质量、延迟、引用和 Provider 错误率观测。"""
 
     if len(cases) != len(observations):
         raise ValueError("cases and observations must have the same length")

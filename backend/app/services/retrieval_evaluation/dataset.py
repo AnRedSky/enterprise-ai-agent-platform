@@ -1,3 +1,9 @@
+"""Retrieval Evaluation 数据集模块。
+
+职责：读取并校验离线检索评估 JSONL 数据集，生成领域评估 Case。
+边界：只负责评估输入，不执行生产检索，也不负责 Provider 调用。
+"""
+
 from __future__ import annotations
 
 import json
@@ -5,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.services.retrieval_evaluation import RetrievalEvaluationCase
+from .service import RetrievalEvaluationCase
 
 
 DATASET_SCHEMA_VERSION = "1"
@@ -13,12 +19,7 @@ DATASET_SCHEMA_VERSION = "1"
 
 @dataclass(frozen=True)
 class RetrievalEvaluationDataset:
-    """Validated evaluation dataset loaded from JSONL.
-
-    The dataset is evaluation input only. Production retrieval must continue
-    to read knowledge data from PostgreSQL/pgvector; this loader never serves
-    retrieval results itself.
-    """
+    """经校验的离线检索评估数据集。"""
 
     source: Path
     cases: tuple[RetrievalEvaluationCase, ...]

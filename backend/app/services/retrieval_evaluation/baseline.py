@@ -1,3 +1,9 @@
+"""Retrieval Evaluation baseline 模块。
+
+职责：生成、比较并持久化检索质量 baseline，冻结 Provider 与数据集身份及关键质量指标。
+边界：只负责离线质量门禁数据，不执行检索、不提供第二套 Provider。
+"""
+
 from __future__ import annotations
 
 import json
@@ -19,9 +25,8 @@ IDENTITY_FIELDS = (
 
 
 def _identity(metadata: dict[str, Any]) -> dict[str, Any]:
-    # Governed identity fields are optional for backward-compatible legacy
-    # baselines. Once a profile is selected, its profile/provider IDs become
-    # part of the frozen baseline identity.
+    # 评估 baseline 的身份字段允许历史 baseline 缺省；一旦选定治理模型档案，
+    # 模型档案与 Provider ID 就必须成为冻结 baseline 身份的一部分。
     return {
         field: metadata[field]
         for field in IDENTITY_FIELDS

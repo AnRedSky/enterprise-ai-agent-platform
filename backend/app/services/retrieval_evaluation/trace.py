@@ -12,10 +12,8 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import AuditLog
-# This service is also invoked by the standalone real-provider evaluation runner,
-# which does not import the workflow API/router. AuditLog has foreign keys to
-# workflow_versions, workflow_executions, and executions, so register those
-# model mappers before SQLAlchemy configures AuditLog independently of FastAPI.
+# 独立的真实 Provider 评估脚本不会导入 Workflow API/Router，因此这里显式注册
+# AuditLog 所依赖的执行、模型和 Workflow ORM 映射，避免 SQLAlchemy 在独立入口下缺少表。
 from app.models.execution import Execution, ExecutionEvent  # noqa: F401
 from app.models.model_provider import ModelProfile, ModelProvider  # noqa: F401
 from app.models.workflow import Workflow, WorkflowVersion  # noqa: F401
@@ -24,7 +22,7 @@ from app.services.observability import ObservabilityService
 
 
 class RetrievalEvaluationTraceService:
-    """Persist evaluation runs/cases into the existing observability and audit model."""
+    """将评估运行与 Case 结果持久化到既有可观测性和审计模型。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db

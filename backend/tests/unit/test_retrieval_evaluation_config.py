@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.services.retrieval_evaluation_config import RetrievalEvaluationConfig, validate_config
+from app.services.retrieval_evaluation import RetrievalEvaluationConfig, validate_config
 
 
 def base_config(**overrides):

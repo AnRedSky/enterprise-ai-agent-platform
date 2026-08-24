@@ -1,9 +1,15 @@
+"""Observability 领域服务单元测试。
+
+职责：验证 Execution 生命周期与事件记录服务的标识、时间归一化行为。
+边界：只测试 canonical Observability Service，不保留旧根 Service import。
+"""
+
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 from app.models.execution import Execution
-from app.services.observability_service import ObservabilityService
+from app.services.observability import ObservabilityService
 
 
 def test_observability_ids_are_unique():
