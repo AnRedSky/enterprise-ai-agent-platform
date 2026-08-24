@@ -59,8 +59,8 @@ backend/app/
 | Session | `app/services/session_service/` | 已完成代码迁移，待全量最终 Gate | 旧根 Service 已删除 |
 | Tool | `app/services/tool/` + `app/tools/` | 已完成代码迁移，待全量最终 Gate | 删除重复 `app.tools.registry`；`app.tools` 仅保留 HTTP/Schema 技术实现 |
 | Usage Accounting | `app/services/usage_accounting/` | 已完成代码迁移，待全量最终 Gate | 旧根 Service 已删除 |
-| Runtime | `app/runtime/<domain>/` | 整改中 | 当前仅保留实际使用的 memory / model / workflow Runtime；继续审查其他 Runtime 职责 |
-| API v1 | `app/api/v1/<domain>/` | **代码迁移完成，待 Gate** | 原 `app/api/*.py` 已按认证、Agent、Knowledge、Model Provider、Organization、Runtime、Tool、Usage、Webhook、Workflow 领域归位；路由前缀保持不变 |
+| Runtime | `app/runtime/<domain>/` | **边界收口中** | 当前仅保留 memory / model / workflow Runtime；新增 Runtime Boundary Gate，继续确认无根目录实现、旧 import 与 Governance 重复实现 |
+| API v1 | `app/api/v1/<domain>/` | **代码迁移完成，Gate 已通过用户本地反馈** | 原 `app/api/*.py` 已按认证、Agent、Knowledge、Model Provider、Organization、Runtime、Tool、Usage、Webhook、Workflow 领域归位；路由前缀保持不变 |
 
 ## 5. API v1：本轮完成物理归位
 
@@ -141,11 +141,22 @@ app/tools/
 
 `app.services.tool` 负责 Tool 领域治理、执行编排、权限、审计、可观测性与持久化适配；`app.tools` 只负责 HTTP/Schema 等底层技术执行能力。
 
+Runtime 正式边界：
+
+```text
+app/runtime/memory/   # 执行期 Memory 上下文构造
+app/runtime/model/    # 唯一 Model Gateway 执行入口
+app/runtime/workflow/ # Workflow 节点执行、重试、超时与熔断
+```
+
+Runtime 不负责 Model Provider 治理、路由策略或领域持久化；这些职责分别由 `app/services/model/`、对应领域 Service 与 Repository 承担。不得在 Runtime 中新增第二套 Provider / Governance / Service 实现。
+
 ## 7. 测试与脚本目录规则
 
 - `backend/tests/` 根目录不得放置 `test_*.py`；测试必须归入 `tests/unit` 或 `tests/integration`。
 - `backend/scripts/test/` 用于自动化测试脚本；开发/环境验证脚本进入 `backend/scripts/dev/`。
 - API v1 迁移 Gate 固定入口：`scripts/test/module-refactor/03_backend_api_v1_module_gate.ps1`。
+- Runtime 边界 Gate 固定入口：`scripts/test/module-refactor/04_backend_runtime_boundary_gate.ps1`。
 
 ## 8. 每个迁移单元验收
 
@@ -168,5 +179,6 @@ app/tools/
 1. 本地同步最新 `main` 并执行 API v1 Module Gate；
 2. 修复 Gate 暴露的生产/测试 import、模块说明、目录边界或重复实现问题；
 3. 执行 Workflow / Tool / Runtime 全量最终 Gate；
-4. 完成 API v1 Gate 后，继续 Governance 与 Runtime 其余边界收敛；
-5. 全部重构领域通过 Module Refactor Gate + Backend Regression 后，才能恢复主线任务。
+4. **执行 Runtime Boundary Gate，完成 Runtime 与 Governance 职责边界收口；**
+5. 完成全部重构领域的最终 Gate 后，执行一次全量 Backend Regression、旧路径/重复实现扫描；
+6. 全部重构领域通过 Module Refactor Gate + Backend Regression 后，才能恢复主线任务。
