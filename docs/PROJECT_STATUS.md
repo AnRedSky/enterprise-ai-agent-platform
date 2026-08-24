@@ -19,6 +19,7 @@
 
 - `0090e732`：补齐 `app/services/knowledge/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明。
 - `5aa9e5c`：记录 Knowledge 模块说明 Gate 阻塞及修复要求。
+- `087d3d8f`：补齐 `app/services/workflow_scheduler/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明；该问题是在按 Gate 规则进行静态检查时提前发现并修复，尚未作为本地实际失败结果记录。
 
 ## 本轮实际代码变更
 
@@ -34,6 +35,7 @@
 10. 本轮没有新增数据库 Migration；目录重构不改变 Tool 数据结构。
 11. 修正 Runtime Query Module Refactor Gate 的 canonical package 误报：删除会匹配正式 `app.services.runtime_query` package 的 legacy grep 规则，同时保留旧根文件 `app/services/runtime_query.py` 的物理路径检查；并为 Runtime Query Service 补充中文模块职责、边界与关键依赖说明。
 12. 修复 Knowledge 模块说明 Gate 阻塞：`app/services/knowledge/__init__.py` 增加固定 `职责：`、`边界：` 与 `关键依赖：` 声明，不改变 Knowledge 与 Provider 的职责边界。
+13. 在重新执行 Gate 前，按现有 Gate 的固定 `职责：` / `边界：` 校验规则静态检查全部 required module description 文件，并提前补齐 Workflow Scheduler 模块的职责、边界与关键依赖说明；该项尚未由本地 Gate 实际执行验证。
 
 ## 当前模块重构完成度
 
@@ -125,7 +127,7 @@ uv run pytest -q
 
 优先顺序保持：
 
-1. 在本地同步 `0090e732` 之后的最新 `main`，重新执行 Module Refactor Gate，取得下一条真实结构性 blocker；
+1. 在本地同步最新 `main`，重新执行 Module Refactor Gate，取得下一条真实结构性 blocker；
 2. 修复 Gate 暴露的生产/测试 import、模块说明或重复实现问题，并同步记录已经发生的工程错误；
 3. 对 Workflow、Trigger、Organization、Observability、Retrieval Evaluation、Runtime Query、Session、Tool、Usage Accounting 逐领域完成 targeted tests 与迁移记录；
 4. 完成 Governance 领域及 API `v1/<domain>` 收敛，保持现有 HTTP Contract 不变；
