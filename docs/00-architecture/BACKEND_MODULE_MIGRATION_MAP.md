@@ -50,16 +50,16 @@ backend/app/
 | Knowledge | `app/services/knowledge/` + Provider | 已完成 | 领域与 Provider 已分离 |
 | Memory | `app/services/memory/` + `app/runtime/memory/` | 已完成 | Service 与 Runtime 已收敛 |
 | Model | `app/services/model/` + `app/runtime/model/` + Provider | 已完成 | Gateway / Governance / Routing / Provider 已收敛 |
-| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | 已完成代码迁移，待全量最终 Gate | WorkflowRuntime 已归位，旧根 Runtime 已删除 |
-| Trigger | `app/services/trigger/` | 已完成代码迁移，待全量最终 Gate | Manual / Scheduled / Webhook 已统一 |
-| Organization | `app/services/organization/` | 已完成代码迁移，待全量最终 Gate | 旧根 Service 已删除 |
-| Observability | `app/services/observability/` | 已完成代码迁移，待全量最终 Gate | Service 已统一 |
-| Retrieval Evaluation | `app/services/retrieval_evaluation/` | 已完成代码迁移，待全量最终 Gate | Trace / Dataset / Baseline / Config 已收敛 |
-| Runtime Query | `app/services/runtime_query/` | 已完成代码迁移，待全量最终 Gate | 旧根 Service 已删除 |
-| Session | `app/services/session_service/` | 已完成代码迁移，待全量最终 Gate | 旧根 Service 已删除 |
-| Tool | `app/services/tool/` + `app/tools/` | 已完成代码迁移，待全量最终 Gate | 删除重复 `app.tools.registry`；`app.tools` 仅保留 HTTP/Schema 技术实现 |
-| Usage Accounting | `app/services/usage_accounting/` | 已完成代码迁移，待全量最终 Gate | 旧根 Service 已删除 |
-| Runtime | `app/runtime/<domain>/` | **边界收口中** | 当前仅保留 memory / model / workflow Runtime；新增 Runtime Boundary Gate，继续确认无根目录实现、旧 import 与 Governance 重复实现 |
+| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | 已完成代码迁移，待最终 Closure Gate | WorkflowRuntime 已归位，旧根 Runtime 已删除 |
+| Trigger | `app/services/trigger/` | 已完成代码迁移，待最终 Closure Gate | Manual / Scheduled / Webhook 已统一 |
+| Organization | `app/services/organization/` | 已完成代码迁移，待最终 Closure Gate | 旧根 Service 已删除 |
+| Observability | `app/services/observability/` | 已完成代码迁移，待最终 Closure Gate | Service 已统一 |
+| Retrieval Evaluation | `app/services/retrieval_evaluation/` | 已完成代码迁移，待最终 Closure Gate | Trace / Dataset / Baseline / Config 已收敛 |
+| Runtime Query | `app/services/runtime_query/` | 已完成代码迁移，待最终 Closure Gate | 旧根 Service 已删除 |
+| Session | `app/services/session_service/` | 已完成代码迁移，待最终 Closure Gate | 旧根 Service 已删除 |
+| Tool | `app/services/tool/` + `app/tools/` | 已完成代码迁移，待最终 Closure Gate | 删除重复 `app.tools.registry`；`app.tools` 仅保留 HTTP/Schema 技术实现 |
+| Usage Accounting | `app/services/usage_accounting/` | 已完成代码迁移，待最终 Closure Gate | 旧根 Service 已删除 |
+| Runtime | `app/runtime/<domain>/` | **边界 Gate 已由用户本地反馈通过，待最终 Closure Gate** | 当前仅保留 memory / model / workflow Runtime；继续确认无根目录实现、旧 import 与 Governance 重复实现 |
 | API v1 | `app/api/v1/<domain>/` | **代码迁移完成，Gate 已通过用户本地反馈** | 原 `app/api/*.py` 已按认证、Agent、Knowledge、Model Provider、Organization、Runtime、Tool、Usage、Webhook、Workflow 领域归位；路由前缀保持不变 |
 
 ## 5. API v1：本轮完成物理归位
@@ -157,6 +157,7 @@ Runtime 不负责 Model Provider 治理、路由策略或领域持久化；这�
 - `backend/scripts/test/` 用于自动化测试脚本；开发/环境验证脚本进入 `backend/scripts/dev/`。
 - API v1 迁移 Gate 固定入口：`scripts/test/module-refactor/03_backend_api_v1_module_gate.ps1`。
 - Runtime 边界 Gate 固定入口：`scripts/test/module-refactor/04_backend_runtime_boundary_gate.ps1`。
+- 全部重构最终静态收口 Gate：`scripts/test/module-refactor/05_backend_refactor_closure_gate.ps1`。
 
 ## 8. 每个迁移单元验收
 
@@ -176,9 +177,9 @@ Runtime 不负责 Model Provider 治理、路由策略或领域持久化；这�
 
 ## 9. 当前下一顺序
 
-1. 本地同步最新 `main` 并执行 API v1 Module Gate；
-2. 修复 Gate 暴露的生产/测试 import、模块说明、目录边界或重复实现问题；
-3. 执行 Workflow / Tool / Runtime 全量最终 Gate；
-4. **执行 Runtime Boundary Gate，完成 Runtime 与 Governance 职责边界收口；**
-5. 完成全部重构领域的最终 Gate 后，执行一次全量 Backend Regression、旧路径/重复实现扫描；
-6. 全部重构领域通过 Module Refactor Gate + Backend Regression 后，才能恢复主线任务。
+1. 本地同步最新 `main` 并执行新增 Refactor Closure Gate；
+2. 若 Closure Gate 暴露旧 import、目录边界、Provider 重复实现或模块说明问题，只修复 canonical 模块，不创建兼容垫片或第二实现；
+3. 继续执行 API v1 Module Gate、Runtime Boundary Gate、Module Refactor Gate、Dependency Boundary Gate 与 Backend Regression；
+4. Closure Gate、全部领域 Gate 与 Backend Regression 全部通过后，执行一次最终旧路径 / 重复实现扫描；
+5. 更新 Migration Map、PROJECT_STATUS 与必要的 Acceptance / Error 记录；
+6. **全部重构验收完成后，才能恢复 Phase 2.4 主线任务。**
