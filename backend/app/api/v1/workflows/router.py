@@ -1,3 +1,10 @@
+"""Workflow API 路由模块。
+
+职责：提供 Workflow、Version 与 Trigger 的 HTTP 协议适配、鉴权和响应转换。
+边界：不实现 Workflow 生命周期或 Trigger 业务规则；业务规则统一委托给对应领域 Service。
+关键依赖：FastAPI、WorkflowRegistry、WorkflowTriggerService、认证依赖与数据库 Session。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Response, status
