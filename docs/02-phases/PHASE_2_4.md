@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Persistence、Runtime 与 Scheduler API Contract 已由开发者本地 Gate 实际通过；当前推进 tenant isolation / misfire integration，新增实现尚待本地 Gate。**
+> 状态：**Persistence、Runtime 与 Scheduler API Contract 已由开发者本地 Gate 实际通过；tenant isolation / misfire integration 正在推进。提交 `09b3811` 集成后曾出现 Scheduler misfire 循环导入，现已修复，修复后的 Gate 待开发者本地重新执行。**
 > 评估日期：2026-08-24
 > 优先级：**P1**
 
@@ -18,16 +18,16 @@ Phase 2.4 采用“**Contract-first + MVP 边界 + 可替换实现**”：
 ```text
 backend/app/services/workflow_scheduler/
 ├── __init__.py      # 稳定公开入口
-├── contract.py      # 薄入口，不重复实现领域规则
+├── contract.py      # 薄的领域聚合入口，不实现具体规则
 ├── models.py        # 状态、misfire、lease、slot 数据模型
-├── time.py          # UTC、IANA timezone、DST 时间语义
+├── time.py          # UTC、IANA timezone、DST 时间语义与槽位构造
 ├── lease.py         # lease 可抢占判断
 ├── misfire.py       # misfire 槽位规划
 ├── repository.py    # PostgreSQL 原子 lease / slot 持久化
 └── runtime.py       # Scheduled Trigger 持久化调度器
 ```
 
-`__init__.py` 负责稳定导出；领域规则按职责拆分，禁止继续向公共 `app/services/` 零散增加同功能文件。
+`__init__.py` 负责稳定导出；领域规则按职责拆分，禁止继续向公共 `app/services/` 零散增加同功能文件。`misfire.py` 只依赖 `models.py` 与 `time.py`，不反向依赖聚合入口，避免形成循环依赖。
 
 ## 3. Contract 范围
 
@@ -130,7 +130,20 @@ catch_up_limit: 1..100，默认 10
 
 misfire 计算统一位于 `workflow_scheduler/misfire.py`，Runtime 不复制规则。
 
-## 8. 当前新增 Gate
+## 8. 当前问题与修复
+
+提交 `09b3811` 后，开发者本地首先遇到：
+
+```text
+contract.py → misfire.py → contract.py
+ImportError: cannot import name 'build_schedule_slot' from partially initialized module
+```
+
+影响：应用 import 失败、tenant/misfire Gate 在 Application import 阶段失败、Tenant Safe Real API bootstrap 返回 503、完整 pytest 在 collection 阶段产生 28 个错误。
+
+修复方式：`misfire.py` 直接从 `workflow_scheduler.time` 导入统一的 `build_schedule_slot`，不新增实现、不使用兼容垫片。详细记录见 `docs/04-errors/2026-08-24-scheduler-misfire-circular-import.md`。
+
+## 9. 当前新增 Gate
 
 ```powershell
 cd backend
@@ -151,11 +164,13 @@ Scheduler API Contract tests
 Backend Regression
 ```
 
-**该 Gate 尚未由开发者本地执行，不记录 Passed。**
+**修复后的 Gate 尚未由开发者本地重新执行，不记录 Passed。**
 
-## 9. 下一执行顺序
+## 10. 下一执行顺序
 
 ```text
+修复后 Application import
+      ↓
 Tenant isolation / misfire integration Gate
       ↓
 Tenant Safe Real API Gate
