@@ -81,30 +81,36 @@ async def test_scheduler_status_lookup_is_tenant_scoped() -> None:
                         status="published",
                         created_by=user_id,
                     ),
-                    WorkflowTrigger(
-                        id=trigger_id,
-                        tenant_id=tenant_id,
-                        workflow_id=workflow_id,
-                        name=f"scheduler-scope-{trigger_id}",
-                        trigger_type="scheduled",
-                        status="enabled",
-                        created_by=user_id,
-                        config={"timezone": "UTC", "interval_seconds": 300},
-                    ),
-                    WorkflowSchedule(
-                        id=schedule_id,
-                        tenant_id=tenant_id,
-                        trigger_id=trigger_id,
-                        workflow_id=workflow_id,
-                        enabled=True,
-                        status="enabled",
-                        timezone="UTC",
-                        schedule_expression="interval:300",
-                        next_run_at=datetime.now(UTC).replace(tzinfo=None),
-                        misfire_policy="skip",
-                        catch_up_limit=10,
-                    ),
                 ]
+            )
+            await session.flush()
+            session.add(
+                WorkflowTrigger(
+                    id=trigger_id,
+                    tenant_id=tenant_id,
+                    workflow_id=workflow_id,
+                    name=f"scheduler-scope-{trigger_id}",
+                    trigger_type="scheduled",
+                    status="enabled",
+                    created_by=user_id,
+                    config={"timezone": "UTC", "interval_seconds": 300},
+                )
+            )
+            await session.flush()
+            session.add(
+                WorkflowSchedule(
+                    id=schedule_id,
+                    tenant_id=tenant_id,
+                    trigger_id=trigger_id,
+                    workflow_id=workflow_id,
+                    enabled=True,
+                    status="enabled",
+                    timezone="UTC",
+                    schedule_expression="interval:300",
+                    next_run_at=datetime.now(UTC).replace(tzinfo=None),
+                    misfire_policy="skip",
+                    catch_up_limit=10,
+                )
             )
 
         repository = WorkflowSchedulerRepository(session)

@@ -1,6 +1,6 @@
 """Workflow Scheduler Runtime：负责已启用 Scheduled Trigger 的持久化调度与幂等分发。
 
-职责：从 PostgreSQL Scheduler 状态恢复到期任务，使用 lease + slot 完成多实例 ownership、租户隔离与 misfire 补偿。
+职责：从 PostgreSQL 持久化状态恢复到期任务，使用 lease + slot 完成多实例 ownership、租户隔离与 misfire 补偿。
 边界：不创建第二套数据库 Session、不复制 Workflow 执行逻辑；实际执行继续复用 WorkflowTriggerService。
 关键依赖：`app.infrastructure.db.SessionLocal`、WorkflowSchedulerRepository、Trigger 领域服务与 Scheduler Contract。
 """
@@ -109,10 +109,9 @@ class ScheduledTriggerScheduler:
         return interval_seconds
 
     @staticmethod
-    def planned_slot_key(trigger_id, planned_at: datetime) -> str:
-        """以持久化 planned_at 生成稳定槽位键，不再依赖进程内计数器。"""
-        timestamp = int(planned_at.astimezone(UTC).timestamp())
-        return f"scheduled:{trigger_id}:{timestamp}"
+    def planned_slot_key(trigger_id, planned_at: datetime, interval_seconds: int) -> str:
+        """使用统一的时间槽编号生成幂等键，确保 Runtime 与公开 Scheduler Contract 使用同一键空间。"""
+        return ScheduledTriggerScheduler.idempotency_key(trigger_id, planned_at, interval_seconds)
 
     @classmethod
     def next_run_after_skip(cls, planned_at: datetime, now: datetime, interval_seconds: int) -> datetime:
@@ -230,11 +229,14 @@ class ScheduledTriggerScheduler:
                             policy,
                             catch_up_limit=config["catch_up_limit"],
                         )
-                    recovery = len(due_slots) > 1 or (planned_at < now - timedelta(seconds=config["interval_seconds"]))
+                    has_misfire = len(due_slots) > 1 or (
+                        planned_at < now - timedelta(seconds=config["interval_seconds"])
+                    )
 
                     latest_execution = None
                     for slot in selected_slots:
-                        slot_key = self.planned_slot_key(trigger.id, slot.planned_at)
+                        slot_key = self.planned_slot_key(trigger.id, slot.planned_at, config["interval_seconds"])
+                        slot_recovery = slot.planned_at < now
                         slot_record = await repository.claim_schedule_slot(
                             tenant_id=trigger.tenant_id,
                             trigger_id=trigger.id,
@@ -262,10 +264,10 @@ class ScheduledTriggerScheduler:
                                     input_data={
                                         "scheduled_slot": slot_key,
                                         "planned_at": slot.planned_at.isoformat(),
-                                        "recovery": recovery,
+                                        "recovery": slot_recovery,
                                     },
                                     idempotency_key=slot_key,
-                                    recovery=recovery,
+                                    recovery=slot_recovery,
                                     return_created=True,
                                 )
                             except HTTPException as exc:
@@ -309,7 +311,7 @@ class ScheduledTriggerScheduler:
                         await db.rollback()
                         continue
                     await db.commit()
-                    if recovery:
+                    if has_misfire:
                         counters["recovered"] += 1
                 except Exception:
                     await db.rollback()

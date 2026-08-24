@@ -1,3 +1,5 @@
+"""真实 HTTP Scheduler Trigger 验收：覆盖配置、幂等、多实例与持久化 misfire 恢复。"""
+
 import asyncio
 import os
 import time
@@ -65,6 +67,42 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
         await engine.dispose()
 
 
+async def _seed_scheduler_backlog(trigger_id: str, next_run_at: datetime, interval_seconds: int) -> None:
+    """直接把真实 Scheduler 持久化状态回拨一个槽位，模拟服务重启后存在历史积压的生产状态。"""
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        async with engine.begin() as connection:
+            trigger = (
+                await connection.execute(
+                    text(
+                        "SELECT tenant_id, workflow_id FROM workflow_triggers "
+                        "WHERE id = :trigger_id"
+                    ),
+                    {"trigger_id": trigger_id},
+                )
+            ).mappings().one()
+            await connection.execute(
+                text(
+                    "INSERT INTO workflow_schedules "
+                    "(id, tenant_id, trigger_id, workflow_id, enabled, status, timezone, "
+                    "schedule_expression, next_run_at, misfire_policy, catch_up_limit, updated_at) "
+                    "VALUES (:id, :tenant_id, :trigger_id, :workflow_id, true, 'enabled', 'UTC', "
+                    ":schedule_expression, :next_run_at, 'catch_up', 2, :updated_at)"
+                ),
+                {
+                    "id": uuid.uuid4(),
+                    "tenant_id": trigger["tenant_id"],
+                    "trigger_id": uuid.UUID(trigger_id),
+                    "workflow_id": trigger["workflow_id"],
+                    "schedule_expression": f"interval:{interval_seconds}",
+                    "next_run_at": next_run_at.replace(tzinfo=None),
+                    "updated_at": datetime.now(UTC).replace(tzinfo=None),
+                },
+            )
+    finally:
+        await engine.dispose()
+
+
 def _wait_for_scheduled_execution(
     loop: asyncio.AbstractEventLoop,
     idempotency_key: str,
@@ -87,6 +125,8 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
     name = f"api-real-scheduled-{uuid.uuid4().hex[:8]}"
     config = {"timezone": "Asia/Shanghai", "interval_seconds": 60}
     updated_config = {"timezone": "UTC", "interval_seconds": 60}
+    expected_config = {**config, "misfire_policy": "skip", "catch_up_limit": 10}
+    expected_updated_config = {**updated_config, "misfire_policy": "skip", "catch_up_limit": 10}
 
     with _client() as client:
         created = client.post(
@@ -98,7 +138,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         trigger_id = trigger["id"]
         assert trigger["trigger_type"] == "scheduled"
         assert trigger["status"] == "enabled"
-        assert trigger["config"] == config
+        assert trigger["config"] == expected_config
 
         runtime_key = ScheduledTriggerScheduler.idempotency_key(
             trigger_id, datetime.now(UTC), config["interval_seconds"]
@@ -107,7 +147,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
 
         detail = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
         assert detail.status_code == 200, detail.text
-        assert detail.json()["config"] == config
+        assert detail.json()["config"] == expected_config
 
         updated = client.patch(
             f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
@@ -115,7 +155,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         )
         assert updated.status_code == 200, updated.text
         assert updated.json()["trigger_type"] == "scheduled"
-        assert updated.json()["config"] == updated_config
+        assert updated.json()["config"] == expected_updated_config
 
         invalid = client.patch(
             f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}",
@@ -136,6 +176,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert rows[0]["idempotency_key"] == runtime_key
         assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
         assert rows[0]["input_data"]["recovery"] is False
+        assert "planned_at" in rows[0]["input_data"]
 
         time.sleep(6)
         rows_after_duplicate_poll = _run_async(scheduler_event_loop, _execution_rows(runtime_key))
@@ -198,7 +239,12 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled recovery validation")
 
     name = f"api-real-scheduled-recovery-{uuid.uuid4().hex[:8]}"
-    config = {"timezone": "UTC", "interval_seconds": 60}
+    config = {
+        "timezone": "UTC",
+        "interval_seconds": 60,
+        "misfire_policy": "catch_up",
+        "catch_up_limit": 2,
+    }
     trigger_id = None
 
     with _client() as client:
@@ -217,6 +263,14 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         current_key = scheduler.slot_idempotency_key(trigger_id, current_slot)
 
         try:
+            _run_async(
+                scheduler_event_loop,
+                _seed_scheduler_backlog(
+                    trigger_id,
+                    datetime.fromtimestamp(recovery_slot * config["interval_seconds"], UTC),
+                    config["interval_seconds"],
+                ),
+            )
             counters = _run_async(scheduler_event_loop, scheduler.tick_once(now))
             recovery_rows = _wait_for_scheduled_execution(scheduler_event_loop, recovery_key)
             current_rows = _wait_for_scheduled_execution(scheduler_event_loop, current_key)
@@ -226,8 +280,12 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
             assert len(current_rows) == 1, current_rows
             assert recovery_rows[0]["status"] == "completed", recovery_rows
             assert current_rows[0]["status"] == "completed", current_rows
-            assert recovery_rows[0]["input_data"] == {"scheduled_slot": recovery_slot, "recovery": True}
-            assert current_rows[0]["input_data"] == {"scheduled_slot": current_slot, "recovery": False}
+            assert recovery_rows[0]["input_data"]["scheduled_slot"] == recovery_slot
+            assert recovery_rows[0]["input_data"]["recovery"] is True
+            assert current_rows[0]["input_data"]["scheduled_slot"] == current_slot
+            assert current_rows[0]["input_data"]["recovery"] is False
+            assert "planned_at" in recovery_rows[0]["input_data"]
+            assert "planned_at" in current_rows[0]["input_data"]
 
             restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
             second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))

@@ -13,11 +13,20 @@ from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 
 def test_planned_slot_key_is_stable_for_persisted_time() -> None:
-    """相同 trigger + planned_at 必须产生相同槽位键。"""
+    """相同 trigger + planned_at + interval 必须产生相同槽位键。"""
     trigger_id = uuid4()
     planned_at = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
-    assert ScheduledTriggerScheduler.planned_slot_key(trigger_id, planned_at) == ScheduledTriggerScheduler.planned_slot_key(
-        trigger_id, planned_at
+    assert ScheduledTriggerScheduler.planned_slot_key(trigger_id, planned_at, 300) == ScheduledTriggerScheduler.planned_slot_key(
+        trigger_id, planned_at, 300
+    )
+
+
+def test_planned_slot_key_matches_public_idempotency_key() -> None:
+    """Runtime 内部槽位键必须与公开 Scheduler Contract 使用同一 interval slot 键空间。"""
+    trigger_id = uuid4()
+    planned_at = datetime(2026, 8, 23, 12, 0, 37, tzinfo=UTC)
+    assert ScheduledTriggerScheduler.planned_slot_key(trigger_id, planned_at, 60) == ScheduledTriggerScheduler.idempotency_key(
+        trigger_id, planned_at, 60
     )
 
 
