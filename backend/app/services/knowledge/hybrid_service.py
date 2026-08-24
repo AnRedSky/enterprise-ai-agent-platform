@@ -1,3 +1,10 @@
+"""Knowledge 混合检索应用服务。
+
+职责：负责编排 Knowledge 领域的词法召回、向量召回与混合评分，并将统一检索结果返回给上层调用方。
+边界：只负责检索流程编排、参数校验和结果整形，不实现词法检索、向量检索算法、候选融合算法或 Provider 技术适配；具体能力由同领域正式服务提供。
+关键依赖：KnowledgeRetrievalService、VectorKnowledgeRetrievalService、HybridRetrievalService，以及 SQLAlchemy AsyncSession。
+"""
+
 from __future__ import annotations
 
 from uuid import UUID
