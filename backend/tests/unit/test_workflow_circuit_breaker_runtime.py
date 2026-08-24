@@ -1,7 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
-from app.runtime.workflow_runtime import WorkflowRuntime
+from app.runtime.workflow import WorkflowRuntime
 
 
 def test_workflow_circuit_breaker_is_opt_in():
@@ -17,9 +17,7 @@ def test_workflow_circuit_breaker_config_is_validated():
     definition = {
         "config": {"timeout_ms": 1000},
         "nodes": [{
-            "id": "agent",
-            "type": "agent",
-            "config": {
+            "id": "agent", "type": "agent", "config": {
                 "agent_id": "00000000-0000-0000-0000-000000000101",
                 "circuit_breaker": {"enabled": True, "failure_threshold": 3, "recovery_timeout_ms": 1000},
             },
@@ -33,9 +31,7 @@ def test_workflow_circuit_breaker_rejects_invalid_recovery_window():
     definition = {
         "config": {"timeout_ms": 1000},
         "nodes": [{
-            "id": "agent",
-            "type": "agent",
-            "config": {
+            "id": "agent", "type": "agent", "config": {
                 "agent_id": "00000000-0000-0000-0000-000000000101",
                 "circuit_breaker": {"enabled": True, "recovery_timeout_ms": 10},
             },
