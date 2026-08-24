@@ -8,16 +8,19 @@
 from __future__ import annotations
 
 import hashlib
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class ScheduledTriggerConfig(BaseModel):
-    """定义第一版 scheduled Trigger 的持久化配置契约。"""
+    """定义 scheduled Trigger 的调度与 misfire 配置契约。"""
 
     timezone: str = Field(min_length=1, max_length=64)
     interval_seconds: int = Field(ge=60, le=86400)
+    misfire_policy: Literal["skip", "fire_once", "catch_up"] = "skip"
+    catch_up_limit: int = Field(default=10, ge=1, le=100)
 
     @field_validator("timezone")
     @classmethod
@@ -27,6 +30,12 @@ class ScheduledTriggerConfig(BaseModel):
         except ZoneInfoNotFoundError as exc:
             raise ValueError("timezone 必须为有效 IANA timezone") from exc
         return value
+
+    def validate_misfire_options(self) -> "ScheduledTriggerConfig":
+        """确保只有 catch_up 策略可以改变补跑上限，避免产生未定义的配置组合。"""
+        if self.misfire_policy != "catch_up" and self.catch_up_limit != 10:
+            raise ValueError("只有 catch_up 策略允许配置 catch_up_limit")
+        return self
 
 
 class WebhookTriggerConfig(BaseModel):
@@ -49,7 +58,9 @@ def validate_trigger_config(trigger_type: str, config: dict) -> dict:
     if trigger_type == "manual":
         return config
     if trigger_type == "scheduled":
-        return ScheduledTriggerConfig.model_validate(config).model_dump()
+        candidate = ScheduledTriggerConfig.model_validate(config)
+        candidate.validate_misfire_options()
+        return candidate.model_dump()
     if trigger_type == "webhook":
         candidate = dict(config or {})
         secret = candidate.pop("secret", None)

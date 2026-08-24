@@ -1,6 +1,6 @@
 """Workflow Scheduler 持久化仓储。
 
-职责：封装 Scheduler 状态、租约和执行槽位的 PostgreSQL 原子操作。
+职责：封装 Scheduler 状态、租约和执行槽位的 PostgreSQL 原子操作，并持久化 misfire 配置。
 边界：不负责时间计算、Trigger 校验或 Workflow 执行；这些职责分别由 Scheduler Contract 与 WorkflowTriggerService 承担。
 关键依赖：SQLAlchemy AsyncSession、PostgreSQL ON CONFLICT，以及 Scheduler 持久化模型。
 
@@ -22,7 +22,7 @@ from app.models.workflow_scheduler import WorkflowSchedule, WorkflowScheduleSlot
 
 
 class WorkflowSchedulerRepository:
-    """Scheduler 持久化仓储，统一提供调度状态、租约与槽位的数据库边界。"""
+    """Scheduler 持久化仓储，统一提供调度状态、租约、misfire 配置与槽位的数据库边界。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -35,7 +35,7 @@ class WorkflowSchedulerRepository:
         return value.astimezone(UTC).replace(tzinfo=None)
 
     async def get_schedule_for_trigger(self, *, tenant_id: UUID, trigger_id: UUID) -> WorkflowSchedule | None:
-        """按 tenant + trigger 获取唯一 Scheduler 状态。"""
+        """按 tenant + trigger 获取唯一 Scheduler 状态，tenant 是强制查询边界。"""
         result = await self.db.execute(
             select(WorkflowSchedule).where(
                 WorkflowSchedule.tenant_id == tenant_id,
@@ -54,6 +54,8 @@ class WorkflowSchedulerRepository:
         interval_seconds: int,
         enabled: bool,
         now: datetime,
+        misfire_policy: str = "skip",
+        catch_up_limit: int = 10,
     ) -> WorkflowSchedule:
         """为 Scheduled Trigger 确保唯一持久化状态；并发首次初始化由数据库唯一键收敛。"""
         existing = await self.get_schedule_for_trigger(tenant_id=tenant_id, trigger_id=trigger_id)
@@ -71,8 +73,8 @@ class WorkflowSchedulerRepository:
                 timezone=timezone,
                 schedule_expression=f"interval:{interval_seconds}",
                 next_run_at=db_now,
-                misfire_policy="skip",
-                catch_up_limit=10,
+                misfire_policy=misfire_policy,
+                catch_up_limit=catch_up_limit,
                 updated_at=db_now,
             )
             .on_conflict_do_nothing(constraint="uq_workflow_schedule_tenant_trigger")
@@ -97,6 +99,8 @@ class WorkflowSchedulerRepository:
         interval_seconds: int,
         enabled: bool,
         now: datetime,
+        misfire_policy: str = "skip",
+        catch_up_limit: int = 10,
     ) -> WorkflowSchedule | None:
         """更新已存在 Scheduler 状态的配置，不重置已计算的 next_run_at。"""
         statement = (
@@ -110,6 +114,8 @@ class WorkflowSchedulerRepository:
                 status="enabled" if enabled else "disabled",
                 timezone=timezone,
                 schedule_expression=f"interval:{interval_seconds}",
+                misfire_policy=misfire_policy,
+                catch_up_limit=catch_up_limit,
                 updated_at=self._db_datetime(now),
             )
             .returning(WorkflowSchedule)

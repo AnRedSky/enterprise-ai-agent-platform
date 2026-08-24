@@ -1,6 +1,6 @@
 """Workflow Scheduler Runtime：负责已启用 Scheduled Trigger 的持久化调度与幂等分发。
 
-职责：从 PostgreSQL Scheduler 状态恢复到期任务，使用 lease + slot 完成多实例 ownership 与执行幂等。
+职责：从 PostgreSQL Scheduler 状态恢复到期任务，使用 lease + slot 完成多实例 ownership、租户隔离与 misfire 补偿。
 边界：不创建第二套数据库 Session、不复制 Workflow 执行逻辑；实际执行继续复用 WorkflowTriggerService。
 关键依赖：`app.infrastructure.db.SessionLocal`、WorkflowSchedulerRepository、Trigger 领域服务与 Scheduler Contract。
 """
@@ -19,6 +19,8 @@ from app.infrastructure.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外键元数据
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
+from app.services.workflow_scheduler.misfire import build_due_slots, choose_misfire_slots, next_run_after_misfire
+from app.services.workflow_scheduler.models import MisfirePolicy
 from app.services.workflow_scheduler.repository import WorkflowSchedulerRepository
 from app.services.trigger import WorkflowTriggerService
 
@@ -114,7 +116,7 @@ class ScheduledTriggerScheduler:
 
     @classmethod
     def next_run_after_skip(cls, planned_at: datetime, now: datetime, interval_seconds: int) -> datetime:
-        """首版 misfire=skip：跳过历史积压槽位，只保留下一次未来运行时间。"""
+        """首版 skip 策略的纯计算入口：跳过历史积压并从未来 interval 继续。"""
         candidate = planned_at + timedelta(seconds=interval_seconds)
         if candidate <= now:
             return now + timedelta(seconds=interval_seconds)
@@ -180,6 +182,8 @@ class ScheduledTriggerScheduler:
                         interval_seconds=config["interval_seconds"],
                         enabled=trigger.status == "enabled",
                         now=now,
+                        misfire_policy=config["misfire_policy"],
+                        catch_up_limit=config["catch_up_limit"],
                     )
                     await repository.sync_schedule_config(
                         schedule_id=schedule.id,
@@ -188,6 +192,8 @@ class ScheduledTriggerScheduler:
                         interval_seconds=config["interval_seconds"],
                         enabled=trigger.status == "enabled",
                         now=now,
+                        misfire_policy=config["misfire_policy"],
+                        catch_up_limit=config["catch_up_limit"],
                     )
                     await db.commit()
 
@@ -208,76 +214,101 @@ class ScheduledTriggerScheduler:
                         continue
 
                     planned_at = claimed.next_run_at.replace(tzinfo=UTC) if claimed.next_run_at.tzinfo is None else claimed.next_run_at.astimezone(UTC)
-                    slot_key = self.planned_slot_key(trigger.id, planned_at)
-                    recovery = planned_at < now - timedelta(seconds=config["interval_seconds"])
-                    slot = await repository.claim_schedule_slot(
-                        tenant_id=trigger.tenant_id,
-                        trigger_id=trigger.id,
-                        workflow_id=workflow.id,
-                        schedule_slot_key=slot_key,
-                        planned_at=planned_at.replace(tzinfo=None),
-                        scheduler_owner=self.owner,
-                    )
-                    if slot is None:
-                        raise RuntimeError("Scheduler 槽位 claim 未收敛")
-
-                    execution = None
-                    created = False
-                    if slot.workflow_execution_id is not None:
-                        execution = await WorkflowTriggerService(db).find_execution_by_idempotency_key(
-                            trigger.tenant_id, slot_key
-                        )
-                    else:
-                        service = WorkflowTriggerService(db)
-                        try:
-                            execution, created = await service.invoke_scheduled(
-                                workflow=workflow,
-                                trigger=trigger,
-                                actor_id=trigger.created_by,
-                                input_data={
-                                    "scheduled_slot": slot_key,
-                                    "planned_at": planned_at.isoformat(),
-                                    "recovery": recovery,
-                                },
-                                idempotency_key=slot_key,
-                                recovery=recovery,
-                                return_created=True,
-                            )
-                        except HTTPException as exc:
-                            if self.is_concurrent_runtime_claim(exc) or self.is_scheduled_claim_contention(exc):
-                                counters["contention"] += 1
-                                await db.rollback()
-                                continue
-                            raise
-                        if execution is not None:
-                            await repository.bind_execution_to_slot(
-                                slot_id=slot.id,
-                                workflow_execution_id=execution.id,
-                            )
-
-                    next_run_at = self.next_run_after_skip(
+                    policy = MisfirePolicy(claimed.misfire_policy)
+                    due_slots = build_due_slots(
+                        trigger.id,
                         planned_at,
                         now,
                         config["interval_seconds"],
+                        limit=config["catch_up_limit"] + 2,
                     )
+                    if len(due_slots) == 1:
+                        selected_slots = due_slots
+                    else:
+                        selected_slots = choose_misfire_slots(
+                            due_slots,
+                            policy,
+                            catch_up_limit=config["catch_up_limit"],
+                        )
+                    recovery = len(due_slots) > 1 or (planned_at < now - timedelta(seconds=config["interval_seconds"]))
+
+                    latest_execution = None
+                    for slot in selected_slots:
+                        slot_key = self.planned_slot_key(trigger.id, slot.planned_at)
+                        slot_record = await repository.claim_schedule_slot(
+                            tenant_id=trigger.tenant_id,
+                            trigger_id=trigger.id,
+                            workflow_id=workflow.id,
+                            schedule_slot_key=slot_key,
+                            planned_at=slot.planned_at.replace(tzinfo=None),
+                            scheduler_owner=self.owner,
+                        )
+                        if slot_record is None:
+                            raise RuntimeError("Scheduler 槽位 claim 未收敛")
+
+                        execution = None
+                        created = False
+                        if slot_record.workflow_execution_id is not None:
+                            execution = await WorkflowTriggerService(db).find_execution_by_idempotency_key(
+                                trigger.tenant_id, slot_key
+                            )
+                        else:
+                            service = WorkflowTriggerService(db)
+                            try:
+                                execution, created = await service.invoke_scheduled(
+                                    workflow=workflow,
+                                    trigger=trigger,
+                                    actor_id=trigger.created_by,
+                                    input_data={
+                                        "scheduled_slot": slot_key,
+                                        "planned_at": slot.planned_at.isoformat(),
+                                        "recovery": recovery,
+                                    },
+                                    idempotency_key=slot_key,
+                                    recovery=recovery,
+                                    return_created=True,
+                                )
+                            except HTTPException as exc:
+                                if self.is_concurrent_runtime_claim(exc) or self.is_scheduled_claim_contention(exc):
+                                    counters["contention"] += 1
+                                    await db.rollback()
+                                    continue
+                                raise
+                            if execution is not None:
+                                await repository.bind_execution_to_slot(
+                                    slot_id=slot_record.id,
+                                    workflow_execution_id=execution.id,
+                                )
+                        if execution is not None:
+                            latest_execution = execution
+                        if created:
+                            counters["dispatched"] += 1
+                        else:
+                            counters["skipped"] += 1
+
+                    if len(due_slots) > 1:
+                        next_run_at = next_run_after_misfire(
+                            selected_slots,
+                            policy,
+                            now,
+                            config["interval_seconds"],
+                        )
+                    else:
+                        next_run_at = planned_at + timedelta(seconds=config["interval_seconds"])
                     advanced = await repository.advance_schedule(
                         schedule_id=claimed.id,
                         tenant_id=trigger.tenant_id,
                         owner=self.owner,
                         now=now,
                         next_run_at=next_run_at.replace(tzinfo=None),
-                        last_run_at=planned_at.replace(tzinfo=None),
-                        last_execution_id=execution.id if execution is not None else None,
+                        last_run_at=(selected_slots[-1].planned_at if selected_slots else planned_at).replace(tzinfo=None),
+                        last_execution_id=latest_execution.id if latest_execution is not None else claimed.last_execution_id,
                     )
                     if advanced is None:
                         counters["contention"] += 1
                         await db.rollback()
                         continue
                     await db.commit()
-                    if created:
-                        counters["dispatched"] += 1
-                    else:
-                        counters["skipped"] += 1
                     if recovery:
                         counters["recovered"] += 1
                 except Exception:

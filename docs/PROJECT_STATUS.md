@@ -7,96 +7,99 @@
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler Contract-first + Persistence：**第一版已完成，Runtime Gate 已由开发者本地实际通过，当前推进 Scheduler API Contract / 状态可观测性**。
-- 当前：**Backend 模块化整改已完成最终 Closure Gate，主线任务恢复，当前进入 Phase 2.4 Scheduler API Contract / 状态可观测性。**
+- Phase 2.4 Durable Scheduler：**Persistence、Runtime、Scheduler API Contract 已完成开发者本地 Gate；当前推进 tenant isolation / misfire integration。**
+- Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-本轮继续直接基于远端 `main`。用户本地已反馈 Closure Gate、API v1、Runtime Boundary、模块重构、依赖边界、Scheduler Persistence、Scheduler Runtime 与 Backend Regression 均通过。
+本轮基于远端 `main` 最新提交 `78c4e52` 继续开发；该提交修正 Scheduler API 对 canonical `WorkflowSchedulerRepository` 子模块的 import。
 
-重构最终收口实际验收结果：
-
-```text
-05_backend_refactor_closure_gate.ps1：Backend Refactor Closure Gate completed.
-REFACTOR_CLOSURE_IMPORT_OK
-```
-
-Phase 2.4 Runtime Gate 实际验收结果：
+用户本地已实际反馈：
 
 ```text
-Scheduler Runtime targeted tests：4 passed
+05_backend_refactor_closure_gate.ps1：REFACTOR_CLOSURE_IMPORT_OK
+02_scheduler_runtime_gate.ps1：Scheduler Runtime targeted tests 4 passed
 Scheduler Persistence Gate：Alembic current = 0028_durable_scheduler_persistence (head)
 Scheduler contract targeted tests：13 passed
 Scheduler repository PostgreSQL integration：2 passed
-Backend default regression：384 passed, 2 skipped, 35 deselected
+03_scheduler_api_contract_gate.ps1：Scheduler API Contract tests 6 passed
+Backend default regression：385 passed, 2 skipped, 35 deselected
+uv run pytest -q：385 passed, 2 skipped, 35 deselected
 ```
 
-因此当前不再把模块化重构或 Scheduler Runtime 标记为阻塞项。
+以上均为用户本地实际反馈；本轮新增 tenant isolation / misfire integration 代码尚未由开发者本地重新执行，不预填通过结果。
 
 ## Backend 模块化重构收口
 
-API v1、Runtime Boundary 以及各领域 Service / Runtime / Provider 迁移已经完成；最终 Closure Gate 已确认：
-
-- 旧扁平领域实现文件不存在；
-- API / Runtime 旧 import 路径不存在；
-- `services` / `runtime` 根目录没有重新堆放领域实现；
-- Provider 技术适配保持 `app/infrastructure/providers/` 唯一正式入口，并排除 ORM `app/models` 与 canonical Model Provider Service 的合理命名；
-- Runtime 没有重复 Model Provider Governance / 路由实现；
-- 正式领域包具备中文“职责 / 边界”说明；
-- canonical 应用入口与 Runtime 导出可正常导入。
+API v1、Runtime Boundary 以及各领域 Service / Runtime / Provider 迁移已经完成；最终 Closure Gate 已确认旧扁平领域实现、旧 import 路径和重复 Provider 入口均已收口，正式领域包具备中文职责 / 边界说明。
 
 **状态：Backend 模块化重构全部 Closure Gate 已完成，不再阻塞主线。**
 
 ## Phase 2.4 当前推进
 
-Durable Scheduler 已完成 Contract-first + Persistence 第一版，并已完成本地 Runtime Gate：
+Durable Scheduler 已完成 Contract-first + Persistence + Runtime + Scheduler 状态 API 第一阶段。
 
-- `WorkflowSchedule` / `WorkflowScheduleSlot` 持久化；
-- lease / slot 幂等；
-- PostgreSQL 原子 claim / release；
-- Scheduled Trigger Runtime 已切换到持久化 Scheduler 状态；
-- 首版 `misfire=skip` 边界保持明确；
-- Scheduler 领域代码已按 `services/workflow_scheduler/` 子模块组织，避免新增第二套调度实现；
-- 新增 Scheduled Trigger Scheduler 状态只读 API Contract，直接复用 `WorkflowSchedulerRepository`，不复制调度规则。
+当前新增实现聚焦两个未完成边界：
 
-当前 API 状态查询入口：
+1. **Tenant isolation**
+   - `WorkflowSchedulerRepository.get_schedule_for_trigger()` 继续以 `tenant_id + trigger_id` 作为强制查询边界；
+   - 新增真实 PostgreSQL tenant isolation integration test，验证错误 tenant 无法读取同一 trigger 的 Scheduler 状态；
+   - Runtime 的 lease、slot claim、advance、release 均继续显式携带 tenant，不创建第二套隔离实现。
+
+2. **Misfire integration**
+   - Scheduled Trigger Contract 新增 `misfire_policy` 与 `catch_up_limit`，默认保持 `skip` / `10`；
+   - 已有 `WorkflowSchedule.misfire_policy` / `catch_up_limit` 字段直接作为持久化边界，本轮不新增 Migration；
+   - Runtime 统一复用 `workflow_scheduler/misfire.py` 计算到期槽位，不在 Runtime 复制 misfire 规则；
+   - `skip`：历史积压全部跳过并恢复未来 interval；
+   - `fire_once`：历史积压只补一次，随后直接恢复未来 interval；
+   - `catch_up`：按 `catch_up_limit` 有界补跑，仍有积压时保留下一槽位供下一 tick 继续处理；
+   - 每个补跑槽位继续使用既有 `schedule_slot_key` + WorkflowTriggerService idempotency，避免重复创建 Execution。
+
+## 本轮代码交付边界
 
 ```text
-GET /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/schedule
+Trigger Config
+    ↓
+WorkflowSchedule 持久化配置
+    ↓
+WorkflowSchedulerRepository
+    ↓
+workflow_scheduler/misfire.py
+    ↓
+ScheduledTriggerScheduler
+    ↓
+既有 WorkflowTriggerService.invoke_scheduled
 ```
 
-该接口只读返回持久化调度状态，包括 enabled/status、timezone、next/last run、last execution、lease 是否有效、misfire policy 等，不暴露 Scheduler worker owner。
+没有新增第二套 Scheduler、Repository、Provider 或 Workflow Execution 实现，也没有新增 Alembic Migration。
 
-## 本轮下一步
-
-1. 本地执行 Scheduler API Contract Gate；
-2. 若 API Contract 暴露问题，只修复 canonical Workflow API / Scheduler Repository，不创建兼容垫片或第二套调度实现；
-3. API Contract 通过后推进 tenant isolation / misfire integration；
-4. 再执行 Tenant Safe Real API Gate 与 Backend Regression；
-5. 根据实际本地结果更新 Phase、Acceptance、Status 与必要 Error 记录。
-
-## 本地自动化验证流程
+## 本轮新增测试编排
 
 ```powershell
 cd backend
-
-git fetch origin
-git reset --hard origin/main
-git log -8 --oneline
-
-uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
-
-# 1. 重构最终收口回归
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\05_backend_refactor_closure_gate.ps1
-
-# 2. Scheduler Runtime Gate
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
-
-# 3. Scheduler API Contract Gate（本轮新增）
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\03_scheduler_api_contract_gate.ps1
-
-# 4. Backend default regression
-uv run pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\04_scheduler_tenant_misfire_gate.ps1
 ```
 
-本轮未新增 Alembic Migration；Scheduler API Contract 只读取既有 `0028_durable_scheduler_persistence` 持久化结构。
+该 Gate 依次执行：
+
+```text
+Application import
+    ↓
+Scheduler misfire unit tests
+    ↓
+Scheduler tenant PostgreSQL integration
+    ↓
+Scheduler API Contract tests
+    ↓
+Backend default regression
+```
+
+本地执行前不得记录为 Passed。
+
+## 下一步
+
+1. 开发者本地执行 `04_scheduler_tenant_misfire_gate.ps1`；
+2. 若 Gate 通过，再执行 Tenant Safe Real API Gate；
+3. 根据真实 Real API 结果继续补齐多实例 lease、misfire、Execution、Audit / Trace 与服务重启恢复验收；
+4. 完成后再更新 Phase Acceptance 与 Project Status 为实际结果；
+5. 仍然不创建兼容垫片、旧入口转发或第二套调度实现。
