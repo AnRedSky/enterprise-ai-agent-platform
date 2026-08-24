@@ -62,11 +62,16 @@ backend/app/
 | Agent | `app/services/agent/` | 已完成 | Service / Repository 已物理迁移，旧入口删除 |
 | Knowledge | `app/services/knowledge/` + `app/infrastructure/providers/` | 已完成 | 领域与 Provider 已分离，无旧 Provider 实现 |
 | Memory | `app/services/memory/` + `app/runtime/memory/` | 已完成 | Service 与 Runtime 上下文均已迁移，旧入口删除 |
-| Model | `app/services/model/` + `app/runtime/model/` + Provider | 已完成 | Service / Contract / Routing / Governance / Runtime Gateway / Provider 已收敛，旧 Service / Runtime Provider 入口删除 |
-| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | **整改中** | Canonical import 与循环依赖已修复，40 个 Workflow targeted tests 已在本地反馈通过；Module Refactor Gate 仍需本地最终验收 |
-| Trigger | `app/services/trigger/` | **代码迁移完成，待 Gate 验收** | Manual / Scheduled / Webhook 已统一进入 Trigger 子模块；旧 Trigger Service、Schedule、Webhook 文件已删除；测试 import 已切换 |
-| Organization / Governance / Observability | 对应领域子模块 | 待迁移 | 当前仍存在多个根目录 Service 文件 |
-| Tool | `app/services/tool/` | 待迁移 | `app/tools/` 技术实现需与领域 Runtime 边界继续收敛 |
+| Model | `app/services/model/` + `app/runtime/model/` + Provider | 已完成 | Service / Contract / Routing / Governance / Runtime Gateway / Provider 已收敛 |
+| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | **整改中** | Canonical import 与循环依赖已修复；仍需最终 Gate / Regression 验收 |
+| Trigger | `app/services/trigger/` | **代码迁移完成，待 Gate 验收** | Manual / Scheduled / Webhook 已统一进入 Trigger 子模块；旧入口删除 |
+| Organization | `app/services/organization/` | **代码迁移完成，待 Gate 验收** | Service 已物理迁移并删除旧根文件 |
+| Observability | `app/services/observability/` | **代码迁移完成，待 Gate 验收** | Service 已物理迁移并切换调用方 |
+| Retrieval Evaluation | `app/services/retrieval_evaluation/` | **代码迁移完成，待 Gate 验收** | Trace / Dataset / Baseline / Config 已收敛 |
+| Runtime Query | `app/services/runtime_query/` | **代码迁移完成，待 Gate 验收** | 旧根 Service 已删除 |
+| Session | `app/services/session_service/` | **代码迁移完成，待 Gate 验收** | 旧根 Service 已删除 |
+| Tool | `app/services/tool/` + `app/tools/` | **代码迁移完成，待 Gate 验收** | Audit / Observability / RBAC / Repository / Runtime 已统一收敛到 `app.services.tool`，`app.tools` 仅保留 HTTP/Schema 技术实现 |
+| Usage Accounting | `app/services/usage_accounting/` | **代码迁移完成，待 Gate 验收** | 旧根 Service 已删除 |
 | API | `app/api/v1/<domain>/` | 待迁移 | 当前 Router 仍位于 `app/api/*.py` |
 
 ## 5. Memory：彻底迁移完成
@@ -85,15 +90,7 @@ app/runtime/memory/
 └── context.py
 ```
 
-迁移要求已完成：
-
-- 生产入口统一为 `app.services.memory`；
-- Runtime 入口统一为 `app.runtime.memory`；
-- 删除旧 Service / Runtime 文件，不保留兼容垫片；
-- Memory 单元测试 import 已同步切换；
-- Module Refactor Gate 已加入旧路径、目录和 Memory targeted tests 检查；
-- 新增/重构模块补充中文职责、边界与关键依赖说明；
-- 本轮未新增数据库 Migration，Memory 数据结构保持不变。
+迁移要求已完成：生产入口统一为 `app.services.memory`；Runtime 入口统一为 `app.runtime.memory`；删除旧文件；测试 import 已同步切换；模块说明与 Gate 检查已补齐；未新增数据库 Migration。
 
 ## 6. Agent：彻底迁移完成
 
@@ -104,7 +101,7 @@ app/services/agent/
 └── repository.py
 ```
 
-原 `app/services/agent_registry.py` 与 `app/services/agent/registry.py` 已删除；生产代码直接使用 `app.services.agent`，不存在兼容垫片或双实现。
+原 `app/services/agent_registry.py` 与旧 registry 入口已删除；生产代码直接使用 `app.services.agent`，不存在兼容垫片或双实现。
 
 ## 7. Knowledge：领域与 Provider 已完成物理迁移
 
@@ -131,18 +128,7 @@ Embedding Contract 只保留 `infrastructure/providers/embedding.py` 一份正�
 
 ## 8. Model：彻底迁移完成
 
-### 原结构
-
-```text
-app/services/model_provider.py
-app/services/model_provider_governance_contract.py
-app/services/runtime_model_governance.py
-app/runtime/model_gateway.py
-app/runtime/provider.py
-app/runtime/openai_provider.py
-```
-
-### 当前正式结构
+正式结构：
 
 ```text
 app/services/model/
@@ -162,45 +148,20 @@ app/infrastructure/providers/
 └── mock_model.py
 ```
 
-迁移结论：
-
-- `ModelProviderService` 已归入 `app.services.model.provider`；
-- Provider Governance Contract、Fallback/Cost/Usage 领域值对象已归入 `app.services.model.contract`；
-- Provider 路由筛选规则已归入 `app.services.model.routing`，不再由 API 或 Runtime 重复实现路由规则；
-- `RuntimeModelGovernanceService` 已归入 `app.services.model.governance`；
-- `ModelGateway` 已归入 `app.runtime.model.gateway`，作为 Runtime 唯一模型调用入口；
-- OpenAI-compatible、Mock Provider 及统一 Provider Contract 已归入 `app.infrastructure.providers`；
-- 已知生产/测试 import 已切换到新入口；
-- 原 Service / Runtime Provider 文件已删除，不保留兼容垫片；
-- Module Refactor Gate 已增加 Model 旧路径、旧 import、目录、Provider 文件和 targeted tests 检查；
-- 新增/重构 Model 模块均补充中文职责、边界和关键依赖说明；
-- 本轮未新增数据库 Migration，Model 数据结构保持不变。
+`ModelProviderService`、Governance Contract、Routing、Runtime Governance、Model Gateway、Provider Contract 均已收敛到唯一正式入口，旧 Service / Runtime Provider 文件删除，不保留兼容垫片。
 
 ## 9. Workflow：当前整改状态
 
-Workflow 已完成旧入口物理删除与 canonical import 切换。随后发现 `WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 的模块初始化循环，已通过 Runtime 仅在未注入 Execution Service 时延迟解析正式入口的方式修复；不恢复旧文件、不增加第二套实现。
+Workflow 已完成旧入口物理删除与 canonical import 切换。`WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 循环依赖已修复；不恢复旧文件、不增加第二套实现。
 
-当前用户本地反馈：
+当前必须继续完成：
 
-- `uv run python -c "from app.main import app; print('APP_IMPORT_OK')"`：`APP_IMPORT_OK`；
-- Workflow targeted tests：`40 passed in 1.40s`；
-- 旧 Workflow import grep：无输出；
-- Module Refactor Gate：此前因 PowerShell ParserError 未执行；Gate 已再次收紧为全域 legacy path、重复实现、模块说明和 Trigger targeted test 的统一验收入口；
-- Backend Regression：必须在 Gate 成功后重新执行并记录实际结果。
-
-因此 Workflow 暂不能标记“迁移完成”。
+- 本地 Module Refactor Gate；
+- Workflow targeted tests；
+- Backend Regression；
+- 旧路径搜索与重复实现审查。
 
 ## 10. Trigger：本轮物理迁移
-
-### 原结构
-
-```text
-app/services/workflow_trigger.py
-app/services/workflow_trigger_schedule.py
-app/services/webhook_trigger.py
-```
-
-### 当前正式结构
 
 ```text
 app/services/trigger/
@@ -210,29 +171,49 @@ app/services/trigger/
 └── webhook.py
 ```
 
-迁移结论：
+`WorkflowTriggerService`、scheduled/webhook 配置契约、`WebhookTriggerService` 均已归入正式 Trigger 模块；Workflow API、Webhook API 与测试已切换；旧三个根文件删除；新增/重构文件补充中文职责、边界和关键依赖说明。
 
-- `WorkflowTriggerService` 已归入 `app.services.trigger.service`；
-- scheduled/webhook 配置契约与 Secret 校验统一归入 `app.services.trigger.schedule`；
-- `WebhookTriggerService` 已归入 `app.services.trigger.webhook`；
-- Workflow API、Webhook API 与 Trigger 测试均切换到 `app.services.trigger` 正式入口；
-- 原三个根目录 Trigger 文件已删除，不保留兼容垫片；
-- Trigger 模块新增/重构文件均补充中文职责、边界和关键依赖说明；
-- 不新增数据库 Migration；
-- 代码迁移完成后必须通过完整 Module Refactor Gate，才能将 Trigger 标记为“迁移完成”。
+## 11. Organization / Observability / Retrieval Evaluation / Runtime Query / Session / Usage Accounting
 
-## 11. Organization / Governance / Observability / Tool / API / Runtime
+上述领域已完成代码物理迁移并删除旧根 Service。当前状态统一为“代码迁移完成，待 Gate 验收”，不得因为代码已移动就提前宣布重构阶段结束。
 
-这些领域继续遵循目标结构与“完整迁移、删除旧文件、旧路径搜索为 0、重复实现为 0”的统一验收规则。具体迁移必须基于当前实际职责，不机械归类。
+验收必须同时满足：旧 import 为 0、旧文件/目录删除、无重复实现、模块说明完整、targeted tests 与 Backend Regression 通过。
 
-## 12. 每个迁移单元验收
+## 12. Tool：统一领域入口
+
+正式结构：
+
+```text
+app/services/tool/
+├── __init__.py
+├── audit.py
+├── observability.py
+├── rbac.py
+├── repository.py
+└── runtime.py
+
+app/tools/
+├── exceptions.py
+├── http_executor.py
+└── schema.py
+```
+
+边界明确为：
+
+- `app.services.tool`：Tool 领域治理、执行编排、权限、审计、可观测性与持久化适配；
+- `app.tools`：HTTP/Schema 等底层技术执行能力；
+- API 只负责 HTTP Contract 与依赖注入，不复制 Tool Runtime 业务规则。
+
+旧 `tool_audit`、`tool_observability`、`tool_rbac`、`tool_repository`、`tool_runtime_service` 目录已删除，不保留兼容转发。
+
+## 13. 每个迁移单元验收
 
 1. 全仓搜索旧 import 路径，结果为 0；
-2. 旧文件已删除；
+2. 旧文件和旧目录已删除；
 3. 不存在重复实现；
 4. 生产代码只存在一个正式入口；
 5. 受影响测试已切换；
-6. 每个新增/重构模块有必要的中文职责说明；
+6. 每个新增/重构模块有必要的中文职责与边界说明；
 7. targeted tests；
 8. Backend Regression；
 9. 必要时 Real API / Tenant Safe Real API；
