@@ -153,7 +153,9 @@ $descriptionCheck | uv run python -
 if ($LASTEXITCODE -ne 0) { throw "Canonical module description validation failed." }
 
 Write-Host "[Gate] Canonical application import"
-uv run python -c "from app.main import app; from app.api.v1 import router as api_router; from app.runtime.model import ModelGateway; from app.runtime.workflow import WorkflowRuntime; print('REFACTOR_CLOSURE_IMPORT_OK')"
+# app.api.v1 是版本命名空间而非聚合 Router 模块；HTTP 路由由 app.main 统一注册。
+# 因此这里验证真实应用入口及 canonical Runtime 导出，避免 Gate 引入项目不存在的虚假 router API。
+uv run python -c "from app.main import app; from app.runtime.model import ModelGateway; from app.runtime.workflow import WorkflowRuntime; print('REFACTOR_CLOSURE_IMPORT_OK')"
 if ($LASTEXITCODE -ne 0) { throw "Canonical refactor import failed." }
 
 Write-Host "============================================================"

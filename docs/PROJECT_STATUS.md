@@ -17,12 +17,12 @@
 本轮新增工程变更：
 
 ```text
-f8d7056 fix(refactor): make closure description gate encoding-safe
+fix(refactor): correct closure gate canonical API import assertion
 ```
 
-该修复针对用户本地 Closure Gate 的 Windows PowerShell 编码问题：内嵌 Python 校验使用中文字符串字面量时发生代码页损坏并触发 `SyntaxError`。现改为 Unicode 转义检查，保持 UTF-8 模块文件读取与原校验语义不变。
+本轮针对用户本地 Closure Gate 的实际失败进行修复：Gate 错误假设 `app.api.v1` 应暴露聚合 `router`，而当前架构由 `app.main` 统一注册各 `app.api.v1/<domain>/` Router。修复后不增加聚合 Router，不创建兼容垫片，不复制 API 实现。
 
-用户本地在修复前实际验收结果：
+用户本地在本轮修复前实际验收结果：
 
 ```text
 API v1 Module Gate：79 passed
@@ -32,7 +32,13 @@ Dependency Boundary Gate：PASS
 Backend default regression：384 passed, 2 skipped, 35 deselected
 ```
 
-修复后的 Closure Gate **尚未由用户本地重新执行**，因此当前仍不能记录为通过。
+本轮 Closure Gate 在修复前实际失败于：
+
+```text
+ImportError: cannot import name 'router' from 'app.api.v1'
+```
+
+该错误已记录至 `docs/04-errors/2026-08-24-backend-refactor-closure-gate-api-v1-router-assertion.md`。修复后的 Closure Gate 尚未由用户本地重新执行，因此当前仍不能记录为通过。
 
 ## API v1 重构
 
@@ -91,7 +97,8 @@ API v1 物理模块归位已经完成，并已通过用户本地 Module Gate：
 
 - `05_backend_refactor_closure_gate.ps1`：检查旧文件、旧 import、根目录边界、Provider 唯一实现入口、Runtime Governance 重复实现与中文模块职责说明。
 - 已修复 Closure Gate 在 Windows PowerShell 管道中的中文编码 false negative / `SyntaxError`。
-- Closure Gate 修复后的版本尚未由用户本地执行。
+- 本轮继续修复 Closure Gate 对 `app.api.v1.router` 的错误 canonical import 假设；实际应用入口为 `app.main`，API v1 领域 Router 由 `main.py` 统一注册。
+- 修复后的 Closure Gate 尚未由用户本地执行。
 - Closure Gate 通过后仍需再次执行 Backend Regression，确认最终收口没有回归。
 - 仍需更新 Migration Map、Acceptance / Error（仅在实际产生对应事实变化时）并最终确认全部重构领域完成。
 
@@ -131,7 +138,7 @@ uv run pytest -q
 
 ## 下一执行任务
 
-1. 用户本地同步 `main` 至 `f8d7056` 或更新提交。
+1. 用户本地同步最新 `main`。
 2. 执行修复后的 `05_backend_refactor_closure_gate.ps1`。
 3. 若 Closure Gate 仍暴露问题，只修复 canonical 模块边界、唯一实现入口或模块说明，不创建兼容垫片或第二实现。
 4. Closure Gate 通过后重新执行 API v1、Runtime Boundary、Module Refactor、Dependency Boundary 与 Backend Regression。
