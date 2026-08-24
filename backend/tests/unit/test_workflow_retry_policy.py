@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.runtime.workflow_runtime import WorkflowRuntime
+from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 
 
