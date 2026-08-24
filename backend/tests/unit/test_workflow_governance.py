@@ -9,7 +9,7 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.services.runtime_query import RuntimeQueryService
-from app.services.workflow_execution import WorkflowExecutionService
+from app.services.workflow import WorkflowExecutionService
 
 
 @pytest.fixture
