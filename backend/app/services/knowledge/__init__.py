@@ -1,6 +1,8 @@
 """Knowledge 业务领域入口。
 
-统一导出 Knowledge 的领域服务与契约；外部技术 Provider 不在本包重复实现。
+职责：统一导出知识接入、检索、向量索引、混合检索及领域契约，作为 Knowledge 领域的正式入口。
+边界：只负责知识领域业务编排与契约，不实现外部 Embedding / Vector Provider；Provider 统一由 infrastructure/providers 提供。
+关键依赖：Knowledge 领域子模块与 infrastructure/providers 中的外部能力适配。
 """
 
 from .contract import EmbeddingProvider, Reranker, RetrievalCandidate, Retriever
