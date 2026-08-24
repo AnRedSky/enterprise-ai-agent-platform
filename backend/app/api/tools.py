@@ -1,3 +1,9 @@
+"""Tool API 路由。
+
+职责：负责 Tool 管理、Agent 绑定和 Tool 执行 HTTP 协议适配，并把业务治理交给 Tool 领域服务。
+边界：不直接实现 Tool 权限、审计、可观测性或执行策略；数据库访问通过领域适配器完成。
+"""
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,12 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
 from app.models.core import AgentTool, AuditLog, Tool
-from app.services.observability_service import ObservabilityService
-from app.services.tool_audit import AuditLogAdapter
-from app.services.tool_observability import ToolObservabilityAdapter
-from app.services.tool_rbac import ToolRBACService
-from app.services.tool_repository import SqlAlchemyAuditRepository, SqlAlchemyToolRepository
-from app.services.tool_runtime_service import ToolExecutionContext, ToolRuntimeService
+from app.services.observability import ObservabilityService
+from app.services.tool import (
+    AuditLogAdapter,
+    SqlAlchemyAuditRepository,
+    SqlAlchemyToolRepository,
+    ToolExecutionContext,
+    ToolObservabilityAdapter,
+    ToolRBACService,
+    ToolRuntimeService,
+)
 
 router = APIRouter()
 
