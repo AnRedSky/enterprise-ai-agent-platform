@@ -1,3 +1,11 @@
+"""可观测性领域服务实现。
+
+职责：统一维护 Execution 生命周期、ExecutionEvent 运行事件以及 trace/request 标识，
+为 API、Runtime 和其他领域提供一致的运行观测持久化入口。
+边界：不负责业务执行、模型调用、工具执行或审计策略；只负责可观测性记录及其数据库持久化。
+关键依赖：SQLAlchemy AsyncSession、Execution 与 ExecutionEvent 持久化模型。
+"""
+
 import inspect
 import uuid
 from datetime import UTC, datetime
@@ -10,16 +18,20 @@ from app.models.execution import Execution, ExecutionEvent
 
 
 class ObservabilityService:
+    """负责记录执行生命周期和执行事件，不承载具体业务执行逻辑。"""
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def _add(self, instance: Any) -> None:
+        """统一兼容同步/异步数据库 Session 的对象添加行为。"""
         result = self.db.add(instance)
         if inspect.isawaitable(result):
             await result
 
     @staticmethod
     def _utc_naive(value: datetime | None) -> datetime | None:
+        """将带时区时间统一转换为数据库使用的 UTC 无时区时间。"""
         if value is None:
             return None
         if value.tzinfo is None:
@@ -36,6 +48,7 @@ class ObservabilityService:
         model_id: str | None,
         model_profile_id: UUID | None = None,
     ) -> Execution:
+        """创建并持久化一个运行中的 Execution 记录。"""
         execution = Execution(
             request_id=request_id,
             trace_id=trace_id,
@@ -50,7 +63,14 @@ class ObservabilityService:
         await self.db.flush()
         return execution
 
-    async def finish_execution(self, execution: Execution, status: str = "completed", error_code: str | None = None, error_message: str | None = None) -> None:
+    async def finish_execution(
+        self,
+        execution: Execution,
+        status: str = "completed",
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """完成 Execution 生命周期并计算持续时间及错误信息。"""
         ended = datetime.now(UTC)
         started = execution.started_at
         if started.tzinfo is None:
@@ -79,6 +99,7 @@ class ObservabilityService:
         error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionEvent:
+        """记录一次 ExecutionEvent，并保存模型、工具、Token 与错误上下文。"""
         ended = datetime.now(UTC)
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=UTC)
@@ -107,8 +128,10 @@ class ObservabilityService:
 
     @staticmethod
     def new_ids() -> tuple[str, str]:
+        """生成 request_id 与 trace_id，供一次执行建立关联标识。"""
         return str(uuid.uuid4()), str(uuid.uuid4())
 
     @staticmethod
     def now() -> datetime:
+        """返回当前 UTC 时间，作为统一的运行观测时间基准。"""
         return datetime.now(UTC)
