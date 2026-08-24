@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.core import Agent, AgentVersion, User
 from app.models.organization import Organization
 from app.runtime.model import ModelGateway
+from app.runtime.workflow.circuit_breaker import CircuitBreakerService, CircuitOpenError
 from app.schemas.model_provider import ModelProviderRoutingRequest
-from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 from app.services.model import RuntimeModelGovernanceService
 
 

@@ -1,3 +1,5 @@
+"""验证 Workflow Runtime 熔断器状态机与策略契约。"""
+
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -6,7 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
+from app.runtime.workflow import CircuitBreakerService, CircuitOpenError
 
 
 def _service(state=None):

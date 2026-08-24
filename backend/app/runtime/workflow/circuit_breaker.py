@@ -1,3 +1,10 @@
+"""Workflow Runtime 熔断器模块。
+
+职责：提供基于数据库持久化状态的 CLOSED/OPEN/HALF_OPEN 熔断状态机与探针配额控制。
+边界：只负责 Workflow Runtime 的熔断状态与策略一致性，不负责节点执行、模型 Provider 或 Workflow Service 生命周期。
+关键依赖：WorkflowCircuitState ORM、SQLAlchemy AsyncSession 与异步执行上下文。
+"""
+
 from __future__ import annotations
 
 from contextvars import ContextVar
@@ -17,25 +24,15 @@ class CircuitOpenError(HTTPException):
         self.circuit_key = circuit_key
 
 
-# A probe completion must only mutate the recovery window that reserved it.
-# ContextVar keeps the reservation token local to the async execution context,
-# including when several Runtime calls share one CircuitBreakerService instance.
+# 探针完成只能修改为其预留探针的恢复窗口。
+# ContextVar 将预留令牌限制在当前异步执行上下文中，避免多个 Runtime 调用共享服务实例时串用探针状态。
 _probe_context: ContextVar[tuple[UUID, str, datetime] | None] = ContextVar(
     "workflow_circuit_probe_context", default=None
 )
 
 
 class CircuitBreakerService:
-    """Database-backed CLOSED/OPEN/HALF_OPEN state machine.
-
-    State and the policy that governs that state are persisted in PostgreSQL so
-    Runtime workers remain stateless and every caller sharing a circuit key
-    observes the same recovery and probe-quota contract.
-
-    HALF_OPEN completions are additionally bound to the recovery-window
-    timestamp captured when the probe was reserved. A delayed completion from
-    an older window therefore cannot close or reopen a newer recovery window.
-    """
+    """数据库持久化的 CLOSED/OPEN/HALF_OPEN 状态机。"""
 
     STATES = {"closed", "open", "half_open"}
 
@@ -91,7 +88,7 @@ class CircuitBreakerService:
 
     @staticmethod
     def _new_state(tenant_id: UUID, circuit_key: str, policy: dict) -> WorkflowCircuitState:
-        """Build a fully initialized state instead of relying on ORM defaults."""
+        """构造完整初始化状态，避免依赖 ORM 默认值。"""
         return WorkflowCircuitState(
             tenant_id=tenant_id,
             circuit_key=circuit_key,
@@ -115,8 +112,7 @@ class CircuitBreakerService:
     ) -> bool:
         token = _probe_context.get()
         if token is None:
-            # Preserve direct service callers that do not explicitly reserve a
-            # probe through before_call; Runtime calls always have a token.
+            # 兼容未显式预留探针的直接服务调用；Runtime 调用始终拥有探针令牌。
             return True
         token_tenant, token_key, token_window = token
         return (
@@ -199,7 +195,7 @@ class CircuitBreakerService:
                 state.opened_at = None
                 state.half_opened_at = None
         elif state.state == "closed":
-            # A stale HALF_OPEN success must never reset a newer CLOSED window.
+            # 过期 HALF_OPEN 成功事件不得重置新的 CLOSED 窗口。
             token = _probe_context.get()
             if token is None:
                 state.failure_count = 0
