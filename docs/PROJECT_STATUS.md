@@ -12,15 +12,17 @@
 
 ## 最新 main 基线
 
-本轮继续直接基于远端 `main`。用户本地已反馈 API v1、模块重构、依赖边界、Runtime Boundary 与 Backend Regression 全部通过；当前继续执行全部重构的最终静态收口，不创建兼容分支或兼容垫片。
+本轮继续直接基于远端 `main`。用户本地已反馈 API v1、模块重构、依赖边界、Runtime Boundary 与 Backend Regression 全部通过；当前继续执行全部重构的最终静态收口。
 
 本轮新增工程变更：
 
 ```text
-44e2afe test(refactor): add backend refactor closure gate
+f8d7056 fix(refactor): make closure description gate encoding-safe
 ```
 
-用户本地实际验收结果：
+该修复针对用户本地 Closure Gate 的 Windows PowerShell 编码问题：内嵌 Python 校验使用中文字符串字面量时发生代码页损坏并触发 `SyntaxError`。现改为 Unicode 转义检查，保持 UTF-8 模块文件读取与原校验语义不变。
+
+用户本地在修复前实际验收结果：
 
 ```text
 API v1 Module Gate：79 passed
@@ -30,7 +32,7 @@ Dependency Boundary Gate：PASS
 Backend default regression：384 passed, 2 skipped, 35 deselected
 ```
 
-上述结果均来自用户本地实际执行反馈。新增 `05_backend_refactor_closure_gate.ps1` 尚未由用户本地执行，因此不能记录为通过。
+修复后的 Closure Gate **尚未由用户本地重新执行**，因此当前仍不能记录为通过。
 
 ## API v1 重构
 
@@ -63,8 +65,6 @@ API v1 物理模块归位已经完成，并已通过用户本地 Module Gate：
 - `ModelGateway` / `WorkflowRuntime` canonical import 可用；
 - Runtime targeted unit tests：79 passed，215 deselected。
 
-同时 `app/runtime/model/gateway.py` 的类 docstring 已按开发准则完成中文职责说明。
-
 **状态：Runtime Boundary 已通过用户本地验收，但尚未通过全部重构 Closure Gate，因此仍不能恢复主线。**
 
 ## 当前模块重构状态
@@ -89,8 +89,9 @@ API v1 物理模块归位已经完成，并已通过用户本地 Module Gate：
 
 ### 最终收口中
 
-- 新增 `05_backend_refactor_closure_gate.ps1`：检查旧文件、旧 import、根目录边界、Provider 唯一实现入口、Runtime Governance 重复实现与中文模块职责说明。
-- Closure Gate 尚未由用户本地执行。
+- `05_backend_refactor_closure_gate.ps1`：检查旧文件、旧 import、根目录边界、Provider 唯一实现入口、Runtime Governance 重复实现与中文模块职责说明。
+- 已修复 Closure Gate 在 Windows PowerShell 管道中的中文编码 false negative / `SyntaxError`。
+- Closure Gate 修复后的版本尚未由用户本地执行。
 - Closure Gate 通过后仍需再次执行 Backend Regression，确认最终收口没有回归。
 - 仍需更新 Migration Map、Acceptance / Error（仅在实际产生对应事实变化时）并最终确认全部重构领域完成。
 
@@ -126,15 +127,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refact
 uv run pytest -q
 ```
 
-本轮仍未新增 Alembic Migration；目录重构不应改变数据库结构。如数据库 Gate 发现异常，应先记录错误并停止继续迁移。
+本轮仍未新增 Alembic Migration；目录重构没有数据库结构变更。如数据库 Gate 发现异常，应先记录错误并停止继续迁移。
 
 ## 下一执行任务
 
-1. 用户本地同步 `main`，执行 `05_backend_refactor_closure_gate.ps1`。
-2. 若 Closure Gate 暴露问题，只修复 canonical 模块边界、唯一实现入口或模块说明，不创建兼容垫片或第二实现。
-3. Closure Gate 通过后重新执行 API v1、Runtime Boundary、Module Refactor、Dependency Boundary 与 Backend Regression。
-4. 全部 Gate 通过后进行最终旧路径 / 重复实现扫描。
-5. 更新 Migration Map、PROJECT_STATUS 与必要的 Acceptance / Error 记录。
-6. **全部重构验收完成后，才恢复 Phase 2.4 主线任务。**
+1. 用户本地同步 `main` 至 `f8d7056` 或更新提交。
+2. 执行修复后的 `05_backend_refactor_closure_gate.ps1`。
+3. 若 Closure Gate 仍暴露问题，只修复 canonical 模块边界、唯一实现入口或模块说明，不创建兼容垫片或第二实现。
+4. Closure Gate 通过后重新执行 API v1、Runtime Boundary、Module Refactor、Dependency Boundary 与 Backend Regression。
+5. 全部 Gate 通过后进行最终旧路径 / 重复实现扫描。
+6. 更新 Migration Map、PROJECT_STATUS 与必要的 Acceptance / Error 记录。
+7. **全部重构验收完成后，才恢复 Phase 2.4 主线任务。**
 
 模块化目录、职责与迁移规则继续以 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md` 与 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。
