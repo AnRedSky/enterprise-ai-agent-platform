@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.runtime.workflow_runtime import WorkflowRuntime
+from app.runtime.workflow import WorkflowRuntime
 
 
 def test_workflow_runtime_accepts_only_supported_sequential_nodes():
