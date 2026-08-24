@@ -38,37 +38,45 @@
 19. Module Refactor Gate 进一步收紧为全域 legacy path、重复实现、模块职责/边界说明、Trigger targeted tests 与 Backend Regression 的统一验收入口。
 20. 修复 Trigger Scheduler 对已删除 `app.services.workflow_trigger` 的残留引用，切换到 `app.services.trigger` 正式入口。
 21. 修复 CircuitBreaker 并发测试对已删除 `app.services.circuit_breaker` 的残留引用，切换到 `app.runtime.workflow.circuit_breaker`，并补充中文测试模块说明。
+22. 修复剩余两个 Trigger 测试收集阶段旧 import：`test_webhook_trigger_integration.py` 与 `test_webhook_trigger_config.py` 统一切换到正式 `app.services.trigger` 入口，并记录错误原因。
+23. 完成 Organization Service 物理迁移到 `app/services/organization/`，删除 `app/services/organization.py`，保留单一实现并通过 `__init__.py` 暴露正式入口。
+24. 完成 Observability Service 物理迁移到 `app/services/observability/`，并同步将 Retrieval Evaluation Trace 的依赖切换到正式 Observability 入口。
+25. 完成 `app/services/` 根目录剩余 Retrieval Evaluation、Runtime Query、Session、Tool Audit/Observability/RBAC/Repository/Runtime、Usage Accounting 的物理迁移为领域子模块包；原实现通过 blob 原样迁移，未新增第二套功能实现。
+26. 为本轮新增领域包补充中文职责、边界与关键依赖说明；Retrieval Evaluation 统一通过 `app.services.retrieval_evaluation` 暴露质量指标、dataset、baseline、config 与 trace 能力。
+27. 删除上述 root service 文件，不使用旧文件转发或兼容实现；当前尚未宣称 Module Refactor Gate / Backend Regression 已通过，必须由开发者本地实际执行确认。
 
 ## 当前模块重构完成度
 
-已完成：
+代码迁移完成、待 Gate 验收：
 
 - Agent
 - Knowledge + Provider
 - Memory
 - Model + Provider
-
-代码迁移完成、待 Gate 验收：
-
 - Workflow
 - Trigger
+- Organization
+- Observability
+- Retrieval Evaluation
+- Runtime Query
+- Session
+- Tool
+- Usage Accounting
 
 仍未完成：
 
-- Workflow / Trigger Module Refactor Gate 最终验收
-- Organization
-- Governance
-- Observability
-- Tool
+- Module Refactor Gate 最终全量验收
+- 生产代码与测试 import 全量旧路径搜索为 0 的本地确认
+- Governance 领域其余职责收敛
 - API `v1/<domain>` 收敛
 - Runtime 其他领域目录收敛
-- `app/services/` 根目录遗留领域服务清理
+- 全部重构领域的重复实现审查与 targeted tests
 
-因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移，直到全部重构单元满足验收条件。
+因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移、旧路径清理、测试收敛与 Gate 验收，直到全部重构单元满足验收条件。
 
 ## 本地验证原则
 
-本轮代码修复不能由仓库端代替开发者本地测试。用户此前已实际反馈 Workflow targeted tests：`56 passed in 1.25s`，并确认 `from app.main import app` 在前一基线返回 `APP_IMPORT_OK`；当前最新提交修复了新的 canonical import 残留，尚无新的本地 Gate 通过结果。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
+本轮代码修复不能由仓库端代替开发者测试。用户此前已实际反馈 Workflow/Trigger targeted tests：`74 passed in 1.97s`，并确认前一基线 `from app.main import app` 返回 `APP_IMPORT_OK`；本轮新增的 root service 物理迁移尚无新的本地 Gate / Regression 通过结果。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
 
 ### 当前完整本地验证流程
 
@@ -77,7 +85,7 @@ cd backend
 
 git fetch origin
 git reset --hard origin/main
-git log -4 --oneline
+git log -8 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
@@ -106,19 +114,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refact
 uv run pytest -q
 ```
 
-若 Gate 报告任何旧 import、旧模块路径、重复实现或模块说明缺失，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
+如果 Gate 报告任何旧 import、旧模块路径、重复实现或模块说明缺失，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
 
 ## 下一执行任务：继续模块化整改
 
 优先顺序保持：
 
-1. 先在本地执行新版 Module Refactor Gate，取得新的真实结构性 blocker；
-2. Workflow：完成 Gate 最终验收并完成迁移记录；
-3. Trigger：完成 Gate 最终验收后标记迁移完成；
-4. 清理 `app/services/` 根目录遗留服务，并按职责迁移 Organization / Governance / Observability / Evaluation 等领域；
-5. Tool Service 与 `app/tools/` 技术实现完成唯一 Runtime 边界；
-6. API 收敛到 `app/api/v1/<domain>/`，保持现有 HTTP Contract 不变；
-7. Runtime 其他领域目录完成职责收敛；
-8. 全部重构领域逐一通过 Module Refactor Gate 后，才恢复 Phase 2.4 主线后续任务。
+1. 先在本地执行新版 Module Refactor Gate，取得本轮真实结构性 blocker；
+2. 修复 Gate 暴露的生产/测试 import、模块说明或重复实现问题，并补充对应错误记录；
+3. Workflow / Trigger / Organization / Observability / Retrieval Evaluation / Runtime Query / Session / Tool / Usage Accounting 逐领域完成 targeted tests 与迁移记录；
+4. 完成 Governance 领域及 API `v1/<domain>` 收敛，保持现有 HTTP Contract 不变；
+5. Runtime 其他领域目录完成职责收敛；
+6. 全部重构领域逐一通过 Module Refactor Gate 与 Backend Regression 后，才恢复 Phase 2.4 主线后续任务。
 
 模块化目录、职责与迁移规则继续以 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md` 与 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。
