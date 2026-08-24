@@ -7,7 +7,11 @@ from app.models.core import Agent, AgentVersion
 
 
 class AgentRepository:
-    """Agent 持久化访问。"""
+    """Agent 持久化访问。
+
+    职责：封装 Agent 与 AgentVersion 的数据库查询，提供领域服务需要的持久化接口。
+    边界：只负责数据访问，不承载 Agent 业务状态变更或其他领域的查询逻辑。
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
