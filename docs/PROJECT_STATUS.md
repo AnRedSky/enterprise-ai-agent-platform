@@ -7,85 +7,67 @@
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler：**Persistence、Runtime、Scheduler API Contract 已完成；tenant isolation / misfire integration 正在修复 Gate 暴露的问题。**
+- Phase 2.4 Durable Scheduler：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate 已通过；Tenant Safe Real API 仍有 3 个失败，当前不能标记 Passed。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-本轮基于远端 `main` 最新提交 `a77d9e6` 继续开发；此前 `09b3811` 集成 Scheduler tenant isolation 与 misfire policies，后续已修复循环导入，并在 `a77d9e6` 记录了 misfire blocker 与恢复路径。
+本轮基于远端 `main` 最新提交 `2bb1d4a` 继续开发。该提交已修复当前 interval slot 被错误标记为 recovery 的边界问题，并新增对应单元测试。随后开发者本地实际执行结果确认 Scheduler Tenant / Misfire Gate 已全部通过，但 Tenant Safe Real API 仍暴露新的运行时验收问题。
 
-开发者本地最新实际结果表明：
+开发者本地最新实际结果：
 
 ```text
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"：APP_IMPORT_OK
-05_backend_refactor_closure_gate.ps1：REFACTOR_CLOSURE_IMPORT_OK
-04_scheduler_tenant_misfire_gate.ps1：20 个 misfire unit tests 通过；2 个 PostgreSQL tenant integration tests 中 1 个失败
+Scheduler targeted tests：34 passed
+04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、395 Backend regression 均通过；3 skipped，35 deselected
 01_run_real_api_tests_tenant_safe.ps1：35 个测试中 3 个失败
-uv run pytest -q：388 passed, 3 failed, 3 skipped, 35 deselected
 ```
 
-失败均已完成根因分析并记录到 `docs/04-errors/2026-08-24-scheduler-tenant-misfire-gate.md`，因此当前 Phase 2.4 不能标记 Passed。
+当前 Real API 三个失败已经完成初步根因分类：
 
-## Backend 模块化重构收口
-
-API v1、Runtime Boundary 以及各领域 Service / Runtime / Provider 迁移已经完成；最终 Closure Gate 已确认旧扁平领域实现、旧 import 路径和重复 Provider 入口均已收口，正式领域包具备中文职责 / 边界说明。
-
-**状态：Backend 模块化重构全部 Closure Gate 已完成，不再阻塞主线。**
+1. 后台 Scheduler 生命周期场景没有在验收窗口内产生预期当前槽位 Execution，需要确认真实 API 服务是否使用带 `scheduler_enabled=true` 的当前进程配置，并将后台生命周期启动作为 Gate 前置条件显式验证。
+2. Runtime 持久化的 `input_data.scheduled_slot` 当前写入完整 `scheduled:{trigger_id}:{slot}` 幂等键，但 Real API Contract 要求这里记录数值 interval slot；本轮代码已修复 Runtime 生成路径，改为持久化数值 slot，同时继续使用完整 key 作为 `idempotency_key`。
+3. Recovery slot 同样受 `scheduled_slot` 元数据类型问题影响；Recovery 判断本身已使用统一 `is_recovery_slot()`，历史槽位 true、当前槽位 false 的规则不再依赖简单 `planned_at < now`。
 
 ## Phase 2.4 当前推进
 
 Durable Scheduler 已完成 Contract-first + Persistence + Runtime + Scheduler 状态 API 第一阶段。
 
-当前继续收口两个边界：
+当前收口顺序：
 
-1. **Tenant isolation**
-   - `WorkflowSchedulerRepository.get_schedule_for_trigger()` 继续以 `tenant_id + trigger_id` 作为强制查询边界；
-   - Runtime 的 lease、slot claim、advance、release 均继续显式携带 tenant；
-   - PostgreSQL tenant isolation 测试已发现测试 fixture 未显式 flush Trigger 的数据准备问题，本轮已修正测试实现。
+1. **Scheduler Runtime metadata contract**
+   - Execution 的正式幂等键继续由 `ScheduledTriggerScheduler.idempotency_key()` 唯一生成；
+   - `input_data.scheduled_slot` 记录数值 interval slot；
+   - `input_data.recovery` 只由统一 `is_recovery_slot()` 判断；
+   - 不新增第二套 slot key 或 recovery 计算实现。
 
-2. **Misfire integration**
-   - Scheduled Trigger Contract 正式包含 `misfire_policy` 与 `catch_up_limit`，默认 `skip` / `10`；
-   - `WorkflowSchedule.misfire_policy` / `catch_up_limit` 继续作为持久化边界，本轮不新增 Migration；
-   - Runtime 统一复用 `workflow_scheduler/misfire.py` 计算到期槽位；
-   - Runtime 的 Execution idempotency key 已统一复用 `ScheduledTriggerScheduler.idempotency_key()`，避免 `planned_at` 时间戳键与 interval slot 键并存；
-   - Runtime 按单个槽位判断 recovery，历史槽位标记 `true`，当前槽位标记 `false`；
-   - Real API Recovery 场景改为真实回拨 `workflow_schedules.next_run_at` 验证持久化 misfire，不再依赖进程内 recovery slot 假设。
+2. **真实后台生命周期验收**
+   - Tenant Safe Real API Gate 必须明确验证 Scheduler 进程实际启用；
+   - 真实 HTTP Trigger 创建 / 更新后，必须能从 PostgreSQL 读取 Scheduler 产生的 Execution；
+   - 不以直接调用 Runtime 替代后台生命周期验收，但允许将直接 Runtime tick 作为确定性补充测试。
 
-## 本轮修复边界
+3. **后续 Runtime production acceptance**
+   - 多实例 lease；
+   - misfire / catch-up；
+   - Execution 状态；
+   - Audit / Trace；
+   - 服务重启恢复。
 
-```text
-workflow_scheduler.runtime
-        ↓
-ScheduledTriggerScheduler.idempotency_key
-        ↓
-WorkflowScheduleSlot / WorkflowExecution
-```
+## 开发准则本轮增强
 
-以及：
+`docs/01-governance/DEVELOPMENT.md` 本轮新增并明确：
 
-```text
-Trigger Contract defaults
-        ↓
-Unit / Real API assertions
-```
+- 新增业务能力前必须先检索已有领域实现，避免重复 Service / Repository / Runtime / Provider / 工具函数；
+- 同一业务规则只能保留一个正式计算 / 校验入口，测试不得复制生产算法形成第二套实现；
+- 模块、类、函数 / 方法必须按实际复杂度补充中文职责、边界、参数、返回值及副作用说明；
+- 时间槽、幂等、租约、misfire、tenant boundary、状态机等非显然规则必须说明设计原因与边界条件；
+- Real API Gate 必须区分后台生命周期验收与确定性 Runtime 补充测试，不能使用 Mock / JSON fixture 替代真实持久化业务流程；
+- 依赖本地服务的自动化 Gate 必须明确服务、环境变量、数据库状态、启动命令和失败条件。
 
-与：
+## 当前禁止事项
 
-```text
-Tenant fixture
-        ↓
-WorkflowTrigger flush
-        ↓
-WorkflowSchedule FK insert
-```
-
-没有新增第二套 Scheduler、Repository、Provider、Execution 或幂等键实现，没有新增 Alembic Migration。
-
-## 下一步
-
-1. 开发者本地重新执行 tenant / misfire Gate，确认 PostgreSQL fixture 与 Scheduler slot key 修复；
-2. 执行 Tenant Safe Real API Gate，确认配置 Contract、多实例幂等与真实持久化 misfire recovery；
-3. 执行 `uv run pytest -q`，确认默认 Backend regression 无回归；
-4. 根据真实结果继续补齐多实例 lease、misfire、Execution、Audit / Trace 与服务重启恢复验收；
-5. 完成后再更新 Phase Acceptance 与 Project Status 为实际结果；
-6. 仍然不创建兼容垫片、旧入口转发或第二套调度实现。
+- 不标记 Phase 2.4 Passed；
+- 不创建第二套 Scheduler / Repository / Provider / Execution / slot key 实现；
+- 不通过修改测试断言掩盖生产 Runtime metadata contract；
+- 不使用 JSON fixture 替代真实 PostgreSQL Scheduler 状态；
+- 不创建兼容垫片、旧入口转发或功能分支。
