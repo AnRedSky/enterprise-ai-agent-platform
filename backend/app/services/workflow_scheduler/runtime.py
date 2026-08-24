@@ -25,6 +25,26 @@ from app.services.workflow_trigger import WorkflowTriggerService
 logger = logging.getLogger(__name__)
 
 
+class _RecoverySlotsDescriptor:
+    """同时支持实例配置调用与类级纯函数调用，避免为同一槽位规则保留两套实现。"""
+
+    def __get__(self, instance, owner):
+        def calculate(now: datetime, interval_seconds: int, max_recovery_slots: int | None = None) -> list[int]:
+            limit = (
+                instance.max_recovery_slots
+                if instance is not None and max_recovery_slots is None
+                else ScheduledTriggerScheduler.DEFAULT_RECOVERY_SLOTS
+                if max_recovery_slots is None
+                else max_recovery_slots
+            )
+            if isinstance(limit, bool) or not 1 <= limit <= owner.MAX_RECOVERY_SLOTS:
+                raise ValueError(f"max_recovery_slots 必须在 1-{owner.MAX_RECOVERY_SLOTS} 范围内")
+            current = owner.interval_slot(now, interval_seconds)
+            return list(range(current - limit + 1, current + 1))
+
+        return calculate
+
+
 class ScheduledTriggerScheduler:
     """基于 PostgreSQL 持久化状态运行 Scheduled Trigger。"""
 
@@ -65,18 +85,7 @@ class ScheduledTriggerScheduler:
     def idempotency_key(cls, trigger_id, now: datetime, interval_seconds: int) -> str:
         return cls.slot_idempotency_key(trigger_id, cls.interval_slot(now, interval_seconds))
 
-    def recovery_slots(
-        self,
-        now: datetime,
-        interval_seconds: int,
-        max_recovery_slots: int | None = None,
-    ) -> list[int]:
-        """计算当前实例需要恢复的槽位，并默认遵循构造函数配置。"""
-        limit = self.max_recovery_slots if max_recovery_slots is None else max_recovery_slots
-        if isinstance(limit, bool) or not 1 <= limit <= self.MAX_RECOVERY_SLOTS:
-            raise ValueError(f"max_recovery_slots 必须在 1-{self.MAX_RECOVERY_SLOTS} 范围内")
-        current = self.interval_slot(now, interval_seconds)
-        return list(range(current - limit + 1, current + 1))
+    recovery_slots = _RecoverySlotsDescriptor()
 
     @staticmethod
     def is_concurrent_runtime_claim(exc: BaseException) -> bool:
@@ -258,52 +267,35 @@ class ScheduledTriggerScheduler:
                         now=now,
                         next_run_at=next_run_at.replace(tzinfo=None),
                         last_run_at=planned_at.replace(tzinfo=None),
-                        last_execution_id=execution.id if execution is not None else None,
+                        last_execution_id=execution.id if execution else None,
                     )
                     if advanced is None:
-                        counters["contention"] += 1
-                        await db.rollback()
-                        continue
+                        raise RuntimeError("Scheduler lease owner 已失效")
                     await db.commit()
                     if created:
                         counters["dispatched"] += 1
-                    else:
-                        counters["skipped"] += 1
                     if recovery:
                         counters["recovered"] += 1
                 except Exception:
-                    await db.rollback()
-                    if schedule is not None:
-                        try:
-                            await repository.release_lease(
-                                schedule_id=schedule.id,
-                                tenant_id=schedule.tenant_id,
-                                owner=self.owner,
-                                now=now,
-                            )
-                            await db.commit()
-                        except Exception:
-                            await db.rollback()
                     counters["failed"] += 1
+                    await db.rollback()
                     logger.exception(
-                        "Scheduled Trigger dispatch failed",
-                        extra={"trigger_id": trigger_id_text, "workflow_id": workflow_id_text},
+                        "Scheduled Trigger 执行失败: trigger_id=%s workflow_id=%s",
+                        trigger_id_text,
+                        workflow_id_text,
                     )
+
         return counters
 
     async def run_forever(self) -> None:
-        self._stop_event.clear()
+        """持续轮询 Scheduler，生命周期停止由 stop() 控制。"""
         while not self._stop_event.is_set():
-            try:
-                await self.tick_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Scheduled Trigger scheduler tick failed")
+            await self.tick_once()
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval_seconds)
             except asyncio.TimeoutError:
                 continue
 
     def stop(self) -> None:
+        """请求结束后台轮询循环。"""
         self._stop_event.set()
