@@ -1,4 +1,4 @@
-"""真实 HTTP Scheduler Trigger 验收：覆盖配置、幂等、多实例与持久化 misfire 恢复。"""
+"""真实 HTTP Scheduler Trigger 验收：覆盖配置、幂等、多实例、misfire 恢复与治理关联。"""
 
 import asyncio
 import os
@@ -63,6 +63,30 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
                 {"idempotency_key": idempotency_key},
             )
             return [dict(row._mapping) for row in result]
+    finally:
+        await engine.dispose()
+
+
+async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
+    """读取真实 PostgreSQL 中与 WorkflowExecution 绑定的 Audit/Trace 记录。"""
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            audit_result = await connection.execute(
+                text(
+                    "SELECT tenant_id, workflow_id, workflow_execution_id, action, status, metadata "
+                    "FROM audit_logs WHERE workflow_execution_id = :execution_id ORDER BY created_at ASC"
+                ),
+                {"execution_id": uuid.UUID(execution_id)},
+            )
+            trace_result = await connection.execute(
+                text(
+                    "SELECT tenant_id, workflow_id, execution_id, event_type, status, data "
+                    "FROM workflow_trace_events WHERE execution_id = :execution_id ORDER BY created_at ASC"
+                ),
+                {"execution_id": uuid.UUID(execution_id)},
+            )
+            return [dict(row._mapping) for row in audit_result], [dict(row._mapping) for row in trace_result]
     finally:
         await engine.dispose()
 
@@ -177,6 +201,16 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
         assert rows[0]["input_data"]["recovery"] is False
         assert "planned_at" in rows[0]["input_data"]
+
+        audit_rows, trace_rows = _run_async(scheduler_event_loop, _governance_rows(str(rows[0]["id"])))
+        assert audit_rows, "Scheduled Execution 必须存在 tenant-scoped AuditLog"
+        assert trace_rows, "Scheduled Execution 必须存在 tenant-scoped WorkflowTraceEvent"
+        assert all(row["tenant_id"] is not None for row in audit_rows + trace_rows)
+        assert all(row["workflow_id"] == uuid.UUID(TRIGGER_WORKFLOW_ID) for row in audit_rows + trace_rows)
+        assert all(row["workflow_execution_id"] == rows[0]["id"] for row in audit_rows)
+        assert all(row["execution_id"] == rows[0]["id"] for row in trace_rows)
+        assert any(row["action"] == "workflow.trigger.scheduled" for row in audit_rows)
+        assert any(row["event_type"] == "trigger.scheduled" for row in trace_rows)
 
         time.sleep(6)
         rows_after_duplicate_poll = _run_async(scheduler_event_loop, _execution_rows(runtime_key))
