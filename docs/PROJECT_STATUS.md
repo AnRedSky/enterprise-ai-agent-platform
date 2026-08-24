@@ -12,7 +12,7 @@
 
 ## 最新 main 基线
 
-本轮从开发者反馈的 `52a9d9f` 基线继续推进，直接提交到 `main`。当前最新提交为 `38977a5`，新增 Scheduler 真实服务重启恢复 Acceptance：真实 Uvicorn 进程停止、真实 PostgreSQL Scheduler 状态持久化、进程重新启动后恢复历史 slot，并校验 Execution / Audit / Trace 关联。
+本轮从开发者反馈的 `52a9d9f` 基线继续推进，直接提交到 `main`。当前最新提交为 `98a245c`，包含 Scheduler 真实服务重启恢复 Acceptance 自动化实现及 Phase 2.4 Acceptance 状态更新。
 
 开发者当前本地实际结果：
 
@@ -41,13 +41,14 @@ uv run pytest -q：397 passed，3 skipped，35 deselected
 8. Tenant Safe Real API：35 个真实 HTTP 测试通过；
 9. FastAPI Scheduler 生命周期 Gate：启动创建唯一后台任务，退出执行 `stop → wait`，仅异常超时才取消；
 10. Scheduler Execution 与真实 PostgreSQL AuditLog / WorkflowTraceEvent 的 tenant、workflow、execution 关联验收；
-11. 本轮新增真实服务重启 Acceptance 自动化测试与独立 Gate，未新增第二套 Scheduler、Repository、slot key、Execution 或 Governance 实现。
+11. 新增真实服务重启 Acceptance 自动化测试与独立 Gate，未新增第二套 Scheduler、Repository、slot key、Execution 或 Governance 实现。
 
 ## 本轮工程变更
 
 - `tests/api_real/test_scheduler_restart_api.py`：新增真实 Uvicorn 进程停止/重启验收；通过真实 PostgreSQL 回拨持久化 `next_run_at`，验证 restart 后历史 slot 恢复为唯一 Execution，并验证 Audit/Trace tenant/workflow/execution 关联。
 - `scripts/test/api-real/02_run_scheduler_restart_acceptance.ps1`：新增可重复执行的真实服务重启 Gate；自动启动临时 API 完成 tenant-safe fixture bootstrap，随后由测试自身启动/停止/重启真实 Uvicorn 进程。
 - `scripts/test/api-real/README.md`：记录 restart Gate 与完整 Real API Gate 的职责边界。
+- `docs/02-phases/PHASE_2_4.md`：记录真实服务重启 Acceptance 的验证边界与下一执行顺序。
 - 未新增并行 Scheduler、Repository、Provider、slot key 或 Execution 实现；restart Acceptance 继续复用现有正式领域入口与 tenant-safe bootstrap。
 - `docs/01-governance/DEVELOPMENT.md` 已包含重复能力前置检索、职责/规则重复检查，以及模块、类、函数/方法的中文说明和参数/返回值说明规则；本轮不创建并行治理规则。
 
