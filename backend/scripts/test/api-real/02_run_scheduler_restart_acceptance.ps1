@@ -7,7 +7,8 @@ $contextFile=Join-Path $PSScriptRoot ".real_api_context.json"
 $bootstrapProcess=$null
 try{
   Write-Host "[1/3] Start temporary real API process for tenant-safe fixture bootstrap"
-  $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port","8000") -WorkingDirectory (Join-Path $PSScriptRoot "..\..\..\..") -PassThru -WindowStyle Hidden
+  $backendDir=Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
+  $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port","8000") -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden
   $deadline=(Get-Date).AddSeconds(20)
   do{
     Start-Sleep -Milliseconds 500
