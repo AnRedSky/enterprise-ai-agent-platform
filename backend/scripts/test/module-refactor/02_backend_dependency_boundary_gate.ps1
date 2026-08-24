@@ -12,7 +12,7 @@ uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 if ($LASTEXITCODE -ne 0) { throw "Application import failed (exit=$LASTEXITCODE)" }
 
 Write-Host "[Gate] Canonical dependency test"
-uv run pytest -q tests/test_dependency_boundary.py
+uv run pytest -q tests/unit/test_dependency_boundary.py
 if ($LASTEXITCODE -ne 0) { throw "Dependency boundary test failed (exit=$LASTEXITCODE)" }
 
 Write-Host "[Gate] Legacy dependency path search"
