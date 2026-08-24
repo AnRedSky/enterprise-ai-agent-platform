@@ -7,75 +7,122 @@
 - 当前架构基线：远端 `main` 持续执行 Backend 模块化整改。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- 当前：**Phase 2.4 Durable Scheduler Contract-first + Persistence 第一版已完成；同时继续执行 Backend 模块化整改，主线任务暂停，直到既有重构任务全部完成。**
+- Phase 2.4 Durable Scheduler Contract-first + Persistence：**第一版已完成**。
+- 当前：**继续执行 Backend 模块化整改，主线任务暂停，必须完成全部既有重构任务后才能恢复主线。**
 
 ## 最新 main 基线
 
-本轮继续直接基于远端 `main` 开发，所有代码变更直接提交 `main`，不创建兼容分支或兼容垫片。
+本轮直接基于远端 `main` 继续提交，不创建兼容分支或兼容垫片。用户当前本地基线反馈为：
 
-开发准则明确要求：模块重构必须完成生产/测试 import 全量切换、旧文件删除、旧路径搜索为 0、重复实现检查、中文模块说明、targeted tests 与 Backend Regression 后才能标记完成；GitHub Actions 不作为开发测试或验收依据。
+```text
+1a9d195 fix(refactor): complete vector retrieval provider module description
+6ac3112 fix(refactor): restore ollama embedding client type annotation
+ed57fa8 fix(refactor): correct ollama embedding provider adapter signature
+2b7f7c7 fix(refactor): complete ollama embedding provider module description
+```
 
-截至本轮：
+用户此前本地 Module Refactor Gate：
 
-- `7053f448`：补齐 `app/services/observability/service.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明，并为类及关键方法补充中文设计意图说明；不改变既有 Execution / ExecutionEvent 持久化职责，也未引入新的可观测性实现入口。
-- `0c828a0e`：补齐 `app/services/knowledge/hybrid_service.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明，保持既有 Knowledge 服务复用关系不变。
-- `4f44fb64`：记录 `hybrid_service.py` 模块说明 Gate 阻塞、分析与本地验证要求。
-- `087d3d8f`：补齐 `app/services/workflow_scheduler/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明；该问题是在按 Gate 规则进行静态检查时提前发现并修复，未作为本地实际失败结果记录。
+```text
+APP_IMPORT_OK
+Tool targeted tests: 8 passed
+Workflow and trigger tests: 101 passed, 191 deselected
+Backend regression: 383 passed, 2 skipped, 35 deselected
+```
 
-## 本轮实际代码变更
+以上结果是用户实际反馈；本轮新增提交后的 Gate / Regression **尚未由本地环境重新执行，不预填通过**。
 
-1. 完成 Model Service、Governance Contract、Routing、Runtime Governance、Model Gateway 与 Provider 的物理迁移。
-2. 完成 Memory、Agent、Knowledge、Workflow、Trigger、Organization、Observability、Retrieval Evaluation、Runtime Query、Session、Usage Accounting 等既有迁移单元的代码归位，并持续执行最终 Gate 验收。
-3. 修复 Workflow canonical import 循环依赖；修复 Trigger Scheduler、CircuitBreaker 与 Trigger 测试的旧入口残留。
-4. 修复 Module Refactor Gate 的 PowerShell ParserError，并持续收紧旧路径、重复实现与模块说明检查。
-5. 完成 Tool 领域的最终代码归位：`app.services.tool` 统一承载 Tool Runtime、RBAC、Audit、Observability 与 Repository；`app.tools` 仅承载 HTTP/Schema 技术执行。
-6. 删除 `app/services/tool_audit`、`tool_observability`、`tool_rbac`、`tool_repository`、`tool_runtime_service` 五个旧领域包，不保留兼容转发。
-7. 更新 Tool API 与受影响单元/集成测试到 `app.services.tool` 正式入口，避免测试通过旧模块名继续维持双入口。
-8. 为 Tool 新模块补充中文职责、边界和关键依赖说明，并把 Tool 模块纳入 Module Refactor Gate 的 required files、legacy paths 与 targeted tests 检查。
-9. 修复 Module Refactor Gate 的中文源码编码问题：模块说明检查改由 Python 按 UTF-8 读取，避免 Windows PowerShell 5.1 默认代码页导致正则字符串损坏。
-10. 本轮没有新增数据库 Migration；目录重构不改变 Tool 数据结构。
-11. 修正 Runtime Query Module Refactor Gate 的 canonical package 误报：删除会匹配正式 `app.services.runtime_query` package 的 legacy grep 规则，同时保留旧根文件 `app/services/runtime_query.py` 的物理路径检查；并为 Runtime Query Service 补充中文模块职责、边界与关键依赖说明。
-12. 修复 Knowledge 模块说明 Gate 阻塞：`app/services/knowledge/__init__.py` 增加固定 `职责：`、`边界：` 与 `关键依赖：` 声明，不改变 Knowledge 与 Provider 的职责边界。
-13. 按现有 Gate 的固定 `职责：` / `边界：` 校验规则持续补齐 Knowledge、Workflow Scheduler 等 required module description 文件。
-14. 修复 `app/services/knowledge/hybrid_service.py` 的模块说明缺失，仅增加职责、边界与关键依赖说明；该服务继续复用既有词法检索、向量检索和混合融合服务，没有新增重复实现。
-15. 修复 `app/services/observability/service.py` 模块说明缺失，补充职责、边界、关键依赖及关键方法中文 docstring；保持现有可观测性唯一服务入口与 Execution / ExecutionEvent 数据模型不变。
+## 本轮新增整改
+
+1. **Workflow Runtime canonical 化**
+   - `app/runtime/workflow_runtime.py` 已物理删除。
+   - `WorkflowRuntime` 已归位到 `app/runtime/workflow/runtime.py`。
+   - `app/runtime/workflow/__init__.py` 统一暴露 `WorkflowRuntime`、Circuit Breaker。
+   - `WorkflowExecutionService` 与 Workflow Runtime 测试全部切换到 canonical import。
+   - 不增加兼容转发文件，不新增第二套 Runtime 实现。
+
+2. **清理失效 Agent Runtime 残留**
+   - 删除 `app/runtime/agent_runtime.py`。
+   - 该旧模块未形成生产唯一执行入口，并引用已不存在的旧模型入口；继续保留会制造错误/重复 Runtime 边界。
+   - 本轮不为目录结构制造空壳 `runtime/agent` 实现，后续仅在存在明确生产职责时建立 canonical Runtime。
+
+3. **清理 Tool 重复实现**
+   - 删除 `app/tools/registry.py`。
+   - Tool 正式领域入口保持 `app.services.tool`。
+   - `app.tools` 继续只承担 HTTP / Schema 等技术执行能力。
+
+4. **测试目录边界整改**
+   - `tests/test_dependency_boundary.py` 已迁移到 `tests/unit/test_dependency_boundary.py`。
+   - Module Refactor Gate 新增 root `tests/test_*.py` 禁止检查。
+
+5. **开发验证脚本目录整改**
+   - `scripts/test_ollama_embedding.py` 已迁移为 `scripts/dev/validate_ollama_embedding.py`。
+   - 修正脚本从新目录运行时的 Backend Root 定位。
+   - Module Refactor Gate 增加 root-level Ollama 验证脚本残留检查。
+
+6. **Module Refactor Gate 收紧**
+   - 增加 canonical Workflow Runtime required file 检查。
+   - 增加 `agent_runtime.py`、`workflow_runtime.py`、`app/tools/registry.py` 等旧路径检查。
+   - 增加旧 import 搜索。
+   - 增加 root `tests` 与开发脚本目录边界检查。
+   - 继续强制 `职责：` / `边界：` 模块说明检查。
+
+7. **文档同步**
+   - 更新 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`，记录 Workflow Runtime、Tool Registry、测试与脚本目录的本轮归位。
+   - 当前文档仍明确：API `v1/<domain>`、Governance、Runtime 其余领域等重构未完成，不得转入主线。
 
 ## 当前模块重构完成度
 
-代码迁移完成、待 Gate 验收：
+### 已完成代码迁移 / 进入最终 Gate
 
 - Agent
 - Knowledge + Provider
 - Memory
 - Model + Provider
-- Workflow
 - Trigger
 - Organization
 - Observability
 - Retrieval Evaluation
 - Runtime Query
 - Session
-- Tool
 - Usage Accounting
 
-仍未完成：
+### 正在整改 / 尚未最终验收
+
+- Workflow：canonical Runtime 已完成，本地 Gate / Regression 待重新执行
+- Tool：重复 Registry 已清理，本地 Gate / Regression 待重新执行
+- Runtime：继续检查其他 Runtime 领域边界
+
+### 尚未完成
 
 - Module Refactor Gate 最终全量验收
-- 生产代码与测试 import 全量旧路径搜索为 0 的本地确认
+- Backend Regression 最终全量验收
+- 全量旧 import 搜索确认 0
+- 全部重构领域重复实现审查
 - Governance 领域其余职责收敛
 - API `v1/<domain>` 收敛
 - Runtime 其他领域目录收敛
-- 全部重构领域的重复实现审查与 targeted tests
 
-**当前最新用户反馈的直接 blocker 已修复：`app/services/observability/service.py` 缺少固定职责/边界/关键依赖模块说明。修复后尚未获得开发者新的 Gate 实际执行结果，因此不得预填 Gate Passed。**
+**因此当前仍不得恢复 Phase 2.4 主线任务。**
 
-因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移、旧路径清理、测试收敛与 Gate 验收，直到全部重构单元满足验收条件。
+## 本轮提交
 
-## 本地验证原则
+- `95496b1`：move workflow runtime into canonical module
+- `4b2a748`：expose canonical workflow runtime entrypoint
+- `6308d9c`：use canonical workflow runtime import
+- `6ac279c`：update workflow runtime timeout test import
+- `2a87a7e`：update workflow runtime unit test import
+- `bbfac6a`：remove legacy workflow runtime module
+- `e7cb8d8`：remove stale unused agent runtime module
+- `a027cc5`：remove duplicate legacy tool registry
+- `ed4a981` / `241a0bd`：move dependency boundary test to unit tests
+- `01bf1d6`：enforce canonical runtime and test module boundaries
+- `4cc2e44` / `054c74a`：move Ollama validation to `scripts/dev` and remove root-level script
+- `616a59f`：update module migration documentation
 
-仓库端不能代替开发者本地测试。本轮用户此前反馈的 Workflow/Trigger targeted tests `101 passed, 191 deselected`、Retrieval Evaluation targeted tests `38 passed`、Tool targeted tests `11 passed` 均为用户实际反馈结果；**Module Refactor Gate 与完整 Backend Regression 尚无本轮通过结果，不得预填通过。**
+当前远端 `main` 最新提交为 `616a59f6c89d61dcd05070a4cd63143bf322a18f`。
 
-### 当前完整本地验证流程
+## 本地自动化验证流程
 
 ```powershell
 cd backend
@@ -86,55 +133,28 @@ git log -8 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-git grep -n -E "app\.services\.circuit_breaker|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger|app\.services\.tool_audit|app\.services\.tool_observability|app\.services\.tool_rbac|app\.services\.tool_repository|app\.services\.tool_runtime_service|app\.services\.observability_service|app\.services\.retrieval_evaluation_" -- "*.py"
-
-uv run pytest -q `
-  tests/unit/test_tool_audit.py `
-  tests/unit/test_tool_runtime.py `
-  tests/unit/test_tool_runtime_service.py `
-  tests/unit/test_tool_runtime_failures.py `
-  tests/unit/test_tool_runtime_security.py `
-  tests/unit/test_retrieval_evaluation.py `
-  tests/unit/test_retrieval_evaluation_baseline.py `
-  tests/unit/test_retrieval_evaluation_config.py `
-  tests/unit/test_retrieval_evaluation_dataset.py `
-  tests/unit/test_retrieval_evaluation_runner.py `
-  tests/unit/test_retrieval_quality_gate.py `
-  tests/unit/test_retrieval_evaluation_trace_bootstrap.py `
-  tests/unit/test_vector_knowledge_retrieval.py `
-  tests/unit/test_circuit_breaker.py `
-  tests/unit/test_circuit_breaker_half_open_concurrency.py `
-  tests/unit/test_workflow_execution_state_machine.py `
-  tests/unit/test_workflow_execution_concurrency.py `
-  tests/unit/test_workflow_execution_idempotency.py `
-  tests/unit/test_workflow_execution_governance.py `
-  tests/unit/test_workflow_execution_retry_transition.py `
-  tests/unit/test_workflow_governance.py `
-  tests/unit/test_workflow_publish_governance.py `
-  tests/unit/test_workflow_retry_budget.py `
-  tests/unit/test_workflow_retry_policy.py `
-  tests/unit/test_workflow_runtime.py `
-  tests/unit/test_workflow_runtime_timeout.py `
-  tests/unit/test_webhook_trigger.py `
-  tests/unit/test_workflow_trigger.py `
-  tests/unit/test_workflow_trigger_schedule.py
-
+# 1. 模块化 Gate：结构、旧路径、模块说明、targeted tests、Backend Regression
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
 
+# 2. 数据库依赖边界 Gate
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\02_backend_dependency_boundary_gate.ps1
+
+# 3. 全量回归（Gate 已执行，可单独再次确认）
 uv run pytest -q
+
+# 4. Ollama 本地 Embedding 环境验证（仅在配置并启动 Ollama 后执行）
+uv run python .\scripts\dev\validate_ollama_embedding.py
 ```
 
 如果 Gate 报告任何旧 import、旧模块路径、重复实现或模块说明缺失，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
 
-## 下一执行任务：继续模块化整改
+## 下一执行任务
 
-优先顺序保持：
-
-1. 在本地同步最新 `main`，重新执行 Module Refactor Gate，取得下一条真实结构性 blocker；
-2. 修复 Gate 暴露的生产/测试 import、模块说明或重复实现问题，并同步记录已经发生的工程错误；
-3. 对 Workflow、Trigger、Organization、Observability、Retrieval Evaluation、Runtime Query、Session、Tool、Usage Accounting 逐领域完成 targeted tests 与迁移记录；
-4. 完成 Governance 领域及 API `v1/<domain>` 收敛，保持现有 HTTP Contract 不变；
-5. Runtime 其他领域目录完成职责收敛；
-6. 全部重构领域逐一通过 Module Refactor Gate 与 Backend Regression 后，才恢复 Phase 2.4 主线后续任务。
+1. 开发者本地同步最新 `main`。
+2. 执行 `01_backend_module_refactor_gate.ps1`，取得本轮真实 blocker。
+3. 执行 `02_backend_dependency_boundary_gate.ps1`。
+4. 对 Workflow / Tool / Runtime 其余领域完成 targeted tests、旧路径搜索、重复实现审查。
+5. 完成 Governance 与 API `v1/<domain>` 收敛。
+6. 全部重构领域通过 Module Refactor Gate + Backend Regression 后，才恢复 Phase 2.4 主线。
 
 模块化目录、职责与迁移规则继续以 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md` 与 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。
