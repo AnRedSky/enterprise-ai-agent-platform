@@ -31,8 +31,11 @@
 12. 修复 Model 迁移后 `UsageAccountingService` 对已删除旧 Contract 路径的残留引用，切换到 `app.services.model.contract` 正式入口。
 13. 修复 Memory 治理测试对已删除 `app.services.memory_service` 的旧入口引用，切换到 `app.services.memory` 正式入口，并补充中文测试模块说明。
 14. 修复 Workflow canonical import 后形成的 `WorkflowExecutionService -> WorkflowRuntime -> app.services.workflow` 循环依赖；Runtime 在未注入 Execution Service 时才延迟解析正式入口，不恢复旧模块。
-15. 修复 Module Refactor Gate 的 PowerShell ParserError：统一明确字符串、数组、函数参数与 Gate 调用结构，并保留失败退出码传播。
+15. 修复 Module Refactor Gate 的 PowerShell ParserError：重新明确脚本结构、失败退出码传播、旧路径检查、模块说明检查与 targeted tests 编排。
 16. 新增 `docs/04-errors/2026-08-24-backend-module-refactor-gate-parser-error.md`，记录 Gate 脚本解析错误及修复方案。
+17. 完成 Trigger 领域物理迁移：`WorkflowTriggerService`、scheduled/webhook 配置契约、`WebhookTriggerService` 统一归入 `app.services.trigger/`，删除三个旧根目录 Service 文件。
+18. 更新 Workflow API、Webhook API 与 Trigger 单元测试的正式 import 路径，并为 Trigger 新模块补充中文职责、边界和关键依赖说明。
+19. Module Refactor Gate 进一步收紧为全域 legacy path、重复实现、模块职责/边界说明、Trigger targeted tests 与 Backend Regression 的统一验收入口。
 
 ## 当前模块重构完成度
 
@@ -43,12 +46,16 @@
 - Memory
 - Model + Provider
 
-Workflow 当前状态：**代码迁移与 canonical import 已完成，领域 targeted tests 已恢复，但 Module Refactor Gate 因脚本 ParserError 尚未完成本地验收，因此暂不标记为迁移完成。**
+代码迁移完成、待 Gate 验收：
+
+- Trigger
+
+Workflow 当前状态：**代码迁移与 canonical import 已完成，领域 targeted tests 已恢复，但 Module Refactor Gate 仍未获得本地成功结果，因此暂不标记为迁移完成。**
 
 仍未完成：
 
 - Workflow Gate 最终验收
-- Trigger
+- Trigger Gate 最终验收
 - Organization
 - Governance
 - Observability
@@ -60,9 +67,9 @@ Workflow 当前状态：**代码迁移与 canonical import 已完成，领域 ta
 
 ## 本地验证原则
 
-本轮代码修复不能由仓库端代替开发者本地测试。当前用户已实际反馈 Workflow targeted tests：`40 passed in 1.40s`，并确认 `from app.main import app` 返回 `APP_IMPORT_OK`；Module Refactor Gate 当前反馈为 PowerShell ParserError，因此 Gate 结果不得记录为通过。
+本轮代码修复不能由仓库端代替开发者本地测试。当前用户已实际反馈 Workflow targeted tests：`40 passed in 1.40s`，并确认 `from app.main import app` 返回 `APP_IMPORT_OK`；此前 Module Refactor Gate 为 PowerShell ParserError，当前远端已提交 Gate 修复版本。**在用户本地重新执行 Gate 前，不得记录 Gate 通过。**
 
-### 当前修复后的完整本地验证流程
+### 当前完整本地验证流程
 
 ```powershell
 cd backend
@@ -73,7 +80,7 @@ git log -3 --oneline
 
 uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 
-git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry" -- "*.py"
+git grep -n -E "app\.services\.workflow_execution|app\.services\.workflow_governance|app\.services\.workflow_registry|app\.services\.workflow_trigger|app\.services\.workflow_trigger_schedule|app\.services\.webhook_trigger" -- "*.py"
 
 uv run pytest -q `
   tests/unit/test_workflow_execution_state_machine.py `
@@ -87,25 +94,28 @@ uv run pytest -q `
   tests/unit/test_workflow_retry_policy.py `
   tests/unit/test_workflow_runtime.py `
   tests/unit/test_workflow_runtime_timeout.py `
-  tests/unit/test_webhook_trigger.py
+  tests/unit/test_webhook_trigger.py `
+  tests/unit/test_workflow_trigger.py `
+  tests/unit/test_workflow_trigger_schedule.py
 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
 
 uv run pytest -q
 ```
 
-若 Gate 报告任何旧 import、旧模块路径或重复实现，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
+若 Gate 报告任何旧 import、旧模块路径、重复实现或模块说明缺失，必须修正实际引用后再次执行；**不得通过兼容垫片或重新暴露旧模块名绕过 Gate。**
 
 ## 下一执行任务：继续模块化整改
 
 优先顺序保持：
 
-1. Workflow：先完成修复后 Module Refactor Gate 本地验收并完成迁移记录；
-2. Trigger 领域物理迁移：Scheduled / Webhook Trigger 统一进入 Trigger 子模块；
-3. Organization / Governance / Observability 按实际职责完成领域收敛；
-4. Tool Service 与 `app/tools/` 技术实现完成唯一 Runtime 边界；
-5. API 收敛到 `app/api/v1/<domain>/`，保持现有 HTTP Contract 不变；
-6. Runtime 其他领域目录完成职责收敛；
-7. 全部重构领域逐一通过 Module Refactor Gate 后，才恢复 Phase 2.4 主线后续任务。
+1. 先在本地执行新版 Module Refactor Gate，取得第一个真实结构性 blocker；
+2. Workflow：完成 Gate 最终验收并完成迁移记录；
+3. Trigger：完成 Gate 最终验收后标记迁移完成；
+4. Organization / Governance / Observability 按实际职责完成领域收敛；
+5. Tool Service 与 `app/tools/` 技术实现完成唯一 Runtime 边界；
+6. API 收敛到 `app/api/v1/<domain>/`，保持现有 HTTP Contract 不变；
+7. Runtime 其他领域目录完成职责收敛；
+8. 全部重构领域逐一通过 Module Refactor Gate 后，才恢复 Phase 2.4 主线后续任务。
 
 模块化目录、职责与迁移规则继续以 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md` 与 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。

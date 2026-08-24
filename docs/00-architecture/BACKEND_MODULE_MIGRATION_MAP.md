@@ -63,8 +63,8 @@ backend/app/
 | Knowledge | `app/services/knowledge/` + `app/infrastructure/providers/` | 已完成 | 领域与 Provider 已分离，无旧 Provider 实现 |
 | Memory | `app/services/memory/` + `app/runtime/memory/` | 已完成 | Service 与 Runtime 上下文均已迁移，旧入口删除 |
 | Model | `app/services/model/` + `app/runtime/model/` + Provider | 已完成 | Service / Contract / Routing / Governance / Runtime Gateway / Provider 已收敛，旧 Service / Runtime Provider 入口删除 |
-| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | **整改中** | Canonical import 与循环依赖已修复，40 个 Workflow targeted tests 已在本地反馈通过；Module Refactor Gate 曾因 PowerShell ParserError 未进入执行，待修复脚本后重新本地验收 |
-| Trigger | `app/services/trigger/` | 待迁移 | Scheduled / Webhook Trigger 仍待统一领域入口 |
+| Workflow | `app/services/workflow/` + `app/runtime/workflow/` | **整改中** | Canonical import 与循环依赖已修复，40 个 Workflow targeted tests 已在本地反馈通过；Module Refactor Gate 仍需本地最终验收 |
+| Trigger | `app/services/trigger/` | **代码迁移完成，待 Gate 验收** | Manual / Scheduled / Webhook 已统一进入 Trigger 子模块；旧 Trigger Service、Schedule、Webhook 文件已删除；测试 import 已切换 |
 | Organization / Governance / Observability | 对应领域子模块 | 待迁移 | 当前仍存在多个根目录 Service 文件 |
 | Tool | `app/services/tool/` | 待迁移 | `app/tools/` 技术实现需与领域 Runtime 边界继续收敛 |
 | API | `app/api/v1/<domain>/` | 待迁移 | 当前 Router 仍位于 `app/api/*.py` |
@@ -185,16 +185,47 @@ Workflow 已完成旧入口物理删除与 canonical import 切换。随后发�
 - `uv run python -c "from app.main import app; print('APP_IMPORT_OK')"`：`APP_IMPORT_OK`；
 - Workflow targeted tests：`40 passed in 1.40s`；
 - 旧 Workflow import grep：无输出；
-- Module Refactor Gate：因 PowerShell ParserError 未执行，修复后必须重新执行；
+- Module Refactor Gate：此前因 PowerShell ParserError 未执行；Gate 已再次收紧为全域 legacy path、重复实现、模块说明和 Trigger targeted test 的统一验收入口；
 - Backend Regression：必须在 Gate 成功后重新执行并记录实际结果。
 
 因此 Workflow 暂不能标记“迁移完成”。
 
-## 10. Trigger / Organization / Governance / Observability / Tool / API / Runtime
+## 10. Trigger：本轮物理迁移
+
+### 原结构
+
+```text
+app/services/workflow_trigger.py
+app/services/workflow_trigger_schedule.py
+app/services/webhook_trigger.py
+```
+
+### 当前正式结构
+
+```text
+app/services/trigger/
+├── __init__.py
+├── service.py
+├── schedule.py
+└── webhook.py
+```
+
+迁移结论：
+
+- `WorkflowTriggerService` 已归入 `app.services.trigger.service`；
+- scheduled/webhook 配置契约与 Secret 校验统一归入 `app.services.trigger.schedule`；
+- `WebhookTriggerService` 已归入 `app.services.trigger.webhook`；
+- Workflow API、Webhook API 与 Trigger 测试均切换到 `app.services.trigger` 正式入口；
+- 原三个根目录 Trigger 文件已删除，不保留兼容垫片；
+- Trigger 模块新增/重构文件均补充中文职责、边界和关键依赖说明；
+- 不新增数据库 Migration；
+- 代码迁移完成后必须通过完整 Module Refactor Gate，才能将 Trigger 标记为“迁移完成”。
+
+## 11. Organization / Governance / Observability / Tool / API / Runtime
 
 这些领域继续遵循目标结构与“完整迁移、删除旧文件、旧路径搜索为 0、重复实现为 0”的统一验收规则。具体迁移必须基于当前实际职责，不机械归类。
 
-## 11. 每个迁移单元验收
+## 12. 每个迁移单元验收
 
 1. 全仓搜索旧 import 路径，结果为 0；
 2. 旧文件已删除；
