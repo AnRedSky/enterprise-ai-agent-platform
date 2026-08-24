@@ -16,7 +16,7 @@ from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
 from app.services.trigger import WorkflowTriggerService
 from app.services.workflow import WorkflowRegistry
-from app.services.workflow_scheduler import WorkflowSchedulerRepository
+from app.services.workflow_scheduler.repository import WorkflowSchedulerRepository
 
 router = APIRouter()
 
