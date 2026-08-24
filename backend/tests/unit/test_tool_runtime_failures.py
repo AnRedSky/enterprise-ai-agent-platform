@@ -1,3 +1,9 @@
+"""Tool Runtime 失败路径集成单元测试。
+
+职责：验证 Tool 执行异常能够被统一 Runtime、Audit 与 Observability 处理。
+边界：不保留旧 Tool Service import 作为测试兼容入口。
+"""
+
 import uuid
 
 import pytest
@@ -6,11 +12,15 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.core import Agent, AgentTool, AuditLog, Base, Tool, User
 from app.models.execution import Execution
-from app.services.tool_audit import AuditLogAdapter
-from app.services.tool_observability import ToolObservabilityAdapter
-from app.services.tool_rbac import ToolRBACService
-from app.services.tool_repository import SqlAlchemyAuditRepository, SqlAlchemyToolRepository
-from app.services.tool_runtime_service import ToolExecutionContext, ToolRuntimeService
+from app.services.tool import (
+    AuditLogAdapter,
+    SqlAlchemyAuditRepository,
+    SqlAlchemyToolRepository,
+    ToolExecutionContext,
+    ToolObservabilityAdapter,
+    ToolRBACService,
+    ToolRuntimeService,
+)
 from app.tools.exceptions import ToolExecutionError
 
 
@@ -33,7 +43,7 @@ async def test_runtime_failure_is_persisted_in_audit():
         async def failing_http(_):
             raise ToolExecutionError("TIMEOUT", "timed out")
 
-        import app.services.tool_runtime_service as runtime_module
+        import app.services.tool.runtime as runtime_module
         original = runtime_module.execute_http_tool
         runtime_module.execute_http_tool = failing_http
         try:
