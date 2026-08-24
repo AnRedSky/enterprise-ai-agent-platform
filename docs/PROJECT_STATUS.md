@@ -15,6 +15,11 @@
 
 开发准则明确要求：模块重构必须完成生产/测试 import 全量切换、旧文件删除、旧路径搜索为 0、重复实现检查、中文模块说明、targeted tests 与 Backend Regression 后才能标记完成；GitHub Actions 不作为开发测试或验收依据。
 
+截至本轮：
+
+- `0090e732`：补齐 `app/services/knowledge/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明。
+- `5aa9e5c`：记录 Knowledge 模块说明 Gate 阻塞及修复要求。
+
 ## 本轮实际代码变更
 
 1. 完成 Model Service、Governance Contract、Routing、Runtime Governance、Model Gateway 与 Provider 的物理迁移。
@@ -28,6 +33,7 @@
 9. 修复 Module Refactor Gate 的中文源码编码问题：模块说明检查改由 Python 按 UTF-8 读取，避免 Windows PowerShell 5.1 默认代码页导致正则字符串损坏。
 10. 本轮没有新增数据库 Migration；目录重构不改变 Tool 数据结构。
 11. 修正 Runtime Query Module Refactor Gate 的 canonical package 误报：删除会匹配正式 `app.services.runtime_query` package 的 legacy grep 规则，同时保留旧根文件 `app/services/runtime_query.py` 的物理路径检查；并为 Runtime Query Service 补充中文模块职责、边界与关键依赖说明。
+12. 修复 Knowledge 模块说明 Gate 阻塞：`app/services/knowledge/__init__.py` 增加固定 `职责：`、`边界：` 与 `关键依赖：` 声明，不改变 Knowledge 与 Provider 的职责边界。
 
 ## 当前模块重构完成度
 
@@ -56,11 +62,13 @@
 - Runtime 其他领域目录收敛
 - 全部重构领域的重复实现审查与 targeted tests
 
+**当前最新本地反馈的直接 blocker 已修复：Knowledge 模块说明校验缺少固定职责/边界标记。修复后尚未获得开发者新的 Gate 实际执行结果，因此不得预填 Gate Passed。**
+
 因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移、旧路径清理、测试收敛与 Gate 验收，直到全部重构单元满足验收条件。
 
 ## 本地验证原则
 
-仓库端不能代替开发者本地测试。本轮用户此前反馈的 Workflow/Trigger targeted tests `74 passed`、Retrieval Evaluation targeted tests `38 passed`、Tool targeted tests `11 passed` 均为用户实际反馈结果；**Module Refactor Gate 与完整 Backend Regression 尚无本轮通过结果，不得预填通过。**
+仓库端不能代替开发者本地测试。本轮用户此前反馈的 Workflow/Trigger targeted tests `101 passed, 191 deselected`、Retrieval Evaluation targeted tests `38 passed`、Tool targeted tests `11 passed` 均为用户实际反馈结果；**Module Refactor Gate 与完整 Backend Regression 尚无本轮通过结果，不得预填通过。**
 
 ### 当前完整本地验证流程
 
@@ -117,8 +125,8 @@ uv run pytest -q
 
 优先顺序保持：
 
-1. 先在本地执行新版 Module Refactor Gate，取得本轮真实结构性 blocker；
-2. 修复 Gate 暴露的生产/测试 import、模块说明或重复实现问题，并补充对应错误记录；
+1. 在本地同步 `0090e732` 之后的最新 `main`，重新执行 Module Refactor Gate，取得下一条真实结构性 blocker；
+2. 修复 Gate 暴露的生产/测试 import、模块说明或重复实现问题，并同步记录已经发生的工程错误；
 3. 对 Workflow、Trigger、Organization、Observability、Retrieval Evaluation、Runtime Query、Session、Tool、Usage Accounting 逐领域完成 targeted tests 与迁移记录；
 4. 完成 Governance 领域及 API `v1/<domain>` 收敛，保持现有 HTTP Contract 不变；
 5. Runtime 其他领域目录完成职责收敛；
