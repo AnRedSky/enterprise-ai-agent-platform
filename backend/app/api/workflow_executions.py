@@ -1,3 +1,10 @@
+"""Workflow Execution API 路由。
+
+职责：提供 Workflow Execution 的创建、运行、取消、重试、状态转换与追踪协议。
+边界：只负责 HTTP 协议、鉴权和响应组装；Execution 生命周期规则统一由 app.services.workflow 领域服务处理。
+关键依赖：WorkflowRegistry、WorkflowExecutionService、SQLAlchemy AsyncSession 与 Workflow ORM。
+"""
+
 from __future__ import annotations
 
 from uuid import UUID
@@ -9,11 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
-from app.models.workflow import WorkflowVersion
+from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
-from app.models.workflow import Workflow
-from app.services.workflow_execution import WorkflowExecutionService
-from app.services.workflow_registry import WorkflowRegistry
+from app.services.workflow import WorkflowExecutionService, WorkflowRegistry
 
 router = APIRouter()
 
