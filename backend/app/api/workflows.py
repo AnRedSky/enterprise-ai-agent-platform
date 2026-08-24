@@ -6,8 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import current_claims, require_roles
 from app.dependencies.db import get_db
+from app.services.trigger import WorkflowTriggerService
 from app.services.workflow import WorkflowRegistry
-from app.services.workflow_trigger import WorkflowTriggerService
 
 router = APIRouter()
 

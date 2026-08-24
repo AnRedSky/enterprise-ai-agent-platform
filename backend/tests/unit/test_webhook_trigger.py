@@ -1,6 +1,8 @@
+"""验证 Webhook Trigger 的公开幂等键生成规则。"""
+
 from uuid import UUID
 
-from app.services.webhook_trigger import WebhookTriggerService
+from app.services.trigger import WebhookTriggerService
 
 
 TRIGGER_ID = UUID("d4d5337b-51d3-4d08-90eb-128c0a6372a4")

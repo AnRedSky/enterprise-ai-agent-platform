@@ -1,3 +1,10 @@
+"""Trigger 配置契约与校验模块。
+
+职责：定义 scheduled/webhook Trigger 的持久化配置契约、规范化与 Webhook Secret 校验。
+边界：只负责配置边界，不创建 Workflow Execution，也不负责 Trigger 生命周期持久化。
+关键依赖：Pydantic 配置模型、IANA timezone 数据和 SHA-256。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -7,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ScheduledTriggerConfig(BaseModel):
-    """Persisted contract for the first scheduled Trigger implementation."""
+    """定义第一版 scheduled Trigger 的持久化配置契约。"""
 
     timezone: str = Field(min_length=1, max_length=64)
     interval_seconds: int = Field(ge=60, le=86400)
@@ -23,7 +30,7 @@ class ScheduledTriggerConfig(BaseModel):
 
 
 class WebhookTriggerConfig(BaseModel):
-    """Persisted webhook contract. The secret is stored only as a SHA-256 hash."""
+    """定义 Webhook Trigger 配置契约；Secret 只允许以 SHA-256 摘要持久化。"""
 
     auth_mode: str = Field(default="secret", min_length=1, max_length=20)
     secret_hash: str = Field(min_length=64, max_length=64)
@@ -38,7 +45,7 @@ class WebhookTriggerConfig(BaseModel):
 
 
 def validate_trigger_config(trigger_type: str, config: dict) -> dict:
-    """Validate and normalize Trigger config without creating an execution."""
+    """校验并规范化 Trigger 配置，但不创建执行记录。"""
     if trigger_type == "manual":
         return config
     if trigger_type == "scheduled":
@@ -55,6 +62,7 @@ def validate_trigger_config(trigger_type: str, config: dict) -> dict:
 
 
 def verify_webhook_secret(config: dict, supplied_secret: str | None) -> bool:
+    """校验请求 Secret 与持久化摘要是否一致。"""
     if not supplied_secret:
         return False
     expected = str((config or {}).get("secret_hash", ""))

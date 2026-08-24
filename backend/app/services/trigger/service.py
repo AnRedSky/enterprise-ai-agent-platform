@@ -1,8 +1,8 @@
-"""Workflow Trigger 领域服务。
+"""Trigger 生命周期与执行入口服务。
 
-职责：管理 manual/scheduled/webhook Trigger 生命周期、配置校验与触发执行入口。
-边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；分别复用对应领域模块。
-关键依赖：Workflow/WorkflowTrigger ORM、Workflow Execution/治理服务与 Trigger 配置校验器。
+职责：管理 manual/scheduled/webhook Trigger 的查询、创建、更新、删除和触发执行入口。
+边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；通过正式 Workflow 模块复用这些能力。
+关键依赖：Workflow/WorkflowTrigger ORM、Workflow Execution/Governance 服务、Trigger 配置契约与 Workflow Runtime。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow_runtime import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
-from app.services.workflow_trigger_schedule import validate_trigger_config
+from app.services.trigger.schedule import validate_trigger_config
 
 
 class WorkflowTriggerService:

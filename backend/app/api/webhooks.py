@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies.db import get_db
-from app.services.webhook_trigger import WebhookTriggerService
+from app.services.trigger import WebhookTriggerService
 
 router = APIRouter()
 

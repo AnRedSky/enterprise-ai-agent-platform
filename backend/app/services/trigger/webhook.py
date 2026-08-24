@@ -1,3 +1,10 @@
+"""Webhook Trigger 领域入口服务。
+
+职责：处理 Webhook Secret 认证、事件身份确定、幂等声明与 Workflow Execution 触发。
+边界：不重复实现 Trigger 生命周期、Workflow Execution、Governance 或 Registry；统一复用正式领域入口。
+关键依赖：WorkflowRuntime、WorkflowTriggerService、Workflow Governance 与 Trigger 配置契约。
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -13,9 +20,9 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow_runtime import WorkflowRuntime
+from app.services.trigger.schedule import verify_webhook_secret
+from app.services.trigger.service import WorkflowTriggerService
 from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
-from app.services.workflow_trigger import WorkflowTriggerService
-from app.services.workflow_trigger_schedule import verify_webhook_secret
 
 
 class WebhookTriggerService:

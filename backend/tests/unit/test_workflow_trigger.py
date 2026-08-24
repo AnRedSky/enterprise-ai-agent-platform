@@ -1,3 +1,5 @@
+"""验证 Trigger 生命周期服务的类型、状态、创建和调用边界。"""
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -5,7 +7,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from app.services.workflow_trigger import WorkflowTriggerService
+from app.services.trigger import WorkflowTriggerService
 
 
 def _service():

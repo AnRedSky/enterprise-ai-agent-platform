@@ -1,8 +1,9 @@
+"""验证 Trigger 配置契约、规范化以及生命周期服务的配置边界。"""
+
 import pytest
 from fastapi import HTTPException
 
-from app.services.workflow_trigger import WorkflowTriggerService
-from app.services.workflow_trigger_schedule import ScheduledTriggerConfig, validate_trigger_config
+from app.services.trigger import ScheduledTriggerConfig, WorkflowTriggerService, validate_trigger_config
 
 
 def test_scheduled_trigger_config_accepts_valid_interval_and_iana_timezone():

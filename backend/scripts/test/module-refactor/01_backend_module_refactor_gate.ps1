@@ -28,6 +28,8 @@ $requiredDirectories = @(
     "app/services/memory",
     "app/services/model",
     "app/services/workflow",
+    "app/services/workflow_scheduler",
+    "app/services/trigger",
     "app/infrastructure",
     "app/infrastructure/db",
     "app/infrastructure/providers",
@@ -36,6 +38,7 @@ $requiredDirectories = @(
     "app/runtime/memory",
     "app/runtime/model"
 )
+
 foreach ($directory in $requiredDirectories) {
     if (-not (Test-Path $directory -PathType Container)) {
         throw "Required module directory is missing: $directory"
@@ -67,10 +70,14 @@ $forbiddenPaths = @(
     "app/runtime/openai_provider.py",
     "app/services/workflow_execution.py",
     "app/services/workflow_governance.py",
-    "app/services/workflow_registry.py"
+    "app/services/workflow_registry.py",
+    "app/services/workflow_trigger.py",
+    "app/services/workflow_trigger_schedule.py",
+    "app/services/webhook_trigger.py"
 )
+
 foreach ($path in $forbiddenPaths) {
-    if (Test-Path $path) {
+    if (Test-Path $path -PathType Leaf) {
         throw "Forbidden legacy module still exists: $path"
     }
 }
@@ -100,8 +107,12 @@ $legacyImportPatterns = @(
     "app\.runtime\.openai_provider",
     "app\.services\.workflow_execution",
     "app\.services\.workflow_governance",
-    "app\.services\.workflow_registry"
+    "app\.services\.workflow_registry",
+    "app\.services\.workflow_trigger",
+    "app\.services\.workflow_trigger_schedule",
+    "app\.services\.webhook_trigger"
 )
+
 foreach ($pattern in $legacyImportPatterns) {
     $matches = @(git grep -n -E $pattern -- "*.py" 2>$null)
     if ($matches.Count -gt 0) {
@@ -115,6 +126,7 @@ $forbiddenDatabaseDependencyPatterns = @(
     "from app\.dependencies\.db import SessionLocal",
     "from app\.dependencies\.db import .*SessionLocal"
 )
+
 foreach ($pattern in $forbiddenDatabaseDependencyPatterns) {
     $matches = @(git grep -n -E $pattern -- "*.py" 2>$null)
     if ($matches.Count -gt 0) {
@@ -138,11 +150,17 @@ $requiredMigratedFiles = @(
     "app/services/workflow/execution.py",
     "app/services/workflow/governance.py",
     "app/services/workflow/registry.py",
+    "app/services/workflow_scheduler/__init__.py",
+    "app/services/trigger/__init__.py",
+    "app/services/trigger/service.py",
+    "app/services/trigger/schedule.py",
+    "app/services/trigger/webhook.py",
     "app/runtime/memory/__init__.py",
     "app/runtime/memory/context.py",
     "app/runtime/model/__init__.py",
     "app/runtime/model/gateway.py"
 )
+
 foreach ($path in $requiredMigratedFiles) {
     if (-not (Test-Path $path -PathType Leaf)) {
         throw "Required migrated implementation is missing: $path"
@@ -177,34 +195,63 @@ foreach ($file in @(
     }
 }
 
-$workflowModules = @(
+$descriptionFiles = @(
+    "app/services/agent/__init__.py",
+    "app/services/agent/service.py",
+    "app/services/agent/repository.py",
+    "app/services/knowledge/__init__.py",
+    "app/services/knowledge/contract.py",
+    "app/services/knowledge/registry.py",
+    "app/services/knowledge/ingestion.py",
+    "app/services/knowledge/retrieval.py",
+    "app/services/knowledge/vector_indexing.py",
+    "app/services/knowledge/vector_retrieval.py",
+    "app/services/knowledge/hybrid.py",
+    "app/services/knowledge/hybrid_service.py",
+    "app/services/memory/__init__.py",
+    "app/services/memory/service.py",
+    "app/services/model/__init__.py",
+    "app/services/model/contract.py",
+    "app/services/model/provider.py",
+    "app/services/model/routing.py",
+    "app/services/model/governance.py",
     "app/services/workflow/__init__.py",
     "app/services/workflow/execution.py",
     "app/services/workflow/governance.py",
-    "app/services/workflow/registry.py"
+    "app/services/workflow/registry.py",
+    "app/services/workflow_scheduler/__init__.py",
+    "app/services/trigger/__init__.py",
+    "app/services/trigger/service.py",
+    "app/services/trigger/schedule.py",
+    "app/services/trigger/webhook.py",
+    "app/runtime/memory/__init__.py",
+    "app/runtime/memory/context.py",
+    "app/runtime/model/__init__.py",
+    "app/runtime/model/gateway.py",
+    "app/infrastructure/providers/__init__.py",
+    "app/infrastructure/providers/embedding.py",
+    "app/infrastructure/providers/mock_embedding.py",
+    "app/infrastructure/providers/ollama_embedding.py",
+    "app/infrastructure/providers/vector_retrieval.py",
+    "app/infrastructure/providers/model.py",
+    "app/infrastructure/providers/mock_model.py",
+    "app/infrastructure/providers/openai_model.py"
 )
-foreach ($module in $workflowModules) {
+
+foreach ($module in $descriptionFiles) {
     $content = Get-Content $module -Raw
     if ($content -notmatch "职责：") {
-        throw "Workflow module description is missing: $module"
+        throw "Module description is missing: $module"
+    }
+    if ($content -notmatch "边界：") {
+        throw "Module boundary description is missing: $module"
     }
 }
 
-foreach ($filter in @(
-    "*agent*",
-    "*knowledge*",
-    "*memory*",
-    "*embedding_provider*",
-    "*vector_retrieval_provider*",
-    "*model_provider*",
-    "*runtime_model_governance*",
-    "*workflow*"
-)) {
-    $rootFiles = @(Get-ChildItem "app/services" -File -Filter $filter -ErrorAction SilentlyContinue)
-    if ($rootFiles.Count -gt 0) {
-        $rootFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
-        throw "Duplicate domain/provider implementation remains in app/services root: $filter"
-    }
+$rootServiceFiles = @(Get-ChildItem "app/services" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -ne "__init__.py" })
+if ($rootServiceFiles.Count -gt 0) {
+    $rootServiceFiles | ForEach-Object { Write-Host "Unexpected root service file: $($_.FullName)" }
+    throw "Root app/services contains legacy domain implementations."
 }
 
 $agentTests = @(Get-ChildItem "tests" -Recurse -File -Filter "*agent*.py" -ErrorAction SilentlyContinue)
@@ -215,12 +262,15 @@ $providerTests = @(Get-ChildItem "tests" -Recurse -File -Filter "*provider*.py" 
 if ($providerTests.Count -eq 0) { throw "Provider module tests are missing." }
 $workflowTests = @(Get-ChildItem "tests" -Recurse -File -Filter "*workflow*.py" -ErrorAction SilentlyContinue)
 if ($workflowTests.Count -eq 0) { throw "Workflow module tests are missing." }
+$triggerTests = @(Get-ChildItem "tests" -Recurse -File -Filter "*trigger*.py" -ErrorAction SilentlyContinue)
+if ($triggerTests.Count -eq 0) { throw "Trigger module tests are missing." }
 
 Invoke-GateStep "Agent targeted tests" { uv run pytest -q tests/unit -k "agent" --disable-warnings }
 Invoke-GateStep "Knowledge targeted tests" { uv run pytest -q tests/unit -k "knowledge" --disable-warnings }
 Invoke-GateStep "Infrastructure provider targeted tests" { uv run pytest -q tests/unit -k "provider" --disable-warnings }
 Invoke-GateStep "Model targeted tests" { uv run pytest -q tests/unit/test_model_gateway.py tests/unit/test_model_provider_governance_contract.py tests/unit/test_runtime_model_governance.py --disable-warnings }
 Invoke-GateStep "Workflow targeted tests" { uv run pytest -q tests/unit -k "workflow" --disable-warnings }
+Invoke-GateStep "Trigger targeted tests" { uv run pytest -q tests/unit -k "trigger" --disable-warnings }
 Invoke-GateStep "Backend default regression" { uv run pytest -q }
 
 Write-Host "============================================================"
