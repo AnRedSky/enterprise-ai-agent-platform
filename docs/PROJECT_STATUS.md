@@ -12,46 +12,65 @@
 
 ## 最新 main 基线
 
-本轮继续直接基于远端 `main`。截至当前最新提交，API v1 重构相关测试旧 import 又发现一组 Workflow Trigger 动态 import 残留，已继续修复并补充模块职责说明；不创建兼容分支或兼容垫片。
+本轮继续直接基于远端 `main`。用户本地已反馈 API v1、模块重构、依赖边界与 Backend Regression 全部通过；当前继续推进 Runtime / Governance 边界最终收口，不创建兼容分支或兼容垫片。
 
-本轮新增修复提交：
-
-```text
-c4dea56 fix(refactor): update scheduled trigger contract import
-5f8dac2 fix(refactor): update webhook contract import
-271a898 refactor(api): document workflow v1 router responsibility
-da1349d docs(errors): record remaining workflow API legacy imports
-```
-
-用户本地真实反馈：
+本轮新增工程变更：
 
 ```text
-API v1 Module Gate：发现 app.api.workflows 仍被两个 API Contract 测试动态引用
-Backend Regression：2 failed, 382 passed, 2 skipped, 35 deselected
+3703673 test(refactor): add runtime boundary gate
+442f40b fix(refactor): localize runtime gateway docstring
+82f1b40 docs(refactor): define runtime boundary gate and ownership
 ```
 
-本轮已将这两个测试切换到 `app.api.v1.workflows.router`，并为 Workflow v1 Router 补充中文职责、边界与关键依赖说明。
+用户本地真实 API v1 / 模块重构验收结果：
 
-**本轮修复后的 API v1 Module Gate / Backend Regression 尚未在用户本地重新执行，不预填通过。**
+```text
+API v1 Module Gate：79 passed
+Backend Module Refactor Gate：384 passed, 2 skipped, 35 deselected
+Dependency Boundary Gate：PASS
+Backend default regression：384 passed, 2 skipped, 35 deselected
+```
 
-## 本轮 API v1 重构
+上述结果来自用户本地实际执行反馈，不代表本轮新增 Runtime Boundary Gate 已经在用户本地执行；新增 Gate 必须单独执行后才能记录为通过。
 
-已完成 API 物理模块归位：
+## API v1 重构
+
+API v1 物理模块归位已经完成，并已通过用户本地 Module Gate：
 
 - `app/api/*.py` → `app/api/v1/<domain>/`；
 - `main.py` 已切换为 canonical API v1 import；
 - 原 `/api/v1/*` 路由前缀保持不变；
 - 删除旧 API 文件，不创建兼容转发；
-- 为 API 根包、v1 包及各领域包补充中文职责、边界和关键依赖说明；
-- 新增 `scripts/test/module-refactor/03_backend_api_v1_module_gate.ps1`，负责旧 API 路径、模块说明、应用 import、API Contract 与 Backend Regression 验证；
-- 修复受影响 API Contract / Integration 测试的旧 import，测试直接使用 canonical API v1 入口；
-- Workflow v1 Router 已补充模块级职责说明，明确 API 层不复制 Workflow / Trigger 领域业务规则。
+- 各 API 领域包具备中文职责、边界和关键依赖说明；
+- 受影响 API Contract / Integration 测试已切换到 canonical API v1 入口；
+- Workflow v1 Router 明确 API 层不复制 Workflow / Trigger 领域业务规则。
 
-**状态：代码与测试 import 已继续收口，待本地 Gate / Regression 实际验收。**
+**状态：API v1 Gate 已由用户本地反馈通过，后续只接受全量最终 Gate 对其进行最终确认。**
+
+## Runtime / Governance 当前收口
+
+Migration Map 当前将 Runtime 标记为“边界收口中”。当前正式 Runtime 仅保留：
+
+- `app/runtime/memory/`：执行期 Memory 上下文构造；
+- `app/runtime/model/`：唯一 Model Gateway 执行入口；
+- `app/runtime/workflow/`：Workflow 节点执行、重试、超时与熔断。
+
+新增 `backend/scripts/test/module-refactor/04_backend_runtime_boundary_gate.ps1`，专门验证：
+
+- Runtime 根目录不存在旧单文件实现；
+- 已删除的 Runtime / Governance 旧 import 不得重新出现；
+- Runtime 不复制 Model Provider Governance、路由或 Service 实现；
+- Runtime 关键模块具备中文“职责 / 边界”说明；
+- `ModelGateway` / `WorkflowRuntime` canonical import 可用；
+- Runtime targeted unit tests 可重复执行。
+
+同时修正 `app/runtime/model/gateway.py` 中英文类 docstring，使其符合开发准则第 21、25 条的中文说明要求。
+
+**状态：代码与 Gate 已准备完成，等待用户本地执行 Runtime Boundary Gate；在执行前不得将 Runtime / Governance 标记为迁移完成。**
 
 ## 当前模块重构状态
 
-### 已完成代码迁移 / 待全量最终 Gate
+### 已完成代码迁移 / 已具备最终 Gate
 
 - Agent
 - Knowledge + Provider
@@ -70,21 +89,13 @@ Backend Regression：2 failed, 382 passed, 2 skipped, 35 deselected
 
 ### 仍需最终收口
 
+- Runtime Boundary Gate 实际本地验收
 - 全部领域 Module Refactor Gate 最终全量验收
 - 全量旧 import 搜索确认 0
-- 全部重构领域重复实现审查
-- Runtime 其他领域边界审查
-- Governance 领域其余职责收敛
+- 全部重构领域重复实现最终审查
+- Governance 领域其余职责收敛确认
 
 **因此当前仍不得恢复 Phase 2.4 主线任务。**
-
-## 文档与错误记录
-
-本轮继续更新工程错误记录：
-
-- `docs/04-errors/2026-08-24-api-v1-legacy-imports.md`：补充 Workflow Trigger 测试残留旧 API import 的第二次真实反馈与修复。
-
-本轮修复后的测试结果待用户本地实际执行后补充；禁止预填“通过”。
 
 ## 本地自动化验证流程
 
@@ -100,25 +111,28 @@ uv run python -c "from app.main import app; print('APP_IMPORT_OK')"
 # 1. API v1 迁移 Gate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\03_backend_api_v1_module_gate.ps1
 
-# 2. 全部模块重构 Gate
+# 2. Runtime / Governance 边界 Gate（本轮新增）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\04_backend_runtime_boundary_gate.ps1
+
+# 3. 全部模块重构 Gate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
 
-# 3. 数据库依赖边界 Gate
+# 4. 数据库依赖边界 Gate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\02_backend_dependency_boundary_gate.ps1
 
-# 4. Backend default regression
+# 5. Backend default regression
 uv run pytest -q
 ```
 
-本轮 API 目录重构未新增 Alembic Migration；如果后续验证发现数据库状态异常，应先记录错误并停止继续迁移，不得为了目录整改修改数据库结构。
+本轮仍未新增 Alembic Migration；如果后续验证发现数据库状态异常，应先记录错误并停止继续迁移，不得为了目录整改修改数据库结构。
 
 ## 下一执行任务
 
-1. 本地同步最新 `main`，确认包含本轮 Workflow Trigger 测试 import 修复。
-2. 执行 API v1 Module Gate，确认旧 `app.api.<module>` 路径为 0。
-3. 执行 Module Refactor Gate、Dependency Boundary Gate 与 Backend Regression。
-4. 根据真实测试反馈继续修复 Runtime / Governance / 重复实现问题。
-5. 执行 Workflow / Tool / Runtime 全量最终 Gate。
+1. 用户本地同步最新 `main`，确认包含 Runtime Boundary Gate 与 Gateway docstring 修复。
+2. 执行 Runtime Boundary Gate，重点观察旧 Runtime / Governance import、重复实现和模块说明检查。
+3. 继续执行 API v1 Module Gate、Module Refactor Gate、Dependency Boundary Gate 与 Backend Regression，确认新增变更没有回归。
+4. 若 Runtime Boundary Gate 暴露问题，只修复 canonical 模块边界，不创建兼容垫片或第二实现。
+5. Runtime / Governance 最终收口后，再执行一次全量旧路径 / 重复实现扫描并更新 Migration Map、PROJECT_STATUS。
 6. 全部重构领域最终 Gate 通过后，才能恢复 Phase 2.4 主线任务。
 
 模块化目录、职责与迁移规则继续以 `docs/00-architecture/BACKEND_MODULE_ARCHITECTURE.md` 与 `docs/00-architecture/BACKEND_MODULE_MIGRATION_MAP.md` 为准。
