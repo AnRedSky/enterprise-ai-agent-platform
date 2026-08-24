@@ -1,7 +1,14 @@
+"""Runtime 与 Knowledge 集成契约测试。
+
+模块职责：验证 Agent API 的知识配置契约与 Chat 知识上下文拼装行为。
+边界：只验证已迁移的 API v1 Agent 入口，不保留旧 API 模块兼容导入。
+关键依赖：Agent v1 API schema、Chat API 的知识上下文构建函数。
+"""
+
 from uuid import uuid4
 
-from app.api.agents import KnowledgeConfig, VersionCreate
-from app.api.chat import build_knowledge_context
+from app.api.v1.agents.chat import build_knowledge_context
+from app.api.v1.agents.router import KnowledgeConfig, VersionCreate
 
 
 def test_knowledge_config_contract_defaults_are_safe():
