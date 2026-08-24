@@ -1,3 +1,10 @@
+"""Organization 领域核心服务。
+
+职责：负责 Organization 与 Membership 的查询、创建、访问控制、成员治理及 owner transfer。
+边界：不重复实现认证、Tenant、Workflow 执行或审计基础设施；审计事件通过统一 AuditLog 模型记录。
+关键依赖：Organization / OrganizationMembership / User 模型，以及 SQLAlchemy AsyncSession。
+"""
+
 from __future__ import annotations
 
 from uuid import UUID, uuid4
