@@ -13,7 +13,6 @@ function Invoke-GateStep {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$Action
     )
-
     Write-Host "[Gate] $Name"
     $global:LASTEXITCODE = 0
     & $Action
@@ -36,9 +35,9 @@ $requiredDirectories = @(
     "app/middleware",
     "app/utils",
     "app/runtime/memory",
-    "app/runtime/model"
+    "app/runtime/model",
+    "app/runtime/workflow"
 )
-
 foreach ($directory in $requiredDirectories) {
     if (-not (Test-Path $directory -PathType Container)) {
         throw "Required module directory is missing: $directory"
@@ -64,6 +63,7 @@ $forbiddenPaths = @(
     "app/services/model_provider.py",
     "app/services/model_provider_governance_contract.py",
     "app/services/runtime_model_governance.py",
+    "app/services/circuit_breaker.py",
     "app/runtime/memory_context.py",
     "app/runtime/model_gateway.py",
     "app/runtime/provider.py",
@@ -75,7 +75,6 @@ $forbiddenPaths = @(
     "app/services/workflow_trigger_schedule.py",
     "app/services/webhook_trigger.py"
 )
-
 foreach ($path in $forbiddenPaths) {
     if (Test-Path $path -PathType Leaf) {
         throw "Forbidden legacy module still exists: $path"
@@ -102,6 +101,7 @@ $legacyImportPatterns = @(
     "app\.services\.model_provider",
     "app\.services\.model_provider_governance_contract",
     "app\.services\.runtime_model_governance",
+    "app\.services\.circuit_breaker",
     "app\.runtime\.model_gateway",
     "app\.runtime\.provider",
     "app\.runtime\.openai_provider",
@@ -112,7 +112,6 @@ $legacyImportPatterns = @(
     "app\.services\.workflow_trigger_schedule",
     "app\.services\.webhook_trigger"
 )
-
 foreach ($pattern in $legacyImportPatterns) {
     $matches = @(git grep -n -E $pattern -- "*.py" 2>$null)
     if ($matches.Count -gt 0) {
@@ -126,7 +125,6 @@ $forbiddenDatabaseDependencyPatterns = @(
     "from app\.dependencies\.db import SessionLocal",
     "from app\.dependencies\.db import .*SessionLocal"
 )
-
 foreach ($pattern in $forbiddenDatabaseDependencyPatterns) {
     $matches = @(git grep -n -E $pattern -- "*.py" 2>$null)
     if ($matches.Count -gt 0) {
@@ -158,38 +156,22 @@ $requiredMigratedFiles = @(
     "app/runtime/memory/__init__.py",
     "app/runtime/memory/context.py",
     "app/runtime/model/__init__.py",
-    "app/runtime/model/gateway.py"
+    "app/runtime/model/gateway.py",
+    "app/runtime/workflow/__init__.py",
+    "app/runtime/workflow/circuit_breaker.py"
 )
-
 foreach ($path in $requiredMigratedFiles) {
     if (-not (Test-Path $path -PathType Leaf)) {
         throw "Required migrated implementation is missing: $path"
     }
 }
 
-foreach ($file in @(
-    "registry.py",
-    "ingestion.py",
-    "retrieval.py",
-    "vector_indexing.py",
-    "vector_retrieval.py",
-    "hybrid.py",
-    "hybrid_service.py"
-)) {
+foreach ($file in @("registry.py","ingestion.py","retrieval.py","vector_indexing.py","vector_retrieval.py","hybrid.py","hybrid_service.py")) {
     if (-not (Test-Path "app/services/knowledge/$file" -PathType Leaf)) {
         throw "Knowledge implementation is missing: $file"
     }
 }
-
-foreach ($file in @(
-    "embedding.py",
-    "mock_embedding.py",
-    "ollama_embedding.py",
-    "vector_retrieval.py",
-    "model.py",
-    "mock_model.py",
-    "openai_model.py"
-)) {
+foreach ($file in @("embedding.py","mock_embedding.py","ollama_embedding.py","vector_retrieval.py","model.py","mock_model.py","openai_model.py")) {
     if (-not (Test-Path "app/infrastructure/providers/$file" -PathType Leaf)) {
         throw "Provider implementation is missing: $file"
     }
@@ -228,6 +210,8 @@ $descriptionFiles = @(
     "app/runtime/memory/context.py",
     "app/runtime/model/__init__.py",
     "app/runtime/model/gateway.py",
+    "app/runtime/workflow/__init__.py",
+    "app/runtime/workflow/circuit_breaker.py",
     "app/infrastructure/providers/__init__.py",
     "app/infrastructure/providers/embedding.py",
     "app/infrastructure/providers/mock_embedding.py",
@@ -237,13 +221,12 @@ $descriptionFiles = @(
     "app/infrastructure/providers/mock_model.py",
     "app/infrastructure/providers/openai_model.py"
 )
-
 foreach ($module in $descriptionFiles) {
     $content = Get-Content $module -Raw
-    if ($content -notmatch "职责：") {
+    if ($content -notmatch "\u804c\u8d23\uff1a") {
         throw "Module description is missing: $module"
     }
-    if ($content -notmatch "边界：") {
+    if ($content -notmatch "\u8fb9\u754c\uff1a") {
         throw "Module boundary description is missing: $module"
     }
 }
@@ -265,13 +248,14 @@ if ($workflowTests.Count -eq 0) { throw "Workflow module tests are missing." }
 $triggerTests = @(Get-ChildItem "tests" -Recurse -File -Filter "*trigger*.py" -ErrorAction SilentlyContinue)
 if ($triggerTests.Count -eq 0) { throw "Trigger module tests are missing." }
 
+Invoke-GateStep "Application import" { uv run python -c "from app.main import app; print('APP_IMPORT_OK')" }
 Invoke-GateStep "Agent targeted tests" { uv run pytest -q tests/unit -k "agent" --disable-warnings }
 Invoke-GateStep "Knowledge targeted tests" { uv run pytest -q tests/unit -k "knowledge" --disable-warnings }
-Invoke-GateStep "Infrastructure provider targeted tests" { uv run pytest -q tests/unit -k "provider" --disable-warnings }
+Invoke-GateStep "Provider targeted tests" { uv run pytest -q tests/unit -k "provider" --disable-warnings }
 Invoke-GateStep "Model targeted tests" { uv run pytest -q tests/unit/test_model_gateway.py tests/unit/test_model_provider_governance_contract.py tests/unit/test_runtime_model_governance.py --disable-warnings }
 Invoke-GateStep "Workflow targeted tests" { uv run pytest -q tests/unit -k "workflow" --disable-warnings }
 Invoke-GateStep "Trigger targeted tests" { uv run pytest -q tests/unit -k "trigger" --disable-warnings }
-Invoke-GateStep "Backend default regression" { uv run pytest -q }
+Invoke-GateStep "Backend regression" { uv run pytest -q }
 
 Write-Host "============================================================"
 Write-Host "Backend Module Refactor Gate completed."
