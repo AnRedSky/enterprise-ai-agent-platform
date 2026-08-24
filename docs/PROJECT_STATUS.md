@@ -17,8 +17,8 @@
 
 截至本轮：
 
-- `0090e732`：补齐 `app/services/knowledge/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明。
-- `5aa9e5c`：记录 Knowledge 模块说明 Gate 阻塞及修复要求。
+- `0c828a0e`：补齐 `app/services/knowledge/hybrid_service.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明，保持既有 Knowledge 服务复用关系不变。
+- `4f44fb64`：记录本轮 `hybrid_service.py` 模块说明 Gate 阻塞、分析与本地验证要求。
 - `087d3d8f`：补齐 `app/services/workflow_scheduler/__init__.py` 的 `职责：`、`边界：`、`关键依赖：` 模块说明；该问题是在按 Gate 规则进行静态检查时提前发现并修复，尚未作为本地实际失败结果记录。
 
 ## 本轮实际代码变更
@@ -35,7 +35,8 @@
 10. 本轮没有新增数据库 Migration；目录重构不改变 Tool 数据结构。
 11. 修正 Runtime Query Module Refactor Gate 的 canonical package 误报：删除会匹配正式 `app.services.runtime_query` package 的 legacy grep 规则，同时保留旧根文件 `app/services/runtime_query.py` 的物理路径检查；并为 Runtime Query Service 补充中文模块职责、边界与关键依赖说明。
 12. 修复 Knowledge 模块说明 Gate 阻塞：`app/services/knowledge/__init__.py` 增加固定 `职责：`、`边界：` 与 `关键依赖：` 声明，不改变 Knowledge 与 Provider 的职责边界。
-13. 在重新执行 Gate 前，按现有 Gate 的固定 `职责：` / `边界：` 校验规则静态检查全部 required module description 文件，并提前补齐 Workflow Scheduler 模块的职责、边界与关键依赖说明；该项尚未由本地 Gate 实际执行验证。
+13. 按现有 Gate 的固定 `职责：` / `边界：` 校验规则持续补齐 Knowledge、Workflow Scheduler 等 required module description 文件。
+14. 修复 `app/services/knowledge/hybrid_service.py` 的模块说明缺失，仅增加职责、边界与关键依赖说明；该服务继续复用既有词法检索、向量检索和混合融合服务，没有新增重复实现。
 
 ## 当前模块重构完成度
 
@@ -64,7 +65,7 @@
 - Runtime 其他领域目录收敛
 - 全部重构领域的重复实现审查与 targeted tests
 
-**当前最新本地反馈的直接 blocker 已修复：Knowledge 模块说明校验缺少固定职责/边界标记。修复后尚未获得开发者新的 Gate 实际执行结果，因此不得预填 Gate Passed。**
+**当前最新用户反馈的直接 blocker 已修复：`app/services/knowledge/hybrid_service.py` 缺少固定职责/边界模块说明。修复后尚未获得开发者新的 Gate 实际执行结果，因此不得预填 Gate Passed。**
 
 因此，**本轮仍不得转入新的业务主线开发**。后续继续按 Migration Map 逐领域完成物理迁移、旧路径清理、测试收敛与 Gate 验收，直到全部重构单元满足验收条件。
 
