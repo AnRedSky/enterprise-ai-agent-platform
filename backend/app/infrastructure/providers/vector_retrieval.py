@@ -1,6 +1,8 @@
 """向量检索技术适配器。
 
-提供 Provider-neutral Contract、内存测试实现和 PostgreSQL/pgvector 实现；Knowledge 领域只依赖本文件定义的稳定契约。
+职责：定义统一的向量写入、相似度检索契约，并提供内存测试实现与 PostgreSQL/pgvector 实现。
+边界：只负责向量存储与检索技术适配，不承载 Knowledge 领域编排、权限治理或业务决策；上层领域服务统一依赖本文件的稳定 Contract。
+关键外部依赖：SQLAlchemy AsyncSession、PostgreSQL/pgvector。
 """
 
 from __future__ import annotations
