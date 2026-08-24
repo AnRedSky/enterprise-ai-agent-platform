@@ -8,44 +8,26 @@ import pytest
 from fastapi import HTTPException
 
 from app.runtime.workflow_runtime import WorkflowRuntime
-from app.services.workflow_execution import WorkflowExecutionService
+from app.services.workflow import WorkflowExecutionService
 
 
 @pytest.mark.asyncio
 async def test_retry_attempt_returns_node_to_running_before_next_runtime_call(monkeypatch):
     service = WorkflowExecutionService(AsyncMock())
-    service.governance.audit = AsyncMock()
-    service.governance.trace = AsyncMock()
-    execution = SimpleNamespace(
-        id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending",
-        input_data={"input": "retry-transition"}, started_at=None, ended_at=None,
-        current_node_id=None, output_data=None, error_code=None, error_message=None,
-    )
-    version = SimpleNamespace(definition={
-        "config": {"timeout_ms": 1000, "retry_budget": {"max_retries": 2}},
-        "nodes": [{
-            "id": "unstable", "type": "input",
-            "config": {
-                "timeout_ms": 1000,
-                "retry": {
-                    "max_attempts": 2,
-                    "backoff_ms": 0,
-                    "max_backoff_ms": 0,
-                    "jitter_ms": 0,
-                    "retryable_error_codes": ["HTTP_503"],
-                },
-            },
-        }],
-    })
+    service.governance.audit = AsyncMock(); service.governance.trace = AsyncMock()
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending",
+                                input_data={"input": "retry-transition"}, started_at=None, ended_at=None,
+                                current_node_id=None, output_data=None, error_code=None, error_message=None)
+    version = SimpleNamespace(definition={"config": {"timeout_ms": 1000, "retry_budget": {"max_retries": 2}}, "nodes": [{
+        "id": "unstable", "type": "input", "config": {"timeout_ms": 1000, "retry": {"max_attempts": 2,
+        "backoff_ms": 0, "max_backoff_ms": 0, "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]}}}]})
 
     async def transition(execution, target_status, **kwargs):
         execution.status = target_status
-        if kwargs.get("error_code"):
-            execution.error_code = kwargs["error_code"]
+        if kwargs.get("error_code"): execution.error_code = kwargs["error_code"]
         return execution
 
     calls: list[str] = []
-
     async def transition_node(_execution, _node_id, target_status, **_kwargs):
         calls.append(target_status)
         attempt = 1 if calls.count("failed") == 1 else 2
@@ -58,9 +40,7 @@ async def test_retry_attempt_returns_node_to_running_before_next_runtime_call(mo
         raise HTTPException(503, "upstream unavailable")
 
     monkeypatch.setattr(WorkflowRuntime, "execute_node", fail_execute)
-
     with pytest.raises(HTTPException) as exc:
         await service.run(execution, version, uuid4())
-
     assert exc.value.status_code == 503
     assert calls == ["running", "failed", "running", "failed"]
