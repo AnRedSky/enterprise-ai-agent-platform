@@ -21,10 +21,11 @@ from app.runtime.model import ModelGateway
 from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.circuit_breaker import CircuitBreakerService, CircuitOpenError
 from app.services.model import RuntimeModelGovernanceService
+from app.services.workflow import WorkflowExecutionService
 
 
 class WorkflowRuntime:
-    """Execute the stable Phase 1.5-D sequential workflow contract."""
+    """Workflow 执行运行时，统一编排节点、重试、超时与模型治理。"""
 
     NODE_TYPES = {"input", "agent", "output"}
     DEFAULT_TIMEOUT_MS = 30_000
@@ -149,9 +150,7 @@ class WorkflowRuntime:
         return normalized
 
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False) -> dict:
-        """Run a workflow with bounded node retry and a single workflow deadline."""
-        from app.services.workflow_execution import WorkflowExecutionService
-
+        """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。"""
         nodes = self.validate_definition(version.definition)
         runtime_config = version.definition.get("config") or {}
         workflow_timeout = self.resolve_timeout_ms(runtime_config)

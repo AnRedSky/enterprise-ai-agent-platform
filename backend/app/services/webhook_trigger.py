@@ -13,14 +13,17 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow_runtime import WorkflowRuntime
-from app.services.workflow_execution import WorkflowExecutionService
-from app.services.workflow_governance import WorkflowGovernanceService
+from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
 from app.services.workflow_trigger import WorkflowTriggerService
 from app.services.workflow_trigger_schedule import verify_webhook_secret
 
 
 class WebhookTriggerService:
-    """Public event-ingress boundary for webhook Trigger executions."""
+    """Webhook 事件入口服务，负责认证、幂等声明与 Workflow 执行触发。
+
+    边界：不重复实现 Workflow Execution、Governance 或 Registry，统一复用 Workflow 领域正式入口。
+    关键依赖：WorkflowRuntime、WorkflowTriggerService 与 services.workflow。
+    """
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -59,7 +62,7 @@ class WebhookTriggerService:
 
     @staticmethod
     def durable_idempotency_key(trigger_id: UUID, identity: str) -> str:
-        """Return a stable public key when it fits, otherwise a deterministic bounded digest."""
+        """返回稳定的公开幂等键；超长时使用确定性摘要控制长度。"""
         public_key = f"webhook:{trigger_id}:{identity}"
         if len(public_key) <= 100:
             return public_key
