@@ -1,7 +1,15 @@
+"""Webhook API Contract 测试。
+
+职责：验证公开 Webhook 路由的协议、请求头和 Trigger 配置契约。
+边界：只验证 HTTP Contract 与 Workflow Trigger 请求模型，不实现 Webhook 业务逻辑。
+关键依赖：FastAPI TestClient 与 Workflow v1 API Router。
+"""
+
 import inspect
 
 from fastapi.testclient import TestClient
 
+from app.api.v1.workflows.router import WorkflowTriggerCreate
 from app.main import app
 
 client = TestClient(app)
@@ -34,8 +42,6 @@ def test_webhook_endpoint_does_not_require_platform_bearer_authentication():
 
 
 def test_webhook_trigger_create_shape_accepts_secret_and_event_identity_config():
-    from app.api.workflows import WorkflowTriggerCreate
-
     create = WorkflowTriggerCreate.model_validate(
         {
             "name": "github-events",
