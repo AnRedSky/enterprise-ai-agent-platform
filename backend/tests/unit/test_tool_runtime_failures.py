@@ -14,6 +14,8 @@ from app.models.core import Agent, AgentTool, AuditLog, Base, Tool, User
 from app.models.execution import Execution
 import app.models.model_provider  # noqa: F401
 import app.models.organization  # noqa: F401
+import app.models.workflow  # noqa: F401 - registers workflows/workflow_versions for audit FK resolution
+import app.models.workflow_execution  # noqa: F401 - registers workflow_executions for audit FK resolution
 from app.services.tool import (
     AuditLogAdapter,
     SqlAlchemyAuditRepository,
