@@ -1,3 +1,9 @@
+"""检索评估运行追踪服务。
+
+职责：将离线检索评估运行、case 结果和质量门禁结果写入统一 Observability/Audit 模型。
+边界：不执行生产检索、不创建第二套审计或可观测性实现。
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,7 +20,7 @@ from app.models.execution import Execution, ExecutionEvent  # noqa: F401
 from app.models.model_provider import ModelProfile, ModelProvider  # noqa: F401
 from app.models.workflow import Workflow, WorkflowVersion  # noqa: F401
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution  # noqa: F401
-from app.services.observability_service import ObservabilityService
+from app.services.observability import ObservabilityService
 
 
 class RetrievalEvaluationTraceService:
