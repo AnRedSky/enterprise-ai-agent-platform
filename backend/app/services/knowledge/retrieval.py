@@ -1,3 +1,10 @@
+"""Knowledge 词法检索领域服务。
+
+职责：负责基于已持久化 Chunk 执行确定性的词法召回、相关度计算、权限过滤与结果去重。
+边界：只实现 Knowledge 领域的本地词法检索，不承担向量检索、Embedding、Provider 适配或 API 协议转换。
+关键依赖：SQLAlchemy AsyncSession 与 app.models.knowledge 中的知识领域持久化模型。
+"""
+
 from __future__ import annotations
 
 import re
