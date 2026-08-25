@@ -12,7 +12,7 @@ function Assert-NoSchedulerBackgroundProcess {
   })
   if($processes.Count -gt 0){
     $details = ($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join "`n"
-    throw "检测到已有 Scheduler Service 进程，Acceptance 必须独占 Scheduler。请先停止以下 Scheduler 进程后重新执行：`n$details"
+    throw "Existing Scheduler Service process detected. Acceptance requires an exclusive Scheduler. Stop these Scheduler processes and retry:`n$details"
   }
 }
 
