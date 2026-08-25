@@ -36,10 +36,24 @@ def scheduler_event_loop():
 
 
 def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
+    """在测试专用事件循环中执行异步数据库操作。
+
+    参数：
+        loop: 当前模块复用的测试事件循环。
+        coroutine: 待执行的协程对象。
+
+    返回值：
+        协程实际返回值。
+    """
     return loop.run_until_complete(coroutine)
 
 
 def _client() -> httpx.Client:
+    """创建带真实 API Token 的 HTTP 客户端。
+
+    返回值：
+        指向当前 Real API 地址的 HTTP 客户端。
+    """
     if not TOKEN:
         pytest.fail("ACCESS_TOKEN is required for real API validation")
     return httpx.Client(
@@ -50,6 +64,14 @@ def _client() -> httpx.Client:
 
 
 async def _execution_rows(idempotency_key: str) -> list[dict]:
+    """读取指定 Scheduler slot 的真实 WorkflowExecution。
+
+    参数：
+        idempotency_key: Scheduler 统一生成的 slot 幂等键。
+
+    返回值：
+        按创建时间排序的真实 WorkflowExecution 行。
+    """
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
@@ -67,8 +89,41 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
         await engine.dispose()
 
 
+async def _scheduled_execution_rows(trigger_id: str) -> list[dict]:
+    """读取指定 Scheduled Trigger 已产生的真实 Execution，避免测试在 interval 边界计算陈旧 slot。
+
+    参数：
+        trigger_id: Scheduled Trigger 的 UUID 字符串。
+
+    返回值：
+        当前 Trigger 对应的全部 Scheduler Execution，按创建时间排序。
+    """
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    try:
+        async with engine.connect() as connection:
+            result = await connection.execute(
+                text(
+                    "SELECT id, status, idempotency_key, input_data "
+                    "FROM workflow_executions "
+                    "WHERE idempotency_key LIKE :prefix "
+                    "ORDER BY created_at ASC"
+                ),
+                {"prefix": f"scheduled:{trigger_id}:%"},
+            )
+            return [dict(row._mapping) for row in result]
+    finally:
+        await engine.dispose()
+
+
 async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
-    """读取真实 PostgreSQL 中与 WorkflowExecution 绑定的 Audit/Trace 记录。"""
+    """读取真实 PostgreSQL 中与 WorkflowExecution 绑定的 Audit/Trace 记录。
+
+    参数：
+        execution_id: WorkflowExecution 的 UUID 字符串。
+
+    返回值：
+        AuditLog 与 WorkflowTraceEvent 两组真实持久化记录。
+    """
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
@@ -92,7 +147,16 @@ async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
 
 
 async def _seed_scheduler_backlog(trigger_id: str, next_run_at: datetime, interval_seconds: int) -> None:
-    """直接把真实 Scheduler 持久化状态回拨一个槽位，模拟服务重启后存在历史积压的生产状态。"""
+    """直接把真实 Scheduler 持久化状态回拨一个槽位，模拟服务重启后存在历史积压的生产状态。
+
+    参数：
+        trigger_id: Scheduled Trigger 的 UUID 字符串。
+        next_run_at: 要写入 Scheduler 的历史计划时间。
+        interval_seconds: Scheduler interval 秒数，用于生成持久化表达式。
+
+    返回值：
+        无；函数直接更新 PostgreSQL 中的 Scheduler 状态。
+    """
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.begin() as connection:
@@ -132,6 +196,16 @@ def _wait_for_scheduled_execution(
     idempotency_key: str,
     timeout_seconds: float = 15.0,
 ) -> list[dict]:
+    """轮询真实 PostgreSQL，等待指定 slot 的 Execution 进入终态。
+
+    参数：
+        loop: 当前模块复用的测试事件循环。
+        idempotency_key: 目标 Scheduler slot 的统一幂等键。
+        timeout_seconds: 最大等待秒数。
+
+    返回值：
+        当前数据库中该幂等键对应的全部 Execution 行。
+    """
     deadline = time.monotonic() + timeout_seconds
     terminal_states = {"completed", "failed", "cancelled"}
     while time.monotonic() < deadline:
@@ -142,7 +216,33 @@ def _wait_for_scheduled_execution(
     return _run_async(loop, _execution_rows(idempotency_key))
 
 
+def _wait_for_trigger_execution(
+    loop: asyncio.AbstractEventLoop,
+    trigger_id: str,
+    timeout_seconds: float = 15.0,
+) -> list[dict]:
+    """轮询指定 Trigger 的真实 Execution，规避 interval 槽位边界导致的测试竞态。
+
+    参数：
+        loop: 当前模块复用的测试事件循环。
+        trigger_id: Scheduled Trigger 的 UUID 字符串。
+        timeout_seconds: 最大等待秒数。
+
+    返回值：
+        当前 Trigger 对应的已持久化 Execution 行。
+    """
+    deadline = time.monotonic() + timeout_seconds
+    terminal_states = {"completed", "failed", "cancelled"}
+    while time.monotonic() < deadline:
+        rows = _run_async(loop, _scheduled_execution_rows(trigger_id))
+        if rows and all(row["status"] in terminal_states for row in rows):
+            return rows
+        time.sleep(1.0)
+    return _run_async(loop, _scheduled_execution_rows(trigger_id))
+
+
 def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(scheduler_event_loop):
+    """验证 Scheduled Trigger 的真实 HTTP 配置、禁止手工 invoke、真实 Execution 与治理关联。"""
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled Trigger validation")
 
@@ -163,11 +263,6 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert trigger["trigger_type"] == "scheduled"
         assert trigger["status"] == "enabled"
         assert trigger["config"] == expected_config
-
-        runtime_key = ScheduledTriggerScheduler.idempotency_key(
-            trigger_id, datetime.now(UTC), config["interval_seconds"]
-        )
-        runtime_slot = int(runtime_key.rsplit(":", 1)[1])
 
         detail = client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
         assert detail.status_code == 200, detail.text
@@ -194,10 +289,12 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
 
-        rows = _wait_for_scheduled_execution(scheduler_event_loop, runtime_key)
+        rows = _wait_for_trigger_execution(scheduler_event_loop, trigger_id)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
-        assert rows[0]["idempotency_key"] == runtime_key
+        runtime_key = rows[0]["idempotency_key"]
+        assert runtime_key.startswith(f"scheduled:{trigger_id}:")
+        runtime_slot = int(runtime_key.rsplit(":", 1)[1])
         assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
         assert rows[0]["input_data"]["recovery"] is False
         assert "planned_at" in rows[0]["input_data"]
@@ -231,6 +328,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
 
 
 def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(scheduler_event_loop):
+    """验证两个 Scheduler worker 对同一真实 PostgreSQL slot 只能收敛出一个 Execution。"""
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for multi-worker scheduler validation")
 
@@ -249,6 +347,11 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, now, config["interval_seconds"])
 
         async def dispatch_from_two_workers():
+            """使用两个独立 Scheduler 实例竞争同一个持久化 slot。
+
+            返回值：
+                两个 worker 的 tick 计数结果。
+            """
             first = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
             second = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
             return await asyncio.gather(first.tick_once(now), second.tick_once(now))
@@ -269,6 +372,7 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
 
 
 def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(scheduler_event_loop):
+    """验证历史 misfire slot 与当前 slot 的真实 Execution 元数据及幂等恢复行为。"""
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for scheduled recovery validation")
 
