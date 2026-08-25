@@ -7,14 +7,14 @@
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery 已完成开发；Frontend / Browser E2E 已完成本轮实际验证；当前 Backend Regression 的 Tenant Safe Real API Gate 因 Scheduler restart 生命周期与普通 Real API Gate 混跑导致的非确定性已完成工程修复，等待本地重新验收。**
+- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery 已完成开发；Frontend / Browser E2E 已完成本轮实际验证；普通 Tenant Safe Real API Gate 已通过，Scheduler Restart Acceptance 尚待本地重新执行确认。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-当前远端 `main` 基线为 `f26f5a5`，Workflow Trigger Browser E2E、Organization Browser E2E、Model Provider Browser E2E 以及 Frontend Regression 均已有开发者本地实际通过结果。
+当前远端 `main` 基线为 `b135876`，Workflow Trigger Browser E2E、Organization Browser E2E、Model Provider Browser E2E、Frontend Regression、Backend Regression 以及 Tenant Safe Real API Gate 均已有开发者本地实际通过结果。
 
-本轮最新反馈进一步暴露 Backend Gate 的生命周期隔离问题：普通 Tenant Safe Real API Gate 同时执行 Scheduler 真实进程 restart acceptance，而开发环境可能已经存在另一个 API/Scheduler 进程。两个 Scheduler 共享 PostgreSQL 后会竞争同一 Scheduled Trigger 的 lease / slot，使 restart acceptance 出现一次失败、随后独立重跑又通过的非确定性结果。
+本轮最新反馈表明 Scheduler Restart Acceptance 尚未开始执行：旧脚本要求 `127.0.0.1:8000` 独占，而开发环境已有 API/Scheduler 占用该端口，因此 Gate 在真正启动测试前即失败。该问题属于测试编排的环境耦合，不是 Scheduler Runtime Contract 失败。
 
 ## 本轮工程变更
 
@@ -23,10 +23,13 @@
   - Scheduler 真实服务停止/重启验收保持独立，不再与普通 HTTP API Gate 混跑；
   - Gate 输出明确区分普通 Real API 与独立 lifecycle acceptance。
 - `backend/scripts/test/api-real/02_run_scheduler_restart_acceptance.ps1`：
-  - 增加 `127.0.0.1:8000` 独占端口检查；
-  - 已有 API/Scheduler 进程运行时立即失败并给出明确操作要求，避免第二个 Scheduler 与现有 worker 竞争 PostgreSQL slot。
+  - 不再固定要求 `127.0.0.1:8000` 空闲；
+  - 启动前自动申请本机空闲临时端口作为 fixture bootstrap API；
+  - bootstrap 完成后释放临时进程，真正的 restart acceptance 继续由测试自身动态申请独立端口；
+  - finally 中清理 `API_BASE_URL`、Token、Trigger fixture 等测试环境变量。
 - `docs/04-errors/2026-08-25-real-api-gate-scheduler-restart-isolation.md`：
-  - 记录本轮真实失败、非确定性根因、修复边界与验收流程。
+  - 记录旧版固定端口导致 Gate 在开发环境已有 API 服务时无法启动的问题；
+  - 明确本次修复只解除无必要的端口耦合，不放宽 Scheduler restart 的真实进程生命周期边界。
 
 ## 已完成的 Browser / Frontend Gate
 
@@ -43,12 +46,12 @@ Workflow Trigger Browser Gate：本地实际通过（1 passed；脚本最终输�
 
 ```text
 Backend default regression                         ✓ 397 passed / 3 skipped / 36 deselected
-Tenant Safe Real API Gate（旧编排）               ⚠ 首次 1 failure，随后独立重跑 36 passed
-Scheduler Restart Acceptance                      ⚠ 需要在独占 Scheduler 条件下重新执行
-Backend Regression Gate                            ↓ 等待上述修复后的本地 Gate 重新确认
+Tenant Safe Real API Gate（修复后）               ✓ 35 passed
+Scheduler Restart Acceptance                      ↓ 待执行
+Backend Regression Gate                            ✓ Backend regression + migration + tenant-safe API 均通过；Phase 2.4 Closure 等待 restart acceptance
 ```
 
-本轮不把“随后独立重跑通过”直接当作最终 Closure；必须按修复后的脚本重新执行并记录实际结果。
+`Scheduler Restart Acceptance` 必须在本次端口自动化修复后重新执行；在实际结果返回前，不提前记录 Phase 2.4 Passed。
 
 ## 当前禁止事项
 
@@ -57,4 +60,4 @@ Backend Regression Gate                            ↓ 等待上述修复后的�
 - 不使用 JSON fixture 替代真实 PostgreSQL Scheduler 状态；
 - 不创建兼容垫片、旧入口转发或功能分支；
 - 不把 GitHub Actions 结果当作本地开发 Gate 或验收结果；
-- Scheduler Restart Acceptance 不得与另一个运行中的 Scheduler 进程共享同一测试数据库执行。
+- Scheduler Restart Acceptance 不得让测试自身启动的多个 Scheduler worker 共享同一目标 slot；bootstrap 临时服务完成 fixture 准备后必须退出。

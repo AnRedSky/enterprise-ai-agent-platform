@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、应用生命周期与真实服务重启 Acceptance 的实现已完成；Frontend Regression 与 Workflow Trigger Browser E2E 已由开发者本地实际通过。当前最新 Backend Regression 反馈发现普通 Tenant Safe Real API Gate 与 Scheduler restart lifecycle acceptance 的进程边界没有隔离，已完成 Gate 编排修复，等待本地重新验收后再进行最终 Acceptance 汇总。**
+> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、应用生命周期与真实服务重启 Acceptance 的实现已完成；Frontend Regression 与 Workflow Trigger Browser E2E 已由开发者本地实际通过。普通 Tenant Safe Real API Gate 已通过；当前仅等待修复后的 Scheduler Restart Acceptance 本地实际结果后进行最终 Acceptance 汇总。**
 > 评估日期：2026-08-25
 > 优先级：**P1**
 
@@ -116,25 +116,27 @@ misfire 计算统一位于 `workflow_scheduler/misfire.py`，Runtime 不复制�
 
 ```text
 Backend default regression：397 passed，3 skipped，36 deselected
-Tenant Safe Real API Gate：首次 1 failure；随后独立重跑 36 passed
+Tenant Safe Real API Gate（修复后）：35 passed
+Frontend Regression：79 passed + production build
+Workflow Trigger Browser E2E：1 passed
+Organization Browser E2E：3 scenarios passed
+Model Provider Browser E2E：2 scenarios passed
 ```
 
-首次失败集中在真实服务 restart recovery：目标历史 slot 没有产生 Execution。随后独立重跑通过，结合 API 服务同时运行的环境，确认需要把 Scheduler restart lifecycle acceptance 与普通 Real API Gate 做进程级隔离。
-
-因此，本轮不能把上述“随后独立重跑通过”直接记为最终 Closure；修复后的两个独立 Gate 必须重新执行并以实际结果为准。
+以上均来自开发者本地实际执行结果。
 
 ## 9. 真实服务重启 Acceptance
 
-真实服务重启 Gate 仍由独立入口执行：
+真实服务重启 Gate 由独立入口执行：
 
 ```powershell
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
 ```
 
-该 Gate 的新前置条件：`127.0.0.1:8000` 不得已经运行另一个 API/Scheduler 进程。脚本现在会自动检查端口并在检测到现有 Scheduler 时立即失败，避免第二个 Scheduler 与测试 slot 竞争。
+当前脚本已取消对 `127.0.0.1:8000` 的固定占用要求：启动前自动申请本机空闲端口作为 tenant-safe fixture bootstrap API。bootstrap 完成后临时进程退出；`tests/api_real/test_scheduler_restart_api.py` 再自行申请新的空闲端口完成真实 Uvicorn 停止/重启验收。
 
-验证边界包括真实 Uvicorn 停止/重启、真实 PostgreSQL `next_run_at` 回拨、历史 slot recovery、统一 idempotency key、WorkflowExecution 以及 Audit/Trace tenant/workflow/execution 关联。
+该设计只消除开发机已有 API 服务造成的无意义端口阻断，不改变“restart acceptance 的目标 Scheduler 进程必须由测试自身独占”的边界。真实 PostgreSQL、`next_run_at` 回拨、历史 slot recovery、统一 idempotency key、WorkflowExecution 以及 Audit/Trace tenant/workflow/execution 关联仍由原 Acceptance 测试真实验证。
 
 ## 10. Frontend Scheduler 状态可观测性
 
@@ -167,8 +169,8 @@ Frontend Release / Regression Gate                         ✓ 已通过
 Browser Scheduler Gate                                    ✓ 已通过
 Organization / Model Provider Browser E2E                 ✓ 已实际通过
 Backend default regression                                 ✓ 已实际通过
-Tenant Safe Real API Gate（修复后）                        ↓ 重新执行
-Scheduler Restart Acceptance（独占 Scheduler）             ↓ 重新执行
+Tenant Safe Real API Gate（修复后）                        ✓ 已通过
+Scheduler Restart Acceptance（新端口自动化）               ↓ 待执行
 Scheduler 多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
                                                             ↓
 Phase 2.4 Passed 评估
@@ -184,9 +186,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 Scheduler Restart Acceptance：
 
 ```powershell
-# 先停止当前正在运行的 API/Scheduler 服务
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
 ```
 
-两者必须作为独立 Gate 执行。当前不记录 Phase 2.4 Passed，直到修复后的本地结果重新确认并完成 Acceptance 汇总。
+两者仍然是独立 Gate。当前不记录 Phase 2.4 Passed，直到新脚本实际完成真实服务 restart acceptance 并完成 Acceptance 汇总。
