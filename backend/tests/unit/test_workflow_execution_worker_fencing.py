@@ -64,3 +64,29 @@ async def test_lock_execution_accepts_current_worker_owner(monkeypatch) -> None:
     result = await service._lock_execution(claimed)  # type: ignore[arg-type]
 
     assert result is locked
+
+
+def test_validate_run_owner_rejects_manual_run_after_worker_claim() -> None:
+    """Worker 已持有 owner 时，HTTP 手动 Run 必须退出，不能进入第二个 Runtime。"""
+    service = WorkflowExecutionService.__new__(WorkflowExecutionService)
+    execution = SimpleNamespace(worker_owner="worker:claimed")
+
+    with pytest.raises(HTTPException) as exc_info:
+        service._validate_run_owner(execution, None)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "只有 pending Execution 可以 Run"
+
+
+def test_validate_run_owner_accepts_current_worker_and_unclaimed_http_run() -> None:
+    """未认领 Execution 允许 HTTP Run，已认领 Execution 只允许对应 Worker owner。"""
+    service = WorkflowExecutionService.__new__(WorkflowExecutionService)
+
+    service._validate_run_owner(SimpleNamespace(worker_owner=None), None)
+    service._validate_run_owner(SimpleNamespace(worker_owner="worker:current"), "worker:current")
+
+    with pytest.raises(HTTPException) as exc_info:
+        service._validate_run_owner(SimpleNamespace(worker_owner="worker:current"), "worker:stale")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == "只有 pending Execution 可以 Run"
