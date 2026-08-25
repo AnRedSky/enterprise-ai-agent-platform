@@ -8,7 +8,7 @@ DEFAULT_TENANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
 def utcnow_naive() -> datetime:
-    """Return the current UTC time without tzinfo for SQLAlchemy DateTime columns."""
+    """返回不带时区信息的当前 UTC 时间，供 SQLAlchemy DateTime 字段使用。"""
     return datetime.now(UTC).replace(tzinfo=None)
 
 
@@ -115,7 +115,9 @@ class AuditLog(Base):
     workflow_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True, index=True)
     workflow_version_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workflow_versions.id", ondelete="SET NULL"), nullable=True)
     workflow_execution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workflow_executions.id", ondelete="SET NULL"), nullable=True, index=True)
-    execution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("executions.id", ondelete="SET NULL"), nullable=True, index=True)
+    # 历史兼容字段：早期可观测性模型使用 executions 表；该表已不再属于当前 Workflow Execution 域。
+    # 保留列以读取历史审计数据，但不再声明 ORM ForeignKey，避免已删除表阻断 SQLAlchemy 当前元数据映射。
+    execution_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(100), index=True)
     resource_type: Mapped[str] = mapped_column(String(50), default="tool")
     resource_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
