@@ -1,8 +1,8 @@
 # Phase 2.4 Durable Scheduler Acceptance
 
-> 当前状态：**Persistence、Runtime、Scheduler API Contract 已本地关闭；tenant isolation / misfire integration 为当前实现任务，新增代码尚待本地 Gate 与 Real API 验收。**
+> 当前状态：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration 已完成开发；Frontend / Browser E2E 仍在本地验收。**
 > 验收基线：`main`
-> 评估日期：2026-08-24
+> 评估日期：2026-08-25
 
 ## 1. 当前 Gate
 
@@ -14,74 +14,41 @@
 | 原子 lease claim / release | PostgreSQL Repository integration 已通过：2 passed |
 | schedule slot 幂等 claim | PostgreSQL Repository integration 已通过 |
 | WorkflowExecution 绑定 | Runtime Gate 已覆盖并通过 |
-| Tenant / Organization scope | Repository lease/slot 已验证；状态查询 tenant isolation 新增测试待本地执行 |
+| Tenant / Organization scope | Repository lease/slot 与状态查询 tenant isolation 已覆盖 |
 | Scheduler Runtime persistence 闭环 | 本地 Gate 已通过：4 passed |
 | Scheduler API Contract / 状态可观测性 | 本地 Gate 已通过：6 passed |
-| Misfire policy Runtime integration | **本轮新增，待本地 Gate** |
+| Misfire policy Runtime integration | 已完成开发，待最终汇总验收 |
+| Frontend Regression Gate | 开发者本地实际通过：79 passed，production build 通过 |
+| Workflow Trigger Browser E2E | **本轮实际失败：E2E 使用 `/workflow-triggers`，正式前端路由为 `/workflows/triggers`** |
 | Tenant Safe Real API acceptance | 待完成 |
 
-## 2. 已实际执行的本地 API / Runtime 流程
+## 2. 最新 Workflow Trigger Browser E2E 失败
 
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\02_scheduler_runtime_gate.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\03_scheduler_api_contract_gate.ps1
-```
-
-用户实际反馈：
+开发者在 `8a03937` 基线本地执行 Workflow Trigger Browser Gate 时，真实浏览器已通过注册、登录、Workflow / Version / Publish 等前置 HTTP Contract，随后在页面导航阶段失败：
 
 ```text
-Scheduler Runtime targeted tests：4 passed
-Alembic current：0028_durable_scheduler_persistence (head) (mergepoint)
-Scheduler contract targeted tests：13 passed
-Scheduler repository PostgreSQL integration：2 passed
-Scheduler API Contract tests：6 passed
-Backend default regression：385 passed, 2 skipped, 35 deselected
+Locator: getByText('Workflow Trigger Governance', { exact: true })
+Expected: visible
+Timeout: 5000ms
+
+await page.goto("/workflow-triggers");
 ```
 
-## 3. Tenant isolation / misfire integration 验收目标
+根因不是 Scheduler Runtime 或 Backend Contract：当前正式前端 Router 注册的路径为 `/workflows/triggers`。旧路径 `/workflow-triggers` 不存在，会被认证路由守卫导向登录页，因此页面标题不存在。
 
-### Tenant isolation
+本轮修复仅调整 E2E 测试导航路径，不修改生产 Router，也不新增兼容旧路径。
 
-1. 正确 tenant + trigger 可以读取 Scheduler 状态；
-2. 错误 tenant + 同 trigger ID 返回空结果，不泄露状态；
-3. lease claim / release / advance 不允许跨 tenant；
-4. schedule slot 不允许跨 tenant 复用查询边界；
-5. Scheduler API 继续沿用 Workflow / Trigger tenant scope。
-
-### Misfire
-
-1. `skip`：历史积压不补发；
-2. `fire_once`：历史积压只补一次，下一运行恢复未来 interval；
-3. `catch_up`：最多处理 `catch_up_limit`，剩余积压在下一 tick 继续；
-4. 长时间停机不得产生无界内存槽位；
-5. 每个补跑槽位继续通过持久化 `schedule_slot_key` 与既有 Execution idempotency 收敛；
-6. `misfire_policy / catch_up_limit` 从 Scheduled Trigger Contract 进入既有 WorkflowSchedule 持久化字段，不新增第二套配置来源。
-
-## 4. 当前新增本地 Gate
+## 3. 本轮重新验收入口
 
 ```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\integration\04_scheduler_tenant_misfire_gate.ps1
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-该 Gate 执行：
+其中 Browser Gate 仍依赖本地真实 Frontend `http://127.0.0.1:5173` 与 Backend HTTP `http://127.0.0.1:8000/api/v1`，并由脚本负责隔离 Browser E2E 数据库状态。
 
-```text
-Application import
-        ↓
-Scheduler misfire unit tests
-        ↓
-Scheduler tenant PostgreSQL integration
-        ↓
-Scheduler API Contract tests
-        ↓
-Backend default regression
-```
-
-**本地 Gate 未执行前不得记录 Passed。**
-
-## 5. 后续 Acceptance 目标
+## 4. 后续 Acceptance 目标
 
 至少覆盖：
 
@@ -94,6 +61,7 @@ Backend default regression
 - Tenant Safe organization scope；
 - Audit / Trace 关联；
 - 服务重启后的 next_run_at / lease 恢复语义；
-- Scheduler 状态 API 的 tenant isolation 与错误边界。
+- Scheduler 状态 API 的 tenant isolation 与错误边界；
+- Workflow Trigger 真实浏览器创建、状态查看、禁用、启用及持久化回读。
 
 **当前不记录 Phase 2.4 Passed。**

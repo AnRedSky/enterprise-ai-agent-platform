@@ -51,7 +51,8 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     const publishResponse = await api.post(apiPath(`/workflows/${workflow.id}/versions/${version.id}/publish`), { headers });
     expect(publishResponse.ok()).toBeTruthy();
 
-    await page.goto("/workflow-triggers");
+    // 正式前端路由为 /workflows/triggers；不能使用不存在的旧路径 /workflow-triggers。
+    await page.goto("/workflows/triggers");
     await expect(page.getByText("Workflow Trigger Governance", { exact: true })).toBeVisible();
 
     const triggerName = `Scheduled Trigger ${unique}`;

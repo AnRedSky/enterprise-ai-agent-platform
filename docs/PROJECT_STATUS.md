@@ -7,25 +7,23 @@
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery 已完成开发并已有本地 Acceptance 结果；Frontend API/UI 已完成实现与问题修复，当前继续进行 Frontend / Browser E2E 验收。**
+- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery 已完成开发并已有本地 Acceptance 结果；Frontend / Browser E2E 仍在验收。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
 当前远端 `main` 已包含 Scheduler Browser E2E 的 UI 选择器修复、稳定 metadata test hooks，以及 Workflow Trigger E2E 的 API Client / Auth Contract / Workflow Version Contract 修复。
 
-开发者最新本地执行表明，Frontend Regression Gate 已通过；Workflow Trigger Browser E2E 已进入实际 Playwright 场景，但在注册 E2E 用户阶段失败：测试发送的 `/auth/register` 请求使用 `email/name` 字段，与当前 Backend 正式 `username/password` Contract 不一致。
+开发者最新本地执行表明，Frontend Regression Gate 已通过；Workflow Trigger Browser E2E 已进入真实浏览器场景，但在页面导航阶段失败：测试访问了 `/workflow-triggers`，而当前正式前端路由为 `/workflows/triggers`，因此页面实际被路由守卫重定向，Playwright 找不到 `Workflow Trigger Governance` 标题。
 
 ## 本轮工程变更
 
 - `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：
-  - 移除不存在的 `./support/api-client` 依赖，恢复使用 Playwright `APIRequestContext` 访问真实 Backend HTTP；
-  - 将注册与登录请求从 `email/name` 调整为正式 Backend `username/password` Contract；
-  - 将 Workflow Version 创建请求从错误的 `graph` 字段调整为正式 `definition` Contract；
-  - 保留 Scheduler metadata test hooks。
-- `docs/04-errors/2026-08-25-browser-e2e-missing-api-client.md`：记录前一轮悬空 import 失败。
-- `docs/04-errors/2026-08-25-browser-e2e-auth-contract-mismatch.md`：记录本轮实际 Auth Contract 失败。
-- 未修改 Auth Backend Contract、Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
+  - 将浏览器导航从不存在的旧路径 `/workflow-triggers` 修正为正式路由 `/workflows/triggers`；
+  - 保留真实 Backend HTTP、正式 Auth / Workflow Version Contract 与 Scheduler metadata test hooks。
+- `docs/04-errors/2026-08-25-browser-e2e-route-mismatch.md`：记录本轮实际页面路由 Contract 漂移及修复边界。
+- `docs/03-acceptance/PHASE_2_4_ACCEPTANCE.md`：同步当前 Browser Gate 实际失败事实与重新验收要求。
+- 未修改 Workflow Trigger Backend Contract、Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
 
 ## 已完成的 Browser Gate
 
@@ -33,7 +31,7 @@
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
 Frontend Regression Gate：本地实际通过
-Workflow Trigger Browser Gate：已进入实际浏览器场景，但当前因注册请求 Contract 不匹配失败；修复后等待开发者重新执行
+Workflow Trigger Browser Gate：已进入真实浏览器场景；当前因 E2E 使用旧前端路由失败，修复后等待开发者重新执行
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
@@ -43,7 +41,7 @@ Workflow Trigger Browser Gate：已进入实际浏览器场景，但当前因注
 ```text
 Frontend Vitest + production build
       ↓
-修复 Browser E2E 测试实现的 API Client / Auth / Version Contract 漂移
+修复 Browser E2E 测试实现的 API Client / Auth / Version / Route Contract 漂移
       ↓
 Browser Scheduler Gate 重新执行
       ↓
