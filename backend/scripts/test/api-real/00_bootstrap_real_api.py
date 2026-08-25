@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -18,6 +19,88 @@ def request(client, method, path, **kwargs):
     if response.status_code >= 400:
         raise RuntimeError(f"{method} {path} -> {response.status_code}: {response.text}")
     return response
+
+
+def wait_for_execution_terminal(client, execution_id: str, *, expected_status: str, expected_error: str | None) -> dict:
+    """等待 Worker 已经抢占的 Real API Fixture 进入预期终态。
+
+    Args:
+        client: 已完成认证的真实 HTTP 客户端。
+        execution_id: 需要等待的 Workflow Execution ID。
+        expected_status: 期望的终态，例如 `failed` 或 `completed`。
+        expected_error: 失败场景期望的错误码；成功场景传入 None。
+
+    Returns:
+        PostgreSQL 持久化后的 Execution JSON。
+
+    Raises:
+        RuntimeError: Worker 未在受控时间内完成 Fixture，或最终状态与预期不符。
+
+    并发边界：Real API Gate 与独立 Worker 同时消费 `pending` Execution 是合法竞争关系。若 Worker 在 `/run` 请求之前完成 claim，bootstrap 不应把正常的 `pending → Worker claim` 竞态误判为 Gate 失败，而应等待真实 Worker 的最终持久化结果。
+    """
+    deadline = time.monotonic() + TIMEOUT
+    last_payload = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/workflows/executions/{execution_id}")
+        if response.status_code >= 400:
+            raise RuntimeError(
+                f"GET /workflows/executions/{execution_id} -> {response.status_code}: {response.text}"
+            )
+        last_payload = response.json()
+        if last_payload.get("status") in {"completed", "failed", "cancelled"}:
+            if last_payload.get("status") != expected_status:
+                raise RuntimeError(
+                    f"Worker Fixture persisted unexpected status: {json.dumps(last_payload, ensure_ascii=False)}"
+                )
+            if expected_error is not None and last_payload.get("error_code") != expected_error:
+                raise RuntimeError(
+                    f"Worker Fixture persisted unexpected error: {json.dumps(last_payload, ensure_ascii=False)}"
+                )
+            return last_payload
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"Worker Fixture did not reach expected state within {TIMEOUT}s: "
+        f"{json.dumps(last_payload, ensure_ascii=False)}"
+    )
+
+
+def run_fixture_execution(client, execution_id: str, *, expected_status: str, expected_error: str | None, expected_http_status: int) -> dict:
+    """触发 Real API Fixture，并兼容独立 Worker 与手动 Run 的合法竞争。
+
+    Args:
+        client: 已完成认证的真实 HTTP 客户端。
+        execution_id: 待执行的 Workflow Execution ID。
+        expected_status: 期望的最终 Execution 状态。
+        expected_error: 失败场景期望错误码；成功场景传入 None。
+        expected_http_status: 手动 `/run` 路径在未被 Worker 抢占时的预期 HTTP 状态码。
+
+    Returns:
+        最终持久化的 Execution JSON。
+
+    Raises:
+        RuntimeError: `/run` 返回非预期状态，或 Worker 竞争后最终状态不符合 Fixture Contract。
+    """
+    response = client.post(f"/workflows/executions/{execution_id}/run")
+    if response.status_code == expected_http_status:
+        persisted = request(client, "GET", f"/workflows/executions/{execution_id}").json()
+        if persisted.get("status") != expected_status or (
+            expected_error is not None and persisted.get("error_code") != expected_error
+        ):
+            raise RuntimeError(
+                f"Manual Run persisted unexpected state: {json.dumps(persisted, ensure_ascii=False)}"
+            )
+        return persisted
+    if response.status_code == 409 and response.json().get("detail") == "只有 pending Execution 可以 Run":
+        return wait_for_execution_terminal(
+            client,
+            execution_id,
+            expected_status=expected_status,
+            expected_error=expected_error,
+        )
+    raise RuntimeError(
+        f"POST /workflows/executions/{execution_id}/run -> expected HTTP "
+        f"{expected_http_status} or Worker ownership race, got {response.status_code}: {response.text}"
+    )
 
 
 def create_user_fixture(client, prefix: str) -> tuple[str, str]:
@@ -101,15 +184,13 @@ def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_c
     execution = request(client, "POST", f"/workflows/{workflow['id']}/executions", json={
         "input_data": {"source": "real_api_retry_boundary_validation"}
     }).json()
-    response = client.post(f"/workflows/executions/{execution['id']}/run")
-    if response.status_code != expected_http_status:
-        raise RuntimeError(
-            f"POST /workflows/executions/{execution['id']}/run -> expected HTTP "
-            f"{expected_http_status}, got {response.status_code}: {response.text}"
-        )
-    persisted = request(client, "GET", f"/workflows/executions/{execution['id']}").json()
-    if persisted.get("status") != expected_status or persisted.get("error_code") != expected_error:
-        raise RuntimeError(f"Retry boundary fixture persisted unexpected state: {json.dumps(persisted, ensure_ascii=False)}")
+    run_fixture_execution(
+        client,
+        execution["id"],
+        expected_status=expected_status,
+        expected_error=expected_error,
+        expected_http_status=expected_http_status,
+    )
     return workflow["id"], execution["id"]
 
 
@@ -143,15 +224,13 @@ def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_confi
     execution = request(client, "POST", f"/workflows/{workflow['id']}/executions", json={
         "input_data": {"source": "real_api_circuit_breaker_validation"}
     }).json()
-    response = client.post(f"/workflows/executions/{execution['id']}/run")
-    if response.status_code != expected_http_status:
-        raise RuntimeError(
-            f"POST /workflows/executions/{execution['id']}/run -> expected HTTP "
-            f"{expected_http_status}, got {response.status_code}: {response.text}"
-        )
-    persisted = request(client, "GET", f"/workflows/executions/{execution['id']}").json()
-    if persisted.get("status") != "failed" or persisted.get("error_code") != expected_error:
-        raise RuntimeError(f"Circuit boundary fixture persisted unexpected state: {json.dumps(persisted, ensure_ascii=False)}")
+    run_fixture_execution(
+        client,
+        execution["id"],
+        expected_status="failed",
+        expected_error=expected_error,
+        expected_http_status=expected_http_status,
+    )
     return workflow["id"], execution["id"]
 
 
