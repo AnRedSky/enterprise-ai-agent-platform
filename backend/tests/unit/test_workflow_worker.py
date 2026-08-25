@@ -1,4 +1,4 @@
-"""Workflow Worker 单元测试：验证独立消费器的并发编排与停止语义。"""
+"""Workflow Worker 单元测试：验证独立消费器的并发编排、恢复与停止语义。"""
 
 from __future__ import annotations
 
@@ -16,6 +16,40 @@ class _ClaimedExecution:
     """测试替身：与 WorkflowWorker.claim_one 的 Execution 契约保持一致。"""
 
     id: UUID
+
+
+class _FakeScalarResult:
+    """测试替身：提供 SQLAlchemy 结果的 scalars/all 最小契约。"""
+
+    def __init__(self, values):
+        self._values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._values)
+
+
+class _FakeRecoveryDb:
+    """测试替身：只覆盖 Worker 恢复遗留 Node 所需的查询接口。"""
+
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+    async def execute(self, _statement):
+        return _FakeScalarResult(self.nodes)
+
+
+class _FakeRecoveryService:
+    """测试替身：记录恢复阶段的 Node 状态转换。"""
+
+    def __init__(self, nodes):
+        self.db = _FakeRecoveryDb(nodes)
+        self.transitions: list[tuple[str, str, str]] = []
+
+    async def transition_node(self, _execution, node_id, target_status, **kwargs):
+        self.transitions.append((node_id, target_status, kwargs["error_code"]))
 
 
 @pytest.mark.asyncio
@@ -60,6 +94,39 @@ async def test_run_forever_stops_without_restarting_after_stop() -> None:
 
     assert calls == 1
     assert worker._stop_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_running_nodes_before_runtime_retry() -> None:
+    """pending Execution 上遗留的 running Node 必须先转 failed，不能直接触发 running → running。"""
+    worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=1, lease_seconds=30)
+    execution = _ClaimedExecution(uuid4())
+    nodes = [
+        type("Node", (), {"node_id": "agent-1"})(),
+        type("Node", (), {"node_id": "agent-2"})(),
+    ]
+    service = _FakeRecoveryService(nodes)
+
+    recovered = await worker._recover_orphaned_running_nodes(execution, service)  # type: ignore[arg-type]
+
+    assert recovered == 2
+    assert service.transitions == [
+        ("agent-1", "failed", "WORKER_RECOVERY_INTERRUPTED"),
+        ("agent-2", "failed", "WORKER_RECOVERY_INTERRUPTED"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_recover_orphaned_running_nodes_is_noop_when_state_is_consistent() -> None:
+    """没有遗留 running Node 时恢复阶段不得产生任何状态变更。"""
+    worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=1, lease_seconds=30)
+    execution = _ClaimedExecution(uuid4())
+    service = _FakeRecoveryService([])
+
+    recovered = await worker._recover_orphaned_running_nodes(execution, service)  # type: ignore[arg-type]
+
+    assert recovered == 0
+    assert service.transitions == []
 
 
 def test_worker_rejects_invalid_runtime_parameters() -> None:

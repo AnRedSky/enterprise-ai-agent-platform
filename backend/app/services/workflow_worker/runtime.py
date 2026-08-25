@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
-from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 
@@ -117,6 +117,50 @@ class WorkflowWorker:
                 execution.worker_lease_expires_at = lease_expires_at
                 await db.commit()
 
+    async def _recover_orphaned_running_nodes(
+        self,
+        execution: WorkflowExecution,
+        service: WorkflowExecutionService,
+    ) -> int:
+        """在 Worker 接管 pending Execution 时收敛遗留的 running Node。
+
+        Args:
+            execution: 当前 Worker 已经持有 ownership 的 pending Execution。
+            service: 唯一 Workflow Execution 状态机服务。
+
+        Returns:
+            本次被收敛为 failed 的遗留 running Node 数量。
+
+        设计意图：Worker 进程可能在 Node 已写入 running 后异常退出，导致数据库中的 Execution 仍为 pending，而 Node 保留 running。若再次消费该 Execution，Runtime 会再次调用 `transition_node(..., "running")`，严格状态机必然得到 running → running 的 409。这里不放宽状态机，而是在新的 Worker 正式接管后，把这种可证明属于恢复边界的遗留 Node 转为 `failed`，再由 Runtime 按现有 retry policy 决定是否重新执行。
+
+        并发边界：调用发生在 claim 后、Runtime 开始前；`transition_node` 会重新锁定 Execution 并执行 Worker ownership fencing，因此旧 Worker 无法借此恢复路径修改已被新 Worker 接管的 Execution。
+        """
+        result = await service.db.execute(
+            select(WorkflowNodeExecution).where(
+                WorkflowNodeExecution.execution_id == execution.id,
+                WorkflowNodeExecution.status == "running",
+            )
+        )
+        orphaned_nodes = list(result.scalars().all())
+        for node in orphaned_nodes:
+            await service.transition_node(
+                execution,
+                node.node_id,
+                "failed",
+                error_code="WORKER_RECOVERY_INTERRUPTED",
+                error_message="Worker 接管 pending Execution 时发现遗留 running Node，已进入恢复态",
+            )
+        if orphaned_nodes:
+            logger.warning(
+                "Workflow Worker recovered orphaned running nodes",
+                extra={
+                    "execution_id": str(execution.id),
+                    "worker_owner": self.owner,
+                    "node_ids": [node.node_id for node in orphaned_nodes],
+                },
+            )
+        return len(orphaned_nodes)
+
     async def execute_claimed(self, execution_id: UUID) -> None:
         """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
 
@@ -129,7 +173,7 @@ class WorkflowWorker:
         Raises:
             Exception: Workflow Runtime 原始执行异常会继续向 Worker 守护层传播。
 
-        设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，长 Workflow 通过独立 lease heartbeat 保持 ownership。
+        设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，长 Workflow 通过独立 lease heartbeat 保持 ownership。Runtime 开始前还必须收敛 pending Execution 上遗留的 running Node，严格保持 Node 状态机不允许 running → running。
         """
         async with SessionLocal() as db:
             execution = (
@@ -159,6 +203,7 @@ class WorkflowWorker:
             workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms(runtime_config or {})
             execution_timeout = workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS
             service = WorkflowExecutionService(db)
+            await self._recover_orphaned_running_nodes(execution, service)
             lease_task = asyncio.create_task(self._renew_lease_forever(execution.id))
             try:
                 await asyncio.wait_for(

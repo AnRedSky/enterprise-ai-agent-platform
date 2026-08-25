@@ -13,9 +13,9 @@
 
 ## 最新 main 基线
 
-当前远端 `main`：`85164f0 fix(worker): make consistency gate independent of caller directory`。
+当前远端 `main`：`c808d86 docs(worker): record consistency diagnostic entrypoint fix`。
 
-本轮前置修复：`b84a088 fix(worker): make runtime consistency diagnostic directly executable`。
+本轮 Worker 恢复整改基线：在上述 main 基础上增加 orphaned running Node recovery，不修改 Node 状态机合法转换。
 
 ```text
 API Service       run.py
@@ -40,6 +40,7 @@ Worker Service
     ├── claim pending Execution
     ├── worker lease
     ├── ownership fencing
+    ├── recover orphaned running Node
     └── WorkflowExecutionService.run()
               ↓
 WorkflowRuntime
@@ -117,30 +118,40 @@ backend/scripts/dev/worker_runtime_consistency.ps1
 - PowerShell Gate 根据 `$PSScriptRoot` 定位 `backend`，调用者不必先切换到 `backend` 目录；
 - 两个入口仍保持只读，不启动、停止或重启 API / Scheduler / Worker。
 
+## 当前 Worker 整改
+
+`running → running` 不是合法状态转换，不通过放宽状态机解决。当前 Worker 在正式进入 Runtime 前增加恢复边界：当已 claim 的 `pending Execution` 存在遗留 `running Node` 时，先将其以 `WORKER_RECOVERY_INTERRUPTED` 转为 `failed`，随后由现有 WorkflowRuntime retry policy 决定是否重新执行。
+
+对应实现：
+
+```text
+backend/app/services/workflow_worker/runtime.py
+WorkflowWorker._recover_orphaned_running_nodes()
+```
+
+对应测试：
+
+```text
+backend/tests/unit/test_workflow_worker.py
+```
+
+对应错误记录：
+
+```text
+docs/04-errors/WORKER_RUNNING_NODE_RECOVERY.md
+```
+
 ## 当前剩余工作
 
-1. 开发者重新执行 Worker Runtime 一致性诊断，确认是否存在 `pending + running Node` 遗留数据。
-2. 若存在，记录具体 Execution ID / Worker owner / attempt，并单独分析其来源；不得自动 resume。
-3. 若不存在，则将 `409 running → running` 归类为历史异常日志或测试场景残留，不修改生产 Node 状态机。
-4. 诊断通过后，再根据实际数据库结果决定是否需要增加针对遗留状态来源的确定性回归测试；当前不修改 Node 状态机。
+1. 开发者在最新 main 上执行 Worker targeted tests，确认恢复逻辑实际通过。
+2. 执行 Backend Regression Gate，确认 Worker 恢复代码没有破坏既有 ownership fencing、Runtime、API 与 migration 质量门禁。
+3. 执行只读 Worker Runtime consistency diagnostic，确认数据库当前是否仍存在 `pending + running Node` 遗留状态；诊断不得自动修改数据。
+4. 执行实际 Worker 生命周期 / Recovery Acceptance，验证旧 Worker 失去 ownership 后不能继续推进 Execution。
 5. Frontend / Browser E2E 按实际 API Contract 影响范围独立执行，不并入 Backend Gate。
 
 ## 当前禁止事项
 
-- 不恢复 API 内嵌 Scheduler；
-- 不让 Scheduler 直接执行 Workflow Runtime；
-- 不创建第二套 Execution Service / Runtime / Provider；
-- 不通过 JSON fixture 替代真实 PostgreSQL Task Contract；
-- 不通过 Mock Runtime 作为 Real Acceptance；
-- 不加入 running Execution 自动 resume；
-- 不创建 MQ/Kafka/Celery 作为当前阶段必要依赖；
-- 不创建功能分支，所有开发直接基于并提交 `main`；
-- 不允许测试 Gate 自动控制 API / Scheduler / Worker 生命周期；
-- 不放宽 `running → running` Node 状态转换来掩盖重复 Runtime。
-
-## 本轮文档与错误记录
-
-- `docs/PROJECT_STATUS.md`
-- `docs/02-phases/PHASE_2_5.md`
-- `docs/04-errors/2026-08-25-worker-runtime-running-node-consistency.md`
-
+- 禁止把 `running → running` 改成合法状态转换。
+- 禁止通过自动 reset 数据库来掩盖 Worker 恢复问题。
+- 禁止新增平行 Workflow Runtime 或第二套 Provider。
+- 禁止用 GitHub Actions 结果替代开发者本地实际测试结果。
