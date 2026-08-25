@@ -1,6 +1,8 @@
-# 2026-08-25 Browser E2E Session Contract Mismatch
+# 2026-08-25 Browser E2E Session 与 Element Plus 交互 Contract 问题
 
 ## 1. 现象
+
+### 1.1 Browser Session 问题
 
 在 `c7c2a58` 修复正式前端路由后，开发者重新执行 Workflow Trigger Browser E2E，测试仍未进入 Workflow Trigger 页面：
 
@@ -12,7 +14,20 @@ Timeout: 5000ms
 
 测试已经使用正式路由 `/workflows/triggers`，但页面标题不可见。
 
+### 1.2 Element Plus Select 点击问题
+
+在 `4ce5423` 建立真实 Browser Session 后，开发者再次执行 Workflow Trigger Browser E2E，页面已经进入正式 Workflow Trigger 页面，但在选择 Trigger 类型时失败：
+
+```text
+Locator: getByLabel('类型')
+Error: locator.click: Test timeout of 60000ms exceeded
+```
+
+Playwright 已解析到 Element Plus `el-select` 内部的 readonly input，但实际点击时被 `el-select__suffix` 下的 SVG 拦截，因此不能稳定打开下拉框。
+
 ## 2. 根因
+
+### 2.1 Browser Session
 
 Frontend Router 对非公开路由执行 `isAuthenticated()` 检查。正式前端 Session 存储在浏览器 `localStorage`：
 
@@ -20,28 +35,51 @@ Frontend Router 对非公开路由执行 `isAuthenticated()` 检查。正式前�
 - `enterprise_agent_roles`
 - `enterprise_agent_user_id`
 
-本次 E2E 通过 Playwright `APIRequestContext` 完成真实注册、登录并取得 access token，但只在 API 请求中使用 `Authorization` Header，没有把真实登录结果建立到 Browser Context 的正式 Session 存储中。
+E2E 虽然通过 Playwright `APIRequestContext` 完成真实注册、登录并取得 access token，但之前只在 API 请求中使用 `Authorization` Header，没有把真实登录结果建立到 Browser Context 的正式 Session 存储中。
 
-因此 `page.goto("/workflows/triggers")` 触发认证守卫并进入登录页，Playwright 无法找到 `Workflow Trigger Governance`。
+因此 `page.goto("/workflows/triggers")` 触发认证守卫并进入登录页。
+
+### 2.2 Element Plus Select
+
+`getByLabel("类型")` 对 Element Plus `el-select` 命中的是内部 readonly input，而不是 Select 组件的可点击根节点。Element Plus 的 suffix SVG 在浏览器事件命中测试中会拦截该 input 的 pointer event。
+
+该问题属于 **E2E 测试定位 Contract 不稳定**，不是生产 Trigger 类型选择业务逻辑错误。
 
 ## 3. 修复边界
 
-已在 `frontend/tests/e2e/workflow-trigger-governance.spec.ts` 中使用真实 `/auth/login` 返回的 `access_token`、`roles`、`user_id` 初始化浏览器 `localStorage`，使 Browser Session 与正式前端认证 Contract 一致。
+已完成：
+
+1. `frontend/tests/e2e/workflow-trigger-governance.spec.ts` 使用真实 `/auth/login` 返回的 `access_token`、`roles`、`user_id` 初始化浏览器 `localStorage`，使 Browser Session 与正式前端认证 Contract 一致。
+2. `frontend/src/views/workflow-triggers/index.vue` 为 Trigger 类型 `el-select` 增加稳定的 `data-testid="workflow-trigger-type-select"` test hook。
+3. E2E 使用 `getByTestId("workflow-trigger-type-select")` 点击 Select 根节点，不再依赖 Element Plus 内部 readonly input。
 
 本次没有：
 
 - 修改生产 Router；
 - 增加旧路由兼容入口；
 - 修改 Backend Auth Contract；
-- 修改 Scheduler Runtime、Repository、Migration 或调度算法。
+- 修改 Scheduler Runtime、Repository、Migration 或调度算法；
+- 使用 `force`、`evaluate` 等方式绕过真实 UI 行为；
+- 放宽页面业务断言掩盖失败。
 
 ## 4. 验证要求
 
-必须重新执行 Workflow Trigger Browser Gate；只有开发者本地实际输出通过后，才能更新 Acceptance 为通过。
+修复后必须由开发者重新执行 Workflow Trigger Browser Gate；只有本地实际输出通过后，才能更新 Acceptance / Project Status 为通过。
 
 ```powershell
 cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-如果继续失败，应优先检查真实浏览器 Session、Frontend API Base URL、Backend HTTP Auth Contract，而不是放宽页面断言。
+建议完整验证顺序：
+
+```powershell
+# 1. Frontend Regression Gate
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+
+# 2. Workflow Trigger Browser E2E
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+```
+
+如果继续失败，应优先检查真实浏览器 Session、Frontend API Base URL、Backend HTTP Auth Contract、页面 test hook 和真实 Element Plus DOM 行为，而不是修改业务断言来规避失败。
