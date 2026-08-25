@@ -19,13 +19,17 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "[3/3] Verify API process does not require Scheduler startup"
 $env:SCHEDULER_ENABLED = "false"
-$process = Start-Process -FilePath "uv" -ArgumentList "run python run.py" -WorkingDirectory (Get-Location) -PassThru -RedirectStandardOutput "$env:TEMP\enterprise-api-service.stdout.log" -RedirectStandardError "$env:TEMP\enterprise-api-service.stderr.log"
+$env:APP_ENV = "testing"
+$env:APP_PORT = "18080"
+$stdout = "$env:TEMP\enterprise-api-service.stdout.log"
+$stderr = "$env:TEMP\enterprise-api-service.stderr.log"
+$process = Start-Process -FilePath "uv" -ArgumentList "run python run.py" -WorkingDirectory (Get-Location) -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 try {
     $deadline = (Get-Date).AddSeconds(20)
     $healthy = $false
     while ((Get-Date) -lt $deadline) {
         try {
-            $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2
+            $response = Invoke-RestMethod -Uri "http://127.0.0.1:18080/health" -TimeoutSec 2
             if ($response.status -eq "ok" -and $response.service -eq "api") {
                 $healthy = $true
                 break
@@ -39,11 +43,11 @@ try {
     }
 
     $output = ""
-    if (Test-Path "$env:TEMP\enterprise-api-service.stdout.log") {
-        $output += Get-Content "$env:TEMP\enterprise-api-service.stdout.log" -Raw
+    if (Test-Path $stdout) {
+        $output += Get-Content $stdout -Raw
     }
-    if (Test-Path "$env:TEMP\enterprise-api-service.stderr.log") {
-        $output += Get-Content "$env:TEMP\enterprise-api-service.stderr.log" -Raw
+    if (Test-Path $stderr) {
+        $output += Get-Content $stderr -Raw
     }
     if ($output -match "Scheduler Service started|scheduled-trigger-scheduler") {
         throw "API Service unexpectedly started Scheduler."
@@ -56,6 +60,8 @@ try {
         Wait-Process -Id $process.Id -Timeout 5 -ErrorAction SilentlyContinue
     }
     Remove-Item Env:SCHEDULER_ENABLED -ErrorAction SilentlyContinue
+    Remove-Item Env:APP_ENV -ErrorAction SilentlyContinue
+    Remove-Item Env:APP_PORT -ErrorAction SilentlyContinue
 }
 
 Write-Host "============================================================"
