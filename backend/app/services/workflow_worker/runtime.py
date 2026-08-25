@@ -217,12 +217,23 @@ class WorkflowWorker:
         return len(tasks)
 
     async def _run_with_guard(self, execution_id: UUID) -> None:
-        """隔离单个任务异常，避免单个 Workflow 失败停止整个 Worker。"""
+        """隔离单个任务异常，并将失去租约的旧消费者视为正常竞争结果。"""
         async with self._semaphore:
             try:
                 await self.execute_claimed(execution_id)
             except asyncio.CancelledError:
                 raise
+            except HTTPException as exc:
+                if exc.status_code == 409 and exc.detail == "Workflow Execution Worker ownership 已失效":
+                    logger.warning(
+                        "Workflow Worker lost execution ownership; abandoning stale consumer",
+                        extra={"execution_id": str(execution_id), "worker_owner": self.owner},
+                    )
+                    return
+                logger.exception(
+                    "Workflow Worker execution failed",
+                    extra={"execution_id": str(execution_id), "status_code": exc.status_code},
+                )
             except Exception:
                 logger.exception("Workflow Worker execution failed", extra={"execution_id": str(execution_id)})
 
