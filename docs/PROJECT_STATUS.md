@@ -7,57 +7,74 @@
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery 已完成开发；Frontend / Browser E2E 已完成本轮实际验证；普通 Tenant Safe Real API Gate 已通过，Scheduler Restart Acceptance 尚待本地重新执行确认。**
+- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery 已完成开发；Frontend / Browser E2E 已完成本轮实际验证；普通 Tenant Safe Real API Gate 已通过；Scheduler Restart Acceptance 仍需开发者在最新 main 上重新执行确认。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-当前远端 `main` 基线为 `b135876`，Workflow Trigger Browser E2E、Organization Browser E2E、Model Provider Browser E2E、Frontend Regression、Backend Regression 以及 Tenant Safe Real API Gate 均已有开发者本地实际通过结果。
+远端 `main` 已继续推进到历史 Workflow Definition 兼容修复。本轮本地反馈暴露了另一类历史数据问题：Scheduler 对旧版本 `{"nodes": []}` 的 published Workflow 仍使用当前严格 Runtime Definition Contract 校验，导致真实 Backend 启动后周期性输出 422。
 
-本轮最新反馈表明 Scheduler Restart Acceptance 尚未开始执行：旧脚本要求 `127.0.0.1:8000` 独占，而开发环境已有 API/Scheduler 占用该端口，因此 Gate 在真正启动测试前即失败。该问题属于测试编排的环境耦合，不是 Scheduler Runtime Contract 失败。
+本轮已在 main 实现受控兼容：历史已发布空节点 Workflow 仅允许从 Scheduler 执行路径显式开启兼容；新版本发布、普通 Execution 创建和非法非空历史节点仍保持严格 Contract。该修复的本地测试状态尚待开发者重新执行，不预填通过结果。
 
 ## 本轮工程变更
 
-- `backend/scripts/test/api-real/01_run_real_api_tests_tenant_safe.ps1`：
-  - 普通 Real API Gate 排除 `test_scheduler_restart_api.py`；
-  - Scheduler 真实服务停止/重启验收保持独立，不再与普通 HTTP API Gate 混跑；
-  - Gate 输出明确区分普通 Real API 与独立 lifecycle acceptance。
-- `backend/scripts/test/api-real/02_run_scheduler_restart_acceptance.ps1`：
-  - 不再固定要求 `127.0.0.1:8000` 空闲；
-  - 启动前自动申请本机空闲临时端口作为 fixture bootstrap API；
-  - bootstrap 完成后释放临时进程，真正的 restart acceptance 继续由测试自身动态申请独立端口；
-  - finally 中清理 `API_BASE_URL`、Token、Trigger fixture 等测试环境变量。
-- `docs/04-errors/2026-08-25-real-api-gate-scheduler-restart-isolation.md`：
-  - 记录旧版固定端口导致 Gate 在开发环境已有 API 服务时无法启动的问题；
-  - 明确本次修复只解除无必要的端口耦合，不放宽 Scheduler restart 的真实进程生命周期边界。
+- `backend/app/runtime/workflow/runtime.py`
+  - `validate_definition()` 增加显式 `allow_legacy_empty_nodes` 边界；默认仍拒绝空 `nodes`。
+  - `execute()` 透传历史空节点兼容开关。
+- `backend/app/services/workflow/execution.py`
+  - `WorkflowExecutionService.run()` 透传历史空节点兼容开关。
+  - manual / 普通 Execution 路径默认不启用兼容。
+- `backend/app/services/trigger/service.py`
+  - scheduled Trigger 仅在已发布 Workflow 路径显式启用历史空节点兼容。
+- `backend/tests/unit/test_workflow_definition_legacy_compatibility.py`
+  - 新增严格 Contract、显式历史兼容、非法非空节点继续拒绝测试。
+- `docs/04-errors/2026-08-25-scheduled-trigger-historical-definition-compatibility.md`
+  - 记录 Scheduler 历史 Definition 兼容问题、根因、边界与验证流程。
 
-## 已完成的 Browser / Frontend Gate
-
-```text
-Phase 2.1-F Organization Browser Gate：本地实际通过
-Model Provider Browser Gate：本地实际通过
-Frontend Regression Gate：本地实际通过（79 passed + production build）
-Workflow Trigger Browser Gate：本地实际通过（1 passed；脚本最终输出 [PASS]）
-```
-
-以上结果均基于开发者本地实际反馈，不预填通过结果。
-
-## Backend 当前 Gate 状态
+## 当前 Gate 状态
 
 ```text
-Backend default regression                         ✓ 397 passed / 3 skipped / 36 deselected
-Tenant Safe Real API Gate（修复后）               ✓ 35 passed
-Scheduler Restart Acceptance                      ↓ 待执行
-Backend Regression Gate                            ✓ Backend regression + migration + tenant-safe API 均通过；Phase 2.4 Closure 等待 restart acceptance
+Backend default regression                         ↓ 需在本轮修复后重新执行
+Tenant Safe Real API Gate                         ↓ 需重新执行
+Scheduler Restart Acceptance                      ↓ 需重新执行
+Backend Regression Gate                            ↓ 需重新执行
+Frontend Regression Gate                           ✓ 上轮本地实际通过
+Workflow Trigger Browser Gate                     ✓ 上轮本地实际通过
 ```
 
-`Scheduler Restart Acceptance` 必须在本次端口自动化修复后重新执行；在实际结果返回前，不提前记录 Phase 2.4 Passed。
+上轮开发者反馈：
+
+```text
+Backend default regression: 397 passed, 3 skipped, 36 deselected
+Tenant Safe Real API Gate: 35 passed
+Frontend Regression: 79 passed + production build
+Workflow Trigger Browser E2E: 1 passed
+```
+
+以上是上一轮实际反馈，不代表本轮兼容修复已经通过。当前不得将本轮修复标记为 Passed，直到开发者重新执行自动化 Gate。
+
+## 当前兼容边界
+
+```text
+新 draft/testing -> published
+    -> 严格 Runtime Definition Contract
+    -> nodes == [] 拒绝
+
+历史 published + nodes == []
+    -> Scheduler 显式兼容
+    -> 按无操作 Workflow 执行
+
+历史 published + 非空非法 nodes
+    -> 仍拒绝
+    -> 不猜测历史执行语义
+```
 
 ## 当前禁止事项
 
 - 不创建第二套 Scheduler / Repository / Provider / Execution / slot key 实现；
-- 不通过修改测试断言掩盖生产 Runtime metadata Contract；测试应匹配真实生产 UI 语义并使用稳定 test hooks；
+- 不通过修改测试断言掩盖生产 Runtime metadata Contract；
 - 不使用 JSON fixture 替代真实 PostgreSQL Scheduler 状态；
 - 不创建兼容垫片、旧入口转发或功能分支；
 - 不把 GitHub Actions 结果当作本地开发 Gate 或验收结果；
-- Scheduler Restart Acceptance 不得让测试自身启动的多个 Scheduler worker 共享同一目标 slot；bootstrap 临时服务完成 fixture 准备后必须退出。
+- Scheduler Restart Acceptance 不得让测试自身启动的多个 Scheduler worker 共享同一目标 slot；bootstrap 临时服务完成 fixture 准备后必须退出；
+- 历史 Definition 兼容不得扩大为任意非法节点自动转换；只有可确定语义的历史空节点允许受控兼容。
