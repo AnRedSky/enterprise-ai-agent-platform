@@ -108,7 +108,7 @@ uv run alembic current
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_workflow_worker.py
+uv run pytest -q tests/unit/test_workflow_execution_worker_fencing.py tests/unit/test_workflow_worker.py
 ```
 
 ## 8. 验收断言
@@ -141,6 +141,31 @@ pending / running / completed / failed / cancelled
 ```
 
 禁止用固定 `pending` 作为幂等契约，否则会把正常的异步执行进度误判为可靠性失败。
+
+### 8.2 Worker ownership fencing
+
+必须验证 Worker lease 失效后旧消费者不能继续修改同一个 Execution：
+
+```text
+Worker A claim
+    ↓ worker_owner=A
+lease 失效 / Worker B 接管
+    ↓ worker_owner=B
+Worker A 再次 transition
+    ↓
+409 Workflow Execution Worker ownership 已失效
+    ↓
+Worker A 放弃 stale consumer
+```
+
+禁止通过放宽 `Node running → running` 状态转换来掩盖 ownership 竞争。当前阶段也不验收 running Execution 自动 resume。
+
+定向 Unit：
+
+```powershell
+cd backend
+uv run pytest -q tests/unit/test_workflow_execution_worker_fencing.py tests/unit/test_workflow_worker.py
+```
 
 ## 9. 禁止验收方式
 
