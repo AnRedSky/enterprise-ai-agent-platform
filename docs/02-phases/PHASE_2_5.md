@@ -27,9 +27,11 @@ Runtime  = 唯一执行实现
 - Worker 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 认领 pending Execution；
 - Worker 复用唯一 `WorkflowExecutionService` 和 `WorkflowRuntime`；
 - Worker 不实现第二套 Trigger、Scheduler、Runtime、Provider 或权限逻辑；
-- Scheduler / Worker Real Acceptance 改为真实启动两个独立进程；
 - `WorkflowExecutionService` 增加 Worker ownership fencing，旧 Worker 失去 lease 后不能继续推进 Execution / Node 状态；
-- Worker 将 ownership 失效视为 stale consumer，主动放弃任务而不是把竞争结果记录为普通 Runtime 失败。
+- Worker 将 ownership 失效视为 stale consumer，主动放弃任务而不是把竞争结果记录为普通 Runtime 失败；
+- `WorkflowExecutionService.run()` 现在区分 HTTP 手动 Run 与 Worker owner，Worker claim 后 HTTP `/run` 不得进入第二个 Runtime；
+- Worker 将 claim 时的 `worker_owner` 传递到 `WorkflowExecutionService.run()`，使 claim ownership 与 Runtime 入口保持同一身份边界；
+- Node 状态机继续禁止 `running → running`，重复 Runtime 通过 Execution owner fencing 在进入 Runtime 前被阻断。
 
 ## 3. 当前执行链
 
@@ -45,11 +47,15 @@ Scheduler Service
    ▼
 WorkflowExecution(status=pending)
    │
+   ├── HTTP /run
+   │      ├── worker_owner=None 且未被 claim → 允许
+   │      └── 已被 Worker claim → 409，禁止重复 Runtime
+   │
    ▼
 Worker Service
    │ claim + lease + ownership fence
    ▼
-WorkflowExecutionService.run()
+WorkflowExecutionService.run(worker_owner=A)
    │
    ▼
 WorkflowRuntime
@@ -95,7 +101,8 @@ worker_attempt
 - Worker lease；
 - ownership fencing；
 - 并发执行；
-- 调用正式 WorkflowExecutionService。
+- 调用正式 WorkflowExecutionService；
+- 向 Runtime 入口传递自己的 owner 身份。
 
 禁止：
 
@@ -104,6 +111,19 @@ worker_attempt
 - 复制 Runtime；
 - 建立第二套 Provider；
 - 建立 Worker HTTP API。
+
+### HTTP `/run`
+
+允许：
+
+- 对尚未被 Worker claim 的 pending Execution 启动一次 Runtime；
+- 保持原有 `409 只有 pending Execution 可以 Run` Contract。
+
+禁止：
+
+- 抢占已由 Worker claim 的 pending Execution；
+- 与 Worker 同时进入同一个 Runtime；
+- 通过放宽 Node 状态机掩盖重复执行。
 
 ## 6. Legacy Definition 兼容
 
@@ -127,9 +147,10 @@ Worker lease 现在同时承担两层职责：
 ② Worker Unit
 ③ Backend Regression
 ④ Alembic upgrade head
-⑤ Scheduler/Worker Real Acceptance
-⑥ Frontend Regression（受 API Contract 影响时）
-⑦ Browser E2E（受 Trigger 行为影响时）
+⑤ Tenant Safe Real API
+⑥ Scheduler/Worker Real Acceptance
+⑦ Frontend Regression（受 API Contract 影响时）
+⑧ Browser E2E（受 Trigger 行为影响时）
 ```
 
 本阶段实际结果只能在开发者执行后填写。
