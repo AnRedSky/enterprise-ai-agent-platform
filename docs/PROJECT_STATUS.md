@@ -12,14 +12,19 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 已包含 Scheduler Browser E2E 的 UI 选择器修复、稳定 metadata test hooks，以及 Workflow Trigger E2E 的 API Client 依赖修复。
+当前远端 `main` 已包含 Scheduler Browser E2E 的 UI 选择器修复、稳定 metadata test hooks，以及 Workflow Trigger E2E 的 API Client / Auth Contract / Workflow Version Contract 修复。
 
 开发者最新本地执行表明，Frontend Regression Gate 已通过；Workflow Trigger Browser E2E 已进入实际 Playwright 场景，但在注册 E2E 用户阶段失败：测试发送的 `/auth/register` 请求使用 `email/name` 字段，与当前 Backend 正式 `username/password` Contract 不一致。
 
 ## 本轮工程变更
 
-- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将注册与登录请求从 `email/name` 调整为正式 Backend `username/password` Contract；继续使用 Playwright `APIRequestContext` 访问真实 Backend HTTP，并保留 Scheduler metadata test hooks。
-- `docs/04-errors/2026-08-25-browser-e2e-auth-contract-mismatch.md`：记录本次本地实际失败、Auth Contract 漂移根因、修复边界与重新验收要求。
+- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：
+  - 移除不存在的 `./support/api-client` 依赖，恢复使用 Playwright `APIRequestContext` 访问真实 Backend HTTP；
+  - 将注册与登录请求从 `email/name` 调整为正式 Backend `username/password` Contract；
+  - 将 Workflow Version 创建请求从错误的 `graph` 字段调整为正式 `definition` Contract；
+  - 保留 Scheduler metadata test hooks。
+- `docs/04-errors/2026-08-25-browser-e2e-missing-api-client.md`：记录前一轮悬空 import 失败。
+- `docs/04-errors/2026-08-25-browser-e2e-auth-contract-mismatch.md`：记录本轮实际 Auth Contract 失败。
 - 未修改 Auth Backend Contract、Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
 
 ## 已完成的 Browser Gate
@@ -38,7 +43,7 @@ Workflow Trigger Browser Gate：已进入实际浏览器场景，但当前因注
 ```text
 Frontend Vitest + production build
       ↓
-修复 Browser E2E 测试实现的 Auth Contract 漂移
+修复 Browser E2E 测试实现的 API Client / Auth / Version Contract 漂移
       ↓
 Browser Scheduler Gate 重新执行
       ↓
