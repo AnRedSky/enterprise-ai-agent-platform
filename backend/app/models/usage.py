@@ -11,7 +11,11 @@ from app.models.core import Base, utcnow_naive
 
 
 class ModelUsageRecord(Base):
-    """单次受治理 Provider 调用的持久化、租户隔离用量记录。"""
+    """单次受治理 Provider 调用的持久化、租户隔离用量记录。
+
+    模型 Profile 可以在后续生命周期中删除；删除后保留历史调用快照，并将
+    `profile_id` 置空，避免历史用量阻止配置生命周期管理。
+    """
 
     __tablename__ = "model_usage_records"
     __table_args__ = (
@@ -31,7 +35,9 @@ class ModelUsageRecord(Base):
     workflow_id: Mapped[UUID | None] = mapped_column(ForeignKey("workflows.id", ondelete="RESTRICT"), nullable=True)
     node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     provider_id: Mapped[UUID] = mapped_column(ForeignKey("model_providers.id", ondelete="RESTRICT"), index=True)
-    profile_id: Mapped[UUID] = mapped_column(ForeignKey("model_profiles.id", ondelete="RESTRICT"), index=True)
+    profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("model_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     model_type: Mapped[str] = mapped_column(String(20))
     model_name: Mapped[str] = mapped_column(String(200))
     request_id: Mapped[str] = mapped_column(String(64), unique=True)

@@ -191,9 +191,11 @@ def test_retry_budget_exhausted_real_business_boundary():
     assert not any(item["event_type"] == "node.retry.scheduled" for item in trace_items)
     exhausted = [item for item in trace_items if item["event_type"] == "node.retry.exhausted"]
     assert exhausted and exhausted[-1]["data"]["reason"] == "retry_budget"
-    actions = [item["action"] for item in reversed(audit_items)]
+    actions = [item["action"] for item in audit_items]
     assert "workflow.node.retry" not in actions
-    assert actions.index("workflow.node.retry_exhausted") < actions.index("workflow.execution.failed")
+    failed_index = actions.index("workflow.execution.failed")
+    exhausted_index = actions.index("workflow.node.retry_exhausted")
+    assert failed_index < exhausted_index, "审计接口按倒序返回；Execution failed 应晚于 retry_exhausted"
 
 
 def test_retry_workflow_deadline_real_business_boundary():
@@ -211,8 +213,10 @@ def test_retry_workflow_deadline_real_business_boundary():
     assert exhausted[-1]["error_code"] == "WORKFLOW_TIMEOUT"
     execution_failed = [item for item in trace_items if item["event_type"] == "execution.state_changed" and item["status"] == "failed"]
     assert execution_failed and execution_failed[-1]["error_code"] == "WORKFLOW_TIMEOUT"
-    actions = [item["action"] for item in reversed(audit_items)]
-    assert actions.index("workflow.node.retry_exhausted") < actions.index("workflow.execution.failed")
+    actions = [item["action"] for item in audit_items]
+    failed_index = actions.index("workflow.execution.failed")
+    exhausted_index = actions.index("workflow.node.retry_exhausted")
+    assert failed_index < exhausted_index, "审计接口按倒序返回；Execution failed 应晚于 retry_exhausted"
 
 
 def test_circuit_breaker_opens_and_fast_fails_real_business_boundary():

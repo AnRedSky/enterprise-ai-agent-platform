@@ -6,14 +6,14 @@
 - Branch: `main`
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
-- Phase 2.3 Model Provider Governance：**已正式关闭**。
+- Phase 2.3 Model Provider Governance：**已正式关闭**；本轮补充修复历史 Usage Record 与 Model Profile 生命周期冲突。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；上一轮独立 Scheduler restart acceptance 已通过。**
-- Phase 2.5 Scheduler → Worker Execution Decoupling：**代码实现完成；本轮 ownership fencing 修复已提交，Backend / Migration / Real Acceptance 待开发者本地重新执行。**
+- Phase 2.5 Scheduler → Worker Execution Decoupling：**代码实现完成；ownership fencing 修复与 Scheduler Recovery Acceptance 已完成本地反馈验证；Backend Regression 当前被 Retry Governance 审计顺序断言与 Model Profile 历史用量 FK 问题阻塞，本轮已形成代码修复，待开发者本地重新执行完整 Gate。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-当前主线已经完成两级服务化边界：
+当前远端 `main` 已完成：
 
 ```text
 API Service
@@ -51,164 +51,94 @@ Worker Service
 WorkflowRuntime
 ```
 
-核心职责已经明确：
+核心职责：
 
 > **Scheduler 负责“什么时候执行”，Worker 负责“执行什么”。**
 
-## 本轮 Scheduler → Worker 变更
+## 本轮最新反馈与修复
 
-### Scheduler
+### 1. Scheduler Recovery Acceptance
 
-`WorkflowTriggerService.invoke_scheduled()` 不再直接调用 `WorkflowExecutionService.run()`。
-
-现在 Scheduled Trigger 只负责：
-
-1. 校验 Trigger / Published Version；
-2. 计算并接收 Scheduler slot metadata；
-3. 通过 idempotency claim 创建 `pending WorkflowExecution`；
-4. 写入 Audit / Trace；
-5. 返回待执行任务。
-
-Scheduler Runtime 随后绑定 slot 与 Execution 并推进持久化 schedule。
-
-### Worker
-
-新增：
+开发者本地反馈：
 
 ```text
-backend/app/services/workflow_worker/
-├── __init__.py
-└── runtime.py
-
-backend/app/entrypoints/worker.py
-backend/run_worker.py
+1 passed in 10.68s
+[PASS] Scheduler / Worker recovery acceptance completed.
 ```
 
-Worker：
+此前 `workflow_schedules` 回拨 `rowcount = 0` 的竞态已经通过 `fcf3326` 增加 Scheduler Schedule 初始化等待解决。该 Gate 不启动、停止或重启服务。
 
-- 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 认领 pending Execution；
-- 写入 `worker_owner / worker_lease_expires_at / worker_attempt`；
-- 复用唯一 `WorkflowExecutionService`；
-- 复用唯一 `WorkflowRuntime`；
-- 不实现 Scheduler slot / misfire / Trigger / Provider / Runtime 第二套规则；
-- 默认并发 8、claim lease 60s、poll 0.2s；
-- 每次 Execution / Node 状态转换重新锁定 Execution 并验证 `worker_owner`，阻断失去 lease 的旧 Worker；
-- ownership 失效时将当前消费者安全丢弃，不再把并发竞争记录成普通 Runtime 失败。
+### 2. Tenant Safe Real API
 
-### Database
-
-新增 Migration：
+开发者本地：
 
 ```text
-0029_workflow_worker_lease
+35 passed
 ```
 
-新增字段：
+但 Backend Regression Gate 中新增发现两个 Retry Governance 断言失败，根因是测试对倒序 Audit API 再次 `reversed()`，断言方向错误。已修正测试 Contract，未修改生产 Runtime 审计顺序。
+
+### 3. Model Profile / Usage Record 生命周期
+
+开发者本地 API 日志发现：
 
 ```text
-workflow_executions.worker_owner
-workflow_executions.worker_lease_expires_at
-workflow_executions.worker_attempt
+model_usage_records_profile_id_fkey
+ForeignKeyViolationError
 ```
 
-并增加 Worker claim 索引与 lease 成对约束。
-
-## Legacy Definition 兼容
-
-历史 Scheduled Execution 仍保留受控的空 nodes 兼容，但 Worker 不扩大兼容范围：
+`ModelUsageRecord` 已保存独立的 `model_type / model_name / pricing / cost` 历史快照，因此本轮新增：
 
 ```text
-scheduled_slot 存在 → 使用已有 Scheduler legacy compatibility
-普通 Manual Execution → 严格 Definition 校验
+0030_usage_profile_lifecycle
 ```
 
-不新增第二套 Definition validator。
-
-## Worker Ownership Fencing
-
-本轮本地运行发现 `Node 不允许从 running 到 running`，根因为 Worker lease 失效后旧消费者仍可以继续推进 Node 状态。
-
-修复后：
+将 `model_usage_records.profile_id` 调整为可空，并使用：
 
 ```text
-Worker A claim
-    ↓
-worker_owner=A
-    ↓ lease 失效
-Worker B claim
-    ↓
-worker_owner=B
-    ↓
-Worker A 再次 transition
-    ↓
-409 ownership 已失效
-    ↓
-Worker A 放弃 stale consumer
+ON DELETE SET NULL
 ```
 
-不放宽 `running → running` 状态机，也不新增 running Execution 自动 resume。
+历史 Usage Record 保留，Profile 删除后仅解除当前 Profile 引用，不破坏历史审计。
 
-错误记录：
+### 4. Worker `running → running`
+
+此前日志中的：
 
 ```text
-docs/04-errors/2026-08-25-worker-node-running-concurrent-owner.md
+409: Node 不允许从 running 到 running
 ```
 
-## 当前服务架构
-
-```text
-API Service
-    backend/run.py
-    └── FastAPI / HTTP / Auth / API Router
-
-Scheduler Service
-    backend/run_scheduler.py
-    └── ScheduledTriggerScheduler
-        ├── PostgreSQL lease
-        ├── schedule slot
-        ├── misfire
-        └── pending WorkflowExecution dispatch
-
-Worker Service
-    backend/run_worker.py
-    └── WorkflowWorker
-        ├── PostgreSQL pending claim
-        ├── worker lease
-        ├── ownership fencing
-        └── WorkflowExecutionService → WorkflowRuntime
-```
-
-API、Scheduler、Worker 三者共享正式 Domain / Infrastructure，但生命周期完全独立。
+不作为本轮状态机放宽依据。当前设计仍禁止 `running → running`，也不偷偷增加 running Execution 自动 resume。ownership fencing 通过 Worker lease 阻断 stale consumer；若后续再次出现该日志，应继续按 Worker owner / lease 边界定位。
 
 ## 当前 Gate 状态
 
-本轮 ownership fencing 代码修复后，必须重新执行：
+本轮代码修复后必须重新执行：
 
 ```text
 ① Worker ownership fencing Unit
 ② Worker Unit
 ③ Backend default regression
 ④ Database migration/head
-⑤ Scheduler + Worker Real Acceptance
-⑥ Frontend Regression（受范围影响时）
-⑦ Workflow Trigger Browser E2E（受范围影响时）
+⑤ Tenant Safe Real API
+⑥ Scheduler + Worker Recovery Acceptance
+⑦ Frontend Regression（受范围影响时）
+⑧ Workflow Trigger Browser E2E（受范围影响时）
 ```
 
-本文件不预填本轮测试通过结果。
+**本文件不预填本轮修复后的测试通过结果。**
 
-上一轮实际结果仍为：
+开发者此前已实际反馈：
 
 ```text
-Backend default regression: 403 passed, 3 skipped, 36 deselected
-Tenant Safe Real API Gate: 35 passed
-Scheduler independent restart acceptance: 1 passed
-Frontend Regression: 79 passed + production build
-Workflow Trigger Browser E2E: 1 passed
+Backend default regression: 409 passed, 3 skipped, 36 deselected
+Tenant Safe Real API: 33 passed, 2 failed
+Scheduler / Worker Recovery Acceptance: 1 passed
 ```
 
-以上结果属于上一轮服务化提交，不能作为本轮 ownership fencing 修复后的验收结果。
+上述结果只记录修复前的实际事实；不能作为本轮修复后的验收结果。
 
-## 本地启动
+## 本地服务前置条件
 
 ### API Service
 
@@ -231,7 +161,9 @@ cd backend
 uv run python run_worker.py
 ```
 
-如果需要完整 Scheduled Workflow 执行链，本地必须同时运行 Scheduler 与 Worker；API 是否运行只取决于是否需要 HTTP 管理入口。
+完整 Scheduled Workflow 执行链需要 Scheduler + Worker；Real HTTP API Gate 需要 API + Worker；Scheduler Recovery Acceptance 需要 Scheduler + Worker，并由脚本验证服务已经存在。
+
+**测试脚本绝不启动、停止或重启上述服务。**
 
 ## 当前禁止事项
 
@@ -243,7 +175,8 @@ uv run python run_worker.py
 - 不通过 Mock Runtime 作为 Real Acceptance；
 - 不在本阶段偷偷加入 running Execution 自动 resume；
 - 不创建 MQ/Kafka/Celery 等 Broker 作为当前阶段必要依赖；
-- 不创建功能分支，所有开发直接基于并提交 `main`。
+- 不创建功能分支，所有开发直接基于并提交 `main`；
+- 不允许测试 Gate 自动控制本地 API / Scheduler / Worker 生命周期。
 
 ## 文档记录
 
@@ -254,3 +187,4 @@ uv run python run_worker.py
 - `docs/03-acceptance/PHASE_2_5_ACCEPTANCE.md`
 - `docs/PROJECT_STATUS.md`
 - `docs/04-errors/2026-08-25-worker-node-running-concurrent-owner.md`
+- `docs/04-errors/2026-08-25-real-api-governance-profile-lifecycle.md`
