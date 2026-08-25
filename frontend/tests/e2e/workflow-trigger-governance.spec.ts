@@ -12,18 +12,18 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
   test.setTimeout(60_000);
 
   const unique = Date.now();
-  const email = `e2e-workflow-trigger-${unique}@example.com`;
+  const username = `e2e-workflow-trigger-${unique}`;
   const password = "TestPassword123!";
   const api: APIRequestContext = await playwright.request.newContext({ baseURL: apiOrigin });
 
   try {
     const register = await api.post(apiPath("/auth/register"), {
-      data: { email, password, name: `E2E Trigger User ${unique}` },
+      data: { username, password },
     });
     expect(register.ok()).toBeTruthy();
 
     const login = await api.post(apiPath("/auth/login"), {
-      data: { email, password },
+      data: { username, password },
     });
     expect(login.ok()).toBeTruthy();
     const loginBody = await login.json();
