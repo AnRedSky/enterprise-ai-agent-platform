@@ -1,4 +1,4 @@
-"""真实服务重启验收：验证 Scheduler 持久化状态可跨进程恢复，并保持治理关联。"""
+"""真实 Scheduler Service 重启验收：验证持久化状态可跨进程恢复，并保持治理关联。"""
 
 from __future__ import annotations
 
@@ -26,21 +26,14 @@ pytestmark = pytest.mark.real_api
 
 
 def _free_port() -> int:
-    """申请当前空闲的本地 TCP 端口，避免真实生命周期验收依赖固定端口。"""
+    """申请当前空闲的本地 TCP 端口，仅用于临时 API fixture bootstrap。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
 
-def _start_server(port: int) -> subprocess.Popen:
-    """启动真实 Uvicorn 进程，使 Scheduler 生命周期由真实进程负责。
-
-    Args:
-        port: Uvicorn 监听端口。
-
-    Returns:
-        已启动但尚未完成健康检查的真实 Uvicorn 子进程。
-    """
+def _start_api(port: int) -> subprocess.Popen:
+    """启动仅用于 HTTP fixture bootstrap/cleanup 的 API Service。"""
     return subprocess.Popen(
         ["uv", "run", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)],
         cwd=BACKEND_DIR,
@@ -49,25 +42,45 @@ def _start_server(port: int) -> subprocess.Popen:
     )
 
 
-def _wait_for_health(process: subprocess.Popen, base_url: str, timeout_seconds: float = 20.0) -> None:
-    """等待真实 HTTP 服务健康；进程提前退出或超时均立即失败。"""
+def _start_scheduler() -> subprocess.Popen:
+    """启动真实独立 Scheduler Service；不启动 HTTP API。"""
+    return subprocess.Popen(
+        ["uv", "run", "python", "run_scheduler.py"],
+        cwd=BACKEND_DIR,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _wait_for_api(process: subprocess.Popen, port: int, timeout_seconds: float = 20.0) -> None:
+    """等待 fixture API 健康。"""
     deadline = time.monotonic() + timeout_seconds
     with httpx.Client(timeout=2.0) as client:
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise AssertionError(f"真实 Uvicorn 进程提前退出，exit_code={process.returncode}")
+                raise AssertionError(f"API Service 进程提前退出，exit_code={process.returncode}")
             try:
-                response = client.get(f"{base_url}/health")
-                if response.status_code == 200:
+                if client.get(f"http://127.0.0.1:{port}/health").status_code == 200:
                     return
             except httpx.HTTPError:
                 pass
             time.sleep(0.25)
-    raise AssertionError(f"真实 HTTP 服务在 {timeout_seconds}s 内未就绪: {base_url}")
+    raise AssertionError(f"API Service 在 {timeout_seconds}s 内未就绪")
 
 
-def _stop_server(process: subprocess.Popen) -> None:
-    """停止真实 Uvicorn 进程，并确保 Windows 本地验收不遗留后台进程。"""
+def _wait_for_scheduler(process: subprocess.Popen, timeout_seconds: float = 5.0) -> None:
+    """确认独立 Scheduler Service 进程保持运行。"""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AssertionError(f"Scheduler Service 进程提前退出，exit_code={process.returncode}")
+        time.sleep(0.25)
+    if process.poll() is not None:
+        raise AssertionError(f"Scheduler Service 进程提前退出，exit_code={process.returncode}")
+
+
+def _stop_process(process: subprocess.Popen) -> None:
+    """停止真实服务进程并避免本地遗留后台进程。"""
     if process.poll() is not None:
         return
     process.terminate()
@@ -79,7 +92,7 @@ def _stop_server(process: subprocess.Popen) -> None:
 
 
 async def _schedule_row(trigger_id: str) -> dict | None:
-    """读取真实 PostgreSQL Scheduler 状态，确认首次生命周期已经完成持久化初始化。"""
+    """读取真实 PostgreSQL Scheduler 状态。"""
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
@@ -97,19 +110,7 @@ async def _schedule_row(trigger_id: str) -> dict | None:
 
 
 async def _seed_restart_slot(trigger_id: str, planned_at: datetime) -> None:
-    """回拨真实 Scheduler 状态到历史槽位，并在重启前激活目标 Trigger。
-
-    Args:
-        trigger_id: Scheduled Trigger UUID 字符串。
-        planned_at: 重启后应恢复执行的历史计划时间。
-
-    Returns:
-        无；直接修改真实 PostgreSQL 测试状态。
-
-    设计意图：首次生命周期阶段把 Trigger 置为 disabled，确保 Scheduler 只负责建立持久化状态而不会
-    在停止前抢先执行。停止进程后再一次性把 Trigger 与 Schedule 激活并回拨历史 slot，使重启后的
-    Scheduler 成为唯一能够消费目标 slot 的 worker。
-    """
+    """停止 Scheduler 后，将真实持久化状态回拨到待恢复的历史 slot。"""
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.begin() as connection:
@@ -139,7 +140,7 @@ async def _seed_restart_slot(trigger_id: str, planned_at: datetime) -> None:
 
 
 async def _execution_rows(idempotency_key: str) -> list[dict]:
-    """读取指定 Scheduler slot 的真实 WorkflowExecution，确认跨进程恢复只产生一个执行。"""
+    """读取指定 Scheduler slot 的真实 WorkflowExecution。"""
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
@@ -156,7 +157,7 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
 
 
 async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
-    """读取恢复执行关联的真实 AuditLog 与 WorkflowTraceEvent。"""
+    """读取恢复执行关联的 AuditLog 与 WorkflowTraceEvent。"""
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
@@ -191,19 +192,7 @@ def _wait_for_execution(idempotency_key: str, timeout_seconds: float = 20.0) -> 
 
 
 def _create_restart_fixture(base_url: str, token: str) -> tuple[str, str]:
-    """通过真实 HTTP 创建本 Acceptance 专属的可执行 Workflow 与 Scheduled Trigger。
-
-    Args:
-        base_url: 临时真实 API 的 `/api/v1` 地址。
-        token: Tenant-safe Real API 管理员访问令牌。
-
-    Returns:
-        `(workflow_id, trigger_id)`，均来自真实 HTTP 持久化响应。
-
-    设计意图：restart acceptance 不再依赖通用 Real API bootstrap 的 Workflow ID，避免共享测试夹具
-    被其他场景复用、历史无效 Workflow 污染或旧 context 导致本验收失去确定性。Workflow Version 在
-    发布后立即通过 HTTP GET 再验证 `nodes` 非空，保证 Scheduler 验收使用的执行定义满足 Runtime Contract。
-    """
+    """通过真实 API 创建本 Acceptance 专属的可执行 Workflow 与 Scheduled Trigger。"""
     headers = {"Authorization": f"Bearer {token}"}
     with httpx.Client(base_url=base_url, headers=headers, timeout=10.0) as client:
         workflow = client.post(
@@ -237,25 +226,19 @@ def _create_restart_fixture(base_url: str, token: str) -> tuple[str, str]:
 
         persisted_version = client.get(f"/workflows/{workflow_id}/versions/{version_payload['id']}")
         assert persisted_version.status_code == 200, persisted_version.text
-        persisted_definition = persisted_version.json()["definition"]
-        assert persisted_definition.get("nodes"), persisted_version.json()
+        assert persisted_version.json()["definition"].get("nodes"), persisted_version.json()
 
         trigger = client.post(
             f"/workflows/{workflow_id}/triggers",
             json={
                 "name": f"restart-{uuid4().hex[:8]}",
                 "trigger_type": "scheduled",
-                "config": {
-                    "timezone": "UTC",
-                    "interval_seconds": 60,
-                    "misfire_policy": "fire_once",
-                },
+                "config": {"timezone": "UTC", "interval_seconds": 60, "misfire_policy": "fire_once"},
             },
         )
         assert trigger.status_code == 201, trigger.text
         trigger_id = trigger.json()["id"]
 
-        # 立即禁用 Trigger：首次 Scheduler 生命周期仍需初始化 WorkflowSchedule，但不得抢先消费 slot。
         disabled = client.patch(
             f"/workflows/{workflow_id}/triggers/{trigger_id}",
             json={"status": "disabled"},
@@ -266,39 +249,49 @@ def _create_restart_fixture(base_url: str, token: str) -> tuple[str, str]:
 
 
 def test_scheduled_trigger_recovers_after_real_service_restart():
-    """验证 Scheduler 在真实进程停止/重启后从 PostgreSQL 恢复历史 slot。"""
+    """验证独立 Scheduler Service 停止/重启后从 PostgreSQL 恢复历史 slot。"""
     if not TOKEN:
         pytest.fail("ACCESS_TOKEN is required for scheduler restart validation")
 
-    port = _free_port()
-    base_url = f"http://127.0.0.1:{port}/api/v1"
-    process = _start_server(port)
+    bootstrap_port = _free_port()
+    base_url = f"http://127.0.0.1:{bootstrap_port}/api/v1"
+    api_process = _start_api(bootstrap_port)
+    scheduler_process: subprocess.Popen | None = None
     workflow_id: str | None = None
     trigger_id: str | None = None
     interval_seconds = 60
     planned_at = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=2 * interval_seconds)
-    runtime_key: str | None = None
 
     try:
-        _wait_for_health(process, f"http://127.0.0.1:{port}")
+        # API Service 仅承担 fixture bootstrap，不承担 Scheduler 生命周期。
+        _wait_for_api(api_process, bootstrap_port)
         workflow_id, trigger_id = _create_restart_fixture(base_url, TOKEN)
+        _stop_process(api_process)
+        api_process = None
 
+        # 第一阶段：独立 Scheduler Service 创建 WorkflowSchedule；Trigger 已禁用，不得消费 slot。
+        scheduler_process = _start_scheduler()
+        _wait_for_scheduler(scheduler_process)
         deadline = time.monotonic() + 15
         schedule = None
         while time.monotonic() < deadline:
             schedule = asyncio.run(_schedule_row(trigger_id))
             if schedule is not None:
                 break
+            if scheduler_process.poll() is not None:
+                raise AssertionError(f"Scheduler Service 提前退出，exit_code={scheduler_process.returncode}")
             time.sleep(0.5)
-        assert schedule is not None, "首次真实服务生命周期未创建 WorkflowSchedule 持久化状态"
+        assert schedule is not None, "首次独立 Scheduler Service 生命周期未创建 WorkflowSchedule 持久化状态"
         assert schedule["enabled"] is False
 
-        _stop_server(process)
+        # 第二阶段：停止独立 Scheduler，回拨历史 slot；随后仅重启 Scheduler Service。
+        _stop_process(scheduler_process)
+        scheduler_process = None
         asyncio.run(_seed_restart_slot(trigger_id, planned_at))
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, planned_at, interval_seconds)
 
-        process = _start_server(port)
-        _wait_for_health(process, f"http://127.0.0.1:{port}")
+        scheduler_process = _start_scheduler()
+        _wait_for_scheduler(scheduler_process)
         rows = _wait_for_execution(runtime_key)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
@@ -318,11 +311,14 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
         duplicate_rows = _wait_for_execution(runtime_key, timeout_seconds=3)
         assert len(duplicate_rows) == 1, duplicate_rows
     finally:
-        _stop_server(process)
+        if scheduler_process is not None:
+            _stop_process(scheduler_process)
+        if api_process is not None:
+            _stop_process(api_process)
         if workflow_id and trigger_id:
-            cleanup_process = _start_server(port)
+            cleanup_process = _start_api(bootstrap_port)
             try:
-                _wait_for_health(cleanup_process, f"http://127.0.0.1:{port}")
+                _wait_for_api(cleanup_process, bootstrap_port)
                 with httpx.Client(
                     base_url=base_url,
                     headers={"Authorization": f"Bearer {TOKEN}"} if TOKEN else {},
@@ -331,4 +327,4 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
                     response = client.delete(f"/workflows/{workflow_id}/triggers/{trigger_id}")
                     assert response.status_code in {204, 404}, response.text
             finally:
-                _stop_server(cleanup_process)
+                _stop_process(cleanup_process)
