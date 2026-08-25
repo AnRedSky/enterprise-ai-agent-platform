@@ -84,49 +84,49 @@ Backend Release / Regression Gate：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\release\\01_backend_regression_gate.ps1
 ```
 
 Frontend Release / Regression Gate：
 
 ```powershell
 cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\release\\01_frontend_regression_gate.ps1
 ```
 
 Browser E2E Organization Gate：
 
 ```powershell
 cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\02_run_organization_e2e.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\e2e\\02_run_organization_e2e.ps1
 ```
 
 Browser E2E Workflow Trigger Gate：
 
 ```powershell
 cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\e2e\\01_run_workflow_trigger_e2e.ps1
 ```
 
 Real API 唯一入口：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\api-real\\01_run_real_api_tests.ps1
 ```
 
 Tenant Safe Real API Gate：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\api-real\\01_run_real_api_tests_tenant_safe.ps1
 ```
 
 模块化整改 Gate：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refactor\01_backend_module_refactor_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\module-refactor\\01_backend_module_refactor_gate.ps1
 ```
 
 ## 5. 固定开发顺序
@@ -175,10 +175,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\module-refact
 26. **同一外部能力只能保留一个正式 Provider 实现入口。Provider 技术适配统一进入 `app/infrastructure/providers/`；领域 Service 不得复制第二套 Provider，也不得以不同文件名实现相同外部协议。每个 Provider 迁移单元必须执行旧路径、重复实现和 targeted tests Gate。**
 27. **新增或修改业务能力前，必须先检索现有领域包、Service、Repository、Runtime、Provider、工具函数及测试，确认没有已有正式实现；若已有实现满足职责，应扩展原实现而不是新增平行模块。代码评审和提交说明必须能够说明为何没有产生重复能力。**
 28. **新增模块不仅要检查文件级重复，还必须检查职责和规则重复：相同业务规则只能保留一个正式计算/校验入口，测试不得通过复制生产算法形成第二套实现；跨模块复用必须通过正式领域入口，不得复制代码片段。**
-29. **每个新增或重构模块必须提供必要中文说明：模块说明职责与边界；类说明核心职责；函数/方法说明用途、关键参数、返回值及重要副作用或事务边界；参数命名已经足够显然且为简单 getter/setter 时可不写冗余说明。**
+29. **每个新增或重构模块必须提供必要中文说明：模块说明职责与边界；类说明核心职责；函数/方法说明用途、参数 `args`、返回值 `return`，以及重要副作用、事务边界或异常语义。参数命名已经足够显然且为简单 getter/setter 时可不写冗余说明，但公共业务函数、跨模块调用函数、复杂内部函数不得省略必要说明。**
 30. **涉及时间槽、幂等、租约、misfire、权限、tenant boundary、状态机、降级或并发控制等非显然规则时，必须在规则实现附近写明“为什么这样做”和边界条件；不得只描述代码做了什么。任何因兼容旧 Contract 而保留的逻辑必须说明兼容对象、移除条件及不可扩展边界。**
 31. **测试脚本必须是可重复执行的自动化入口；不得要求开发者手工修改测试文件或生产代码才能完成验收。若测试依赖本地服务，Gate 脚本必须明确前置服务、环境变量、数据库状态、启动命令和失败条件，并在输出中区分“脚本未执行”“执行失败”和“执行通过”。**
 32. **Real API 测试必须验证真实 HTTP + 真实 PostgreSQL 持久化链路；可以直接调用 Runtime 做确定性补充验证，但不得用 Mock、JSON fixture 或进程内假数据替代真实持久化业务流程。涉及后台生命周期的验收必须单独验证 Scheduler 是否实际启动并运行。**
+33. **函数文档采用统一中文结构。Python 公共函数/方法优先使用 Google 风格 docstring：先写功能与设计意图，再使用 `Args:` 描述关键参数，使用 `Returns:` 描述返回值；存在重要异常、事务边界、状态变更或外部副作用时补充 `Raises:` 或对应说明。TypeScript/Vue 公共函数使用等价的中文 JSDoc，至少表达参数与返回值。**
+34. **函数文档不是机械补注释：简单 getter/setter、纯属性访问、显然的私有 dunder 方法可以省略；但一旦函数包含业务规则、持久化、并发、权限、tenant scope、状态机、时间计算、幂等或外部调用，就必须解释调用者需要知道的约束，而不是重复函数名或代码本身。**
+35. **代码变更必须同步检查函数文档是否仍然准确。修改参数、返回值、异常语义、事务边界或副作用时，必须同时更新对应 docstring/JSDoc；禁止保留与实现不一致的旧文档。函数文档检查属于代码 Review 与提交前自检项，不得把“以后补文档”作为完成条件。**
 
 ## 6. 分层原则
 
