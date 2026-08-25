@@ -87,6 +87,34 @@ class WorkflowWorker:
             await db.commit()
             return execution
 
+    async def _renew_lease_once(self, execution_id: UUID) -> bool:
+        """刷新一次当前 Worker 的 Execution 租约。
+
+        Args:
+            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
+
+        Returns:
+            当前 Worker 仍持有 Execution ownership 时返回 True；Execution 已不存在、已转移 ownership 或进入终态时返回 False。
+
+        事务边界：每次刷新使用独立短事务，避免占用 Runtime 执行事务。数据库瞬时异常向调用方传播，由 heartbeat 循环负责记录并继续下一轮；这避免一次网络抖动永久杀死 heartbeat 任务。
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
+        lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(WorkflowExecution).where(
+                    WorkflowExecution.id == execution_id,
+                    WorkflowExecution.worker_owner == self.owner,
+                    WorkflowExecution.status.in_({"pending", "running"}),
+                )
+            )
+            execution = result.scalar_one_or_none()
+            if execution is None:
+                return False
+            execution.worker_lease_expires_at = lease_expires_at
+            await db.commit()
+            return True
+
     async def _renew_lease_forever(self, execution_id: UUID) -> None:
         """持续刷新当前 Worker 的 Execution 租约，避免长 Workflow 在 lease 到期后被误判失联。
 
@@ -96,26 +124,23 @@ class WorkflowWorker:
         Returns:
             无；Execution 不再属于当前 Worker 或进入终态后自动退出。
 
-        事务边界：每次刷新使用独立短事务，避免占用 Runtime 执行事务；刷新失败只记录日志，不改变 Workflow Runtime 状态。
+        事务边界：每次刷新使用独立短事务；单次数据库瞬时失败只记录日志并继续下一轮，避免 heartbeat 协程因一次连接抖动永久退出。若 ownership 已不存在则立即结束，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
         """
-        interval = max(1.0, self.lease_seconds / 3)
+        interval = max(0.1, self.lease_seconds / 3)
         while True:
             await asyncio.sleep(interval)
-            now = datetime.now(UTC).replace(tzinfo=None)
-            lease_expires_at = now + timedelta(seconds=self.lease_seconds)
-            async with SessionLocal() as db:
-                result = await db.execute(
-                    select(WorkflowExecution).where(
-                        WorkflowExecution.id == execution_id,
-                        WorkflowExecution.worker_owner == self.owner,
-                        WorkflowExecution.status.in_({"pending", "running"}),
-                    )
+            try:
+                owned = await self._renew_lease_once(execution_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Workflow Worker lease heartbeat failed; will retry",
+                    extra={"execution_id": str(execution_id), "worker_owner": self.owner},
                 )
-                execution = result.scalar_one_or_none()
-                if execution is None:
-                    return
-                execution.worker_lease_expires_at = lease_expires_at
-                await db.commit()
+                continue
+            if not owned:
+                return
 
     async def _recover_orphaned_running_nodes(
         self,

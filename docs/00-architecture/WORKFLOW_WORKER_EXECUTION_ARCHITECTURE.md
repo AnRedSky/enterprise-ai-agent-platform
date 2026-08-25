@@ -68,7 +68,7 @@ WorkflowRuntime
                                ▼
                     ┌──────────────────────┐
                     │ Lease Heartbeat      │
-                    │ 持续刷新 ownership   │
+                    │ 独立刷新 ownership    │
                     └──────────┬───────────┘
                                │
                                ▼
@@ -131,7 +131,20 @@ WorkflowRuntime 使用既有 failed → running 合法入口
 
 Worker 执行长 Workflow 时独立刷新 lease，避免 Runtime 执行时间超过初始 lease 后被其他 Worker 错误接管。Runtime 外层同时受 Workflow deadline + 固定宽限控制，防止异常 Runtime 永久占用 Worker 消费协程。
 
-这两个机制职责不同：
+Heartbeat 的单轮刷新属于可重试的基础设施操作：
+
+```text
+heartbeat tick
+    ↓
+renew lease
+    ├── success → 下一 tick
+    ├── transient DB error → 记录日志 → 下一 tick 重试
+    └── ownership 不存在/Execution 已终态 → heartbeat 退出
+```
+
+这一区分非常重要：**瞬时数据库异常不能让 heartbeat task 静默死亡；ownership 已经失效也不能通过继续 heartbeat 伪造所有权。** Runtime 本身不因为单次 heartbeat 网络抖动被强制重置；若最终 lease 到期并被其他 Worker 接管，旧 Worker 后续状态写入必须由 ownership fencing 拒绝。
+
+Heartbeat 与 Execution timeout 职责不同：
 
 ```text
 lease heartbeat → 解决 ownership 生命周期
@@ -170,7 +183,7 @@ pending Execution + orphaned running Node
 1. Scheduler 不直接调用 Runtime；
 2. Worker 可以独立 claim pending Execution；
 3. claim 后 ownership fencing 生效；
-4. Worker lease 可以持续刷新；
+4. Worker lease 可以持续刷新，且单次瞬态刷新异常不会永久终止 heartbeat；
 5. pending + orphaned running Node 能在 Runtime 前恢复；
 6. `running → running` 仍被状态机拒绝；
 7. Worker 使用唯一 WorkflowExecutionService / WorkflowRuntime；
