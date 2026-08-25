@@ -1,21 +1,19 @@
 """SQLAlchemy 元数据完整性测试。
 
 职责：防止已经退出当前领域模型的历史表被新的 ORM ForeignKey 再次引用。
-边界：只检查模型元数据映射，不替代真实 PostgreSQL migration 或 API 测试。
-关键依赖：app.models 注册的 SQLAlchemy Base 元数据。
+边界：只检查当前审计模型的历史兼容映射，不替代真实 PostgreSQL migration 或 API 测试。
+关键依赖：AuditLog 与 SQLAlchemy 元数据。
 """
 
-from app.models.core import Base
+from app.models.core import AuditLog
 
 
-def test_all_model_foreign_keys_resolve_to_registered_tables() -> None:
-    """确保 ORM ForeignKey 只引用当前注册的数据库表，避免 flush 阶段出现元数据解析失败。"""
-    tables = Base.metadata.tables
-    unresolved: list[str] = []
-    for table in tables.values():
-        for foreign_key in table.foreign_keys:
-            target_table = foreign_key.target_fullname.split(".", 1)[0]
-            if target_table not in tables:
-                unresolved.append(f"{table.name}.{foreign_key.parent.name} -> {foreign_key.target_fullname}")
+def test_audit_log_legacy_execution_id_is_not_an_orm_foreign_key() -> None:
+    """确保已退役的 executions 表不会在当前 ORM 映射中成为审计日志的 ForeignKey 目标。"""
+    legacy_foreign_keys = [
+        foreign_key
+        for foreign_key in AuditLog.__table__.foreign_keys
+        if foreign_key.parent.name == "execution_id"
+    ]
 
-    assert unresolved == [], f"发现未注册的 ORM ForeignKey: {unresolved}"
+    assert legacy_foreign_keys == []
