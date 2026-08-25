@@ -146,7 +146,12 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(persistedCreatedTrigger).toMatchObject({
       trigger_type: "scheduled",
       status: "enabled",
-      config: { timezone: "UTC", interval_seconds: 60 },
+      config: {
+        timezone: "UTC",
+        interval_seconds: 60,
+        misfire_policy: "skip",
+        catch_up_limit: 10,
+      },
     });
 
     await expect.poll(
@@ -194,7 +199,12 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(persistedItems).toBeInstanceOf(Array);
     const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === triggerName);
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
-    expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 60 });
+    expect(persistedTrigger.config).toEqual({
+      timezone: "UTC",
+      interval_seconds: 60,
+      misfire_policy: "skip",
+      catch_up_limit: 10,
+    });
   } finally {
     await api.dispose();
   }
