@@ -235,14 +235,27 @@ class WorkflowExecutionService:
         await self.db.refresh(node)
         return node
 
-    async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID, admin: bool = False) -> WorkflowExecution:
+    async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID, admin: bool = False,
+                  allow_legacy_empty_nodes: bool = False) -> WorkflowExecution:
+        """执行已发布 Workflow，并可由受控的 Scheduler 路径兼容历史空节点版本。
+
+        Args:
+            execution: 待执行的 Workflow Execution。
+            version: 当前执行对应的 Workflow Version。
+            actor_id: 执行发起者身份。
+            admin: 是否使用管理员权限执行 Agent 节点。
+            allow_legacy_empty_nodes: 仅 Scheduler 历史发布数据允许开启；普通执行默认严格校验。
+
+        Returns:
+            执行完成后的 Workflow Execution。
+        """
         execution = await self._lock_execution(execution)
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以 Run")
         await self.transition(execution, "running", actor_id=actor_id)
         runtime = WorkflowRuntime(self.db, execution_service=self)
         try:
-            await runtime.execute(execution, version, actor_id, admin)
+            await runtime.execute(execution, version, actor_id, admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
         except CircuitOpenError:
             await self.transition(execution, "failed", error_code="CIRCUIT_OPEN", error_message="Circuit Breaker is open", actor_id=actor_id)
             raise HTTPException(503, "Circuit Breaker is open")
