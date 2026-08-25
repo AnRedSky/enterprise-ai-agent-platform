@@ -12,20 +12,20 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 已完成 Workflow Trigger Browser E2E 的 API Client、Auth、Workflow Version、正式路由、Browser Session、Element Plus Select Contract 对齐。最新开发者本地反馈显示 Frontend Regression Gate 已实际通过 79 tests，production build 也已通过；Browser E2E 已进入正式 `/workflows/triggers` 页面并完成 Trigger 类型选择，但随后测试实现因错误捕获 `expect.poll(...).toMatchObject(...)` 的返回值而得到 `undefined`，在读取 `persistedCreatedTrigger.id` 时失败。
+当前远端 `main` 已完成 Workflow Trigger Browser E2E 的 API Client、Auth、Workflow Version、正式路由、Browser Session、Element Plus Select、Trigger 持久化实体等待等 Contract 对齐。开发者最新本地反馈中，Frontend Regression Gate 已实际通过 79 tests，production build 也已通过；Workflow Trigger Browser E2E 已进入正式 `/workflows/triggers` 页面、完成 Trigger 类型选择并成功创建 Trigger。随后测试在 Scheduler UI 首次查询仍处于异步初始化窗口时，直接读取 `scheduler-timezone`，导致元素尚未渲染而失败。
 
-本轮针对该真实测试实现错误进行修复：将 Trigger 持久化等待改为独立的真实 HTTP 轮询函数，只有查询到 PostgreSQL 已持久化的目标 Trigger 后才返回实体；保留真实注册、登录、Browser Session、Frontend UI、Backend HTTP 和 Scheduler 持久化链路，不通过放宽业务断言或构造测试数据绕过问题。
+本轮继续修复该真实 E2E 时序问题：测试先通过真实 HTTP 确认 PostgreSQL Scheduler 状态已经持久化，再在生产 UI 未显示状态字段时点击 Scheduler 卡片的正式“刷新”入口，最后继续使用真实 DOM test hook 验证 `timezone / misfire_policy / catch_up_limit`。不使用固定 sleep、不构造测试数据、不降低业务断言。
 
 **当前 Browser Gate 尚未由开发者重新执行，因此不得标记为通过。**
 
 ## 本轮工程变更
 
 - `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：
-  - 新增中文职责明确的 `waitForPersistedTrigger` 自动化等待函数；
-  - 不再把 Playwright `expect.poll().toMatchObject()` 的断言结果误当作业务实体；
-  - 继续通过真实 HTTP 查询确认 Trigger 已持久化，再读取其 `id` 进行 Scheduler 状态验证。
-- `docs/04-errors/2026-08-25-browser-e2e-session-contract.md`：
-  - 增加本轮 E2E 测试实现错误的根因、修复边界和验证要求。
+  - 修复 Scheduler Backend 已持久化而 Frontend 首次查询尚未刷新时的 UI 时序竞争；
+  - 先完成真实 HTTP Scheduler Contract 轮询，再使用生产 UI 的“刷新”操作同步页面状态；
+  - 最终仍验证真实 `scheduler-timezone`、`scheduler-misfire-policy`、`scheduler-catch-up-limit`。
+- `docs/04-errors/2026-08-25-browser-e2e-scheduler-ui-race.md`：
+  - 记录 Scheduler UI 初始化时序竞争的现象、根因、修复边界与本地验收要求。
 
 ## 已完成的 Browser / Frontend Gate
 
@@ -33,7 +33,7 @@
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
 Frontend Regression Gate：本地实际通过（79 passed + production build）
-Workflow Trigger Browser Gate：本轮已进入正式页面并完成 Select 交互，但在测试等待实体的实现错误处失败；已修复，等待开发者重新执行
+Workflow Trigger Browser Gate：已完成真实 Trigger 创建并进入 Scheduler 状态验收；本轮因 UI 初始化时序竞争失败，测试已修复，等待开发者重新执行
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
@@ -43,7 +43,7 @@ Workflow Trigger Browser Gate：本轮已进入正式页面并完成 Select 交�
 ```text
 Frontend Vitest + production build
       ↓
-修复 Browser E2E 测试实现的 API Client / Auth / Version / Route / Browser Session / UI Select / Persistence Poll Contract 漂移
+修复 Browser E2E 测试实现的 API Client / Auth / Version / Route / Browser Session / UI Select / Persistence Poll / Scheduler UI Sync Contract 漂移
       ↓
 Browser Scheduler Gate 重新执行
       ↓
