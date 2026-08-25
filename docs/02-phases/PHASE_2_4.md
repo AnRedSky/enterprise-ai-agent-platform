@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate、真实服务重启 Acceptance 已完成；Frontend API/UI 已实现并完成针对异步初始化窗口的修复，当前等待开发者重新执行 Frontend 与 Browser E2E Gate。**
+> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate、真实服务重启 Acceptance 已完成；Frontend Regression 与 Workflow Trigger Browser E2E 已由开发者本地实际通过，当前进入剩余 Browser / Backend Gate 与最终 Acceptance 汇总。**
 > 评估日期：2026-08-25
 > 优先级：**P1**
 
@@ -121,7 +121,7 @@ misfire 计算统一位于 `workflow_scheduler/misfire.py`，Runtime 不复制�
 04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、397 Backend regression 均通过；3 skipped，36 deselected
 ```
 
-上述结果仅表示开发者实际执行过的 Backend Gate，不代表 Frontend 或 Browser E2E 已通过。
+上述结果仅表示开发者实际执行过的 Backend Gate，不代表本轮剩余 Gate 已再次确认。
 
 ## 9. 真实服务重启 Acceptance
 
@@ -144,7 +144,7 @@ Backend Scheduler API Contract 已向 Frontend 暴露正式只读入口，Fronte
 - Trigger 禁用、删除或 Workflow 切换导致目标失效时，页面清理已选 Scheduler 状态，避免展示过期持久化数据；
 - Scheduler Runtime 在 Trigger 创建后存在异步初始化窗口时，Frontend 仅对“Scheduler 状态尚未初始化”执行有限重试，不复制 Scheduler 调度规则；
 - Vitest 已补充该初始化窗口的重试断言；
-- Browser E2E 已暴露两个工程性问题并完成修复：Workflow Trigger Gate 误执行其他领域场景，以及多个场景共享“一 Tenant 一 Organization”导致 Organization 数据互相污染；对应 Gate 已改为独立、可重复的场景隔离执行。
+- Workflow Trigger Browser E2E 已实际验证真实 Trigger 创建、Scheduler API 状态、Scheduler UI 状态以及 PostgreSQL 持久化 Config。
 
 ## 11. Browser E2E 场景隔离
 
@@ -161,24 +161,14 @@ Backend Scheduler API Contract 已向 Frontend 暴露正式只读入口，Fronte
 ## 12. 下一执行顺序
 
 ```text
-Frontend Release / Regression Gate
-      ↓
-Browser / Frontend-Backend Scheduler E2E
-      ↓
-Organization / Model Provider Browser E2E
-      ↓
-Backend default regression + Tenant Safe Real API Gate（再次确认）
-      ↓
+Frontend Release / Regression Gate                         ✓ 已通过
+Browser Scheduler Gate                                    ✓ 已通过
+Organization / Model Provider Browser E2E                 ↓ 重新确认
+Backend default regression                                 ↓ 重新确认
+Tenant Safe Real API Gate                                  ↓ 重新确认
 Scheduler 多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
-      ↓
+                                                            ↓
 Phase 2.4 Passed 评估
-```
-
-Frontend Release / Regression Gate：
-
-```powershell
-cd frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
 Browser Scheduler Gate：
@@ -188,4 +178,6 @@ cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-当前不记录 Phase 2.4 Passed，直到上述 Frontend 与 Browser E2E Gate 由开发者本地实际执行并反馈通过。
+该 Gate 已由开发者本地实际执行并通过：Playwright `1 passed`，脚本最终输出 `[PASS]`。
+
+当前不记录 Phase 2.4 Passed，直到剩余 Browser / Backend / Real API Gate 与 Acceptance 汇总完成。
