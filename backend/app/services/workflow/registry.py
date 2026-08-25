@@ -2,7 +2,7 @@
 
 职责：管理 Workflow、版本及发布状态，并维护租户与所有者访问边界。
 边界：只处理 Workflow 领域状态与发布事务，不执行 Workflow Runtime，也不负责 API 协议。
-关键依赖：Workflow/WorkflowVersion ORM、AuditLog 与 SQLAlchemy AsyncSession。
+关键依赖：Workflow/WorkflowVersion ORM、AuditLog、Workflow Runtime 与 SQLAlchemy AsyncSession。
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import AuditLog
 from app.models.workflow import Workflow, WorkflowVersion
+from app.runtime.workflow import WorkflowRuntime
 
 
 class WorkflowRegistry:
@@ -111,6 +112,19 @@ class WorkflowRegistry:
         return version
 
     async def publish(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID) -> WorkflowVersion:
+        """发布经过 Runtime Contract 校验的 Workflow 版本。
+
+        Args:
+            workflow: 待发布的 Workflow。
+            version: 与 Workflow 绑定且处于可发布状态的版本。
+            actor_id: 执行发布操作的用户 ID。
+
+        Returns:
+            已完成发布状态变更的 WorkflowVersion。
+
+        Raises:
+            HTTPException: Workflow、版本关系或 Runtime Definition Contract 不满足发布条件时抛出。
+        """
         if workflow.status == "archived":
             raise HTTPException(409, "归档 Workflow 不允许发布")
         if version.workflow_id != workflow.id:
@@ -119,6 +133,11 @@ class WorkflowRegistry:
             return version
         if version.status not in self.VERSION_PUBLISHABLE_STATUSES and version.status != "published":
             raise HTTPException(409, "当前版本状态不允许发布")
+
+        # 发布版本会直接成为 Scheduler/Trigger/Runtime 的执行输入；必须在状态切换前复用唯一 Runtime Contract。
+        # 这样可以阻止空 nodes、非法 node type 等不可执行定义进入 published 状态，避免后台 Scheduler 持续消费坏版本。
+        WorkflowRuntime.validate_definition(version.definition)
+
         previous_id = workflow.published_version_id
         if previous_id and previous_id != version.id:
             previous = (await self.db.execute(select(WorkflowVersion).where(WorkflowVersion.id == previous_id))).scalar_one_or_none()
