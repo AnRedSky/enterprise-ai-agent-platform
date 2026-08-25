@@ -12,26 +12,24 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 已包含 Scheduler Browser E2E 的 UI 选择器修复、稳定 metadata test hooks，以及 Workflow Trigger E2E 的 API Client / Auth Contract / Workflow Version Contract 修复。
-
-开发者最新本地执行表明，Frontend Regression Gate 已通过；Workflow Trigger Browser E2E 已进入真实浏览器场景，但在页面导航阶段失败：测试访问了 `/workflow-triggers`，而当前正式前端路由为 `/workflows/triggers`，因此页面实际被路由守卫重定向，Playwright 找不到 `Workflow Trigger Governance` 标题。
+最新远端 `main` 已完成 Workflow Trigger Browser E2E 的 API Client、Auth、Workflow Version、正式路由 Contract 对齐。开发者最新本地反馈显示 Frontend Regression Gate 已实际通过 79 tests，production build 也已通过；Browser E2E 已进入正式 `/workflows/triggers` 页面导航，但因测试未把真实登录返回的 Session 写入浏览器 localStorage，认证路由守卫将页面导向登录页，导致标题断言失败。
 
 ## 本轮工程变更
 
 - `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：
-  - 将浏览器导航从不存在的旧路径 `/workflow-triggers` 修正为正式路由 `/workflows/triggers`；
-  - 保留真实 Backend HTTP、正式 Auth / Workflow Version Contract 与 Scheduler metadata test hooks。
-- `docs/04-errors/2026-08-25-browser-e2e-route-mismatch.md`：记录本轮实际页面路由 Contract 漂移及修复边界。
-- `docs/03-acceptance/PHASE_2_4_ACCEPTANCE.md`：同步当前 Browser Gate 实际失败事实与重新验收要求。
-- 未修改 Workflow Trigger Backend Contract、Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
+  - 使用真实 `/auth/login` 返回的 `access_token`、`roles`、`user_id` 建立正式浏览器 Session；
+  - 保持正式路由 `/workflows/triggers`；
+  - 不修改生产 Router、Backend Auth Contract 或 Scheduler Runtime。
+- `docs/04-errors/2026-08-25-browser-e2e-session-contract.md`：记录本轮 Browser Session Contract 漂移及修复边界。
+- 当前 Browser Gate 尚未由开发者重新执行，因此不得标记为通过。
 
-## 已完成的 Browser Gate
+## 已完成的 Browser / Frontend Gate
 
 ```text
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
-Frontend Regression Gate：本地实际通过
-Workflow Trigger Browser Gate：已进入真实浏览器场景；当前因 E2E 使用旧前端路由失败，修复后等待开发者重新执行
+Frontend Regression Gate：本地实际通过（79 passed + production build）
+Workflow Trigger Browser Gate：已进入正式路由，但本轮因 Browser Session 未建立而失败；修复后等待开发者重新执行
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
@@ -41,7 +39,7 @@ Workflow Trigger Browser Gate：已进入真实浏览器场景；当前因 E2E �
 ```text
 Frontend Vitest + production build
       ↓
-修复 Browser E2E 测试实现的 API Client / Auth / Version / Route Contract 漂移
+修复 Browser E2E 测试实现的 API Client / Auth / Version / Route / Browser Session Contract 漂移
       ↓
 Browser Scheduler Gate 重新执行
       ↓
