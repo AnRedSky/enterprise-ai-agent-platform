@@ -167,6 +167,7 @@ class WorkflowWorker:
                         version,
                         execution.created_by,
                         allow_legacy_empty_nodes=allow_legacy_empty_nodes,
+                        worker_owner=self.owner,
                     ),
                     timeout=execution_timeout,
                 )
