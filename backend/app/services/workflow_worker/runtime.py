@@ -25,7 +25,16 @@ logger = logging.getLogger(__name__)
 class WorkflowWorker:
     """独立 Worker Service 的 PostgreSQL Execution 消费器。"""
 
-    def __init__(self, poll_interval_seconds: float = 1.0, concurrency: int = 4, lease_seconds: int = 60):
+    DEFAULT_POLL_INTERVAL_SECONDS = 0.2
+    DEFAULT_CONCURRENCY = 8
+    DEFAULT_LEASE_SECONDS = 60
+
+    def __init__(
+        self,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        concurrency: int = DEFAULT_CONCURRENCY,
+        lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    ):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds 必须大于 0")
         if isinstance(concurrency, bool) or concurrency < 1:
@@ -40,17 +49,7 @@ class WorkflowWorker:
         self._semaphore = asyncio.Semaphore(concurrency)
 
     async def claim_one(self, now: datetime | None = None) -> WorkflowExecution | None:
-        """原子认领一个 pending Execution。
-
-        Args:
-            now: 本次认领使用的 UTC 时间；未传入时使用当前时间。
-
-        Returns:
-            已由当前 Worker 获得短租约的 Execution；没有可消费任务时返回 None。
-
-        Raises:
-            数据库异常向上抛出，由 Worker 主循环记录并继续运行。
-        """
+        """原子认领一个 pending Execution。"""
         now = now or datetime.now(UTC)
         now_naive = now.replace(tzinfo=None)
         lease_expires_at = now_naive + timedelta(seconds=self.lease_seconds)
@@ -77,17 +76,7 @@ class WorkflowWorker:
             return execution
 
     async def execute_claimed(self, execution_id) -> None:
-        """执行已认领的 Workflow Execution。
-
-        Args:
-            execution_id: PostgreSQL 中 Workflow Execution 的 UUID。
-
-        Returns:
-            None。执行结果与状态由 WorkflowExecutionService 持久化。
-
-        Raises:
-            Runtime 异常由调用层捕获并记录；不会终止 Worker 主循环。
-        """
+        """执行已认领的 Workflow Execution。"""
         async with SessionLocal() as db:
             execution = (
                 await db.execute(
@@ -128,11 +117,7 @@ class WorkflowWorker:
                     await db.commit()
 
     async def dispatch_once(self) -> int:
-        """批量认领并并发执行当前可用任务。
-
-        Returns:
-            本轮成功认领的 Execution 数量。
-        """
+        """批量认领并并发执行当前可用任务。"""
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
             execution = await self.claim_one()
