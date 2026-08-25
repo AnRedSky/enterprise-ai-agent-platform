@@ -12,23 +12,20 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 已完成 Workflow Trigger Browser E2E 的 API Client、Auth、Workflow Version、正式路由、Browser Session Contract 对齐。最新开发者本地反馈显示 Frontend Regression Gate 已实际通过 79 tests，production build 也已通过；Browser E2E 已成功进入正式 `/workflows/triggers` 页面，但 Element Plus `el-select` 内部 readonly input 的 pointer event 被 suffix SVG 拦截，导致 Trigger 类型选择步骤超时。
+当前远端 `main` 已完成 Workflow Trigger Browser E2E 的 API Client、Auth、Workflow Version、正式路由、Browser Session、Element Plus Select Contract 对齐。最新开发者本地反馈显示 Frontend Regression Gate 已实际通过 79 tests，production build 也已通过；Browser E2E 已进入正式 `/workflows/triggers` 页面并完成 Trigger 类型选择，但随后测试实现因错误捕获 `expect.poll(...).toMatchObject(...)` 的返回值而得到 `undefined`，在读取 `persistedCreatedTrigger.id` 时失败。
 
-本轮已完成针对该真实 UI Contract 的 E2E 修复：为 Trigger 类型 Select 增加稳定 `data-testid`，并让 Playwright 点击 Select 根节点；同时保留真实注册、登录、Browser Session、Frontend UI、Backend HTTP 和 Scheduler 持久化链路，不通过强制事件或放宽业务断言绕过问题。
+本轮针对该真实测试实现错误进行修复：将 Trigger 持久化等待改为独立的真实 HTTP 轮询函数，只有查询到 PostgreSQL 已持久化的目标 Trigger 后才返回实体；保留真实注册、登录、Browser Session、Frontend UI、Backend HTTP 和 Scheduler 持久化链路，不通过放宽业务断言或构造测试数据绕过问题。
 
 **当前 Browser Gate 尚未由开发者重新执行，因此不得标记为通过。**
 
 ## 本轮工程变更
 
 - `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：
-  - 使用真实 `/auth/login` 返回的 `access_token`、`roles`、`user_id` 建立正式浏览器 Session；
-  - 保持正式路由 `/workflows/triggers`；
-  - 使用稳定 `workflow-trigger-type-select` test hook 点击 Element Plus Select 根节点。
-- `frontend/src/views/workflow-triggers/index.vue`：
-  - 为 Trigger 类型 `el-select` 增加 `data-testid="workflow-trigger-type-select"`；
-  - 未修改生产业务逻辑、Router、Backend Auth Contract 或 Scheduler Runtime。
+  - 新增中文职责明确的 `waitForPersistedTrigger` 自动化等待函数；
+  - 不再把 Playwright `expect.poll().toMatchObject()` 的断言结果误当作业务实体；
+  - 继续通过真实 HTTP 查询确认 Trigger 已持久化，再读取其 `id` 进行 Scheduler 状态验证。
 - `docs/04-errors/2026-08-25-browser-e2e-session-contract.md`：
-  - 记录 Browser Session Contract 漂移及 Element Plus Select pointer-event Contract 问题、根因和修复边界。
+  - 增加本轮 E2E 测试实现错误的根因、修复边界和验证要求。
 
 ## 已完成的 Browser / Frontend Gate
 
@@ -36,7 +33,7 @@
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
 Frontend Regression Gate：本地实际通过（79 passed + production build）
-Workflow Trigger Browser Gate：本轮进入正式页面后在 Element Plus Select 交互处失败；已修复，等待开发者重新执行
+Workflow Trigger Browser Gate：本轮已进入正式页面并完成 Select 交互，但在测试等待实体的实现错误处失败；已修复，等待开发者重新执行
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
@@ -46,7 +43,7 @@ Workflow Trigger Browser Gate：本轮进入正式页面后在 Element Plus Sele
 ```text
 Frontend Vitest + production build
       ↓
-修复 Browser E2E 测试实现的 API Client / Auth / Version / Route / Browser Session / UI Select Contract 漂移
+修复 Browser E2E 测试实现的 API Client / Auth / Version / Route / Browser Session / UI Select / Persistence Poll Contract 漂移
       ↓
 Browser Scheduler Gate 重新执行
       ↓
