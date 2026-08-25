@@ -3,8 +3,23 @@ Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Scheduler Real Restart Acceptance"
 Write-Host "============================================================"
 
+function Assert-NoProjectSchedulerOnPort8000 {
+  # Restart Acceptance 必须保证目标 Trigger 在 PostgreSQL 中只有一个 Scheduler worker 能够竞争。
+  # bootstrap 已经改为动态端口，因此这里检查的不是端口可用性，而是开发机常见的项目 API/Scheduler 是否仍在运行。
+  $connections = @(Get-NetTCPConnection -LocalAddress "127.0.0.1" -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue)
+  foreach($connection in $connections){
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($connection.OwningProcess)" -ErrorAction SilentlyContinue
+    if($process -and $process.CommandLine -match "app\.main:app"){
+      throw "检测到项目 API/Scheduler 仍监听 127.0.0.1:8000 (PID=$($connection.OwningProcess))。Scheduler restart acceptance 要求目标 PostgreSQL 只有测试自身的 Scheduler worker；请先停止该 API/Scheduler 进程后重新执行本 Gate。"
+    }
+    Write-Host "[WARN] 127.0.0.1:8000 被其他进程占用，但未识别为本项目 app.main:app；继续执行。"
+  }
+}
+
+Assert-NoProjectSchedulerOnPort8000
+
 # 该 Gate 需要一个仅由自身控制的临时 API/Scheduler 进程。
-# 不再固定占用 8000，而是启动前申请本机空闲端口，避免开发环境已有 API 服务时被无关端口状态阻断。
+# 不再固定占用 8000，而是启动前申请本机空闲端口作为 fixture bootstrap；真正 restart acceptance 的 Scheduler 仍由测试代码自行申请独立端口。
 $bootstrapListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
 try {
   $bootstrapListener.Start()
@@ -41,6 +56,7 @@ try{
 
   $context=Get-Content $contextFile -Raw|ConvertFrom-Json
   $env:ACCESS_TOKEN=[string]$context.ACCESS_TOKEN
+  # 通用 Real API Workflow ID 仅由 bootstrap 兼容输出；restart acceptance 已改为自行创建可执行 Workflow，避免共享 Fixture。
   $env:TRIGGER_WORKFLOW_ID=[string]$context.TRIGGER_WORKFLOW_ID
 
   Write-Host "[3/3] Start/stop/restart real Uvicorn process and verify PostgreSQL recovery"
