@@ -8,7 +8,16 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import UTC, datetime
+from pathlib import Path
+
+# 该脚本位于 backend/scripts/dev；直接执行时 Python 默认只把脚本目录加入 sys.path。
+# 将 backend 根目录显式加入路径，保证 `uv run python .\scripts\dev\...py` 与
+# `python -m ...` 一样能够解析正式 app 包入口，避免把工作目录偶然性当成运行前提。
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from sqlalchemy import select
 
