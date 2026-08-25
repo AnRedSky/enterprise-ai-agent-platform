@@ -27,7 +27,9 @@ Runtime  = 唯一执行实现
 - Worker 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 认领 pending Execution；
 - Worker 复用唯一 `WorkflowExecutionService` 和 `WorkflowRuntime`；
 - Worker 不实现第二套 Trigger、Scheduler、Runtime、Provider 或权限逻辑；
-- Scheduler / Worker Real Acceptance 改为真实启动两个独立进程。
+- Scheduler / Worker Real Acceptance 改为真实启动两个独立进程；
+- `WorkflowExecutionService` 增加 Worker ownership fencing，旧 Worker 失去 lease 后不能继续推进 Execution / Node 状态；
+- Worker 将 ownership 失效视为 stale consumer，主动放弃任务而不是把竞争结果记录为普通 Runtime 失败。
 
 ## 3. 当前执行链
 
@@ -45,7 +47,7 @@ WorkflowExecution(status=pending)
    │
    ▼
 Worker Service
-   │ claim + lease
+   │ claim + lease + ownership fence
    ▼
 WorkflowExecutionService.run()
    │
@@ -91,6 +93,7 @@ worker_attempt
 
 - claim pending Execution；
 - Worker lease；
+- ownership fencing；
 - 并发执行；
 - 调用正式 WorkflowExecutionService。
 
@@ -110,19 +113,23 @@ Scheduler 创建的历史兼容 Execution 保留 `scheduled_slot` 元数据。Wo
 
 ## 7. 当前风险边界
 
-本阶段 Worker lease 只保护 `pending → Worker claim`。
+Worker lease 现在同时承担两层职责：
 
-如果 Runtime 已进入 `running` 后 Worker 进程崩溃，本阶段不新增自动 resume；这是后续 Runtime durable execution / checkpoint 任务，而不是通过 Worker 伪造恢复逻辑解决。
+1. `pending → Worker claim` 的消费 ownership；
+2. Runtime 每次 Execution / Node 状态转换时的 ownership fencing。
+
+如果 Runtime 已进入 `running` 后 Worker 进程崩溃，本阶段仍不新增自动 resume；这是后续 Runtime durable execution / checkpoint 任务，而不是通过 Worker 伪造恢复逻辑解决。
 
 ## 8. 测试顺序
 
 ```text
-① Worker Unit
-② Backend Regression
-③ Alembic upgrade head
-④ Scheduler/Worker Real Acceptance
-⑤ Frontend Regression（受 API Contract 影响时）
-⑥ Browser E2E（受 Trigger 行为影响时）
+① Worker ownership fencing Unit
+② Worker Unit
+③ Backend Regression
+④ Alembic upgrade head
+⑤ Scheduler/Worker Real Acceptance
+⑥ Frontend Regression（受 API Contract 影响时）
+⑦ Browser E2E（受 Trigger 行为影响时）
 ```
 
 本阶段实际结果只能在开发者执行后填写。
