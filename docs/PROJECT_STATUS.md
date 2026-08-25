@@ -12,14 +12,14 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 已包含 Scheduler Browser E2E 两轮选择器问题修复。最新修复针对 Scheduler 状态卡片实际使用 Element Plus `el-descriptions` 的页面结构，将测试从错误的 `cell` role 断言调整为稳定的描述项业务文本断言。
+当前远端 `main` 已包含 Scheduler Browser E2E 的 UI 选择器修复以及稳定 metadata test hooks。
 
-开发者在 `cca981b` 后本地重新执行 Workflow Trigger Browser Gate，Scheduler 状态接口轮询已经成功，但暴露出新的 UI 定位问题：`.scheduler-card` 内不存在测试所假设的 `cell` role，导致 `UTC` 定位超时。
+开发者最新本地执行表明，Frontend Regression Gate 已通过；Workflow Trigger Browser E2E 在测试收集阶段发现新的测试实现错误：`workflow-trigger-governance.spec.ts` 引用了远端不存在的 `frontend/tests/e2e/support/api-client` 模块，因此尚未进入实际浏览器场景执行。
 
 ## 本轮工程变更
 
-- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将 Scheduler 状态字段断言从 `getByRole("cell")` 调整为针对实际 `el-descriptions` UI 语义的精确文本断言，覆盖时区、Misfire、Catch-up Limit 及对应值。
-- `docs/04-errors/2026-08-25-browser-e2e-scheduler-card-description-selector.md`：记录本次本地实际失败、生产 UI 结构根因、修复边界与重新验收要求。
+- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：移除不存在的 `./support/api-client` 依赖，恢复使用 Playwright `APIRequestContext` 建立真实 Backend HTTP 客户端；保留 Scheduler metadata test hooks。
+- `docs/04-errors/2026-08-25-browser-e2e-missing-api-client.md`：记录本次本地实际失败、悬空 import 根因、修复边界与重新验收要求。
 - 未修改 Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
 
 ## 已完成的 Browser Gate
@@ -27,7 +27,8 @@
 ```text
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
-Workflow Trigger Browser Gate：当前仍处于本轮选择器修复后的待本地重新执行状态
+Frontend Regression Gate：本地实际通过
+Workflow Trigger Browser Gate：当前因测试模块悬空 import 失败，修复后等待开发者重新执行
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
@@ -36,6 +37,8 @@ Workflow Trigger Browser Gate：当前仍处于本轮选择器修复后的待本
 
 ```text
 Frontend Vitest + production build
+      ↓
+修复 Browser E2E 测试实现的悬空 import
       ↓
 Browser Scheduler Gate 重新执行
       ↓
@@ -53,7 +56,7 @@ Phase 2.4 Passed 评估
 ## 当前禁止事项
 
 - 不创建第二套 Scheduler / Repository / Provider / Execution / slot key 实现；
-- 不通过修改测试断言掩盖生产 Runtime metadata Contract；本轮修改仅使断言匹配实际生产 UI 组件语义；
+- 不通过修改测试断言掩盖生产 Runtime metadata Contract；测试应匹配真实生产 UI 语义并使用稳定 test hooks；
 - 不使用 JSON fixture 替代真实 PostgreSQL Scheduler 状态；
 - 不创建兼容垫片、旧入口转发或功能分支；
 - 不把 GitHub Actions 结果当作本地开发 Gate 或验收结果。

@@ -1,13 +1,20 @@
-import { expect, test } from "@playwright/test";
-import { createApiClient, apiPath, type ApiClient } from "./support/api-client";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 
-// Workflow Trigger Governance completes the real scheduled browser contract.
-test("Workflow Trigger Governance completes the real scheduled browser contract", async ({ page, request }) => {
-  const api: ApiClient = createApiClient(request);
+function normalizeApiOrigin(value: string): string {
+  return value.replace(/\/+$/, "").replace(/\/api\/v1$/, "");
+}
+
+const apiOrigin = normalizeApiOrigin(process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1");
+const apiPath = (path: string): string => `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
+
+// Workflow Trigger Governance 完成真实的定时触发器浏览器契约验证。
+test("Workflow Trigger Governance completes the real scheduled browser contract", async ({ page, playwright }) => {
+  test.setTimeout(60_000);
+
   const unique = Date.now();
   const email = `e2e-workflow-trigger-${unique}@example.com`;
   const password = "TestPassword123!";
-  let token = "";
+  const api: APIRequestContext = await playwright.request.newContext({ baseURL: apiOrigin });
 
   try {
     const register = await api.post(apiPath("/auth/register"), {
@@ -20,7 +27,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     });
     expect(login.ok()).toBeTruthy();
     const loginBody = await login.json();
-    token = loginBody.access_token;
+    const token = loginBody.access_token as string;
     expect(token).toBeTruthy();
     const headers = { Authorization: `Bearer ${token}` };
 
@@ -36,9 +43,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     const versionResponse = await api.post(apiPath(`/workflows/${workflow.id}/versions`), {
       headers,
-      data: {
-        graph: { nodes: [], edges: [] },
-      },
+      data: { graph: { nodes: [], edges: [] } },
     });
     expect(versionResponse.ok()).toBeTruthy();
     const version = await versionResponse.json();
