@@ -114,12 +114,31 @@ class WorkflowRuntime:
         return min(policy["max_backoff_ms"], ceiling_ms + jitter_ms) / 1000
 
     @classmethod
-    def validate_definition(cls, definition: dict) -> list[dict]:
+    def validate_definition(cls, definition: dict, *, allow_legacy_empty_nodes: bool = False) -> list[dict]:
+        """校验 Workflow Definition，并在明确授权时兼容历史空节点版本。
+
+        Args:
+            definition: Workflow Definition 对象。
+            allow_legacy_empty_nodes: 仅供已发布历史版本的执行路径使用；新版本发布与普通执行必须保持默认严格校验。
+
+        Returns:
+            经过 Runtime Contract 归一化后的节点列表；历史空节点兼容数据返回空列表。
+
+        Raises:
+            HTTPException: Definition 或节点不满足当前 Runtime Contract 时抛出 422。
+        """
         if not isinstance(definition, dict):
             raise HTTPException(422, "Workflow definition 必须为对象")
         nodes = definition.get("nodes")
-        if not isinstance(nodes, list) or not nodes:
-            raise HTTPException(422, "Workflow definition 必须包含非空 nodes")
+        if not isinstance(nodes, list):
+            raise HTTPException(422, "Workflow definition 必须包含 nodes 数组")
+        if not nodes:
+            if allow_legacy_empty_nodes:
+                # 历史已发布版本可能在旧 Contract 下使用空 nodes 表示无操作 Workflow。
+                # 兼容只允许既有发布记录；新发布仍由严格默认分支拒绝。
+                nodes = []
+            else:
+                raise HTTPException(422, "Workflow definition 必须包含非空 nodes")
         runtime_config = definition.get("config") or {}
         if not isinstance(runtime_config, dict):
             raise HTTPException(422, "Workflow config 必须为对象")
@@ -148,15 +167,27 @@ class WorkflowRuntime:
             normalized.append({"id": node_id, "type": node_type, "config": config})
         return normalized
 
-    async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False) -> dict:
-        """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。"""
+    async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False,
+                      allow_legacy_empty_nodes: bool = False) -> dict:
+        """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。
+
+        Args:
+            execution: 待执行的 Workflow Execution。
+            version: 当前执行对应的 Workflow Version。
+            actor_id: 执行发起者身份。
+            is_admin: 是否使用管理员权限执行 Agent 节点。
+            allow_legacy_empty_nodes: 是否允许已发布历史版本的空 nodes 兼容执行。
+
+        Returns:
+            Workflow 最终输出数据。
+        """
         if self.execution_service is None:
             from app.services.workflow import WorkflowExecutionService
 
             service = WorkflowExecutionService(self.db)
         else:
             service = self.execution_service
-        nodes = self.validate_definition(version.definition)
+        nodes = self.validate_definition(version.definition, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
         runtime_config = version.definition.get("config") or {}
         workflow_timeout = self.resolve_timeout_ms(runtime_config)
         retry_budget = runtime_config.get("retry_budget") or {}
