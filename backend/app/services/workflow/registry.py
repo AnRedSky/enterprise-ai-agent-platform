@@ -134,7 +134,9 @@ class WorkflowRegistry:
             raise HTTPException(409, "当前版本状态不允许发布")
 
         # 延迟导入避免 Workflow Registry 与 Runtime/Trigger 聚合入口形成循环依赖。
-        # 发布版本会直接成为 Scheduler/Trigger/Runtime 的执行输入，必须复用唯一 Runtime Contract。
+        # 已发布版本的幂等路径位于本校验之前，这是有意保留的历史数据兼容边界：历史版本可能使用旧 Definition Contract，
+        # 只允许继续作为当前已发布版本被幂等确认，不允许通过该路径把它重新发布成新的活动版本。
+        # 任何新的 draft/testing -> published 状态迁移都必须复用唯一 Runtime Contract，防止不可执行定义进入发布状态。
         from app.runtime.workflow import WorkflowRuntime
 
         WorkflowRuntime.validate_definition(version.definition)

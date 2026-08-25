@@ -12,12 +12,16 @@ def _result(value):
     return result
 
 
+def _valid_definition(node_id="node-1", node_type="input"):
+    return {"nodes": [{"id": node_id, "type": node_type, "config": {}}]}
+
+
 @pytest.mark.asyncio
 async def test_publish_sets_active_version_and_is_idempotent():
     db = MagicMock(); db.execute = AsyncMock(return_value=_result(None)); db.commit = AsyncMock(); db.refresh = AsyncMock(); db.add = MagicMock()
     workflow_id = uuid4(); version_id = uuid4(); actor_id = uuid4()
     workflow = Workflow(id=workflow_id, owner_id=actor_id, name="demo", status="draft")
-    version = WorkflowVersion(id=version_id, workflow_id=workflow_id, version="1.0.0", definition={"nodes": []}, status="draft", created_by=actor_id)
+    version = WorkflowVersion(id=version_id, workflow_id=workflow_id, version="1.0.0", definition=_valid_definition(), status="draft", created_by=actor_id)
     registry = WorkflowRegistry(db)
     published = await registry.publish(workflow, version, actor_id)
     assert published is version; assert version.status == "published"; assert workflow.status == "published"; assert workflow.published_version_id == version_id
@@ -32,10 +36,34 @@ async def test_publish_deprecates_previous_active_version():
     workflow_id = uuid4(); actor_id = uuid4()
     workflow = Workflow(id=workflow_id, owner_id=actor_id, name="demo", status="published", published_version_id=previous_id)
     previous = WorkflowVersion(id=previous_id, workflow_id=workflow_id, version="1.0.0", definition={"nodes": []}, status="published", created_by=actor_id)
-    current = WorkflowVersion(id=uuid4(), workflow_id=workflow_id, version="1.1.0", definition={"nodes": ["new"]}, status="testing", created_by=actor_id)
+    current = WorkflowVersion(id=uuid4(), workflow_id=workflow_id, version="1.1.0", definition=_valid_definition("new"), status="testing", created_by=actor_id)
     db.execute.return_value = _result(previous)
     published = await WorkflowRegistry(db).publish(workflow, current, actor_id)
     assert published is current; assert previous.status == "deprecated"; assert current.status == "published"; assert workflow.published_version_id == current.id; assert workflow.status == "published"
+
+
+@pytest.mark.asyncio
+async def test_publish_keeps_historical_published_legacy_definition_idempotent():
+    """历史已发布版本允许原样幂等读取，但不能借此绕过新版本发布校验。"""
+    db = MagicMock(); db.commit = AsyncMock(); db.refresh = AsyncMock(); db.add = MagicMock()
+    workflow_id = uuid4(); version_id = uuid4(); actor_id = uuid4()
+    workflow = Workflow(id=workflow_id, owner_id=actor_id, name="legacy", status="published", published_version_id=version_id)
+    version = WorkflowVersion(
+        id=version_id,
+        workflow_id=workflow_id,
+        version="0.9.0",
+        definition={"nodes": []},
+        status="published",
+        created_by=actor_id,
+    )
+
+    published = await WorkflowRegistry(db).publish(workflow, version, actor_id)
+
+    assert published is version
+    assert version.status == "published"
+    assert workflow.published_version_id == version_id
+    db.commit.assert_not_awaited()
+    db.add.assert_not_called()
 
 
 @pytest.mark.asyncio
