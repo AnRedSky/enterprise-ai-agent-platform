@@ -10,14 +10,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.services.workflow import WorkflowExecutionService
+from app.runtime.workflow import WorkflowRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ class WorkflowWorker:
     DEFAULT_POLL_INTERVAL_SECONDS = 0.2
     DEFAULT_CONCURRENCY = 8
     DEFAULT_LEASE_SECONDS = 60
+    EXECUTION_TIMEOUT_GRACE_SECONDS = 5
 
     def __init__(
         self,
@@ -49,7 +52,16 @@ class WorkflowWorker:
         self._semaphore = asyncio.Semaphore(concurrency)
 
     async def claim_one(self, now: datetime | None = None) -> WorkflowExecution | None:
-        """原子认领一个 pending Execution。"""
+        """原子认领一个 pending Execution。
+
+        Args:
+            now: 可选的当前时间；主要用于确定性测试和租约计算。
+
+        Returns:
+            成功认领的 WorkflowExecution；没有可消费任务时返回 None。
+
+        事务边界：在 PostgreSQL 行锁事务中写入 Worker owner、租约到期时间和尝试次数并立即提交。
+        """
         now = now or datetime.now(UTC)
         now_naive = now.replace(tzinfo=None)
         lease_expires_at = now_naive + timedelta(seconds=self.lease_seconds)
@@ -75,8 +87,20 @@ class WorkflowWorker:
             await db.commit()
             return execution
 
-    async def execute_claimed(self, execution_id) -> None:
-        """执行已认领的 Workflow Execution。"""
+    async def execute_claimed(self, execution_id: UUID) -> None:
+        """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
+
+        Args:
+            execution_id: 已由当前 Worker owner 认领的 Workflow Execution ID。
+
+        Returns:
+            无；Execution 最终状态由 WorkflowExecutionService 持久化。
+
+        Raises:
+            Exception: Workflow Runtime 原始执行异常会继续向 Worker 守护层传播。
+
+        设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，并且不超过 Worker lease。
+        """
         async with SessionLocal() as db:
             execution = (
                 await db.execute(
@@ -99,14 +123,41 @@ class WorkflowWorker:
             ).scalar_one_or_none()
             if version is None or workflow is None:
                 raise RuntimeError("Worker Execution 关联的 Workflow/Version 不存在")
+
             allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {})
+            runtime_config = version.definition.get("config") if isinstance(version.definition, dict) else {}
+            workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms(runtime_config or {})
+            execution_timeout = min(
+                workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS,
+                max(1, self.lease_seconds - 1),
+            )
+            service = WorkflowExecutionService(db)
             try:
-                await WorkflowExecutionService(db).run(
-                    execution,
-                    version,
-                    execution.created_by,
-                    allow_legacy_empty_nodes=allow_legacy_empty_nodes,
+                await asyncio.wait_for(
+                    service.run(
+                        execution,
+                        version,
+                        execution.created_by,
+                        allow_legacy_empty_nodes=allow_legacy_empty_nodes,
+                    ),
+                    timeout=execution_timeout,
                 )
+            except asyncio.TimeoutError as exc:
+                current = (
+                    await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))
+                ).scalar_one_or_none()
+                if current is not None and current.status == "running":
+                    try:
+                        await service.transition(
+                            current,
+                            "failed",
+                            error_code="WORKER_EXECUTION_TIMEOUT",
+                            error_message="Worker Execution 超过受控执行时间",
+                            actor_id=current.created_by,
+                        )
+                    except HTTPException:
+                        await db.rollback()
+                raise RuntimeError("Worker Execution 超过受控执行时间") from exc
             finally:
                 current = (
                     await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))
@@ -117,7 +168,11 @@ class WorkflowWorker:
                     await db.commit()
 
     async def dispatch_once(self) -> int:
-        """批量认领并并发执行当前可用任务。"""
+        """批量认领并并发执行当前可用任务。
+
+        Returns:
+            本轮成功认领的 Execution 数量。
+        """
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
             execution = await self.claim_one()
@@ -128,7 +183,7 @@ class WorkflowWorker:
             await asyncio.gather(*tasks)
         return len(tasks)
 
-    async def _run_with_guard(self, execution_id) -> None:
+    async def _run_with_guard(self, execution_id: UUID) -> None:
         """隔离单个任务异常，避免单个 Workflow 失败停止整个 Worker。"""
         async with self._semaphore:
             try:

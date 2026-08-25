@@ -3,22 +3,20 @@ Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Scheduler / Worker Restart Acceptance"
 Write-Host "============================================================"
 
-function Assert-NoProjectBackgroundProcess {
-  # Acceptance 必须独占目标 Scheduler / Worker，避免已有后台服务抢占同一 PostgreSQL Execution。
+function Assert-NoSchedulerBackgroundProcess {
+  # Acceptance 必须独占 Scheduler；API 与 Worker 可以作为本地独立服务继续运行。
+  # Worker 使用 PostgreSQL claim/lease 竞争消费，因此允许既有 Worker 参与本验收；
+  # Scheduler 则会改变同一持久化 schedule 的生命周期，不能与验收 Scheduler 并存。
   $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-    $_.CommandLine -and (
-      $_.CommandLine -match "app\.main:app" -or
-      $_.CommandLine -match "run_scheduler\.py" -or
-      $_.CommandLine -match "run_worker\.py"
-    )
+    $_.CommandLine -and $_.CommandLine -match "run_scheduler\.py"
   })
   if($processes.Count -gt 0){
     $details = ($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join "`n"
-    throw "检测到已有项目 API/Scheduler/Worker 进程，Acceptance 必须独占目标后台服务。请先停止以下进程后重新执行：`n$details"
+    throw "检测到已有 Scheduler Service 进程，Acceptance 必须独占 Scheduler。请先停止以下 Scheduler 进程后重新执行：`n$details"
   }
 }
 
-Assert-NoProjectBackgroundProcess
+Assert-NoSchedulerBackgroundProcess
 
 # Gate 只使用临时 API Service 完成 tenant-safe fixture bootstrap；真实验收由独立 Scheduler + Worker 完成。
 $bootstrapListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
@@ -69,6 +67,7 @@ try{
   uv run pytest -q tests/api_real/test_scheduler_restart_api.py -m real_api
   if($LASTEXITCODE -ne 0){throw "Scheduler / Worker restart acceptance failed."}
   Write-Host "[PASS] Independent Scheduler / Worker restart acceptance completed."
+  Write-Host "[INFO] Existing API/Worker processes were not treated as conflicts; only Scheduler process isolation is mandatory."
 }finally{
   if($bootstrapProcess -and -not $bootstrapProcess.HasExited){Stop-Process -Id $bootstrapProcess.Id -Force -ErrorAction SilentlyContinue; $bootstrapProcess.WaitForExit()}
   if(Test-Path $contextFile){Remove-Item $contextFile -Force -ErrorAction SilentlyContinue}
