@@ -168,9 +168,14 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
       lease_active: expect.any(Boolean),
     });
 
+    // Backend 持久化状态可能在页面首次点击“调度状态”之后才完成初始化；先确认真实 API 已可读，再刷新页面正式 UI Contract。
     const schedulerCard = page.locator(".scheduler-card");
     await expect(schedulerCard).toBeVisible();
-    await expect(schedulerCard.getByTestId("scheduler-timezone")).toHaveText("UTC");
+    const schedulerRefresh = schedulerCard.getByRole("button", { name: "刷新" });
+    if (await schedulerCard.getByTestId("scheduler-timezone").count() === 0) {
+      await schedulerRefresh.click();
+    }
+    await expect(schedulerCard.getByTestId("scheduler-timezone")).toHaveText("UTC", { timeout: 15_000 });
     await expect(schedulerCard.getByTestId("scheduler-misfire-policy")).toHaveText("skip");
     await expect(schedulerCard.getByTestId("scheduler-catch-up-limit")).toHaveText("10");
 
