@@ -25,16 +25,50 @@ function Get-ProcessByPattern {
   })
 }
 
+function Get-ServiceInstances {
+  param([string]$Pattern)
+
+  $allProcesses=@(Get-CimInstance Win32_Process -ErrorAction Stop)
+  $matches=@($allProcesses | Where-Object {
+    $_.CommandLine -and $_.CommandLine -match $Pattern
+  })
+  $byPid=@{}
+  foreach($process in $allProcesses){$byPid[[int]$process.ProcessId]=$process}
+
+  $instances=@{}
+  foreach($process in $matches){
+    $current=$process
+    $visited=@{}
+    while($current -and $byPid.ContainsKey([int]$current.ParentProcessId) -and $current.ParentProcessId -ne $current.ProcessId){
+      $parent=$byPid[[int]$current.ParentProcessId]
+      if($visited.ContainsKey([int]$parent.ProcessId)){break}
+      $visited[[int]$parent.ProcessId]=$true
+      if(-not ($parent.CommandLine -and $parent.CommandLine -match $Pattern)){break}
+      $current=$parent
+    }
+    $rootPid=[int]$current.ProcessId
+    if(-not $instances.ContainsKey($rootPid)){$instances[$rootPid]=@()}
+    $instances[$rootPid]+=$process
+  }
+  return $instances
+}
+
 function Assert-SchedulerAvailable {
-  $processes=Get-ProcessByPattern "run_scheduler\.py"
-  if($processes.Count -eq 0){
+  $instances=Get-ServiceInstances "run_scheduler\.py"
+  if($instances.Count -eq 0){
     throw "Required Scheduler Service is not running. Start it manually: uv run python run_scheduler.py"
   }
-  if($processes.Count -gt 1){
-    $details=($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join "`n"
-    throw "Multiple Scheduler Service processes detected. This acceptance requires exactly one Scheduler. Stop duplicate Scheduler processes manually and retry:`n$details"
+  if($instances.Count -gt 1){
+    $details=@()
+    foreach($entry in $instances.GetEnumerator()){
+      $details += "ServiceRootPID=$($entry.Key)"
+      $details += ($entry.Value | ForEach-Object { "  PID=$($_.ProcessId) ParentPID=$($_.ParentProcessId) CommandLine=$($_.CommandLine)" })
+    }
+    throw "Multiple Scheduler Service instances detected. This acceptance requires exactly one Scheduler instance. Stop duplicate Scheduler instances manually and retry:`n$($details -join "`n")"
   }
-  Write-Host "[INFO] Existing Scheduler PID=$($processes[0].ProcessId) CommandLine=$($processes[0].CommandLine)"
+  $entry=$instances.GetEnumerator() | Select-Object -First 1
+  Write-Host "[INFO] Existing Scheduler Service instance detected (root PID=$($entry.Key))."
+  $entry.Value | ForEach-Object { Write-Host "[INFO] Scheduler process PID=$($_.ProcessId) ParentPID=$($_.ParentProcessId)" }
 }
 
 function Assert-WorkerAvailable {
@@ -42,7 +76,7 @@ function Assert-WorkerAvailable {
   if($processes.Count -eq 0){
     throw "Required Worker Service is not running. Start it manually: uv run python run_worker.py"
   }
-  $processes | ForEach-Object { Write-Host "[INFO] Existing Worker PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
+  $processes | ForEach-Object { Write-Host "[INFO] Existing Worker PID=$($_.ProcessId) ParentPID=$($_.ParentProcessId) CommandLine=$($_.CommandLine)" }
 }
 
 try{
