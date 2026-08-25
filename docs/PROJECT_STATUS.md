@@ -8,7 +8,7 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；上一轮独立 Scheduler restart acceptance 已通过。**
-- Phase 2.5 Scheduler → Worker Execution Decoupling：**代码实现完成；本轮 Backend / Migration / Real Acceptance 待开发者本地执行。**
+- Phase 2.5 Scheduler → Worker Execution Decoupling：**代码实现完成；本轮 ownership fencing 修复已提交，Backend / Migration / Real Acceptance 待开发者本地重新执行。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
@@ -45,6 +45,7 @@ Scheduler Service
 Worker Service
     ├── claim pending Execution
     ├── worker lease
+    ├── ownership fencing
     └── WorkflowExecutionService.run()
               ↓
 WorkflowRuntime
@@ -90,7 +91,9 @@ Worker：
 - 复用唯一 `WorkflowExecutionService`；
 - 复用唯一 `WorkflowRuntime`；
 - 不实现 Scheduler slot / misfire / Trigger / Provider / Runtime 第二套规则；
-- 默认并发 4、claim lease 60s、poll 1s。
+- 默认并发 8、claim lease 60s、poll 0.2s；
+- 每次 Execution / Node 状态转换重新锁定 Execution 并验证 `worker_owner`，阻断失去 lease 的旧 Worker；
+- ownership 失效时将当前消费者安全丢弃，不再把并发竞争记录成普通 Runtime 失败。
 
 ### Database
 
@@ -121,6 +124,36 @@ scheduled_slot 存在 → 使用已有 Scheduler legacy compatibility
 
 不新增第二套 Definition validator。
 
+## Worker Ownership Fencing
+
+本轮本地运行发现 `Node 不允许从 running 到 running`，根因为 Worker lease 失效后旧消费者仍可以继续推进 Node 状态。
+
+修复后：
+
+```text
+Worker A claim
+    ↓
+worker_owner=A
+    ↓ lease 失效
+Worker B claim
+    ↓
+worker_owner=B
+    ↓
+Worker A 再次 transition
+    ↓
+409 ownership 已失效
+    ↓
+Worker A 放弃 stale consumer
+```
+
+不放宽 `running → running` 状态机，也不新增 running Execution 自动 resume。
+
+错误记录：
+
+```text
+docs/04-errors/2026-08-25-worker-node-running-concurrent-owner.md
+```
+
 ## 当前服务架构
 
 ```text
@@ -141,6 +174,7 @@ Worker Service
     └── WorkflowWorker
         ├── PostgreSQL pending claim
         ├── worker lease
+        ├── ownership fencing
         └── WorkflowExecutionService → WorkflowRuntime
 ```
 
@@ -148,15 +182,16 @@ API、Scheduler、Worker 三者共享正式 Domain / Infrastructure，但生命�
 
 ## 当前 Gate 状态
 
-本轮代码变更完成后，必须重新执行：
+本轮 ownership fencing 代码修复后，必须重新执行：
 
 ```text
-① Worker Unit
-② Backend default regression
-③ Database migration/head
-④ Scheduler + Worker Real Acceptance
-⑤ Frontend Regression（受范围影响时）
-⑥ Workflow Trigger Browser E2E（受范围影响时）
+① Worker ownership fencing Unit
+② Worker Unit
+③ Backend default regression
+④ Database migration/head
+⑤ Scheduler + Worker Real Acceptance
+⑥ Frontend Regression（受范围影响时）
+⑦ Workflow Trigger Browser E2E（受范围影响时）
 ```
 
 本文件不预填本轮测试通过结果。
@@ -171,7 +206,7 @@ Frontend Regression: 79 passed + production build
 Workflow Trigger Browser E2E: 1 passed
 ```
 
-以上结果属于上一轮服务化提交，不能作为 Phase 2.5 本轮代码变更后的验收结果。
+以上结果属于上一轮服务化提交，不能作为本轮 ownership fencing 修复后的验收结果。
 
 ## 本地启动
 
@@ -218,3 +253,4 @@ uv run python run_worker.py
 - `docs/02-phases/PHASE_2_5.md`
 - `docs/03-acceptance/PHASE_2_5_ACCEPTANCE.md`
 - `docs/PROJECT_STATUS.md`
+- `docs/04-errors/2026-08-25-worker-node-running-concurrent-owner.md`
