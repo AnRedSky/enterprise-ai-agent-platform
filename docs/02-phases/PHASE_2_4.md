@@ -1,6 +1,6 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate、真实服务重启 Acceptance 已完成；当前进入 Frontend API/UI 与 Browser E2E 验收。**
+> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate、真实服务重启 Acceptance 已完成；Frontend API/UI 已实现并完成针对异步初始化窗口的修复，当前等待开发者重新执行 Frontend 与 Browser E2E Gate。**
 > 评估日期：2026-08-25
 > 优先级：**P1**
 
@@ -142,14 +142,30 @@ Backend Scheduler API Contract 已向 Frontend 暴露正式只读入口，Fronte
 - Workflow Trigger 页面为 Scheduled Trigger 增加“调度状态”入口；
 - 页面展示 status、timezone、misfire、catch-up、next/last run、lease 与最近 Execution；
 - Trigger 禁用、删除或 Workflow 切换导致目标失效时，页面清理已选 Scheduler 状态，避免展示过期持久化数据；
-- API/View Vitest 与 Browser E2E 已补充对应验收断言，尚未由开发者本地执行，因此不能标记 Frontend/Browser Gate Passed。
+- Scheduler Runtime 在 Trigger 创建后存在异步初始化窗口时，Frontend 仅对“Scheduler 状态尚未初始化”执行有限重试，不复制 Scheduler 调度规则；
+- Vitest 已补充该初始化窗口的重试断言；
+- Browser E2E 已暴露两个工程性问题并完成修复：Workflow Trigger Gate 误执行其他领域场景，以及多个场景共享“一 Tenant 一 Organization”导致 Organization 数据互相污染；对应 Gate 已改为独立、可重复的场景隔离执行。
 
-## 11. 下一执行顺序
+## 11. Browser E2E 场景隔离
+
+当前 Organization 领域保持“一 Tenant 一 Organization”。为了让 Browser E2E 在本地可重复执行，不改变生产领域约束：
+
+- `backend/scripts/test/e2e/00_reset_browser_e2e_database.py` 仅清理本地 E2E 数据库的 Organization 根聚合及其级联数据；
+- `frontend/scripts/test/e2e/00_run_isolated_test.ps1` 在每个 Browser 场景前执行数据库隔离，再运行真实 Browser -> Vue -> Backend HTTP；
+- `01_run_workflow_trigger_e2e.ps1` 只执行 Scheduler Workflow Trigger 场景；
+- `02_run_organization_e2e.ps1` 逐个执行 Organization 场景；
+- `03_run_model_provider_e2e.ps1` 逐个执行 Model Provider/Profile 场景。
+
+该清理工具仅用于本地 Browser E2E，不得用于生产数据库，不替代 Alembic migration。
+
+## 12. 下一执行顺序
 
 ```text
 Frontend Release / Regression Gate
       ↓
 Browser / Frontend-Backend Scheduler E2E
+      ↓
+Organization / Model Provider Browser E2E
       ↓
 Backend default regression + Tenant Safe Real API Gate（再次确认）
       ↓
@@ -165,4 +181,11 @@ cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
 ```
 
-当前不记录 Phase 2.4 Passed，直到 Frontend 与 Browser E2E 的本地实际结果完成记录。
+Browser Scheduler Gate：
+
+```powershell
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+```
+
+当前不记录 Phase 2.4 Passed，直到上述 Frontend 与 Browser E2E Gate 由开发者本地实际执行并反馈通过。
