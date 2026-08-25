@@ -6,6 +6,9 @@ function normalizeApiOrigin(value: string): string {
 
 const apiOrigin = normalizeApiOrigin(process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1");
 const apiPath = (path: string): string => `/api/v1${path.startsWith("/") ? path : `/${path}`}`;
+const accessTokenStorageKey = "enterprise_agent_access_token";
+const rolesStorageKey = "enterprise_agent_roles";
+const userIdStorageKey = "enterprise_agent_user_id";
 
 // Workflow Trigger Governance 完成真实的定时触发器浏览器契约验证。
 test("Workflow Trigger Governance completes the real scheduled browser contract", async ({ page, playwright }) => {
@@ -52,6 +55,23 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(publishResponse.ok()).toBeTruthy();
 
     // 正式前端路由为 /workflows/triggers；不能使用不存在的旧路径 /workflow-triggers。
+    // 路由守卫依赖前端 localStorage Session，因此浏览器上下文必须使用真实登录返回值建立正式 Session。
+    await page.addInitScript(
+      ({ token: accessToken, roles, userId, tokenKey, rolesKey, userIdKey }) => {
+        localStorage.setItem(tokenKey, accessToken);
+        localStorage.setItem(rolesKey, JSON.stringify(roles || []));
+        localStorage.setItem(userIdKey, userId);
+      },
+      {
+        token,
+        roles: loginBody.roles || [],
+        userId: loginBody.user_id,
+        tokenKey: accessTokenStorageKey,
+        rolesKey: rolesStorageKey,
+        userIdKey: userIdStorageKey,
+      },
+    );
+
     await page.goto("/workflows/triggers");
     await expect(page.getByText("Workflow Trigger Governance", { exact: true })).toBeVisible();
 
