@@ -74,7 +74,7 @@ backend/
 
 `Scheduler` 不直接挂在 `app/` 根目录下，也不把领域代码移动到进程入口。`app/entrypoints` 只负责进程生命周期编排；真正的调度业务继续位于 `services/workflow_scheduler/`，符合 Backend 模块架构中“Service 负责领域规则、Runtime 负责执行编排、入口只负责进程启动”的边界。
 
-## 4. 启动方式
+## 4. 启动方式与进程身份
 
 ### API Service
 
@@ -82,6 +82,8 @@ backend/
 cd backend
 uv run python run.py
 ```
+
+`run.py` 的进程身份固定为 API Service，不读取 Scheduler 开关，也不会因为任何 Scheduler 配置而切换角色。
 
 等价入口：
 
@@ -98,22 +100,37 @@ cd backend
 uv run python run_scheduler.py
 ```
 
-Scheduler Service 不提供 HTTP API。其健康状态应通过后续独立的 process/metrics/lease observability 机制暴露，不在本次拆分中向 Scheduler 复制一套 HTTP 服务。
+`run_scheduler.py` 的进程身份固定为 Scheduler Service，不读取 `SCHEDULER_ENABLED` 之类的角色开关；启动该脚本就意味着启动 Scheduler。Scheduler Service 不提供 HTTP API，其健康状态应通过后续独立的 process/metrics/lease observability 机制暴露。
+
+### 禁止的双模式
+
+```text
+禁止：
+    SCHEDULER_ENABLED=false
+        ↓
+    run.py 变成 API
+    run_scheduler.py 变成“不启动 Scheduler”
+
+固定：
+    run.py          → API Service
+    run_scheduler.py → Scheduler Service
+```
+
+服务角色由启动入口确定，而不是由运行配置二选一。
 
 ## 5. 配置边界
 
-当前 `scheduler_enabled` 保留为 Scheduler Service 的启动开关：
+Scheduler 配置只用于 Scheduler 的运行参数，例如轮询间隔、数据库连接和其他运行策略；不再存在一个通过 `SCHEDULER_ENABLED` 在 API 与 Scheduler 之间切换进程角色的配置 Contract。
 
 ```text
 API Service
-    └── 不读取该开关来创建 Scheduler
+    └── 只负责 FastAPI HTTP 生命周期
 
 Scheduler Service
-    └── scheduler_enabled=true → 启动
-    └── scheduler_enabled=false → 明确拒绝启动
+    └── 只负责 ScheduledTriggerScheduler 生命周期
 ```
 
-这样可以避免出现“API 偶然关闭 Scheduler 后，系统悄悄回退到 API 内嵌 Scheduler”的双模式。
+如果部署系统不需要 Scheduler，应当不部署/不启动 `run_scheduler.py` 进程，而不是启动后通过配置把 Scheduler 变成“关闭模式”。
 
 ## 6. Worker Service 后续扩展原则
 
@@ -192,7 +209,7 @@ Redis / Queue Broker
 3. `run.py` 只启动 API；
 4. `run_scheduler.py` 只启动 Scheduler；
 5. Scheduler Service 复用唯一 `ScheduledTriggerScheduler`；
-6. `scheduler_enabled=false` 时 Scheduler 明确拒绝启动；
+6. 不存在通过 `SCHEDULER_ENABLED` 切换 API / Scheduler 角色的运行模式；
 7. 既有 Backend regression、Real API、Scheduler restart acceptance 继续作为独立 Gate；
 8. API Service 与 Scheduler Service 可以分别停止和重启，不需要修改业务代码；
 9. 不产生旧入口兼容垫片或第二套 Scheduler 实现。

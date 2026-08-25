@@ -47,12 +47,26 @@ Scheduler Service
 
 正式设计见 `docs/00-architecture/SERVICE_RUNTIME_ARCHITECTURE.md`。
 
+### 固定服务身份
+
+服务角色由启动入口唯一确定，不通过配置开关二选一：
+
+```text
+run.py
+    → 必然是 API Service
+
+run_scheduler.py
+    → 必然是 Scheduler Service
+```
+
+项目不使用 `SCHEDULER_ENABLED=false` 区分 API / Scheduler，也不提供“启动 Scheduler 脚本但通过配置关闭 Scheduler”的双模式。若部署环境不需要 Scheduler，应直接不启动 `run_scheduler.py`。
+
 验收要求：
 
 1. API `/health` 返回 `service=api`；
 2. API 进程启动不产生 Scheduler 后台 task；
 3. Scheduler 入口复用唯一 `ScheduledTriggerScheduler`；
-4. `scheduler_enabled=false` 时 Scheduler 入口明确拒绝启动；
+4. Scheduler Service 不依赖 `SCHEDULER_ENABLED` 或同类角色开关；
 5. API 与 Scheduler 的启动脚本互不调用对方；
 6. 不改变现有 API Contract、数据库模型、tenant isolation、slot/idempotency 与 misfire 规则；
 7. Worker Service 当前不创建空壳实现。
@@ -107,7 +121,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_wo
 
 ```powershell
 cd backend
-$env:SCHEDULER_ENABLED="false"
 uv run python run.py
 ```
 
@@ -135,7 +148,6 @@ uv run alembic upgrade head
 然后：
 
 ```powershell
-$env:SCHEDULER_ENABLED="true"
 uv run python run_scheduler.py
 ```
 

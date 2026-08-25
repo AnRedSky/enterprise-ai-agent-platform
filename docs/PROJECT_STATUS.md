@@ -16,6 +16,8 @@
 
 此前 API `lifespan` 会创建 `ScheduledTriggerScheduler`。虽然 PostgreSQL lease / slot 可以保护多实例 ownership 与幂等，但 API 横向扩容会同步增加 Scheduler 后台进程，使 HTTP 生命周期、发布重启与调度生命周期耦合。本轮将 Scheduler 生命周期移出 API，改为独立 `run_scheduler.py` 进程入口。
 
+本轮进一步明确：**服务角色由启动入口决定，而不是由配置开关决定。** `run.py` 永远是 API Service；`run_scheduler.py` 永远是 Scheduler Service。项目不再使用 `SCHEDULER_ENABLED=false` 之类的配置区分两类服务，也不通过该开关把 Scheduler 变成关闭模式。若部署环境不需要 Scheduler，应不启动 Scheduler Service 进程。
+
 ## 本轮工程变更
 
 ### 服务化进程入口
@@ -24,25 +26,29 @@
   - 建立独立进程入口模块边界。
 - `backend/app/entrypoints/scheduler.py`
   - 负责 Scheduler Service 生命周期编排；不实现 slot / lease / misfire 业务规则。
+  - 删除 `scheduler_enabled` 启动拒绝逻辑，确保 Scheduler 入口身份固定。
 - `backend/run.py`
   - 明确为 API Service 启动入口。
 - `backend/run_scheduler.py`
-  - 新增 Scheduler Service 独立启动入口。
+  - 明确为 Scheduler Service 独立启动入口。
+  - 启动信息不再打印 `scheduler_enabled`，避免暗示服务角色由配置切换。
 - `backend/app/main.py`
   - 删除 API lifespan 中的 Scheduler 创建、后台 task 与停止逻辑。
   - `/health` 增加 `service=api`，明确 API Service 身份。
+- `backend/app/core/config.py`
+  - 删除 `scheduler_enabled` 配置 Contract；保留 Scheduler 自身运行参数。
 
 ### 测试
 
 - `backend/tests/unit/test_service_entrypoints.py`
   - 验证 API 启动不创建 Scheduler；
   - 验证 Scheduler Service 复用唯一 `ScheduledTriggerScheduler`；
-  - 验证 `scheduler_enabled=false` 时 Scheduler 明确拒绝启动。
+  - 验证 Scheduler Service 的身份不依赖 `SCHEDULER_ENABLED` 配置。
 
 ### 架构 / Phase / Acceptance
 
 - `docs/00-architecture/SERVICE_RUNTIME_ARCHITECTURE.md`
-  - 记录 API / Scheduler / Worker 三类服务演进方案与当前实施边界。
+  - 明确 API / Scheduler 服务角色由启动入口确定，不使用 `SCHEDULER_ENABLED` 进行角色切换。
 - `docs/02-phases/PHASE_2_4.md`
   - 记录 Phase 2.4 服务化拆分及后续 Worker 扩展边界。
 - `docs/03-acceptance/PHASE_2_4_ACCEPTANCE.md`
@@ -108,7 +114,14 @@ cd backend
 uv run python run_scheduler.py
 ```
 
-API Service 不再自动启动 Scheduler。开发机如果同时需要 HTTP 与 Scheduled Trigger，必须显式启动两个进程。
+两个入口的服务身份固定：
+
+```text
+run.py           → API Service
+run_scheduler.py → Scheduler Service
+```
+
+API Service 不再自动启动 Scheduler。开发机如果同时需要 HTTP 与 Scheduled Trigger，必须显式启动两个进程。若只需要 API，则只启动 `run.py`；若只需要 Scheduler，则只启动 `run_scheduler.py`，不需要修改任何配置开关。
 
 ## 当前禁止事项
 
@@ -120,4 +133,5 @@ API Service 不再自动启动 Scheduler。开发机如果同时需要 HTTP 与 
 - Scheduler Restart Acceptance 不得让测试自身启动的多个 Scheduler worker 共享同一目标 slot；
 - 历史 Definition 兼容不得扩大为任意非法节点自动转换；只有可确定语义的历史空节点允许受控兼容；
 - API Service 不得恢复内嵌 Scheduler；Scheduler 必须保持独立进程入口；
+- **不得使用 `SCHEDULER_ENABLED` 或等价配置开关区分 API Service 与 Scheduler Service；服务角色必须由启动入口固定确定；**
 - Worker Service 在 Task Contract 与 Queue/Broker 等基础 Contract 未明确前不得创建空壳实现。

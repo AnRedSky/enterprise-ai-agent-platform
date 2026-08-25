@@ -26,12 +26,12 @@ def test_api_service_does_not_start_scheduler():
 
 @pytest.mark.asyncio
 async def test_scheduler_service_owns_scheduler_lifecycle():
-    """Scheduler Service 负责创建、运行并停止唯一正式 Scheduler 实现。"""
+    """Scheduler Service 无条件创建、运行并停止正式 Scheduler 实现。"""
     fake_scheduler = MagicMock()
     fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("test-stop"))
     fake_scheduler.stop = MagicMock()
 
-    with patch.object(settings, "scheduler_enabled", True), patch.object(
+    with patch.object(
         scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler
     ) as scheduler_factory:
         with pytest.raises(RuntimeError, match="test-stop"):
@@ -43,8 +43,20 @@ async def test_scheduler_service_owns_scheduler_lifecycle():
 
 
 @pytest.mark.asyncio
-async def test_scheduler_service_rejects_disabled_configuration():
-    """Scheduler 被配置关闭时必须拒绝启动，而不是静默退化成 API 内嵌模式。"""
-    with patch.object(settings, "scheduler_enabled", False):
-        with pytest.raises(RuntimeError, match="Scheduler Service 已被 scheduler_enabled 配置关闭"):
+async def test_scheduler_service_identity_is_not_configuration_switch():
+    """Scheduler Service 的进程身份不由 SCHEDULER_ENABLED 配置决定。"""
+    assert not hasattr(settings, "scheduler_enabled")
+
+    fake_scheduler = MagicMock()
+    fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("test-stop"))
+    fake_scheduler.stop = MagicMock()
+
+    with patch.object(
+        scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler
+    ) as scheduler_factory:
+        with pytest.raises(RuntimeError, match="test-stop"):
             await scheduler_entrypoint.run_scheduler_service()
+
+    scheduler_factory.assert_called_once_with(settings.scheduler_poll_interval_seconds)
+    fake_scheduler.run_forever.assert_awaited_once()
+    fake_scheduler.stop.assert_called_once()

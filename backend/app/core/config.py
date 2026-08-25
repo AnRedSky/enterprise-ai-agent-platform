@@ -85,7 +85,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent_platform"
     redis_url: str = "redis://localhost:6379/0"
 
-    scheduler_enabled: bool = True
     scheduler_poll_interval_seconds: float = 5.0
 
     jwt_secret_key: str = "change-me-in-local-env"
