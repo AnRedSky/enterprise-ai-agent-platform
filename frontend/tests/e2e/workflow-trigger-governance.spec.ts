@@ -43,7 +43,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     const versionResponse = await api.post(apiPath(`/workflows/${workflow.id}/versions`), {
       headers,
-      data: { graph: { nodes: [], edges: [] } },
+      data: { definition: { nodes: [], edges: [] } },
     });
     expect(versionResponse.ok()).toBeTruthy();
     const version = await versionResponse.json();
