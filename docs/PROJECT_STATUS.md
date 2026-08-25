@@ -12,14 +12,14 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 最新提交为 `7b36b0c`。该提交已将 Scheduler 状态字段的 Browser E2E 断言限定到 `.scheduler-card` 并使用精确表格单元格选择器。
+当前远端 `main` 已包含 Scheduler Browser E2E 两轮选择器问题修复。最新修复针对 Scheduler 状态卡片实际使用 Element Plus `el-descriptions` 的页面结构，将测试从错误的 `cell` role 断言调整为稳定的描述项业务文本断言。
 
-开发者随后本地重新执行 Workflow Trigger Browser Gate，数据库隔离重置、Scheduler 状态接口轮询及状态字段定位均继续正常，但暴露出新的标题定位问题：`getByText("Scheduler 持久化状态")` 同时匹配状态卡片标题与初始化提示，Playwright strict mode 失败。
+开发者在 `cca981b` 后本地重新执行 Workflow Trigger Browser Gate，Scheduler 状态接口轮询已经成功，但暴露出新的 UI 定位问题：`.scheduler-card` 内不存在测试所假设的 `cell` role，导致 `UTC` 定位超时。
 
 ## 本轮工程变更
 
-- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将 Scheduler 状态标题断言改为 `getByText("Scheduler 持久化状态", { exact: true })`，避免初始化提示包含标题文本导致 strict mode 冲突。
-- `docs/04-errors/2026-08-25-browser-e2e-scheduler-status-selector.md`：补充本次实际失败、根因与修复记录。
+- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将 Scheduler 状态字段断言从 `getByRole("cell")` 调整为针对实际 `el-descriptions` UI 语义的精确文本断言，覆盖时区、Misfire、Catch-up Limit 及对应值。
+- `docs/04-errors/2026-08-25-browser-e2e-scheduler-card-description-selector.md`：记录本次本地实际失败、生产 UI 结构根因、修复边界与重新验收要求。
 - 未修改 Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
 
 ## 已完成的 Browser Gate
@@ -27,7 +27,7 @@
 ```text
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
-Workflow Trigger Browser Gate：在修复 Scheduler 状态字段选择器后继续暴露标题定位问题，当前已完成针对性修复，等待本地重新执行结果
+Workflow Trigger Browser Gate：当前仍处于本轮选择器修复后的待本地重新执行状态
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
@@ -39,6 +39,8 @@ Frontend Vitest + production build
       ↓
 Browser Scheduler Gate 重新执行
       ↓
+Organization Browser E2E / Model Provider Browser E2E 状态再次确认
+      ↓
 Backend default regression + Tenant Safe Real API Gate（再次确认）
       ↓
 Scheduler 多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
@@ -46,12 +48,12 @@ Scheduler 多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
 Phase 2.4 Passed 评估
 ```
 
-当前不标记 Phase 2.4 Passed。必须等待 Workflow Trigger Browser Gate 修复后的本地实际结果，并完成后续 Backend Gate / Real API / Acceptance 汇总。
+当前不标记 Phase 2.4 Passed。必须等待本轮 Workflow Trigger Browser Gate 修复后的本地实际结果，并完成后续 Backend Gate / Real API / Acceptance 汇总。
 
 ## 当前禁止事项
 
 - 不创建第二套 Scheduler / Repository / Provider / Execution / slot key 实现；
-- 不通过修改测试断言掩盖生产 Runtime metadata Contract；
+- 不通过修改测试断言掩盖生产 Runtime metadata Contract；本轮修改仅使断言匹配实际生产 UI 组件语义；
 - 不使用 JSON fixture 替代真实 PostgreSQL Scheduler 状态；
 - 不创建兼容垫片、旧入口转发或功能分支；
 - 不把 GitHub Actions 结果当作本地开发 Gate 或验收结果。
