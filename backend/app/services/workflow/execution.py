@@ -104,7 +104,19 @@ class WorkflowExecutionService:
         return list(result.scalars().all())
 
     async def _lock_execution(self, execution: WorkflowExecution) -> WorkflowExecution:
-        """在状态转换前重新读取 Execution 行并加锁，避免并发 Runtime 覆盖状态。"""
+        """在状态转换前重新读取 Execution 行并加锁，同时阻断失去租约的旧 Worker。
+
+        Args:
+            execution: 当前需要进行状态转换的 Execution。
+
+        Returns:
+            加锁后的最新 WorkflowExecution。
+
+        Raises:
+            HTTPException: Execution 不存在，或 Worker 已失去该 Execution 的 ownership。
+
+        并发边界：Worker 将 `worker_owner` 写入 Execution 后，所有 Runtime 状态转换都必须以该 owner 的最新持久化值为准。这样当旧 Worker 的租约失效并被新 Worker 接管后，旧 Worker 不能继续推进节点状态。
+        """
         if not isinstance(self.db, AsyncSession):
             return execution
         locked = (await self.db.execute(
@@ -112,6 +124,9 @@ class WorkflowExecutionService:
         )).scalar_one_or_none()
         if locked is None:
             raise HTTPException(404, "Workflow Execution 不存在")
+        expected_worker_owner = execution.worker_owner
+        if expected_worker_owner is not None and locked.worker_owner != expected_worker_owner:
+            raise HTTPException(409, "Workflow Execution Worker ownership 已失效")
         return locked
 
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
@@ -185,6 +200,25 @@ class WorkflowExecutionService:
     async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,
                               input_data: dict | None = None, output_data: dict | None = None,
                               error_code: str | None = None, error_message: str | None = None) -> WorkflowNodeExecution:
+        """推进 Node Execution 状态，并在 Worker 场景执行 ownership fencing。
+
+        Args:
+            execution: 所属 Workflow Execution。
+            node_id: Workflow Definition 中的节点 ID。
+            target_status: 目标节点状态。
+            input_data: 节点输入数据。
+            output_data: 节点输出数据。
+            error_code: 节点失败错误码。
+            error_message: 节点失败说明。
+
+        Returns:
+            更新后的 WorkflowNodeExecution。
+
+        Raises:
+            HTTPException: 状态转换非法、Execution 已结束或 Worker ownership 已失效。
+
+        并发边界：先锁定并重新读取 Execution，再由 `_lock_execution` 比较 claim 时保存的 `worker_owner`。旧 Worker 即使本地 Runtime 仍在运行，也不能在新 Worker 接管后继续写节点状态。
+        """
         if target_status not in self.NODE_STATES:
             raise HTTPException(400, "不支持的 Node Execution 状态")
         execution = await self._lock_execution(execution)
