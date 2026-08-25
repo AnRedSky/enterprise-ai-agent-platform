@@ -6,8 +6,18 @@
 关键依赖：项目 Settings 与 SQLAlchemy AsyncEngine；数据库连接来自当前本地环境配置。
 """
 
+from pathlib import Path
+import sys
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+
+
+# 直接以脚本路径启动时，Python 默认只把 scripts/test/e2e 目录加入 sys.path；
+# 显式加入 backend 根目录，确保独立 Gate 与 pytest 的 pythonpath 行为一致。
+BACKEND_ROOT = Path(__file__).resolve().parents[4]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.core.config import settings
 
