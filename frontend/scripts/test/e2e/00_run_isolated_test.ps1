@@ -7,8 +7,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$frontendRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")).Path
-$backendRoot = Join-Path $frontendRoot "backend"
+# 脚本位于 frontend/scripts/test/e2e；向上三级得到 frontend 根目录。
+$frontendRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
+$backendRoot = Join-Path (Split-Path $frontendRoot -Parent) "backend"
 
 Write-Host "[E2E] Reset local Browser E2E database"
 Set-Location $backendRoot
