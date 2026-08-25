@@ -38,3 +38,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_wo
 ```
 
 本错误记录只记录已发生的失败及代码修复，不预填通过结果。
+
+## 5. 后续失败：Scheduler 状态标题 strict mode 冲突
+
+开发者在上述修复后的本地 Browser Gate 中继续执行，新的失败发生在 Scheduler 状态面板打开后的标题断言：
+
+```text
+expect(locator).toBeVisible() failed
+Locator: getByText('Scheduler 持久化状态')
+strict mode violation: resolved to 2 elements
+```
+
+两个匹配项分别是状态卡片标题 `Scheduler 持久化状态` 和初始化提示 `Scheduler 持久化状态正在初始化，请稍候刷新。`。
+
+根因仍属于 Browser E2E 页面级文本选择器过宽：初始化提示包含标题文本，导致 `getByText` 非精确匹配产生两个元素。
+
+修复为：
+
+```ts
+await expect(page.getByText("Scheduler 持久化状态", { exact: true })).toBeVisible();
+```
+
+本次修复同样不修改 Scheduler API Contract、Runtime 调度算法、持久化模型或生产调度逻辑，仅收紧 E2E 选择器语义。
+
+修复后必须重新执行 Frontend regression、production build 与 Workflow Trigger Browser Gate；在开发者本地实际反馈前，不得记录 Browser Gate Passed。

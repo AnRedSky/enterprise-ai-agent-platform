@@ -111,7 +111,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     expect(persistedCreatedTrigger?.id).toBeTruthy();
 
     await triggerRow.getByRole("button", { name: "调度状态" }).click();
-    await expect(page.getByText("Scheduler 持久化状态")).toBeVisible();
+    await expect(page.getByText("Scheduler 持久化状态", { exact: true })).toBeVisible();
 
     await expect.poll(
       async () => {

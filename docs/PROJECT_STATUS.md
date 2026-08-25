@@ -12,22 +12,22 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 最新提交为 `c013ace`。该提交已修正 Workflow Trigger Browser E2E 暴露的 Scheduler 状态面板异步初始化渲染问题：选择 Scheduled Trigger 后立即显示状态面板，在初始化期间显示 loading / 提示。
+当前远端 `main` 最新提交为 `7b36b0c`。该提交已将 Scheduler 状态字段的 Browser E2E 断言限定到 `.scheduler-card` 并使用精确表格单元格选择器。
 
-开发者随后本地重新执行 Workflow Trigger Browser Gate，数据库隔离重置和 Scheduler 状态接口轮询均正常，但暴露出新的测试定位问题：`getByText("10")` 在页面中匹配到 `catch_up_limit` 与时间戳等多个元素，Playwright strict mode 失败。
+开发者随后本地重新执行 Workflow Trigger Browser Gate，数据库隔离重置、Scheduler 状态接口轮询及状态字段定位均继续正常，但暴露出新的标题定位问题：`getByText("Scheduler 持久化状态")` 同时匹配状态卡片标题与初始化提示，Playwright strict mode 失败。
 
 ## 本轮工程变更
 
-- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将 Scheduler 状态字段断言限定在 `.scheduler-card` 内，并使用精确的表格单元格语义选择器，避免页面时间戳等非目标文本造成 strict mode 冲突。
-- `docs/04-errors/2026-08-25-browser-e2e-scheduler-status-selector.md`：记录 Scheduler 状态字段选择器冲突、根因与修复。
-- 未修改 Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则或生产调度逻辑。
+- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将 Scheduler 状态标题断言改为 `getByText("Scheduler 持久化状态", { exact: true })`，避免初始化提示包含标题文本导致 strict mode 冲突。
+- `docs/04-errors/2026-08-25-browser-e2e-scheduler-status-selector.md`：补充本次实际失败、根因与修复记录。
+- 未修改 Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则、数据库持久化或生产调度逻辑。
 
 ## 已完成的 Browser Gate
 
 ```text
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
-Workflow Trigger Browser Gate：在修复 Scheduler 状态面板后继续暴露测试定位问题，当前已完成针对性修复，等待本地重新执行结果
+Workflow Trigger Browser Gate：在修复 Scheduler 状态字段选择器后继续暴露标题定位问题，当前已完成针对性修复，等待本地重新执行结果
 ```
 
 以上结果以开发者本地实际反馈为准，不预填通过结果。
