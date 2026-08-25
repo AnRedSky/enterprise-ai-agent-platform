@@ -76,12 +76,6 @@ WorkflowRuntime
 409 passed, 3 skipped, 36 deselected
 ```
 
-当前 main 基线进一步反馈为：
-
-```text
-409 passed, 3 skipped, 36 deselected
-```
-
 本轮新增代码尚未在开发者本地重新执行完整 Backend Gate，因此不能把上述结果视为本轮最终验收结果。
 
 ### 3. Tenant Safe Real API bootstrap 竞态
@@ -90,38 +84,18 @@ WorkflowRuntime
 
 ```text
 POST /workflows/executions/<id>/run
--> expected HTTP 404, got 409
-只有 pending Execution 可以 Run
+-> 409: 只有 pending Execution 可以 Run
 ```
 
-该 409 在当前 Scheduler → Worker 架构下可能是合法的并发竞争结果，不应被 Real API Gate 当作随机失败。已修改 bootstrap：
-
-- `/run` 保持原有 Contract，不放宽生产状态机；
-- 若 `/run` 成功，则继续验证真实 HTTP / PostgreSQL 持久化结果；
-- 若 `/run` 返回明确的 `只有 pending Execution 可以 Run`，则认为 Worker 已合法抢占，改为轮询真实 Execution 直到终态；
-- 只接受与 Fixture Contract 一致的终态和错误码；
-- 超时、其他 409 或其他 HTTP 错误仍直接失败。
+该 409 在当前 Scheduler → Worker 架构下可能是合法的并发竞争结果，不应被 Real API Gate 当作随机失败。测试 bootstrap 已统一使用 `backend/tests/api_real/execution_helpers.py` 观察真实 HTTP / PostgreSQL 终态；不修改生产状态机，不放宽 `running → running`，不自动 resume。
 
 ### 4. Model Provider / Usage Record 生命周期
 
-开发者本地 Real API Governance 测试在 Profile 删除后继续删除 Provider 时出现：
+开发者本地 Real API Governance 测试在 Profile 删除后继续删除 Provider 时出现 `500 Internal Server Error`。根因是 `model_usage_records.provider_id` 使用 `ON DELETE RESTRICT / NOT NULL`，而 Usage Record 已保存独立历史快照。`0031_usage_provider_lifecycle` 已将该引用调整为可空并使用 `ON DELETE SET NULL`，删除 Provider 后历史 Usage Record 保留。
 
-```text
-500 Internal Server Error
-```
+### 5. Usage Accounting / Circuit Breaker Worker claim 竞态
 
-根因是 `model_usage_records.provider_id` 仍使用：
-
-```text
-ON DELETE RESTRICT
-NOT NULL
-```
-
-而 Usage Record 已经保存独立的 `model_type / model_name / pricing / cost` 历史快照，因此 Provider 删除不应阻塞历史用量生命周期。`0031_usage_provider_lifecycle` 已将 `provider_id` 调整为可空并使用 `ON DELETE SET NULL`，删除 Provider 后历史 Usage Record 保留，仅解除当前 Provider 引用。
-
-### 5. 本轮新增：Usage Accounting / Circuit Breaker Worker claim 竞态
-
-开发者在 `bfb0014` 后反馈：
+开发者此前反馈：
 
 ```text
 test_real_api_persists_governed_usage_and_calculated_cost
@@ -131,15 +105,7 @@ test_circuit_breaker_half_open_probe_quota_real_business_boundary
 -> expected [200, 503], actual [409, 409]
 ```
 
-这两个现象与独立 Worker 的 `pending` claim 存在相同竞态：测试在创建 Execution 后调用 `/run`，Worker 可以先于 HTTP `/run` 抢占 Execution。
-
-本轮新增统一测试辅助模块：
-
-```text
-backend/tests/api_real/execution_helpers.py
-```
-
-该辅助模块只处理测试观察语义：
+测试辅助模块现在只处理合法 Worker claim 观察竞态：
 
 ```text
 真实 HTTP /run
@@ -151,32 +117,38 @@ backend/tests/api_real/execution_helpers.py
         等待 PostgreSQL 持久化终态
 ```
 
-不修改生产 Execution 状态机，不允许 `running → running`，不自动 resume，不控制 API / Worker / Scheduler 生命周期。
+Usage Accounting 最终必须验证 `completed + Usage Record`；Circuit Breaker Half-Open 必须仍得到一个成功 Probe 与一个 `CIRCUIT_OPEN` Probe。
 
-Usage Accounting 现在验证：
+### 6. 本轮修复：Worker claim 与 HTTP `/run` 重复 Runtime
 
-```text
-/run = 200 或合法 Worker claim 409
-最终 Execution = completed
-Usage Record = 真实 PostgreSQL 持久化
-```
-
-Circuit Breaker Half-Open 并发测试在合法 Worker claim 409 时根据真实持久化结果恢复业务语义，并仍严格要求：
-
-```text
-一个 Probe → completed → 200 业务语义
-一个 Probe → failed / CIRCUIT_OPEN → 503 业务语义
-```
-
-### 6. Worker `running → running`
-
-此前日志中的：
+开发者最新 Worker 日志明确出现：
 
 ```text
 409: Node 不允许从 running 到 running
 ```
 
-不作为本轮状态机放宽依据。当前设计仍禁止 `running → running`，也不偷偷增加 running Execution 自动 resume。ownership fencing 通过 Worker lease 阻断 stale consumer；若后续再次出现该日志，应继续按 Worker owner / lease / Node 状态转换边界定位。
+根因不是 Node 状态机过严，而是 Worker claim 后仍保持 `status=pending`，原 HTTP `/run` 只检查 `status=pending`，导致 HTTP Runtime 与已 claim Worker Runtime 都可以进入 `WorkflowExecutionService.run()`。
+
+本轮已直接修复生产执行入口：
+
+- `WorkflowExecutionService.run()` 新增 `worker_owner` 执行身份；
+- HTTP `/run` 不声明 Worker owner；
+- Worker 必须携带自己的 `worker_owner`；
+- Execution 已被其他 Worker claim 时，HTTP `/run` 返回既有 `409 只有 pending Execution 可以 Run` Contract，不进入第二个 Runtime；
+- Worker 只允许使用自己 claim 的 owner 进入 Runtime；
+- Node 状态机继续禁止 `running → running`；
+- 新增 Unit 覆盖 HTTP/Worker owner 边界。
+
+因此目标执行链变为：
+
+```text
+Worker claim
+    ↓ worker_owner=A, status=pending
+        ├── HTTP /run → 409，退出
+        └── Worker A → owner 校验通过 → pending → running → Runtime
+```
+
+该修复不增加数据库结构，不修改 migration head，也不引入第二套 Runtime。
 
 ## 当前 Gate 状态
 
@@ -206,7 +178,7 @@ Scheduler / Worker Recovery Acceptance: 1 passed
 Backend Regression Gate（后续完整重跑）: 35 passed
 ```
 
-上述结果均只记录开发者实际反馈；不能替代本轮新增 `execution_helpers.py` 与两个测试修改后的重新验收。
+上述结果均只记录开发者实际反馈；不能替代本轮 owner fencing 修复后的重新验收。
 
 ## 本地服务前置条件
 
@@ -260,3 +232,4 @@ uv run python run_worker.py
 - `docs/04-errors/2026-08-25-real-api-governance-profile-lifecycle.md`
 - `docs/04-errors/2026-08-25-real-api-worker-claim-race-and-provider-lifecycle.md`
 - `docs/04-errors/2026-08-25-real-api-usage-circuit-worker-claim-race.md`
+- `docs/04-errors/2026-08-25-worker-manual-run-duplicate-runtime.md`
