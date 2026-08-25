@@ -251,7 +251,7 @@ onMounted(loadWorkflows);
       <el-form label-position="top" inline @submit.prevent="createTrigger">
         <el-form-item label="Trigger 名称"><el-input v-model="form.name" placeholder="例如：订单事件入口" /></el-form-item>
         <el-form-item label="类型">
-          <el-select :model-value="form.triggerType" @update:model-value="selectTriggerType">
+          <el-select data-testid="workflow-trigger-type-select" :model-value="form.triggerType" @update:model-value="selectTriggerType">
             <el-option label="manual" value="manual" />
             <el-option label="scheduled" value="scheduled" />
             <el-option label="webhook" value="webhook" />
@@ -305,35 +305,30 @@ onMounted(loadWorkflows);
             <el-descriptions-item label="下次运行">{{ schedulerStatus.next_run_at || '-' }}</el-descriptions-item>
             <el-descriptions-item label="上次运行">{{ schedulerStatus.last_run_at || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Lease"><el-tag :type="schedulerStatus.lease_active ? 'warning' : 'info'">{{ schedulerStatus.lease_active ? '占用中' : '未占用' }}</el-tag></el-descriptions-item>
-            <el-descriptions-item label="Lease 到期">{{ schedulerStatus.lease_expires_at || '-' }}</el-descriptions-item>
-            <el-descriptions-item label="最近 Execution">{{ schedulerStatus.last_execution_id || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="Last Execution">{{ schedulerStatus.last_execution_id || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="Trigger ID">{{ schedulerStatus.trigger_id }}</el-descriptions-item>
           </el-descriptions>
         </template>
-        <el-empty v-else description="Scheduler 持久化状态正在初始化，请稍候刷新。" />
       </el-card>
 
       <el-divider />
-      <el-form label-position="top">
-        <el-form-item label="Manual Invoke Input JSON">
-          <el-input v-model="inputText" type="textarea" :rows="4" />
-        </el-form-item>
+      <el-form label-position="top" class="execution-form">
+        <el-form-item label="Manual Trigger Input JSON"><el-input v-model="inputText" type="textarea" :rows="4" /></el-form-item>
       </el-form>
-
-      <el-descriptions v-if="execution" title="最近一次 Manual Trigger Execution" :column="2" border>
-        <el-descriptions-item label="Execution ID">{{ execution.id }}</el-descriptions-item>
-        <el-descriptions-item label="Status"><el-tag>{{ execution.status }}</el-tag></el-descriptions-item>
-        <el-descriptions-item label="Workflow Version">{{ execution.workflow_version_id }}</el-descriptions-item>
-        <el-descriptions-item v-if="execution.error_code" label="Error">{{ execution.error_code }}: {{ execution.error_message || '-' }}</el-descriptions-item>
-      </el-descriptions>
+      <el-card v-if="execution" class="execution-card">
+        <template #header><span>最近一次 Workflow Execution</span></template>
+        <pre>{{ JSON.stringify(execution, null, 2) }}</pre>
+      </el-card>
     </el-card>
   </div>
 </template>
 
 <style scoped>
-.trigger-page { padding: 24px; }
-.header { display: flex; justify-content: space-between; align-items: center; }
-.selector { margin-top: 16px; max-width: 520px; }
-.el-form--inline { align-items: end; }
+.trigger-page { padding: 20px; }
+.header { display: flex; align-items: center; justify-content: space-between; }
+.selector { margin-top: 16px; }
 .secret-editor { display: flex; gap: 8px; align-items: center; }
-.scheduler-card { margin-top: 16px; }
+.scheduler-card, .execution-card { margin-top: 16px; }
+.execution-form { margin-top: 16px; }
+pre { white-space: pre-wrap; word-break: break-word; }
 </style>
