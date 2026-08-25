@@ -251,10 +251,15 @@ def test_circuit_breaker_opens_and_fast_fails_real_business_boundary():
         nodes, trace_items, audit_items = _get_governance(client, CIRCUIT_OPEN_EXECUTION_ID, CIRCUIT_OPEN_WORKFLOW_ID)
         second = client.post(f"/workflows/{CIRCUIT_OPEN_WORKFLOW_ID}/executions", json={"input_data": {"source": "circuit-fast-fail"}})
         assert second.status_code == 201, second.text
-        second_run = client.post(f"/workflows/executions/{second.json()['id']}/run")
-        assert second_run.status_code == 503, second_run.text
-        second_execution = _assert_failed_execution(client, second.json()["id"], "CIRCUIT_OPEN")
-        second_nodes, second_trace, _second_audit = _get_governance(client, second.json()["id"], CIRCUIT_OPEN_WORKFLOW_ID)
+        second_id = second.json()["id"]
+        second_run_status, second_persisted = run_or_observe_execution(
+            client,
+            second_id,
+            expected_http_status=503,
+        )
+        assert _effective_run_status(second_run_status, second_persisted) == 503
+        second_execution = _assert_failed_execution(client, second_id, "CIRCUIT_OPEN")
+        second_nodes, second_trace, _second_audit = _get_governance(client, second_id, CIRCUIT_OPEN_WORKFLOW_ID)
     assert execution["error_code"] == "CIRCUIT_OPEN"
     assert nodes[0]["attempt"] == 2
     assert nodes[0]["error_code"] == "CIRCUIT_OPEN"
@@ -316,16 +321,24 @@ def test_circuit_breaker_half_open_probe_recovers_and_closes():
         execution = client.post(f"/workflows/{CIRCUIT_RECOVERY_WORKFLOW_ID}/executions", json={"input_data": {"source": "circuit-recovery"}})
         assert execution.status_code == 201, execution.text
         execution_id = execution.json()["id"]
-        run = client.post(f"/workflows/executions/{execution_id}/run")
-        assert run.status_code == 200, run.text
-        payload = run.json()
+        run_status, persisted = run_or_observe_execution(
+            client,
+            execution_id,
+            expected_http_status=200,
+        )
+        assert _effective_run_status(run_status, persisted) == 200
+        payload = persisted
         assert payload["status"] == "completed"
         nodes, trace_items, audit_items = _get_governance(client, execution_id, CIRCUIT_RECOVERY_WORKFLOW_ID)
         follow_up = client.post(f"/workflows/{CIRCUIT_RECOVERY_WORKFLOW_ID}/executions", json={"input_data": {"source": "circuit-closed"}})
         assert follow_up.status_code == 201, follow_up.text
         follow_up_id = follow_up.json()["id"]
-        follow_up_run = client.post(f"/workflows/executions/{follow_up_id}/run")
-        assert follow_up_run.status_code == 200, follow_up_run.text
+        follow_up_run_status, follow_up_persisted = run_or_observe_execution(
+            client,
+            follow_up_id,
+            expected_http_status=200,
+        )
+        assert _effective_run_status(follow_up_run_status, follow_up_persisted) == 200
     assert nodes[0]["status"] == "completed"
     assert nodes[0]["attempt"] == 1
     assert any(item["event_type"] == "node.state_changed" and item["status"] == "completed" for item in trace_items)

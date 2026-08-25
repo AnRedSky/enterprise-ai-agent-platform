@@ -14,6 +14,12 @@ WorkflowRuntime
 
 不能通过同一进程内调用、Mock Runtime 或 JSON fixture 替代。
 
+产品级 Worker 执行架构记录：
+
+```text
+docs/00-architecture/WORKFLOW_WORKER_EXECUTION_ARCHITECTURE.md
+```
+
 ## 2. 自动化入口
 
 Tenant Safe Real API：
@@ -118,16 +124,13 @@ cd backend
 uv run pytest -q tests/unit/test_workflow_execution_worker_fencing.py tests/unit/test_workflow_worker.py
 ```
 
-本轮 Worker ownership 定向测试新增 HTTP 手动 Run 与 Worker owner 边界：
+当前本地反馈：
 
 ```text
-未 claim + HTTP /run → 允许
-Worker A claim + HTTP /run → 409，禁止第二个 Runtime
-Worker A claim + Worker A run → 允许
-Worker A claim + Worker B run → 409 ownership
+9 passed in 1.09s
 ```
 
-## 7. 验收断言
+## 7. Worker 执行流程验收断言
 
 必须满足：
 
@@ -138,8 +141,11 @@ Worker A claim + Worker B run → 409 ownership
 [PASS] Scheduler 可以创建 pending WorkflowExecution
 [PASS] Worker Service 可以独立运行
 [PASS] Worker 可以 claim pending Execution
+[PASS] Worker 写入 worker_owner / lease / attempt
+[PASS] Worker heartbeat 可以保持长任务 ownership
 [PASS] Worker 使用唯一 WorkflowExecutionService
-[PASS] WorkflowRuntime 最终完成 Execution
+[PASS] Runtime 开始前可以恢复 pending Execution 上遗留 running Node
+[PASS] WorkflowRuntime 最终完成或失败 Execution
 [PASS] Scheduler restart 后历史 slot 可以恢复
 [PASS] slot / Execution idempotency 唯一
 [PASS] AuditLog tenant/workflow/execution 关联正确
@@ -194,7 +200,49 @@ WorkflowExecutionService.run(worker_owner=A)
 允许进入 Runtime
 ```
 
-禁止通过放宽 `Node running → running` 状态转换来掩盖 ownership 竞争。当前阶段也不验收 running Execution 自动 resume。
+### 7.3 Worker recovery
+
+当 Worker claim 后发现：
+
+```text
+Execution.status = pending
+Node.status = running
+```
+
+必须先执行：
+
+```text
+running → failed
+error_code = WORKER_RECOVERY_INTERRUPTED
+```
+
+然后由既有 Runtime 进入合法的：
+
+```text
+failed → running
+```
+
+禁止把 `running → running` 加入状态机，也禁止通过 reset 数据库隐藏恢复问题。
+
+### 7.4 Real API Worker claim race
+
+创建 Execution 后 Worker 可能先于 HTTP `/run` claim。测试必须使用：
+
+```text
+backend/tests/api_real/execution_helpers.py
+run_or_observe_execution()
+```
+
+该 helper 的语义是：
+
+1. 首先真实调用 HTTP `/run`；
+2. 若直接返回预期状态，立即校验持久化结果；
+3. 若返回 `409 只有 pending Execution 可以 Run`，只将其识别为合法 Worker claim 竞态；
+4. 继续通过真实 HTTP 查询等待 Execution 终态；
+5. 测试根据业务 Fixture 将最终持久化状态映射为有效结果；
+6. 其他 409 / HTTP 状态仍然失败。
+
+本轮 Circuit Breaker probe 测试已统一采用该 helper，避免把真实 Worker 调度时序误判为生产错误。
 
 ## 8. 禁止验收方式
 
@@ -206,8 +254,10 @@ WorkflowExecutionService.run(worker_owner=A)
 - 用 JSON fixture 代替 WorkflowExecution；
 - 手工修改生产代码让测试通过；
 - 使用 GitHub Actions 结果替代本地 Gate；
-- 让 Gate 脚本自动启动、停止或重启本地服务。
+- 让 Gate 脚本自动启动、停止或重启本地服务；
+- 通过放宽 `running → running` 消除错误日志；
+- 通过降低 Worker polling 频率规避 claim 竞态。
 
 ## 9. 当前状态
 
-代码已提交到 `main` 后，必须由开发者在本地执行上述 Gate。未收到本轮实际执行结果前，本 Acceptance 不标记为 Passed。
+代码已经进入 `main`，Worker targeted tests 已由开发者本地反馈通过；本轮 Tenant Safe Real API 曾因 Circuit Breaker probe 的合法 Worker claim 竞态失败。测试已整改为观察真实持久化结果，但在开发者重新执行 Gate 前，本 Acceptance 不标记为最终 Passed。
