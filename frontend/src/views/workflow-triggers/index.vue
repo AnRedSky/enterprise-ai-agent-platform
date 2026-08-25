@@ -294,19 +294,22 @@ onMounted(loadWorkflows);
         </el-table-column>
       </el-table>
 
-      <el-card v-if="schedulerStatus" v-loading="schedulerLoading" class="scheduler-card">
-        <template #header><div class="header"><span>Scheduler 持久化状态</span><el-button size="small" @click="loadSchedule(triggers.find((item) => item.id === selectedSchedulerTriggerId) as WorkflowTrigger)">刷新</el-button></div></template>
-        <el-descriptions :column="3" border>
-          <el-descriptions-item label="状态"><el-tag :type="schedulerStatus.status === 'enabled' ? 'success' : 'info'">{{ schedulerStatus.status }}</el-tag></el-descriptions-item>
-          <el-descriptions-item label="时区">{{ schedulerStatus.timezone }}</el-descriptions-item>
-          <el-descriptions-item label="Misfire">{{ schedulerStatus.misfire_policy }}</el-descriptions-item>
-          <el-descriptions-item label="Catch-up Limit">{{ schedulerStatus.catch_up_limit }}</el-descriptions-item>
-          <el-descriptions-item label="下次运行">{{ schedulerStatus.next_run_at || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="上次运行">{{ schedulerStatus.last_run_at || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="Lease"><el-tag :type="schedulerStatus.lease_active ? 'warning' : 'info'">{{ schedulerStatus.lease_active ? '占用中' : '未占用' }}</el-tag></el-descriptions-item>
-          <el-descriptions-item label="Lease 到期">{{ schedulerStatus.lease_expires_at || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="最近 Execution">{{ schedulerStatus.last_execution_id || '-' }}</el-descriptions-item>
-        </el-descriptions>
+      <el-card v-if="selectedSchedulerTriggerId" v-loading="schedulerLoading" class="scheduler-card">
+        <template #header><div class="header"><span>Scheduler 持久化状态</span><el-button size="small" :disabled="schedulerLoading" @click="loadSchedule(triggers.find((item) => item.id === selectedSchedulerTriggerId) as WorkflowTrigger)">刷新</el-button></div></template>
+        <template v-if="schedulerStatus">
+          <el-descriptions :column="3" border>
+            <el-descriptions-item label="状态"><el-tag :type="schedulerStatus.status === 'enabled' ? 'success' : 'info'">{{ schedulerStatus.status }}</el-tag></el-descriptions-item>
+            <el-descriptions-item label="时区">{{ schedulerStatus.timezone }}</el-descriptions-item>
+            <el-descriptions-item label="Misfire">{{ schedulerStatus.misfire_policy }}</el-descriptions-item>
+            <el-descriptions-item label="Catch-up Limit">{{ schedulerStatus.catch_up_limit }}</el-descriptions-item>
+            <el-descriptions-item label="下次运行">{{ schedulerStatus.next_run_at || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="上次运行">{{ schedulerStatus.last_run_at || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="Lease"><el-tag :type="schedulerStatus.lease_active ? 'warning' : 'info'">{{ schedulerStatus.lease_active ? '占用中' : '未占用' }}</el-tag></el-descriptions-item>
+            <el-descriptions-item label="Lease 到期">{{ schedulerStatus.lease_expires_at || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="最近 Execution">{{ schedulerStatus.last_execution_id || '-' }}</el-descriptions-item>
+          </el-descriptions>
+        </template>
+        <el-empty v-else description="Scheduler 持久化状态正在初始化，请稍候刷新。" />
       </el-card>
 
       <el-divider />
