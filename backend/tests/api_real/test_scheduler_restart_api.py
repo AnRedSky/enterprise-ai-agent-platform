@@ -263,7 +263,6 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
                         "timezone": "UTC",
                         "interval_seconds": interval_seconds,
                         "misfire_policy": "fire_once",
-                        "catch_up_limit": 1,
                     },
                 },
             )
@@ -281,8 +280,7 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
 
         # 先停止真实进程，再回拨 PostgreSQL 状态；这样重启前不会由原进程抢先消费目标历史槽位。
         _stop_server(process)
-        _seed_restart_slot_result = asyncio.run(_seed_restart_slot(trigger_id, planned_at))
-        del _seed_restart_slot_result
+        asyncio.run(_seed_restart_slot(trigger_id, planned_at))
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, planned_at, interval_seconds)
 
         process = _start_server(port)
