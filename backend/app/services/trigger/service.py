@@ -154,7 +154,7 @@ class WorkflowTriggerService:
         if not idempotency_key:
             raise HTTPException(422, "Scheduled Trigger 必须提供调度 Idempotency-Key")
         version = await self._get_published_version(workflow)
-        WorkflowRuntime.validate_definition(version.definition)
+        WorkflowRuntime.validate_definition(version.definition, allow_legacy_empty_nodes=True)
         execution_id = uuid.uuid4()
         execution = WorkflowExecution(id=execution_id, tenant_id=workflow.tenant_id, workflow_id=workflow.id,
                                        workflow_version_id=version.id, created_by=actor_id, idempotency_key=idempotency_key,
@@ -180,7 +180,9 @@ class WorkflowTriggerService:
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type, "timezone": config["timezone"],
             "interval_seconds": config["interval_seconds"], "recovery": recovery})
         await self.db.commit()
-        result_execution = await WorkflowExecutionService(self.db).run(execution, version, actor_id)
+        result_execution = await WorkflowExecutionService(self.db).run(
+            execution, version, actor_id, allow_legacy_empty_nodes=True
+        )
         return (result_execution, True) if return_created else result_execution
 
     async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
