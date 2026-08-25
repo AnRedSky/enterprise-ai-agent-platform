@@ -129,6 +129,29 @@ class WorkflowExecutionService:
             raise HTTPException(409, "Workflow Execution Worker ownership 已失效")
         return locked
 
+    def _validate_run_owner(self, execution: WorkflowExecution, worker_owner: str | None) -> None:
+        """校验 Runtime 执行者是否与已认领 Execution 的 Worker owner 一致。
+
+        Args:
+            execution: 已加锁并重新读取的 Workflow Execution。
+            worker_owner: 当前执行调用方声明的 Worker owner；HTTP 手动执行为 None。
+
+        Returns:
+            无；校验通过时返回。
+
+        Raises:
+            HTTPException: Execution 已被其他 Worker 认领，禁止 HTTP 手动执行与 Worker 重复运行。
+
+        并发边界：Worker claim 与 HTTP `/run` 都可能看到 `pending`。一旦 Worker 已持久化 owner，HTTP `/run` 必须退出；否则两个 Runtime 都会进入同一个 Node，形成 `running → running` 冲突甚至重复调用 Provider。
+        """
+        claimed_owner = execution.worker_owner
+        if claimed_owner is None:
+            if worker_owner is not None:
+                raise HTTPException(409, "Workflow Execution Worker ownership 已失效")
+            return
+        if worker_owner != claimed_owner:
+            raise HTTPException(409, "只有 pending Execution 可以 Run")
+
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
                          error_code: str | None = None, error_message: str | None = None,
                          output_data: dict | None = None, actor_id: UUID | None = None) -> WorkflowExecution:
@@ -270,8 +293,8 @@ class WorkflowExecutionService:
         return node
 
     async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID, admin: bool = False,
-                  allow_legacy_empty_nodes: bool = False) -> WorkflowExecution:
-        """执行已发布 Workflow，并可由受控的 Scheduler 路径兼容历史空节点版本。
+                  allow_legacy_empty_nodes: bool = False, worker_owner: str | None = None) -> WorkflowExecution:
+        """执行已发布 Workflow，并区分 HTTP 手动执行与已认领 Worker 的执行身份。
 
         Args:
             execution: 待执行的 Workflow Execution。
@@ -279,13 +302,20 @@ class WorkflowExecutionService:
             actor_id: 执行发起者身份。
             admin: 是否使用管理员权限执行 Agent 节点。
             allow_legacy_empty_nodes: 仅 Scheduler 历史发布数据允许开启；普通执行默认严格校验。
+            worker_owner: 当前 Worker 的 owner；HTTP 手动执行必须保持为 None。
 
         Returns:
             执行完成后的 Workflow Execution。
+
+        Raises:
+            HTTPException: Execution 非 pending、已被其他 Worker 认领或 Runtime 执行失败。
+
+        并发边界：Worker claim 与 HTTP `/run` 都可能在 Execution 仍为 pending 时到达。必须先锁定并校验 owner，再将 Execution 切换为 running，防止 HTTP 与 Worker 同时进入 Runtime 导致同一 Node 被重复推进。
         """
         execution = await self._lock_execution(execution)
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以 Run")
+        self._validate_run_owner(execution, worker_owner)
         await self.transition(execution, "running", actor_id=actor_id)
         runtime = WorkflowRuntime(self.db, execution_service=self)
         try:
