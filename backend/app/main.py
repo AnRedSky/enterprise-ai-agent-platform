@@ -1,12 +1,10 @@
-"""FastAPI 应用入口与进程级生命周期管理。
+"""FastAPI API Service 应用入口。
 
-职责：注册 HTTP 路由、中间件以及应用启动/停止时的 Scheduler 生命周期。
-边界：不承载具体业务规则；业务能力继续由 API、领域 Service、Runtime 与 Infrastructure 模块负责。
-关键依赖：FastAPI、项目配置以及 `ScheduledTriggerScheduler`。
+职责：注册 HTTP 路由、中间件以及 API Service 的 HTTP 生命周期。
+边界：不再启动 Scheduler；调度循环属于独立 Scheduler Service 进程，避免 API 多实例各自创建后台
+Scheduler 导致重复消费、lease contention 与资源隔离问题。
+关键依赖：FastAPI、项目配置以及各 API Router。
 """
-
-import asyncio
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,43 +24,9 @@ from app.api.v1.webhooks.router import router as webhooks_router
 from app.api.v1.workflows.executions import router as workflow_executions_router
 from app.api.v1.workflows.router import router as workflows_router
 from app.core.config import settings
-from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """管理应用级 Scheduler 生命周期。
-
-    参数：
-        app: 当前 FastAPI 应用实例，用于暴露 Scheduler 状态对象。
-
-    返回值：
-        异步上下文管理器本身；进入上下文完成启动准备，退出上下文负责停止后台任务。
-
-    重要副作用：当 `scheduler_enabled` 开启时创建后台 Scheduler 任务；应用退出时先请求
-    Scheduler 停止并等待其自然退出，只有后台任务未能响应停止请求时才取消任务，避免正常关闭
-    路径依赖强制取消而跳过 Scheduler 自身的清理边界。
-    """
-    scheduler = ScheduledTriggerScheduler(settings.scheduler_poll_interval_seconds)
-    task: asyncio.Task | None = None
-    if settings.scheduler_enabled:
-        task = asyncio.create_task(scheduler.run_forever(), name="scheduled-trigger-scheduler")
-    app.state.scheduled_trigger_scheduler = scheduler
-    try:
-        yield
-    finally:
-        scheduler.stop()
-        if task is not None:
-            try:
-                # run_forever() 在 stop() 后会结束当前轮询，不应把正常退出当成取消任务处理。
-                await asyncio.wait_for(asyncio.shield(task), timeout=max(settings.scheduler_poll_interval_seconds, 1.0) + 1.0)
-            except asyncio.TimeoutError:
-                # 兜底仅用于异常卡住的后台任务；正常退出路径必须先完成 stop + wait。
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-
-
-app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
@@ -88,5 +52,5 @@ app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"]
 
 @app.get("/health")
 async def health():
-    """返回应用存活状态与当前运行环境。"""
-    return {"status": "ok", "version": "0.2.0", "environment": settings.app_env}
+    """返回 API Service 存活状态与当前运行环境。"""
+    return {"status": "ok", "service": "api", "version": "0.2.0", "environment": settings.app_env}
