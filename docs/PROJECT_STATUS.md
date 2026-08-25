@@ -13,7 +13,9 @@
 
 ## 最新 main 基线
 
-当前远端 `main`：`9bb40c8 fix(test): align ownership fixtures and circuit probe gate`。
+当前远端 `main`：`85164f0 fix(worker): make consistency gate independent of caller directory`。
+
+本轮前置修复：`b84a088 fix(worker): make runtime consistency diagnostic directly executable`。
 
 ```text
 API Service       run.py
@@ -102,28 +104,26 @@ Tenant Safe Real API: 35 passed in 57.33s
 
 其中 `503 / 404 / 504` 均对应已有负向业务路径；`409 running → running` 仍必须保持禁止，不能放宽 Node 状态机。
 
-为定位 `409` 是否来自遗留持久化不一致，本轮新增只读诊断：
+为定位 `409` 是否来自遗留持久化不一致，新增只读诊断：
 
 ```text
 backend/scripts/dev/inspect_worker_runtime_consistency.py
 backend/scripts/dev/worker_runtime_consistency.ps1
 ```
 
-诊断重点：
+本轮进一步修复了诊断入口的直接执行问题：
 
-```text
-pending Execution + running Node
-running Execution + expired Worker lease
-```
-
-诊断不会自动 resume、重置 Node 或控制服务生命周期。
+- Python 诊断脚本显式加入 `backend` 根目录到 `sys.path`，不再依赖当前工作目录碰巧能解析 `app` 包；
+- PowerShell Gate 根据 `$PSScriptRoot` 定位 `backend`，调用者不必先切换到 `backend` 目录；
+- 两个入口仍保持只读，不启动、停止或重启 API / Scheduler / Worker。
 
 ## 当前剩余工作
 
-1. 开发者执行 Worker Runtime 一致性诊断，确认是否存在 `pending + running Node` 遗留数据。
+1. 开发者重新执行 Worker Runtime 一致性诊断，确认是否存在 `pending + running Node` 遗留数据。
 2. 若存在，记录具体 Execution ID / Worker owner / attempt，并单独分析其来源；不得自动 resume。
 3. 若不存在，则将 `409 running → running` 归类为历史异常日志或测试场景残留，不修改生产 Node 状态机。
-4. Frontend / Browser E2E 按实际 API Contract 影响范围独立执行，不并入 Backend Gate。
+4. 诊断通过后，再根据实际数据库结果决定是否需要增加针对遗留状态来源的确定性回归测试；当前不修改 Node 状态机。
+5. Frontend / Browser E2E 按实际 API Contract 影响范围独立执行，不并入 Backend Gate。
 
 ## 当前禁止事项
 

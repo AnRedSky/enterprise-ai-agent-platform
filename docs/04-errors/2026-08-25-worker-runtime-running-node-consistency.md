@@ -1,4 +1,4 @@
-# 2026-08-25：Worker 手动运行日志中的 Node running→running 与预期失败路径区分
+# 2026-08-25：Worker 手工运行日志中的 Node running→running 与诊断入口执行失败
 
 ## 1. 现象
 
@@ -9,6 +9,13 @@
 409: Node 不允许从 running 到 running
 404: Mock provider HTTP 404
 504: Retry backoff exceeds workflow deadline
+```
+
+随后执行新增的一致性诊断时又出现：
+
+```text
+uv run python .\scripts\dev\inspect_worker_runtime_consistency.py
+ModuleNotFoundError: No module named 'app'
 ```
 
 ## 2. 初步分类
@@ -39,37 +46,52 @@ WorkflowNodeExecution.status = running
 
 如果存在，该持久化状态属于 Worker ownership fencing 修复前遗留或异常恢复形成的不一致状态；当前阶段禁止自动 resume / 自动把 running Node 改回 pending。
 
+### 2.5 `ModuleNotFoundError: No module named 'app'`
+
+该错误不是数据库一致性结论，而是开发辅助脚本的直接执行入口缺陷。脚本位于 `backend/scripts/dev`，Python 直接执行脚本时默认把脚本目录而不是 `backend` 根目录加入 `sys.path`，因此无法解析正式 `app` 包。
+
 ## 3. 工程处理
 
-新增只读诊断：
+新增并修正只读一致性诊断：
 
 ```text
 backend/scripts/dev/inspect_worker_runtime_consistency.py
 backend/scripts/dev/worker_runtime_consistency.ps1
 ```
 
-诊断检查：
+处理结果：
 
-1. `pending Execution + running Node` 不变量；
-2. `running Execution + expired Worker lease` 候选项；
-3. 不修改任何 PostgreSQL 数据；
-4. 不启动、停止或重启 API / Scheduler / Worker。
-
-发现 `pending + running Node` 时返回退出码 `2`，要求人工结合 Execution ID、Worker owner、attempt 与日志进一步定位。
+1. Python 脚本根据 `__file__` 显式加入 `backend` 根目录到 `sys.path`；
+2. PowerShell Gate 根据 `$PSScriptRoot` 定位 `backend`，不依赖调用者当前目录；
+3. 两个入口继续只读检查，不提交数据库修改；
+4. 发现 `pending + running Node` 时仍返回退出码 `2`，要求人工结合 Execution ID、Worker owner、attempt 与日志定位；
+5. 不自动 resume、重置 Node，也不控制 API / Scheduler / Worker 生命周期。
 
 ## 4. 本地验证
 
+代码修复后必须由开发者实际执行：
+
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
+
 uv run python .\scripts\dev\inspect_worker_runtime_consistency.py
 
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\worker_runtime_consistency.ps1
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\dev\worker_runtime_consistency.ps1
+```
+
+PowerShell Gate 也支持从其他目录调用：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend\scripts\dev\worker_runtime_consistency.ps1
 ```
 
 预期无异常时：
 
 ```text
 [PASS] No pending Execution contains a running Node.
+[PASS] Worker runtime consistency diagnostic completed.
 ```
 
 发现异常时：
@@ -82,3 +104,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\worker_runtime
 ## 5. 处理边界
 
 本记录不把手工 `run_worker.py` 输出直接等同于 Release Gate 失败。正式质量结论仍以 Backend Regression、Migration、Tenant Safe Real API 与 Scheduler/Worker Recovery Acceptance 的实际结果为准。
+
+本轮代码修复后，诊断脚本本身的执行成功与数据库一致性结论仍需开发者本地实际反馈，不能预填为通过。
