@@ -13,9 +13,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
-# 直接以脚本路径启动时，Python 默认只把 scripts/test/e2e 目录加入 sys.path；
-# 显式加入 backend 根目录，确保独立 Gate 与 pytest 的 pythonpath 行为一致。
-BACKEND_ROOT = Path(__file__).resolve().parents[4]
+# 直接以脚本路径启动时，Python 默认只把当前脚本目录加入 sys.path；
+# 当前脚本位于 backend/scripts/test/e2e，因此向上三级才是 backend 根目录。
+BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
