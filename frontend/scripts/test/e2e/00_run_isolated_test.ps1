@@ -1,11 +1,11 @@
-$ErrorActionPreference = "Stop"
-
 param(
     [Parameter(Mandatory = $true)]
     [string]$Spec,
     [Parameter(Mandatory = $true)]
     [string]$Grep
 )
+
+$ErrorActionPreference = "Stop"
 
 $frontendRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")).Path
 $backendRoot = Join-Path $frontendRoot "backend"
