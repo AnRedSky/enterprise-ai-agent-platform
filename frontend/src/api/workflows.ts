@@ -74,10 +74,13 @@ export type WorkflowTrace = {
 
 export type WorkflowTriggerType = "manual" | "scheduled" | "webhook";
 export type WorkflowTriggerStatus = "enabled" | "disabled";
+export type ScheduledMisfirePolicy = "skip" | "fire_once" | "catch_up";
 
 export type ScheduledTriggerConfig = {
   timezone: string;
   interval_seconds: number;
+  misfire_policy?: ScheduledMisfirePolicy;
+  catch_up_limit?: number;
 };
 
 export type WebhookTriggerConfig = {
@@ -101,6 +104,25 @@ export type WorkflowTrigger = {
   updated_at: string;
 };
 
+export type SchedulerStatus = {
+  id: string;
+  trigger_id: string;
+  workflow_id: string;
+  tenant_id: string;
+  enabled: boolean;
+  status: string;
+  timezone: string;
+  schedule_expression?: string | null;
+  next_run_at?: string | null;
+  last_run_at?: string | null;
+  last_execution_id?: string | null;
+  lease_expires_at?: string | null;
+  lease_active: boolean;
+  misfire_policy: ScheduledMisfirePolicy;
+  catch_up_limit: number;
+  updated_at: string;
+};
+
 export type CreateWebhookTriggerConfig = {
   auth_mode?: "secret";
   secret: string;
@@ -115,6 +137,10 @@ export const workflowApi = {
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
   triggers(id: string) { return request.get<WorkflowTrigger[]>(`/workflows/${id}/triggers`); },
+  /** 查询 Scheduled Trigger 的持久化调度状态，复用后端正式 Scheduler API Contract。 */
+  schedule(id: string, triggerId: string) {
+    return request.get<SchedulerStatus>(`/workflows/${id}/triggers/${triggerId}/schedule`);
+  },
   createTrigger(id: string, payload: { name: string; trigger_type: WorkflowTriggerType; config: Record<string, unknown> }) {
     return request.post<WorkflowTrigger>(`/workflows/${id}/triggers`, payload);
   },

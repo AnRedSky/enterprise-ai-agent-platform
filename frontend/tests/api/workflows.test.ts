@@ -50,6 +50,13 @@ describe("workflowApi", () => {
     expect(del).toHaveBeenCalledWith("/workflows/w1/triggers/t1");
   });
 
+  it("queries the persisted scheduler status through the formal workflow trigger contract", async () => {
+    get.mockResolvedValue({ data: { id: "s1", trigger_id: "t1", lease_active: false } });
+    const response = await workflowApi.schedule("w1", "t1");
+    expect(get).toHaveBeenCalledWith("/workflows/w1/triggers/t1/schedule");
+    expect(response.data.trigger_id).toBe("t1");
+  });
+
   it("creates a webhook trigger with secret config without inventing a second endpoint", async () => {
     post.mockResolvedValue({ data: {} });
     await workflowApi.createTrigger("w1", {

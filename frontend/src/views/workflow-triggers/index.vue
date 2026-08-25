@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import {
   workflowApi,
   type ScheduledTriggerConfig,
+  type SchedulerStatus,
   type WebhookTriggerConfig,
   type Workflow,
   type WorkflowExecution,
@@ -17,6 +18,9 @@ const selectedWorkflowId = ref("");
 const loading = ref(false);
 const actionLoading = ref(false);
 const execution = ref<WorkflowExecution>();
+const schedulerStatus = ref<SchedulerStatus>();
+const schedulerLoading = ref(false);
+const selectedSchedulerTriggerId = ref("");
 const webhookSecret = ref("");
 const form = ref({ name: "", triggerType: "manual" as WorkflowTriggerType, configText: "{}" });
 const inputText = ref("{}");
@@ -37,6 +41,8 @@ function scheduleConfig(trigger: WorkflowTrigger): ScheduledTriggerConfig {
   return {
     timezone: typeof config.timezone === "string" ? config.timezone : "UTC",
     interval_seconds: typeof config.interval_seconds === "number" ? config.interval_seconds : 60,
+    misfire_policy: config.misfire_policy,
+    catch_up_limit: config.catch_up_limit,
   };
 }
 
@@ -83,12 +89,39 @@ async function loadWorkflows() {
 async function loadTriggers() {
   if (!selectedWorkflowId.value) {
     triggers.value = [];
+    schedulerStatus.value = undefined;
+    selectedSchedulerTriggerId.value = "";
     return;
   }
   try {
     triggers.value = (await workflowApi.triggers(selectedWorkflowId.value)).data;
+    const selected = triggers.value.find((item) => item.id === selectedSchedulerTriggerId.value);
+    if (!selected || !isScheduled(selected)) {
+      schedulerStatus.value = undefined;
+      selectedSchedulerTriggerId.value = "";
+    }
   } catch {
     ElMessage.error("Trigger 查询失败");
+  }
+}
+
+/**
+ * 查询当前 Workflow 下指定 Scheduled Trigger 的持久化状态。
+ *
+ * @param trigger 要查询的 Scheduled Trigger。
+ * @returns 无返回值；查询结果写入页面状态并展示后端正式 Scheduler Contract。
+ */
+async function loadSchedule(trigger: WorkflowTrigger) {
+  if (!selectedWorkflowId.value || !isScheduled(trigger)) return;
+  selectedSchedulerTriggerId.value = trigger.id;
+  schedulerLoading.value = true;
+  try {
+    schedulerStatus.value = (await workflowApi.schedule(selectedWorkflowId.value, trigger.id)).data;
+  } catch {
+    schedulerStatus.value = undefined;
+    ElMessage.error("Scheduler 状态查询失败");
+  } finally {
+    schedulerLoading.value = false;
   }
 }
 
@@ -139,6 +172,7 @@ async function toggleTrigger(trigger: WorkflowTrigger) {
     actionLoading.value = true;
     await workflowApi.updateTrigger(selectedWorkflowId.value, trigger.id, { status: trigger.status === "enabled" ? "disabled" : "enabled" });
     await loadTriggers();
+    if (trigger.id === selectedSchedulerTriggerId.value && trigger.status === "enabled") schedulerStatus.value = undefined;
     ElMessage.success(`Trigger 已${trigger.status === "enabled" ? "禁用" : "启用"}`);
   } catch {
     ElMessage.error("Trigger 状态更新失败");
@@ -153,6 +187,10 @@ async function deleteTrigger(trigger: WorkflowTrigger) {
     await ElMessageBox.confirm(`确认删除 Trigger「${trigger.name}」？`, "删除 Trigger", { type: "warning" });
     actionLoading.value = true;
     await workflowApi.deleteTrigger(selectedWorkflowId.value, trigger.id);
+    if (trigger.id === selectedSchedulerTriggerId.value) {
+      selectedSchedulerTriggerId.value = "";
+      schedulerStatus.value = undefined;
+    }
     await loadTriggers();
     ElMessage.success("Trigger 已删除");
   } catch (error) {
@@ -231,14 +269,30 @@ onMounted(loadWorkflows);
           </template>
         </el-table-column>
         <el-table-column prop="updated_at" label="更新时间" min-width="180" />
-        <el-table-column label="操作" width="250">
+        <el-table-column label="操作" width="320">
           <template #default="scope">
+            <el-button v-if="scope.row.trigger_type === 'scheduled'" size="small" :loading="schedulerLoading && selectedSchedulerTriggerId === scope.row.id" @click="loadSchedule(scope.row as WorkflowTrigger)">调度状态</el-button>
             <el-button v-if="scope.row.trigger_type === 'manual'" size="small" :disabled="scope.row.status === 'disabled'" @click="invokeTrigger(scope.row as WorkflowTrigger)">Invoke</el-button>
             <el-button size="small" :loading="actionLoading" @click="toggleTrigger(scope.row as WorkflowTrigger)">{{ scope.row.status === 'enabled' ? '禁用' : '启用' }}</el-button>
             <el-button size="small" type="danger" :loading="actionLoading" @click="deleteTrigger(scope.row as WorkflowTrigger)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+
+      <el-card v-if="schedulerStatus" v-loading="schedulerLoading" class="scheduler-card">
+        <template #header><div class="header"><span>Scheduler 持久化状态</span><el-button size="small" @click="loadSchedule(triggers.find((item) => item.id === selectedSchedulerTriggerId) as WorkflowTrigger)">刷新</el-button></div></template>
+        <el-descriptions :column="3" border>
+          <el-descriptions-item label="状态"><el-tag :type="schedulerStatus.status === 'enabled' ? 'success' : 'info'">{{ schedulerStatus.status }}</el-tag></el-descriptions-item>
+          <el-descriptions-item label="时区">{{ schedulerStatus.timezone }}</el-descriptions-item>
+          <el-descriptions-item label="Misfire">{{ schedulerStatus.misfire_policy }}</el-descriptions-item>
+          <el-descriptions-item label="Catch-up Limit">{{ schedulerStatus.catch_up_limit }}</el-descriptions-item>
+          <el-descriptions-item label="下次运行">{{ schedulerStatus.next_run_at || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="上次运行">{{ schedulerStatus.last_run_at || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="Lease"><el-tag :type="schedulerStatus.lease_active ? 'warning' : 'info'">{{ schedulerStatus.lease_active ? '占用中' : '未占用' }}</el-tag></el-descriptions-item>
+          <el-descriptions-item label="Lease 到期">{{ schedulerStatus.lease_expires_at || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="最近 Execution">{{ schedulerStatus.last_execution_id || '-' }}</el-descriptions-item>
+        </el-descriptions>
+      </el-card>
 
       <el-divider />
       <el-form label-position="top">
@@ -263,4 +317,5 @@ onMounted(loadWorkflows);
 .selector { margin-top: 16px; max-width: 520px; }
 .el-form--inline { align-items: end; }
 .secret-editor { display: flex; gap: 8px; align-items: center; }
+.scheduler-card { margin-top: 16px; }
 </style>
