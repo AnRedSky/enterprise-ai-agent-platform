@@ -137,7 +137,13 @@ export const workflowApi = {
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
   triggers(id: string) { return request.get<WorkflowTrigger[]>(`/workflows/${id}/triggers`); },
-  /** 查询 Scheduled Trigger 的持久化调度状态，复用后端正式 Scheduler API Contract。 */
+  /**
+   * 查询 Scheduled Trigger 的持久化调度状态，并复用后端正式 Scheduler API Contract。
+   *
+   * @param id Workflow 标识，用于限定租户内的 Workflow 范围。
+   * @param triggerId Scheduled Trigger 标识，用于查询对应持久化调度记录。
+   * @returns 返回 Scheduler 持久化状态的 HTTP 响应，包含 next/last run、lease、misfire 等只读状态。
+   */
   schedule(id: string, triggerId: string) {
     return request.get<SchedulerStatus>(`/workflows/${id}/triggers/${triggerId}/schedule`);
   },

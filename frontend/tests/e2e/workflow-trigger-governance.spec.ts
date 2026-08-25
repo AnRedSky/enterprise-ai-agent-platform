@@ -28,7 +28,7 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     const workflowResponse = await api.post(apiPath("/workflows"), {
       headers,
-      data: { name: `Browser Scheduled Trigger E2E ${nonce}`, description: "Phase 1.7-D browser fixture" },
+      data: { name: `Browser Scheduled Trigger E2E ${nonce}`, description: "Phase 2.4 scheduler browser contract" },
     });
     expect(workflowResponse.status()).toBe(201);
     const workflow = await workflowResponse.json();
@@ -102,6 +102,38 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     await expect(triggerRow).toContainText("scheduled");
     await expect(triggerRow).toContainText("UTC / 每 60 秒");
     await expect(triggerRow.getByRole("button", { name: "Invoke" })).toHaveCount(0);
+
+    const persistedAfterCreate = await api.get(apiPath(`/workflows/${workflow.id}/triggers`), { headers });
+    expect(persistedAfterCreate.ok()).toBeTruthy();
+    const persistedAfterCreatePayload = await persistedAfterCreate.json();
+    const persistedAfterCreateItems = Array.isArray(persistedAfterCreatePayload) ? persistedAfterCreatePayload : persistedAfterCreatePayload.items;
+    const persistedCreatedTrigger = persistedAfterCreateItems.find((item: { name: string }) => item.name === triggerName);
+    expect(persistedCreatedTrigger?.id).toBeTruthy();
+
+    await triggerRow.getByRole("button", { name: "调度状态" }).click();
+    await expect(page.getByText("Scheduler 持久化状态")).toBeVisible();
+
+    await expect.poll(
+      async () => {
+        const response = await api.get(apiPath(`/workflows/${workflow.id}/triggers/${persistedCreatedTrigger.id}/schedule`), { headers });
+        if (!response.ok()) return null;
+        return response.json();
+      },
+      { timeout: 15_000, intervals: [500, 1000, 2000] },
+    ).toMatchObject({
+      trigger_id: persistedCreatedTrigger.id,
+      workflow_id: workflow.id,
+      tenant_id: workflow.tenant_id,
+      status: "enabled",
+      timezone: "UTC",
+      misfire_policy: "skip",
+      catch_up_limit: 10,
+      lease_active: expect.any(Boolean),
+    });
+
+    await expect(page.getByText("UTC").last()).toBeVisible();
+    await expect(page.getByText("skip")).toBeVisible();
+    await expect(page.getByText("10")).toBeVisible();
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
     await expect(page.getByText("Trigger 已禁用")).toBeVisible();

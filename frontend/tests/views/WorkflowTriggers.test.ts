@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 const api = vi.hoisted(() => ({
   list: vi.fn(),
   triggers: vi.fn(),
+  schedule: vi.fn(),
   createTrigger: vi.fn(),
   updateTrigger: vi.fn(),
   deleteTrigger: vi.fn(),
@@ -14,12 +15,13 @@ const messages = vi.hoisted(() => ({
   error: vi.fn(),
   success: vi.fn(),
   warning: vi.fn(),
+  confirm: vi.fn(),
 }));
 
 vi.mock("../../src/api/workflows", () => ({ workflowApi: api }));
 vi.mock("element-plus", () => ({
-  ElMessage: messages,
-  ElMessageBox: { confirm: vi.fn() },
+  ElMessage: { error: messages.error, success: messages.success, warning: messages.warning },
+  ElMessageBox: { confirm: messages.confirm },
 }));
 
 import WorkflowTriggers from "../../src/views/workflow-triggers/index.vue";
@@ -36,9 +38,7 @@ const stubs = {
   "el-tag": { template: "<span><slot /></span>" },
   "el-divider": { template: "<hr />" },
   "el-table": { template: "<div><slot /></div>" },
-  // Element Plus provides a row to each column scoped slot and renders
-  // prop-backed cells. Preserve those semantics in the unit-test stub so
-  // governance assertions exercise the actual column templates.
+  // Element Plus 提供 row 给列的 scoped slot；测试桩保留该语义，确保治理断言覆盖真实列模板。
   "el-table-column": {
     props: ["prop"],
     setup(props: { prop?: string }) {
@@ -74,6 +74,13 @@ const scheduledTrigger = {
   created_at: "2026-08-20T00:00:00Z", updated_at: "2026-08-20T00:00:00Z",
 };
 
+const schedulerStatus = {
+  id: "s1", trigger_id: "t2", workflow_id: "w1", tenant_id: "t1", enabled: true, status: "enabled",
+  timezone: "Asia/Seoul", schedule_expression: null, next_run_at: "2026-08-20T00:01:00Z",
+  last_run_at: "2026-08-20T00:00:00Z", last_execution_id: "e1", lease_expires_at: null,
+  lease_active: false, misfire_policy: "skip" as const, catch_up_limit: 10, updated_at: "2026-08-20T00:00:00Z",
+};
+
 const global = { stubs, directives: { loading: () => undefined } };
 
 describe("Workflow Trigger Governance view", () => {
@@ -82,10 +89,12 @@ describe("Workflow Trigger Governance view", () => {
     Object.values(messages).forEach((mock) => mock.mockReset());
     api.list.mockResolvedValue({ data: [workflow] });
     api.triggers.mockResolvedValue({ data: [manualTrigger, scheduledTrigger] });
+    api.schedule.mockResolvedValue({ data: schedulerStatus });
     api.createTrigger.mockResolvedValue({ data: manualTrigger });
     api.updateTrigger.mockResolvedValue({ data: { ...manualTrigger, status: "disabled" } });
     api.deleteTrigger.mockResolvedValue({ data: undefined });
     api.invokeTrigger.mockResolvedValue({ data: { id: "e1", status: "completed", workflow_id: "w1", workflow_version_id: "v1", input_data: {}, created_at: "2026-08-20" } });
+    messages.confirm.mockResolvedValue(undefined);
   });
 
   it("loads workflow trigger inventory", async () => {
@@ -93,6 +102,38 @@ describe("Workflow Trigger Governance view", () => {
     await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
     expect(wrapper.text()).toContain("Workflow Trigger Governance");
     expect(wrapper.text()).toContain("Asia/Seoul / 每 60 秒");
+  });
+
+  it("loads persisted scheduler status through the formal API contract", async () => {
+    const wrapper = mount(WorkflowTriggers, { global });
+    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    await (wrapper.vm as any).loadSchedule(scheduledTrigger);
+    expect(api.schedule).toHaveBeenCalledWith("w1", "t2");
+    expect((wrapper.vm as any).schedulerStatus).toEqual(schedulerStatus);
+    expect(wrapper.text()).toContain("Scheduler 持久化状态");
+    expect(wrapper.text()).toContain("Asia/Seoul");
+    expect(wrapper.text()).toContain("2026-08-20T00:01:00Z");
+    expect(wrapper.text()).toContain("e1");
+  });
+
+  it("clears persisted scheduler status when the selected scheduled trigger is disabled or deleted", async () => {
+    const wrapper = mount(WorkflowTriggers, { global });
+    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const vm = wrapper.vm as any;
+    await vm.loadSchedule(scheduledTrigger);
+    expect(vm.schedulerStatus).toEqual(schedulerStatus);
+
+    api.updateTrigger.mockResolvedValue({ data: { ...scheduledTrigger, status: "disabled" } });
+    await vm.toggleTrigger(scheduledTrigger);
+    expect(vm.schedulerStatus).toBeUndefined();
+
+    api.triggers.mockResolvedValue({ data: [manualTrigger] });
+    await vm.loadSchedule(scheduledTrigger);
+    expect(vm.schedulerStatus).toEqual(schedulerStatus);
+    await vm.deleteTrigger(scheduledTrigger);
+    expect(vm.schedulerStatus).toBeUndefined();
+    expect(vm.selectedSchedulerTriggerId).toBe("");
+    expect(messages.confirm).toHaveBeenCalled();
   });
 
   it("renders schedule governance guidance without inventing scheduler state", async () => {

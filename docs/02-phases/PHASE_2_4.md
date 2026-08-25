@@ -1,7 +1,7 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate 已由开发者本地实际执行通过；当前进入真实服务重启与生产化 Acceptance 收口。**
-> 评估日期：2026-08-24
+> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration Gate、Tenant Safe Real API Gate、应用生命周期 Gate、真实服务重启 Acceptance 已完成；当前进入 Frontend API/UI 与 Browser E2E 验收。**
+> 评估日期：2026-08-25
 > 优先级：**P1**
 
 ## 1. 方案决策
@@ -42,8 +42,6 @@ backend/app/services/workflow_scheduler/
 7. `skip / fire_once / catch_up` misfire；
 8. Scheduled Trigger 配置可持久化 `misfire_policy / catch_up_limit`。
 
-对应测试：`backend/tests/unit/test_workflow_scheduler_contract.py` 与 Runtime misfire targeted tests。
-
 ## 4. Persistence 第一版
 
 已存在：
@@ -54,8 +52,6 @@ backend/app/services/workflow_scheduler/
 - `workflow_scheduler/repository.py`：单条 UPDATE 原子 lease claim、owner 条件 release、PostgreSQL `ON CONFLICT DO NOTHING` slot claim、Execution 绑定；
 - Repository 的 tenant + trigger scope；
 - PostgreSQL Repository lease / release、tenant isolation 与 slot idempotency integration tests。
-
-本轮不新增 Migration，因为 misfire 字段已经存在于 `0028_durable_scheduler_persistence` 的持久化模型。
 
 ## 5. Durable Runtime 接入
 
@@ -114,54 +110,59 @@ catch_up_limit: 1..100，默认 10
 
 misfire 计算统一位于 `workflow_scheduler/misfire.py`，Runtime 不复制规则。
 
-## 8. 已完成 Gate 结果
+## 8. Backend Gate / Acceptance 实际结果
 
-开发者本地实际反馈：
+开发者本地已反馈通过：
 
 ```text
-Application import：APP_IMPORT_OK
+02_run_scheduler_restart_acceptance.ps1：1 passed
+01_run_real_api_tests_tenant_safe.ps1：36 passed
 05_scheduler_lifecycle_gate.ps1：2 passed
-Scheduler targeted tests：36 passed
-04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、397 Backend regression 均通过；3 skipped，35 deselected
-01_run_real_api_tests_tenant_safe.ps1：35 passed
-uv run pytest -q：397 passed，3 skipped，35 deselected
+04_scheduler_tenant_misfire_gate.ps1：22 misfire unit tests、3 PostgreSQL tenant integration、6 API Contract、397 Backend regression 均通过；3 skipped，36 deselected
 ```
 
-上述结果均为开发者当前本地实际执行结果。新增的真实服务重启 Acceptance 尚未由开发者本地执行，因此不能据此标记 restart recovery 已通过。
+上述结果仅表示开发者实际执行过的 Backend Gate，不代表 Frontend 或 Browser E2E 已通过。
 
 ## 9. 真实服务重启 Acceptance
 
-生产化 Acceptance 新增独立入口：
+真实服务重启 Gate 已由开发者本地执行通过：
 
 ```powershell
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
 ```
 
-该 Gate 的验证边界为：
+验证边界包括真实 Uvicorn 停止/重启、真实 PostgreSQL `next_run_at` 回拨、历史 slot recovery、统一 idempotency key、WorkflowExecution 以及 Audit/Trace tenant/workflow/execution 关联。
 
-1. 自动启动真实 Uvicorn 进程完成 tenant-safe fixture bootstrap；
-2. 测试自身启动真实 Uvicorn，创建 Scheduled Trigger，并等待真实 PostgreSQL `WorkflowSchedule` 持久化；
-3. 停止真实服务进程；
-4. 在真实 PostgreSQL 中回拨持久化 `next_run_at`，清理旧 lease，模拟服务停止期间形成的历史到期 slot；
-5. 重新启动真实 Uvicorn；
-6. 验证 Scheduler 从持久化状态恢复历史 slot，只产生一个统一幂等键对应的 WorkflowExecution；
-7. 验证 Execution 的 AuditLog / WorkflowTraceEvent 保持 tenant、workflow、execution 关联。
+## 10. Frontend Scheduler 状态可观测性
 
-该测试不使用进程内重新实例化 Scheduler 代替真实服务重启，不使用 JSON fixture 替代 PostgreSQL，也不新增第二套 Scheduler Runtime。
+Backend Scheduler API Contract 已向 Frontend 暴露正式只读入口，Frontend 不实现第二套 Scheduler 计算逻辑：
 
-## 10. 下一执行顺序
+- `frontend/src/api/workflows.ts` 定义 `SchedulerStatus`，统一调用 `/workflows/{workflow_id}/triggers/{trigger_id}/schedule`；
+- Workflow Trigger 页面为 Scheduled Trigger 增加“调度状态”入口；
+- 页面展示 status、timezone、misfire、catch-up、next/last run、lease 与最近 Execution；
+- Trigger 禁用、删除或 Workflow 切换导致目标失效时，页面清理已选 Scheduler 状态，避免展示过期持久化数据；
+- API/View Vitest 与 Browser E2E 已补充对应验收断言，尚未由开发者本地执行，因此不能标记 Frontend/Browser Gate Passed。
+
+## 11. 下一执行顺序
 
 ```text
-真实服务 restart recovery Acceptance
+Frontend Release / Regression Gate
       ↓
-多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
+Browser / Frontend-Backend Scheduler E2E
       ↓
-Backend default regression + Tenant Safe Real API Gate
+Backend default regression + Tenant Safe Real API Gate（再次确认）
       ↓
-Frontend API / UI（如存在明确用户操作范围）
+Scheduler 多实例 lease / misfire / Execution / Audit Trace Acceptance 汇总
       ↓
-Browser E2E（如存在对应 UI 用户链路）
+Phase 2.4 Passed 评估
 ```
 
-在真实服务重启与生产化 Acceptance 全部完成前，不记录 Phase 2.4 Passed。
+Frontend Release / Regression Gate：
+
+```powershell
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+```
+
+当前不记录 Phase 2.4 Passed，直到 Frontend 与 Browser E2E 的本地实际结果完成记录。
