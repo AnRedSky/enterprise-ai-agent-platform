@@ -12,34 +12,25 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 最新提交为 `4c970cb`。本轮先修正 Browser E2E 数据库重置 Backend 根路径，再修正隔离运行器的 Frontend 根目录计算；开发者随后完成 Organization 与 Model Provider Browser Gate，Workflow Trigger Browser Gate 暴露新的生产 UI 渲染问题。
+当前远端 `main` 最新提交为 `c013ace`。该提交已修正 Workflow Trigger Browser E2E 暴露的 Scheduler 状态面板异步初始化渲染问题：选择 Scheduled Trigger 后立即显示状态面板，在初始化期间显示 loading / 提示。
 
-开发者本地实际结果：
-
-```text
-uv run python .\scripts\test\e2e\00_reset_browser_e2e_database.py：BROWSER_E2E_DATABASE_RESET_OK
-
-Organization Browser Gate：3/3 passed
-Model Provider Browser Gate：2/2 passed
-Workflow Trigger Browser Gate：1 failed
-```
-
-Workflow Trigger 失败位置：点击 Scheduled Trigger 的“调度状态”后，Playwright 在 5 秒内找不到 `Scheduler 持久化状态`。失败并非数据库重置或隔离运行器问题。
+开发者随后本地重新执行 Workflow Trigger Browser Gate，数据库隔离重置和 Scheduler 状态接口轮询均正常，但暴露出新的测试定位问题：`getByText("10")` 在页面中匹配到 `catch_up_limit` 与时间戳等多个元素，Playwright strict mode 失败。
 
 ## 本轮工程变更
 
-- `frontend/src/views/workflow-triggers/index.vue`：修正 Scheduler 持久化状态卡片的渲染生命周期。选择 Scheduled Trigger 后立即渲染状态面板，在异步 Scheduler 状态初始化期间显示 loading / 初始化提示，成功后继续显示真实后端状态。
-- `docs/04-errors/2026-08-25-browser-e2e-scheduler-status-panel.md`：记录 Workflow Trigger Browser E2E 暴露的 Scheduler 状态面板渲染问题、根因及修复。
-- 未修改 Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则，也未修改 Browser E2E 断言。
+- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`：将 Scheduler 状态字段断言限定在 `.scheduler-card` 内，并使用精确的表格单元格语义选择器，避免页面时间戳等非目标文本造成 strict mode 冲突。
+- `docs/04-errors/2026-08-25-browser-e2e-scheduler-status-selector.md`：记录 Scheduler 状态字段选择器冲突、根因与修复。
+- 未修改 Scheduler API Contract、Runtime 调度算法、slot / lease / misfire 规则或生产调度逻辑。
 
 ## 已完成的 Browser Gate
 
 ```text
 Phase 2.1-F Organization Browser Gate：本地实际通过
 Model Provider Browser Gate：本地实际通过
+Workflow Trigger Browser Gate：在修复 Scheduler 状态面板后继续暴露测试定位问题，当前已完成针对性修复，等待本地重新执行结果
 ```
 
-以上结果来自开发者本地反馈，可作为当前事实记录。
+以上结果以开发者本地实际反馈为准，不预填通过结果。
 
 ## Phase 2.4 当前任务
 

@@ -131,9 +131,11 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
       lease_active: expect.any(Boolean),
     });
 
-    await expect(page.getByText("UTC").last()).toBeVisible();
-    await expect(page.getByText("skip")).toBeVisible();
-    await expect(page.getByText("10")).toBeVisible();
+    const schedulerCard = page.locator(".scheduler-card");
+    await expect(schedulerCard).toBeVisible();
+    await expect(schedulerCard.getByRole("cell", { name: "UTC", exact: true })).toBeVisible();
+    await expect(schedulerCard.getByRole("cell", { name: "skip", exact: true })).toBeVisible();
+    await expect(schedulerCard.getByRole("cell", { name: "10", exact: true })).toBeVisible();
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
     await expect(page.getByText("Trigger 已禁用")).toBeVisible();
