@@ -2,29 +2,29 @@ $ErrorActionPreference="Stop"
 Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Scheduler Real Restart Acceptance"
 Write-Host "============================================================"
-$restartPort=8000
-$portProbe=New-Object System.Net.Sockets.TcpClient
-try{
-  try{
-    $portProbe.Connect("127.0.0.1",$restartPort)
-    throw "Port $restartPort is already occupied. Scheduler real restart acceptance requires exclusive ownership of the local Scheduler process; stop the existing API/Scheduler service before running this gate."
-  }catch [System.Net.Sockets.SocketException]{
-    # 连接失败表示目标端口当前未被监听，可以继续启动独占的临时服务。
-  }
-}finally{
-  $portProbe.Dispose()
+
+# 该 Gate 需要一个仅由自身控制的临时 API/Scheduler 进程。
+# 不再固定占用 8000，而是启动前申请本机空闲端口，避免开发环境已有 API 服务时被无关端口状态阻断。
+$bootstrapListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+try {
+  $bootstrapListener.Start()
+  $bootstrapPort = ([System.Net.IPEndPoint]$bootstrapListener.LocalEndpoint).Port
+} finally {
+  $bootstrapListener.Stop()
 }
-if(-not $env:API_BASE_URL){$env:API_BASE_URL="http://127.0.0.1:$restartPort/api/v1"}
+
+$env:API_BASE_URL="http://127.0.0.1:$bootstrapPort/api/v1"
 $contextFile=Join-Path $PSScriptRoot ".real_api_context.json"
 $bootstrapProcess=$null
 try{
   Write-Host "[1/3] Start temporary real API process for tenant-safe fixture bootstrap"
+  Write-Host "[INFO] Scheduler restart bootstrap port: $bootstrapPort"
   $backendDir=Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
-  $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port",$restartPort) -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden
+  $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port",$bootstrapPort) -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden
   $deadline=(Get-Date).AddSeconds(20)
   do{
     Start-Sleep -Milliseconds 500
-    try{$health=Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$restartPort/health" -TimeoutSec 2}catch{$health=$null}
+    try{$health=Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$bootstrapPort/health" -TimeoutSec 2}catch{$health=$null}
     if($health -and $health.StatusCode -eq 200){break}
     if($bootstrapProcess.HasExited){throw "Temporary real API process exited before health check."}
   }while((Get-Date) -lt $deadline)
@@ -54,4 +54,5 @@ try{
   if(Test-Path $contextFile){Remove-Item $contextFile -Force -ErrorAction SilentlyContinue}
   Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue
   Remove-Item Env:TRIGGER_WORKFLOW_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:API_BASE_URL -ErrorAction SilentlyContinue
 }
