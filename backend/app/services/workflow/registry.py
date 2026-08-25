@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import AuditLog
 from app.models.workflow import Workflow, WorkflowVersion
-from app.runtime.workflow import WorkflowRuntime
 
 
 class WorkflowRegistry:
@@ -134,8 +133,10 @@ class WorkflowRegistry:
         if version.status not in self.VERSION_PUBLISHABLE_STATUSES and version.status != "published":
             raise HTTPException(409, "当前版本状态不允许发布")
 
-        # 发布版本会直接成为 Scheduler/Trigger/Runtime 的执行输入；必须在状态切换前复用唯一 Runtime Contract。
-        # 这样可以阻止空 nodes、非法 node type 等不可执行定义进入 published 状态，避免后台 Scheduler 持续消费坏版本。
+        # 延迟导入避免 Workflow Registry 与 Runtime/Trigger 聚合入口形成循环依赖。
+        # 发布版本会直接成为 Scheduler/Trigger/Runtime 的执行输入，必须复用唯一 Runtime Contract。
+        from app.runtime.workflow import WorkflowRuntime
+
         WorkflowRuntime.validate_definition(version.definition)
 
         previous_id = workflow.published_version_id
