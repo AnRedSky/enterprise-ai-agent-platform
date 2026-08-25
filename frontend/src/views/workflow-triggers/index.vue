@@ -299,9 +299,9 @@ onMounted(loadWorkflows);
         <template v-if="schedulerStatus">
           <el-descriptions :column="3" border>
             <el-descriptions-item label="状态"><el-tag :type="schedulerStatus.status === 'enabled' ? 'success' : 'info'">{{ schedulerStatus.status }}</el-tag></el-descriptions-item>
-            <el-descriptions-item label="时区">{{ schedulerStatus.timezone }}</el-descriptions-item>
-            <el-descriptions-item label="Misfire">{{ schedulerStatus.misfire_policy }}</el-descriptions-item>
-            <el-descriptions-item label="Catch-up Limit">{{ schedulerStatus.catch_up_limit }}</el-descriptions-item>
+            <el-descriptions-item label="时区"><span data-testid="scheduler-timezone">{{ schedulerStatus.timezone }}</span></el-descriptions-item>
+            <el-descriptions-item label="Misfire"><span data-testid="scheduler-misfire-policy">{{ schedulerStatus.misfire_policy }}</span></el-descriptions-item>
+            <el-descriptions-item label="Catch-up Limit"><span data-testid="scheduler-catch-up-limit">{{ schedulerStatus.catch_up_limit }}</span></el-descriptions-item>
             <el-descriptions-item label="下次运行">{{ schedulerStatus.next_run_at || '-' }}</el-descriptions-item>
             <el-descriptions-item label="上次运行">{{ schedulerStatus.last_run_at || '-' }}</el-descriptions-item>
             <el-descriptions-item label="Lease"><el-tag :type="schedulerStatus.lease_active ? 'warning' : 'info'">{{ schedulerStatus.lease_active ? '占用中' : '未占用' }}</el-tag></el-descriptions-item>
