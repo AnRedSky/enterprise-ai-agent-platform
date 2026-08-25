@@ -31,10 +31,12 @@ try{
   $env:ORGANIZATION_MEMBERSHIP_ID=[string]$context.ORGANIZATION_MEMBERSHIP_ID
   $env:ORGANIZATION_MEMBER_USER_ID=[string]$context.ORGANIZATION_MEMBER_USER_ID
   $env:ORGANIZATION_MEMBER_ACCESS_TOKEN=[string]$context.ORGANIZATION_MEMBER_ACCESS_TOKEN
-  Write-Host "[2/2] Execute all real HTTP API tests"
-  uv run pytest -q tests/api_real -m real_api
+  Write-Host "[2/2] Execute tenant-safe real HTTP API tests (lifecycle restart acceptance is independent)"
+  uv run pytest -q tests/api_real -m real_api --ignore=tests/api_real/test_scheduler_restart_api.py
   if($LASTEXITCODE -ne 0){throw "Real API test suite failed."}
-  Write-Host "[PASS] Real API gate completed. Frontend/backend integration may proceed."
+  Write-Host "[PASS] Tenant-safe Real API gate completed."
+  Write-Host "[INFO] Scheduler real service restart acceptance is intentionally excluded from this gate."
+  Write-Host "[INFO] Run .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1 separately with no other Scheduler process active."
 }finally{
   if(Test-Path $contextFile){Remove-Item $contextFile -Force -ErrorAction SilentlyContinue}
   Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue

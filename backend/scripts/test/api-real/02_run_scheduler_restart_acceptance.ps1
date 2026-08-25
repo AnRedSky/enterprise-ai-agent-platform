@@ -2,17 +2,29 @@ $ErrorActionPreference="Stop"
 Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Scheduler Real Restart Acceptance"
 Write-Host "============================================================"
-if(-not $env:API_BASE_URL){$env:API_BASE_URL="http://127.0.0.1:8000/api/v1"}
+$restartPort=8000
+$portProbe=New-Object System.Net.Sockets.TcpClient
+try{
+  try{
+    $portProbe.Connect("127.0.0.1",$restartPort)
+    throw "Port $restartPort is already occupied. Scheduler real restart acceptance requires exclusive ownership of the local Scheduler process; stop the existing API/Scheduler service before running this gate."
+  }catch [System.Net.Sockets.SocketException]{
+    # 连接失败表示目标端口当前未被监听，可以继续启动独占的临时服务。
+  }
+}finally{
+  $portProbe.Dispose()
+}
+if(-not $env:API_BASE_URL){$env:API_BASE_URL="http://127.0.0.1:$restartPort/api/v1"}
 $contextFile=Join-Path $PSScriptRoot ".real_api_context.json"
 $bootstrapProcess=$null
 try{
   Write-Host "[1/3] Start temporary real API process for tenant-safe fixture bootstrap"
   $backendDir=Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
-  $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port","8000") -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden
+  $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port",$restartPort) -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden
   $deadline=(Get-Date).AddSeconds(20)
   do{
     Start-Sleep -Milliseconds 500
-    try{$health=Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8000/health" -TimeoutSec 2}catch{$health=$null}
+    try{$health=Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$restartPort/health" -TimeoutSec 2}catch{$health=$null}
     if($health -and $health.StatusCode -eq 200){break}
     if($bootstrapProcess.HasExited){throw "Temporary real API process exited before health check."}
   }while((Get-Date) -lt $deadline)
