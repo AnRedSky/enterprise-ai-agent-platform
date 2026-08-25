@@ -12,7 +12,7 @@
 
 ## 最新 main 基线
 
-当前最新提交为 `6d4f206`，在前序 Browser E2E 场景隔离与数据库重置修复基础上，修正 Browser E2E 数据库重置脚本的 Backend 根路径计算，使直接执行脚本时可以稳定导入 `app`。
+当前最新提交为 `293773d`，本轮在 `6d4f206` 修正 Browser E2E 数据库重置 Backend 根路径之后，继续修正 Browser E2E 隔离运行器的 Frontend 根目录计算，确保 Playwright 在 `frontend` 根目录执行。
 
 开发者本地实际结果：
 
