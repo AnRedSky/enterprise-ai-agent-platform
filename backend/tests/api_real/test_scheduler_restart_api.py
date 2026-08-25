@@ -43,6 +43,36 @@ async def _schedule_row(trigger_id: str) -> dict | None:
         await engine.dispose()
 
 
+def _wait_for_schedule(trigger_id: str, timeout_seconds: float = 15.0) -> dict:
+    """等待手动运行的 Scheduler 为新建 Trigger 初始化持久化 Schedule。
+
+    Args:
+        trigger_id: 需要等待初始化的 Scheduled Trigger ID。
+        timeout_seconds: 最长等待时间；必须覆盖 Scheduler 的正常轮询周期。
+
+    Returns:
+        已存在的真实 Scheduler 持久化状态。
+
+    Raises:
+        AssertionError: 在限定时间内 Scheduler 未创建对应持久化状态。
+
+    设计边界：Trigger 创建与 Scheduler 初始化是两个独立事务，验收不能假设
+    POST Trigger 返回后 `workflow_schedules` 行已经同步存在，因此这里显式等待
+    外部 Scheduler 完成初始化，再执行历史 slot 回拨，避免测试与 Scheduler 首次
+    `ensure_schedule` 产生竞态。该等待不会启动、停止或重启任何服务。
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        row = asyncio.run(_schedule_row(trigger_id))
+        if row is not None:
+            return row
+        time.sleep(0.5)
+    row = asyncio.run(_schedule_row(trigger_id))
+    if row is None:
+        raise AssertionError(f"Scheduler 未在 {timeout_seconds:.1f}s 内初始化持久化 Schedule，trigger_id={trigger_id}")
+    return row
+
+
 async def _seed_recovery_slot(trigger_id: str, planned_at: datetime) -> None:
     """将真实持久化 Schedule 设置为历史待恢复 slot，不启动任何服务。"""
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
@@ -146,6 +176,7 @@ def test_scheduled_trigger_recovers_persisted_slot_with_external_services():
     planned_at = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=2 * interval_seconds)
 
     try:
+        _wait_for_schedule(trigger_id)
         asyncio.run(_seed_recovery_slot(trigger_id, planned_at))
         schedule = asyncio.run(_schedule_row(trigger_id))
         assert schedule is not None
