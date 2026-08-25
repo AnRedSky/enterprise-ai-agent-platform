@@ -116,6 +116,19 @@ describe("Workflow Trigger Governance view", () => {
     expect(wrapper.text()).toContain("e1");
   });
 
+  it("retries the scheduler status contract while runtime persistence is initializing", async () => {
+    const wrapper = mount(WorkflowTriggers, { global });
+    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    api.schedule.mockRejectedValueOnce(new Error("Scheduler 状态尚未初始化"));
+    api.schedule.mockResolvedValueOnce({ data: schedulerStatus });
+
+    await (wrapper.vm as any).loadSchedule(scheduledTrigger);
+
+    expect(api.schedule).toHaveBeenCalledTimes(2);
+    expect((wrapper.vm as any).schedulerStatus).toEqual(schedulerStatus);
+    expect(messages.error).not.toHaveBeenCalled();
+  });
+
   it("clears persisted scheduler status when the selected scheduled trigger is disabled or deleted", async () => {
     const wrapper = mount(WorkflowTriggers, { global });
     await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
