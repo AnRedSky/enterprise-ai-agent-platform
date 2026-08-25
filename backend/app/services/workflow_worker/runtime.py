@@ -18,8 +18,8 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
-from app.services.workflow import WorkflowExecutionService
 from app.runtime.workflow import WorkflowRuntime
+from app.services.workflow import WorkflowExecutionService
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +87,36 @@ class WorkflowWorker:
             await db.commit()
             return execution
 
+    async def _renew_lease_forever(self, execution_id: UUID) -> None:
+        """持续刷新当前 Worker 的 Execution 租约，避免长 Workflow 在 lease 到期后被误判失联。
+
+        Args:
+            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
+
+        Returns:
+            无；Execution 不再属于当前 Worker 或进入终态后自动退出。
+
+        事务边界：每次刷新使用独立短事务，避免占用 Runtime 执行事务；刷新失败只记录日志，不改变 Workflow Runtime 状态。
+        """
+        interval = max(1.0, self.lease_seconds / 3)
+        while True:
+            await asyncio.sleep(interval)
+            now = datetime.now(UTC).replace(tzinfo=None)
+            lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+            async with SessionLocal() as db:
+                result = await db.execute(
+                    select(WorkflowExecution).where(
+                        WorkflowExecution.id == execution_id,
+                        WorkflowExecution.worker_owner == self.owner,
+                        WorkflowExecution.status.in_({"pending", "running"}),
+                    )
+                )
+                execution = result.scalar_one_or_none()
+                if execution is None:
+                    return
+                execution.worker_lease_expires_at = lease_expires_at
+                await db.commit()
+
     async def execute_claimed(self, execution_id: UUID) -> None:
         """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
 
@@ -99,7 +129,7 @@ class WorkflowWorker:
         Raises:
             Exception: Workflow Runtime 原始执行异常会继续向 Worker 守护层传播。
 
-        设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，并且不超过 Worker lease。
+        设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，长 Workflow 通过独立 lease heartbeat 保持 ownership。
         """
         async with SessionLocal() as db:
             execution = (
@@ -127,11 +157,9 @@ class WorkflowWorker:
             allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {})
             runtime_config = version.definition.get("config") if isinstance(version.definition, dict) else {}
             workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms(runtime_config or {})
-            execution_timeout = min(
-                workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS,
-                max(1, self.lease_seconds - 1),
-            )
+            execution_timeout = workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS
             service = WorkflowExecutionService(db)
+            lease_task = asyncio.create_task(self._renew_lease_forever(execution.id))
             try:
                 await asyncio.wait_for(
                     service.run(
@@ -159,6 +187,11 @@ class WorkflowWorker:
                         await db.rollback()
                 raise RuntimeError("Worker Execution 超过受控执行时间") from exc
             finally:
+                lease_task.cancel()
+                try:
+                    await lease_task
+                except asyncio.CancelledError:
+                    pass
                 current = (
                     await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))
                 ).scalar_one_or_none()
