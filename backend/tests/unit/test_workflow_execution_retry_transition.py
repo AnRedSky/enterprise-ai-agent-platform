@@ -23,7 +23,8 @@ async def test_retry_attempt_returns_node_to_running_before_next_runtime_call(mo
     service.governance.audit = AsyncMock(); service.governance.trace = AsyncMock()
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending",
                                 input_data={"input": "retry-transition"}, started_at=None, ended_at=None,
-                                current_node_id=None, output_data=None, error_code=None, error_message=None)
+                                current_node_id=None, output_data=None, error_code=None, error_message=None,
+                                worker_owner=None)
     version = SimpleNamespace(definition={"config": {"timeout_ms": 1000, "retry_budget": {"max_retries": 2}}, "nodes": [{
         "id": "unstable", "type": "input", "config": {"timeout_ms": 1000, "retry": {"max_attempts": 2,
         "backoff_ms": 0, "max_backoff_ms": 0, "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]}}}]})

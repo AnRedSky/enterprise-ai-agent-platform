@@ -20,7 +20,7 @@ def test_timeout_policy_defaults_and_bounds():
 
 
 def _mock_execution():
-    return SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), created_by=uuid4(), status="pending", input_data={"input": "slow"})
+    return SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), created_by=uuid4(), status="pending", input_data={"input": "slow"}, worker_owner=None)
 
 
 def _service():

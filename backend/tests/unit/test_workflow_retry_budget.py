@@ -14,7 +14,7 @@ from app.services.workflow import WorkflowExecutionService
 @pytest.mark.asyncio
 async def test_retry_budget_exhaustion_fails_execution_and_records_governance(monkeypatch):
     service = WorkflowExecutionService(AsyncMock()); service.governance.audit = AsyncMock(); service.governance.trace = AsyncMock()
-    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending", input_data={"input": "retry"}, started_at=None, ended_at=None, current_node_id=None, output_data=None, error_code=None, error_message=None)
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending", input_data={"input": "retry"}, started_at=None, ended_at=None, current_node_id=None, output_data=None, error_code=None, error_message=None, worker_owner=None)
     version = SimpleNamespace(definition={"config": {"timeout_ms": 1000, "retry_budget": {"max_retries": 1}}, "nodes": [{"id": "unstable", "type": "input", "config": {"timeout_ms": 1000, "retry": {"max_attempts": 5, "backoff_ms": 0, "max_backoff_ms": 0, "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]}}}]})
     async def transition(execution, target_status, **kwargs):
         execution.status = target_status
@@ -37,7 +37,7 @@ async def test_retry_budget_exhaustion_fails_execution_and_records_governance(mo
 @pytest.mark.asyncio
 async def test_retry_deadline_exhaustion_marks_workflow_timeout(monkeypatch):
     service = WorkflowExecutionService(AsyncMock()); service.governance.audit = AsyncMock(); service.governance.trace = AsyncMock()
-    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending", input_data={"input": "deadline"}, started_at=None, ended_at=None, current_node_id=None, output_data=None, error_code=None, error_message=None)
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), created_by=uuid4(), status="pending", input_data={"input": "deadline"}, started_at=None, ended_at=None, current_node_id=None, output_data=None, error_code=None, error_message=None, worker_owner=None)
     version = SimpleNamespace(definition={"config": {"timeout_ms": 10, "retry_budget": {"max_retries": 5}}, "nodes": [{"id": "unstable", "type": "input", "config": {"timeout_ms": 1000, "retry": {"max_attempts": 3, "backoff_ms": 100, "max_backoff_ms": 100, "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]}}}]})
     async def transition(execution, target_status, **kwargs):
         execution.status = target_status

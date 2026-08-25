@@ -279,7 +279,11 @@ def test_circuit_breaker_half_open_probe_quota_real_business_boundary():
             )
             assert created.status_code == 201, created.text
             execution_id = created.json()["id"]
-            run_status, persisted = run_or_observe_execution(client, execution_id)
+            run_status, persisted = run_or_observe_execution(
+                client,
+                execution_id,
+                expected_http_status=(200, 503),
+            )
             return execution_id, run_status, persisted
 
     with ThreadPoolExecutor(max_workers=2) as pool:
