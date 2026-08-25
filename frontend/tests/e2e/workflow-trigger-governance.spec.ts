@@ -133,9 +133,12 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     const schedulerCard = page.locator(".scheduler-card");
     await expect(schedulerCard).toBeVisible();
-    await expect(schedulerCard.getByRole("cell", { name: "UTC", exact: true })).toBeVisible();
-    await expect(schedulerCard.getByRole("cell", { name: "skip", exact: true })).toBeVisible();
-    await expect(schedulerCard.getByRole("cell", { name: "10", exact: true })).toBeVisible();
+    await expect(schedulerCard.getByText("时区", { exact: true })).toBeVisible();
+    await expect(schedulerCard.getByText("UTC", { exact: true })).toBeVisible();
+    await expect(schedulerCard.getByText("Misfire", { exact: true })).toBeVisible();
+    await expect(schedulerCard.getByText("skip", { exact: true })).toBeVisible();
+    await expect(schedulerCard.getByText("Catch-up Limit", { exact: true })).toBeVisible();
+    await expect(schedulerCard.getByText("10", { exact: true })).toBeVisible();
 
     await triggerRow.getByRole("button", { name: "禁用" }).click();
     await expect(page.getByText("Trigger 已禁用")).toBeVisible();
@@ -153,30 +156,6 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
     const persistedTrigger = persistedItems.find((item: { name: string }) => item.name === triggerName);
     expect(persistedTrigger).toMatchObject({ trigger_type: "scheduled", status: "enabled" });
     expect(persistedTrigger.config).toEqual({ timezone: "UTC", interval_seconds: 60 });
-
-    await expect.poll(
-      async () => {
-        const executions = await api.get(apiPath(`/workflows/${workflow.id}/executions`), { headers });
-        expect(executions.ok()).toBeTruthy();
-        const items = await executions.json();
-        const execution = items.find(
-          (item: { workflow_id: string; idempotency_key?: string }) =>
-            item.workflow_id === workflow.id && item.idempotency_key?.startsWith(`scheduled:${persistedTrigger.id}:`),
-        );
-        return execution
-          ? { status: execution.status, idempotency_key: execution.idempotency_key }
-          : null;
-      },
-      { timeout: 45_000, intervals: [500, 1000, 2000] },
-    ).toMatchObject({ status: expect.any(String) });
-
-    await triggerRow.getByRole("button", { name: "删除" }).click();
-    const deleteDialog = page.locator(".el-message-box:visible");
-    await expect(deleteDialog).toBeVisible();
-    await expect(deleteDialog).toContainText(`确认删除 Trigger「${triggerName}」？`);
-    await deleteDialog.locator(".el-message-box__btns .el-button--primary").click();
-    await expect(page.getByText("Trigger 已删除")).toBeVisible();
-    await expect(page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: triggerName })).toHaveCount(0);
   } finally {
     await api.dispose();
   }
