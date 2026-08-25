@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import pytest
 
+from .execution_helpers import run_or_observe_execution
+
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
 ORGANIZATION_ID = os.getenv("ORGANIZATION_ID")
@@ -175,8 +177,9 @@ def test_real_api_persists_governed_usage_and_calculated_cost():
                 assert execution.status_code == 201, execution.text
                 execution_id = execution.json()["id"]
 
-                run = client.post(f"/workflows/executions/{execution_id}/run")
-                assert run.status_code == 200, run.text
+                run_status, persisted_execution = run_or_observe_execution(client, execution_id)
+                assert run_status in {200, 409}
+                assert persisted_execution["status"] == "completed"
 
                 usage = client.get(
                     "/usage/model",

@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 import httpx
 
+from .execution_helpers import run_or_observe_execution
+
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
 WORKFLOW_ID = os.getenv("WORKFLOW_ID")
@@ -47,6 +49,28 @@ def _get_governance(client, execution_id, workflow_id):
     assert trace.status_code == 200, trace.text
     assert audit.status_code == 200, audit.text
     return nodes.json(), trace.json(), audit.json()["items"]
+
+
+def _effective_run_status(run_status, persisted_execution):
+    """将 Worker 抢占导致的 409 映射为业务结果，而不是把竞态误判为断言失败。
+
+    Args:
+        run_status: 真实 HTTP `/run` 返回状态码。
+        persisted_execution: Worker 完成后通过真实 HTTP 查询得到的 Execution。
+
+    Returns:
+        与手动 `/run` 直接执行时等价的业务 HTTP 状态码。
+
+    Raises:
+        AssertionError: Worker 持久化结果不能对应当前 Circuit Breaker Fixture Contract。
+    """
+    if run_status != 409:
+        return run_status
+    if persisted_execution["status"] == "completed":
+        return 200
+    if persisted_execution["status"] == "failed" and persisted_execution.get("error_code") == "CIRCUIT_OPEN":
+        return 503
+    raise AssertionError(f"Worker claim race persisted unexpected execution: {persisted_execution}")
 
 
 def test_unauthenticated_workflow_api_is_rejected():
@@ -255,16 +279,20 @@ def test_circuit_breaker_half_open_probe_quota_real_business_boundary():
             )
             assert created.status_code == 201, created.text
             execution_id = created.json()["id"]
-            response = client.post(f"/workflows/executions/{execution_id}/run")
-            return execution_id, response.status_code, response.text
+            run_status, persisted = run_or_observe_execution(client, execution_id)
+            return execution_id, run_status, persisted
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         first, second = pool.map(lambda _index: run_execution(), (1, 2))
 
     results = [first, second]
-    assert sorted(result[1] for result in results) == [200, 503]
-    failed_id = next(result[0] for result in results if result[1] == 503)
-    successful_id = next(result[0] for result in results if result[1] == 200)
+    effective_results = [
+        (_execution_id, _effective_run_status(_run_status, _persisted), _persisted)
+        for _execution_id, _run_status, _persisted in results
+    ]
+    assert sorted(result[1] for result in effective_results) == [200, 503]
+    failed_id = next(result[0] for result in effective_results if result[1] == 503)
+    successful_id = next(result[0] for result in effective_results if result[1] == 200)
     with _client() as client:
         failed = _assert_failed_execution(client, failed_id, "CIRCUIT_OPEN")
         successful = client.get(f"/workflows/executions/{successful_id}")
