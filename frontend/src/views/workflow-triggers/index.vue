@@ -108,6 +108,9 @@ async function loadTriggers() {
 /**
  * 查询当前 Workflow 下指定 Scheduled Trigger 的持久化状态。
  *
+ * Scheduler Runtime 会在 Trigger 创建后异步初始化持久化 Schedule，因此首次查询可能暂时返回“尚未初始化”。
+ * 页面只重试该可预期的初始化窗口，不复制 Scheduler 的调度、slot 或 misfire 规则。
+ *
  * @param trigger 要查询的 Scheduled Trigger。
  * @returns 无返回值；查询结果写入页面状态并展示后端正式 Scheduler Contract。
  */
@@ -115,8 +118,20 @@ async function loadSchedule(trigger: WorkflowTrigger) {
   if (!selectedWorkflowId.value || !isScheduled(trigger)) return;
   selectedSchedulerTriggerId.value = trigger.id;
   schedulerLoading.value = true;
+  schedulerStatus.value = undefined;
+  const maxAttempts = 4;
   try {
-    schedulerStatus.value = (await workflowApi.schedule(selectedWorkflowId.value, trigger.id)).data;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        schedulerStatus.value = (await workflowApi.schedule(selectedWorkflowId.value, trigger.id)).data;
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        const retryable = message.includes("Scheduler 状态尚未初始化") || message.includes("Request failed with status code 404");
+        if (!retryable || attempt === maxAttempts) throw error;
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+      }
+    }
   } catch {
     schedulerStatus.value = undefined;
     ElMessage.error("Scheduler 状态查询失败");
@@ -312,8 +327,8 @@ onMounted(loadWorkflows);
 </template>
 
 <style scoped>
-.trigger-page { padding: 16px; }
-.header { display: flex; align-items: center; justify-content: space-between; }
+.trigger-page { padding: 24px; }
+.header { display: flex; justify-content: space-between; align-items: center; }
 .selector { margin-top: 16px; max-width: 520px; }
 .el-form--inline { align-items: end; }
 .secret-editor { display: flex; gap: 8px; align-items: center; }
