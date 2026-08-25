@@ -77,7 +77,8 @@ test("Workflow Trigger Governance completes the real scheduled browser contract"
 
     const triggerName = `Scheduled Trigger ${unique}`;
     await page.getByLabel("Trigger 名称").fill(triggerName);
-    await page.getByLabel("类型").click();
+    // Element Plus 的 el-select 内部 input 是 readonly，点击时可能被 suffix SVG 拦截；使用生产页面提供的稳定 test hook 点击 Select 根节点。
+    await page.getByTestId("workflow-trigger-type-select").click();
     await page.getByRole("option", { name: "scheduled" }).click();
     await page.getByRole("button", { name: "创建 Trigger" }).click();
 
