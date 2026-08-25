@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-from uuid import uuid4
+from dataclasses import dataclass
+from uuid import UUID, uuid4
 
 import pytest
 
 from app.services.workflow_worker import WorkflowWorker
+
+
+@dataclass(frozen=True)
+class _ClaimedExecution:
+    """测试替身：与 WorkflowWorker.claim_one 的 Execution 契约保持一致。"""
+
+    id: UUID
 
 
 @pytest.mark.asyncio
@@ -15,7 +23,7 @@ async def test_dispatch_once_runs_each_claimed_execution_once() -> None:
     """一轮 dispatch 应为每个成功 claim 的 Execution 创建一个消费任务。"""
     worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=3, lease_seconds=30)
     execution_ids = [uuid4(), uuid4(), uuid4()]
-    claimed = list(execution_ids)
+    claimed = [_ClaimedExecution(item) for item in execution_ids]
     executed: list[str] = []
 
     async def fake_claim_one():
