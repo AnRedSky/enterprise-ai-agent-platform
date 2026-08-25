@@ -1,26 +1,26 @@
 $ErrorActionPreference="Stop"
 Write-Host "============================================================"
-Write-Host "Enterprise AI Agent Platform - Scheduler Real Restart Acceptance"
+Write-Host "Enterprise AI Agent Platform - Scheduler / Worker Restart Acceptance"
 Write-Host "============================================================"
 
-function Assert-NoProjectSchedulerProcess {
-  # Restart Acceptance 必须保证目标 Trigger 在 PostgreSQL 中只有测试自身的 Scheduler worker 能够竞争。
-  # 当前服务边界下 API 与 Scheduler 是两个独立进程，因此同时检查 API Service 与 Scheduler Service。
+function Assert-NoProjectBackgroundProcess {
+  # Acceptance 必须独占目标 Scheduler / Worker，避免已有后台服务抢占同一 PostgreSQL Execution。
   $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
     $_.CommandLine -and (
       $_.CommandLine -match "app\.main:app" -or
-      $_.CommandLine -match "run_scheduler\.py"
+      $_.CommandLine -match "run_scheduler\.py" -or
+      $_.CommandLine -match "run_worker\.py"
     )
   })
   if($processes.Count -gt 0){
     $details = ($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join "`n"
-    throw "检测到已有项目 API/Scheduler 进程，restart acceptance 必须独占目标 Scheduler。请先停止以下进程后重新执行：`n$details"
+    throw "检测到已有项目 API/Scheduler/Worker 进程，Acceptance 必须独占目标后台服务。请先停止以下进程后重新执行：`n$details"
   }
 }
 
-Assert-NoProjectSchedulerProcess
+Assert-NoProjectBackgroundProcess
 
-# Gate 只使用临时 API Service 完成 tenant-safe fixture bootstrap；真实 restart acceptance 由独立 Scheduler Service 完成。
+# Gate 只使用临时 API Service 完成 tenant-safe fixture bootstrap；真实验收由独立 Scheduler + Worker 完成。
 $bootstrapListener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
 try {
   $bootstrapListener.Start()
@@ -34,7 +34,7 @@ $contextFile=Join-Path $PSScriptRoot ".real_api_context.json"
 $bootstrapProcess=$null
 try{
   Write-Host "[1/3] Start temporary API Service for tenant-safe fixture bootstrap"
-  Write-Host "[INFO] Scheduler restart fixture bootstrap port: $bootstrapPort"
+  Write-Host "[INFO] Fixture bootstrap port: $bootstrapPort"
   $backendDir=Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
   $bootstrapProcess=Start-Process -FilePath "uv" -ArgumentList @("run","uvicorn","app.main:app","--host","127.0.0.1","--port",$bootstrapPort) -WorkingDirectory $backendDir -PassThru -WindowStyle Hidden
   $deadline=(Get-Date).AddSeconds(20)
@@ -57,17 +57,18 @@ try{
 
   $context=Get-Content $contextFile -Raw|ConvertFrom-Json
   $env:ACCESS_TOKEN=[string]$context.ACCESS_TOKEN
-  # restart acceptance 已自行创建可执行 Workflow，TRIGGER_WORKFLOW_ID 仅保留兼容 bootstrap context，不参与测试。
   $env:TRIGGER_WORKFLOW_ID=[string]$context.TRIGGER_WORKFLOW_ID
 
-  Write-Host "[3/3] Start/stop/restart independent Scheduler Service and verify PostgreSQL recovery"
+  Write-Host "[3/3] Start/stop/restart independent Scheduler + Worker Services and verify PostgreSQL execution recovery"
   uv run python -c "from app.main import app; print('API_IMPORT_OK')"
   if($LASTEXITCODE -ne 0){throw "Application import failed."}
   uv run python -c "from app.entrypoints.scheduler import run_scheduler_service; print('SCHEDULER_ENTRYPOINT_IMPORT_OK')"
   if($LASTEXITCODE -ne 0){throw "Scheduler entrypoint import failed."}
+  uv run python -c "from app.entrypoints.worker import run_worker_service; print('WORKER_ENTRYPOINT_IMPORT_OK')"
+  if($LASTEXITCODE -ne 0){throw "Worker entrypoint import failed."}
   uv run pytest -q tests/api_real/test_scheduler_restart_api.py -m real_api
-  if($LASTEXITCODE -ne 0){throw "Scheduler real restart acceptance failed."}
-  Write-Host "[PASS] Independent Scheduler Service restart acceptance completed."
+  if($LASTEXITCODE -ne 0){throw "Scheduler / Worker restart acceptance failed."}
+  Write-Host "[PASS] Independent Scheduler / Worker restart acceptance completed."
 }finally{
   if($bootstrapProcess -and -not $bootstrapProcess.HasExited){Stop-Process -Id $bootstrapProcess.Id -Force -ErrorAction SilentlyContinue; $bootstrapProcess.WaitForExit()}
   if(Test-Path $contextFile){Remove-Item $contextFile -Force -ErrorAction SilentlyContinue}

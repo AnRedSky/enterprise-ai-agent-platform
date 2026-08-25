@@ -10,11 +10,14 @@ from app.models.core import Base, utcnow_naive
 
 
 class WorkflowExecution(Base):
+    """Workflow 执行持久化模型，包含独立 Worker 的 ownership 租约。"""
+
     __tablename__ = "workflow_executions"
     __table_args__ = (
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_workflow_execution_tenant_idempotency"),
         Index("ix_workflow_execution_tenant_created", "tenant_id", "created_at"),
         Index("ix_workflow_execution_workflow_created", "workflow_id", "created_at"),
+        Index("ix_workflow_execution_worker_claim", "status", "worker_lease_expires_at", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -34,10 +37,15 @@ class WorkflowExecution(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    worker_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    worker_lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    worker_attempt: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
 
 
 class WorkflowNodeExecution(Base):
+    """Workflow 节点执行持久化模型。"""
+
     __tablename__ = "workflow_node_executions"
     __table_args__ = (
         UniqueConstraint("execution_id", "node_id", name="uq_workflow_node_execution"),

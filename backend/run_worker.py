@@ -1,0 +1,27 @@
+"""Worker Service 独立启动脚本。
+
+职责：提供本地开发与部署系统统一的 Worker Service 进程入口。
+边界：不启动 FastAPI、不启动 Scheduler；Worker 只消费持久化 Workflow Execution。
+"""
+
+from app.entrypoints.worker import main
+
+
+def print_startup_info() -> None:
+    """打印 Worker Service 的关键非敏感启动信息。"""
+    print("=" * 64, flush=True)
+    print("Enterprise AI Agent Platform - Worker Service", flush=True)
+    print("=" * 64, flush=True)
+    print("Service       : worker", flush=True)
+    print("Transport     : PostgreSQL pending WorkflowExecution", flush=True)
+    print("Concurrency   : 4", flush=True)
+    print("Lease         : 60s", flush=True)
+    print("HTTP API      : none (independent background service)", flush=True)
+    print("Scheduler     : run_scheduler.py (independent process)", flush=True)
+    print("API Service   : run.py (independent process)", flush=True)
+    print("=" * 64, flush=True)
+
+
+if __name__ == "__main__":
+    print_startup_info()
+    main()

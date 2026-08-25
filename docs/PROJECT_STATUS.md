@@ -7,52 +7,119 @@
 - 当前架构基线：远端 `main`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
-- Phase 2.4 Durable Scheduler：**Backend 持久化、Runtime、Scheduler API Contract、tenant isolation / misfire、生命周期、真实服务 restart recovery、API/Scheduler 进程解耦已完成开发；Frontend / Browser E2E 上轮已完成实际验证；本轮服务化后完整 Backend / Real API / Restart Gate 需重新执行。**
+- Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；上一轮独立 Scheduler restart acceptance 已通过。**
+- Phase 2.5 Scheduler → Worker Execution Decoupling：**代码实现完成；本轮 Backend / Migration / Real Acceptance 待开发者本地执行。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-当前 `main` 已在历史 Workflow Definition 兼容修复基础上完成 API Service / Scheduler Service 进程职责拆分。
+当前主线已经完成两级服务化边界：
 
-此前 API `lifespan` 会创建 `ScheduledTriggerScheduler`。虽然 PostgreSQL lease / slot 可以保护多实例 ownership 与幂等，但 API 横向扩容会同步增加 Scheduler 后台进程，使 HTTP 生命周期、发布重启与调度生命周期耦合。本轮将 Scheduler 生命周期移出 API，改为独立 `run_scheduler.py` 进程入口。
+```text
+API Service
+    run.py
 
-本轮进一步明确：**服务角色由启动入口决定，而不是由配置开关决定。** `run.py` 永远是 API Service；`run_scheduler.py` 永远是 Scheduler Service。项目不再使用 `SCHEDULER_ENABLED=false` 之类的配置区分两类服务，也不通过该开关把 Scheduler 变成关闭模式。若部署环境不需要 Scheduler，应不启动 Scheduler Service 进程。
+Scheduler Service
+    run_scheduler.py
 
-## 本轮工程变更
+Worker Service
+    run_worker.py
+```
 
-### 服务化进程入口
+服务角色由启动入口固定确定，不使用 `SCHEDULER_ENABLED` / `WORKER_ENABLED` 等配置开关切换角色。
 
-- `backend/app/entrypoints/__init__.py`
-  - 建立独立进程入口模块边界。
-- `backend/app/entrypoints/scheduler.py`
-  - 负责 Scheduler Service 生命周期编排；不实现 slot / lease / misfire 业务规则。
-  - 删除 `scheduler_enabled` 启动拒绝逻辑，确保 Scheduler 入口身份固定。
-- `backend/run.py`
-  - 明确为 API Service 启动入口。
-- `backend/run_scheduler.py`
-  - 明确为 Scheduler Service 独立启动入口。
-  - 启动信息不再打印 `scheduler_enabled`，避免暗示服务角色由配置切换。
-- `backend/app/main.py`
-  - 删除 API lifespan 中的 Scheduler 创建、后台 task 与停止逻辑。
-  - `/health` 增加 `service=api`，明确 API Service 身份。
-- `backend/app/core/config.py`
-  - 删除 `scheduler_enabled` 配置 Contract；保留 Scheduler 自身运行参数。
+## 当前执行链
 
-### 测试
+```text
+API Service
+    ↓ HTTP
+Workflow / Trigger Domain
+    ↓
+Scheduler Service
+    ├── schedule
+    ├── lease
+    ├── slot
+    ├── misfire
+    └── create pending WorkflowExecution
+              ↓ PostgreSQL
+Worker Service
+    ├── claim pending Execution
+    ├── worker lease
+    └── WorkflowExecutionService.run()
+              ↓
+WorkflowRuntime
+```
 
-- `backend/tests/unit/test_service_entrypoints.py`
-  - 验证 API 启动不创建 Scheduler；
-  - 验证 Scheduler Service 复用唯一 `ScheduledTriggerScheduler`；
-  - 验证 Scheduler Service 的身份不依赖 `SCHEDULER_ENABLED` 配置。
+核心职责已经明确：
 
-### 架构 / Phase / Acceptance
+> **Scheduler 负责“什么时候执行”，Worker 负责“执行什么”。**
 
-- `docs/00-architecture/SERVICE_RUNTIME_ARCHITECTURE.md`
-  - 明确 API / Scheduler 服务角色由启动入口确定，不使用 `SCHEDULER_ENABLED` 进行角色切换。
-- `docs/02-phases/PHASE_2_4.md`
-  - 记录 Phase 2.4 服务化拆分及后续 Worker 扩展边界。
-- `docs/03-acceptance/PHASE_2_4_ACCEPTANCE.md`
-  - 增加服务职责、启动方式与本地验收流程。
+## 本轮 Scheduler → Worker 变更
+
+### Scheduler
+
+`WorkflowTriggerService.invoke_scheduled()` 不再直接调用 `WorkflowExecutionService.run()`。
+
+现在 Scheduled Trigger 只负责：
+
+1. 校验 Trigger / Published Version；
+2. 计算并接收 Scheduler slot metadata；
+3. 通过 idempotency claim 创建 `pending WorkflowExecution`；
+4. 写入 Audit / Trace；
+5. 返回待执行任务。
+
+Scheduler Runtime 随后绑定 slot 与 Execution 并推进持久化 schedule。
+
+### Worker
+
+新增：
+
+```text
+backend/app/services/workflow_worker/
+├── __init__.py
+└── runtime.py
+
+backend/app/entrypoints/worker.py
+backend/run_worker.py
+```
+
+Worker：
+
+- 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 认领 pending Execution；
+- 写入 `worker_owner / worker_lease_expires_at / worker_attempt`；
+- 复用唯一 `WorkflowExecutionService`；
+- 复用唯一 `WorkflowRuntime`；
+- 不实现 Scheduler slot / misfire / Trigger / Provider / Runtime 第二套规则；
+- 默认并发 4、claim lease 60s、poll 1s。
+
+### Database
+
+新增 Migration：
+
+```text
+0029_workflow_worker_lease
+```
+
+新增字段：
+
+```text
+workflow_executions.worker_owner
+workflow_executions.worker_lease_expires_at
+workflow_executions.worker_attempt
+```
+
+并增加 Worker claim 索引与 lease 成对约束。
+
+## Legacy Definition 兼容
+
+历史 Scheduled Execution 仍保留受控的空 nodes 兼容，但 Worker 不扩大兼容范围：
+
+```text
+scheduled_slot 存在 → 使用已有 Scheduler legacy compatibility
+普通 Manual Execution → 严格 Definition 校验
+```
+
+不新增第二套 Definition validator。
 
 ## 当前服务架构
 
@@ -67,71 +134,87 @@ Scheduler Service
         ├── PostgreSQL lease
         ├── schedule slot
         ├── misfire
-        └── WorkflowTriggerService dispatch
+        └── pending WorkflowExecution dispatch
 
 Worker Service
-    └── 后续扩展，当前不实现空壳
+    backend/run_worker.py
+    └── WorkflowWorker
+        ├── PostgreSQL pending claim
+        ├── worker lease
+        └── WorkflowExecutionService → WorkflowRuntime
 ```
 
-API 与 Scheduler 共享正式 Domain / Runtime / Infrastructure，但不共享进程生命周期。Worker 后续必须在 Task Contract、Queue/Broker、retry、lease、DLQ、cancellation 与 tenant boundary 明确后再实施。
+API、Scheduler、Worker 三者共享正式 Domain / Infrastructure，但生命周期完全独立。
 
 ## 当前 Gate 状态
 
+本轮代码变更完成后，必须重新执行：
+
 ```text
-服务职责边界单测                                      ↓ 本轮待执行
-Backend default regression                            ↓ 本轮待重新执行
-Tenant Safe Real API Gate                             ↓ 本轮待重新执行
-Scheduler Restart Acceptance                          ↓ 本轮待重新执行
-Frontend Regression Gate                              ↓ 服务化后按范围重新确认
-Workflow Trigger Browser Gate                         ↓ 服务化后按范围重新确认
-Phase 2.4 Acceptance 汇总                             ↓
+① Worker Unit
+② Backend default regression
+③ Database migration/head
+④ Scheduler + Worker Real Acceptance
+⑤ Frontend Regression（受范围影响时）
+⑥ Workflow Trigger Browser E2E（受范围影响时）
 ```
 
-上轮开发者实际反馈：
+本文件不预填本轮测试通过结果。
+
+上一轮实际结果仍为：
 
 ```text
-Backend default regression: 397 passed, 3 skipped, 36 deselected
+Backend default regression: 403 passed, 3 skipped, 36 deselected
 Tenant Safe Real API Gate: 35 passed
+Scheduler independent restart acceptance: 1 passed
 Frontend Regression: 79 passed + production build
 Workflow Trigger Browser E2E: 1 passed
 ```
 
-以上属于上一轮实际结果，不代表本轮服务化拆分已经通过。
+以上结果属于上一轮服务化提交，不能作为 Phase 2.5 本轮代码变更后的验收结果。
 
-## 本轮运行方式
+## 本地启动
 
-API Service：
+### API Service
 
 ```powershell
 cd backend
 uv run python run.py
 ```
 
-Scheduler Service：
+### Scheduler Service
 
 ```powershell
 cd backend
 uv run python run_scheduler.py
 ```
 
-两个入口的服务身份固定：
+### Worker Service
 
-```text
-run.py           → API Service
-run_scheduler.py → Scheduler Service
+```powershell
+cd backend
+uv run python run_worker.py
 ```
 
-API Service 不再自动启动 Scheduler。开发机如果同时需要 HTTP 与 Scheduled Trigger，必须显式启动两个进程。若只需要 API，则只启动 `run.py`；若只需要 Scheduler，则只启动 `run_scheduler.py`，不需要修改任何配置开关。
+如果需要完整 Scheduled Workflow 执行链，本地必须同时运行 Scheduler 与 Worker；API 是否运行只取决于是否需要 HTTP 管理入口。
 
 ## 当前禁止事项
 
-- 不创建第二套 Scheduler / Repository / Provider / Execution / slot key 实现；
-- 不通过修改测试断言掩盖生产 Runtime metadata Contract；
-- 不使用 JSON fixture 替代真实 PostgreSQL Scheduler 状态；
-- 不创建兼容垫片、旧入口转发或功能分支；
-- 不把 GitHub Actions 结果当作本地开发 Gate 或验收结果；
-- Scheduler Restart Acceptance 不得让测试自身启动的多个 Scheduler worker 共享同一目标 slot；
-- 历史 Definition 兼容不得扩大为任意非法节点自动转换；只有可确定语义的历史空节点允许受控兼容；
-- API Service 不得恢复内嵌 Scheduler；Scheduler 必须保持独立进程入口；
-- **不得使用 `SCHEDULER_ENABLED` 或等价配置开关区分 API Service 与 Scheduler Service；服务角色必须由启动入口固定确定；**
-- Worker Service 在 Task Contract 与 Queue/Broker 等基础 Contract 未明确前不得创建空壳实现。
+- 不恢复 API 内嵌 Scheduler；
+- 不使用 `SCHEDULER_ENABLED` / `WORKER_ENABLED` 区分服务角色；
+- 不让 Scheduler 直接执行 Workflow Runtime；
+- 不创建第二套 Execution Service / Runtime / Provider；
+- 不通过 JSON fixture 替代真实 PostgreSQL Task Contract；
+- 不通过 Mock Runtime 作为 Real Acceptance；
+- 不在本阶段偷偷加入 running Execution 自动 resume；
+- 不创建 MQ/Kafka/Celery 等 Broker 作为当前阶段必要依赖；
+- 不创建功能分支，所有开发直接基于并提交 `main`。
+
+## 文档记录
+
+本轮同步维护：
+
+- `docs/00-architecture/SERVICE_RUNTIME_ARCHITECTURE.md`
+- `docs/02-phases/PHASE_2_5.md`
+- `docs/03-acceptance/PHASE_2_5_ACCEPTANCE.md`
+- `docs/PROJECT_STATUS.md`

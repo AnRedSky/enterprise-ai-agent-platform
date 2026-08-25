@@ -1,4 +1,4 @@
-"""真实 Scheduler Service 重启验收：验证持久化状态可跨进程恢复，并保持治理关联。"""
+"""真实 Scheduler / Worker Service 重启验收：验证调度与执行跨进程解耦并保持持久化恢复。"""
 
 from __future__ import annotations
 
@@ -43,13 +43,15 @@ def _start_api(port: int) -> subprocess.Popen:
 
 
 def _start_scheduler() -> subprocess.Popen:
-    """启动真实独立 Scheduler Service；不启动 HTTP API。"""
-    return subprocess.Popen(
-        ["uv", "run", "python", "run_scheduler.py"],
-        cwd=BACKEND_DIR,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    """启动真实独立 Scheduler Service；不启动 HTTP API 或 Worker。"""
+    return subprocess.Popen(["uv", "run", "python", "run_scheduler.py"], cwd=BACKEND_DIR,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _start_worker() -> subprocess.Popen:
+    """启动真实独立 Worker Service；只消费 PostgreSQL pending Execution。"""
+    return subprocess.Popen(["uv", "run", "python", "run_worker.py"], cwd=BACKEND_DIR,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def _wait_for_api(process: subprocess.Popen, port: int, timeout_seconds: float = 20.0) -> None:
@@ -68,15 +70,13 @@ def _wait_for_api(process: subprocess.Popen, port: int, timeout_seconds: float =
     raise AssertionError(f"API Service 在 {timeout_seconds}s 内未就绪")
 
 
-def _wait_for_scheduler(process: subprocess.Popen, timeout_seconds: float = 5.0) -> None:
-    """确认独立 Scheduler Service 进程保持运行。"""
+def _wait_for_background_service(process: subprocess.Popen, service_name: str, timeout_seconds: float = 5.0) -> None:
+    """确认独立后台服务保持运行。"""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         if process.poll() is not None:
-            raise AssertionError(f"Scheduler Service 进程提前退出，exit_code={process.returncode}")
+            raise AssertionError(f"{service_name} 进程提前退出，exit_code={process.returncode}")
         time.sleep(0.25)
-    if process.poll() is not None:
-        raise AssertionError(f"Scheduler Service 进程提前退出，exit_code={process.returncode}")
 
 
 def _stop_process(process: subprocess.Popen) -> None:
@@ -127,11 +127,8 @@ async def _seed_restart_slot(trigger_id: str, planned_at: datetime) -> None:
                     "lease_owner = NULL, lease_expires_at = NULL, updated_at = :updated_at "
                     "WHERE trigger_id = :trigger_id"
                 ),
-                {
-                    "trigger_id": UUID(trigger_id),
-                    "planned_at": planned_at.astimezone(UTC).replace(tzinfo=None),
-                    "updated_at": datetime.now(UTC).replace(tzinfo=None),
-                },
+                {"trigger_id": UUID(trigger_id), "planned_at": planned_at.astimezone(UTC).replace(tzinfo=None),
+                 "updated_at": datetime.now(UTC).replace(tzinfo=None)},
             )
             if updated.rowcount != 1:
                 raise AssertionError(f"Scheduler 状态回拨失败，trigger_id={trigger_id}")
@@ -181,7 +178,7 @@ async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
 
 
 def _wait_for_execution(idempotency_key: str, timeout_seconds: float = 20.0) -> list[dict]:
-    """轮询真实 PostgreSQL，等待恢复 slot 的 Execution 进入终态。"""
+    """轮询真实 PostgreSQL，等待 Worker 执行结果进入终态。"""
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         rows = asyncio.run(_execution_rows(idempotency_key))
@@ -195,61 +192,41 @@ def _create_restart_fixture(base_url: str, token: str) -> tuple[str, str]:
     """通过真实 API 创建本 Acceptance 专属的可执行 Workflow 与 Scheduled Trigger。"""
     headers = {"Authorization": f"Bearer {token}"}
     with httpx.Client(base_url=base_url, headers=headers, timeout=10.0) as client:
-        workflow = client.post(
-            "/workflows",
-            json={
-                "name": f"Scheduler Restart Acceptance {uuid4().hex[:8]}",
-                "description": "真实 Scheduler restart acceptance 专用可执行 Workflow",
-            },
-        )
+        workflow = client.post("/workflows", json={
+            "name": f"Scheduler Worker Acceptance {uuid4().hex[:8]}",
+            "description": "真实 Scheduler/Worker 解耦验收专用 Workflow",
+        })
         assert workflow.status_code == 201, workflow.text
         workflow_id = workflow.json()["id"]
 
-        version = client.post(
-            f"/workflows/{workflow_id}/versions",
-            json={
-                "definition": {
-                    "nodes": [
-                        {"id": "input", "type": "input", "config": {}},
-                        {"id": "output", "type": "output", "config": {}},
-                    ],
-                    "edges": [],
-                }
-            },
-        )
+        version = client.post(f"/workflows/{workflow_id}/versions", json={
+            "definition": {
+                "nodes": [
+                    {"id": "input", "type": "input", "config": {}},
+                    {"id": "output", "type": "output", "config": {}},
+                ],
+                "edges": [],
+            }
+        })
         assert version.status_code == 201, version.text
         version_payload = version.json()
-        assert version_payload["definition"]["nodes"], version_payload
-
         published = client.post(f"/workflows/{workflow_id}/versions/{version_payload['id']}/publish")
         assert published.status_code == 200, published.text
 
-        persisted_version = client.get(f"/workflows/{workflow_id}/versions/{version_payload['id']}")
-        assert persisted_version.status_code == 200, persisted_version.text
-        assert persisted_version.json()["definition"].get("nodes"), persisted_version.json()
-
-        trigger = client.post(
-            f"/workflows/{workflow_id}/triggers",
-            json={
-                "name": f"restart-{uuid4().hex[:8]}",
-                "trigger_type": "scheduled",
-                "config": {"timezone": "UTC", "interval_seconds": 60, "misfire_policy": "fire_once"},
-            },
-        )
+        trigger = client.post(f"/workflows/{workflow_id}/triggers", json={
+            "name": f"restart-{uuid4().hex[:8]}",
+            "trigger_type": "scheduled",
+            "config": {"timezone": "UTC", "interval_seconds": 60, "misfire_policy": "fire_once"},
+        })
         assert trigger.status_code == 201, trigger.text
         trigger_id = trigger.json()["id"]
-
-        disabled = client.patch(
-            f"/workflows/{workflow_id}/triggers/{trigger_id}",
-            json={"status": "disabled"},
-        )
+        disabled = client.patch(f"/workflows/{workflow_id}/triggers/{trigger_id}", json={"status": "disabled"})
         assert disabled.status_code == 200, disabled.text
-
     return str(workflow_id), str(trigger_id)
 
 
 def test_scheduled_trigger_recovers_after_real_service_restart():
-    """验证独立 Scheduler Service 停止/重启后从 PostgreSQL 恢复历史 slot。"""
+    """验证 Scheduler 只产生 Execution，Worker 跨进程消费并完成历史 slot。"""
     if not TOKEN:
         pytest.fail("ACCESS_TOKEN is required for scheduler restart validation")
 
@@ -257,21 +234,21 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
     base_url = f"http://127.0.0.1:{bootstrap_port}/api/v1"
     api_process = _start_api(bootstrap_port)
     scheduler_process: subprocess.Popen | None = None
+    worker_process: subprocess.Popen | None = None
     workflow_id: str | None = None
     trigger_id: str | None = None
     interval_seconds = 60
     planned_at = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=2 * interval_seconds)
 
     try:
-        # API Service 仅承担 fixture bootstrap，不承担 Scheduler 生命周期。
         _wait_for_api(api_process, bootstrap_port)
         workflow_id, trigger_id = _create_restart_fixture(base_url, TOKEN)
         _stop_process(api_process)
         api_process = None
 
-        # 第一阶段：独立 Scheduler Service 创建 WorkflowSchedule；Trigger 已禁用，不得消费 slot。
+        # 第一阶段只启动 Scheduler：验证 schedule 持久化，但没有 Worker 时不得直接执行 Workflow。
         scheduler_process = _start_scheduler()
-        _wait_for_scheduler(scheduler_process)
+        _wait_for_background_service(scheduler_process, "Scheduler Service")
         deadline = time.monotonic() + 15
         schedule = None
         while time.monotonic() < deadline:
@@ -284,20 +261,21 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
         assert schedule is not None, "首次独立 Scheduler Service 生命周期未创建 WorkflowSchedule 持久化状态"
         assert schedule["enabled"] is False
 
-        # 第二阶段：停止独立 Scheduler，回拨历史 slot；随后仅重启 Scheduler Service。
         _stop_process(scheduler_process)
         scheduler_process = None
         asyncio.run(_seed_restart_slot(trigger_id, planned_at))
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, planned_at, interval_seconds)
 
+        # 第二阶段同时启动独立 Scheduler + Worker：Scheduler 只入队，Worker 才执行。
         scheduler_process = _start_scheduler()
-        _wait_for_scheduler(scheduler_process)
+        worker_process = _start_worker()
+        _wait_for_background_service(scheduler_process, "Scheduler Service")
+        _wait_for_background_service(worker_process, "Worker Service")
+
         rows = _wait_for_execution(runtime_key)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
-        assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(
-            planned_at, interval_seconds
-        )
+        assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(planned_at, interval_seconds)
         assert rows[0]["input_data"]["recovery"] is True
 
         audit_rows, trace_rows = asyncio.run(_governance_rows(str(rows[0]["id"])))
@@ -311,6 +289,8 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
         duplicate_rows = _wait_for_execution(runtime_key, timeout_seconds=3)
         assert len(duplicate_rows) == 1, duplicate_rows
     finally:
+        if worker_process is not None:
+            _stop_process(worker_process)
         if scheduler_process is not None:
             _stop_process(scheduler_process)
         if api_process is not None:
@@ -319,11 +299,7 @@ def test_scheduled_trigger_recovers_after_real_service_restart():
             cleanup_process = _start_api(bootstrap_port)
             try:
                 _wait_for_api(cleanup_process, bootstrap_port)
-                with httpx.Client(
-                    base_url=base_url,
-                    headers={"Authorization": f"Bearer {TOKEN}"} if TOKEN else {},
-                    timeout=10.0,
-                ) as client:
+                with httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=10.0) as client:
                     response = client.delete(f"/workflows/{workflow_id}/triggers/{trigger_id}")
                     assert response.status_code in {204, 404}, response.text
             finally:

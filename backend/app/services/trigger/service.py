@@ -1,7 +1,7 @@
 """Trigger 生命周期与执行入口服务。
 
 职责：管理 manual/scheduled/webhook Trigger 的查询、创建、更新、删除和触发执行入口。
-边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；通过正式 Workflow 模块复用这些能力。
+边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；Scheduled Trigger 只创建 pending Execution，实际执行交给独立 Worker Service。
 关键依赖：Workflow/WorkflowTrigger ORM、Workflow Execution/Governance 服务、Trigger 配置契约与 Workflow Runtime。
 """
 
@@ -24,6 +24,8 @@ from app.services.trigger.schedule import validate_trigger_config
 
 
 class WorkflowTriggerService:
+    """Workflow Trigger 生命周期、配置校验与执行任务创建服务。"""
+
     ALLOWED_TYPES = {"manual", "scheduled", "webhook"}
     ALLOWED_STATUSES = {"enabled", "disabled"}
 
@@ -146,6 +148,25 @@ class WorkflowTriggerService:
 
     async def invoke_scheduled(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
                                idempotency_key: str, recovery: bool = False, return_created: bool = False):
+        """为 Scheduled Trigger 创建待执行任务，不在 Scheduler 进程内执行 Workflow Runtime。
+
+        Args:
+            workflow: 已发布 Workflow。
+            trigger: 已启用的 scheduled Trigger。
+            actor_id: Trigger 创建者身份。
+            input_data: Scheduler 计算出的 slot、计划时间与 recovery 元数据。
+            idempotency_key: Scheduler slot 对应的唯一 Execution 幂等键。
+            recovery: 是否为历史 misfire 恢复任务。
+            return_created: 是否同时返回本次是否新建 Execution。
+
+        Returns:
+            已存在或新创建的 pending WorkflowExecution；return_created 为真时返回 `(execution, created)`。
+
+        Raises:
+            HTTPException: Trigger、Workflow Published Version 或幂等 claim 不满足要求时抛出。
+
+        设计边界：Scheduler 只负责“调度到任务”，Worker 负责“领取并执行任务”。这样 Scheduler 重启不会直接占用 Workflow Runtime，也允许后续独立扩展 Worker 副本。
+        """
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "scheduled":
@@ -175,15 +196,15 @@ class WorkflowTriggerService:
         trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
         await self.governance.audit(execution, actor_id, audit_action, "success", metadata={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type, "timezone": config["timezone"],
-            "interval_seconds": config["interval_seconds"], "idempotency_key": idempotency_key, "recovery": recovery})
+            "interval_seconds": config["interval_seconds"], "idempotency_key": idempotency_key, "recovery": recovery,
+            "dispatch_mode": "queued",
+        })
         await self.governance.trace(execution, actor_id, trace_event, "pending", data={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type, "timezone": config["timezone"],
-            "interval_seconds": config["interval_seconds"], "recovery": recovery})
+            "interval_seconds": config["interval_seconds"], "recovery": recovery, "dispatch_mode": "queued",
+        })
         await self.db.commit()
-        result_execution = await WorkflowExecutionService(self.db).run(
-            execution, version, actor_id, allow_legacy_empty_nodes=True
-        )
-        return (result_execution, True) if return_created else result_execution
+        return (execution, True) if return_created else execution
 
     async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
                      idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
