@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.core.database import SessionLocal
+from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 
 
