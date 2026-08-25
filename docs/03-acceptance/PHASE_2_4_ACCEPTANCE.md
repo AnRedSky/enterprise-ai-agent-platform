@@ -1,6 +1,6 @@
 # Phase 2.4 Durable Scheduler Acceptance
 
-> 当前状态：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration 已完成开发；Frontend Regression 与 Workflow Trigger Browser E2E 已由开发者本地实际通过；剩余 Browser / Backend / Real API Gate 与最终 Acceptance 汇总待完成。**
+> 当前状态：**Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire integration、API/Scheduler 进程解耦已完成开发；Frontend Regression 与 Workflow Trigger Browser E2E 上轮已由开发者本地实际通过；服务化拆分后的 Backend / Real API / Restart Acceptance 需要重新执行。**
 > 验收基线：`main`
 > 评估日期：2026-08-25
 
@@ -8,96 +8,161 @@
 
 | 项目 | 状态 |
 |---|---|
-| Contract / timezone / DST | 本地 Gate 已通过：13 passed |
-| Scheduler 持久化模型 | 本地 Migration Gate 已通过 |
-| Alembic `0028_durable_scheduler_persistence` | 本地 `current` 为 head |
-| 原子 lease claim / release | PostgreSQL Repository integration 已通过：2 passed |
-| schedule slot 幂等 claim | PostgreSQL Repository integration 已通过 |
-| WorkflowExecution 绑定 | Runtime Gate 已覆盖并通过 |
+| Contract / timezone / DST | 本地 Gate 已通过：13 passed（上一轮） |
+| Scheduler 持久化模型 | 本地 Migration Gate 已通过（上一轮） |
+| Alembic `0028_durable_scheduler_persistence` | 本地 `current` 为 head（上一轮） |
+| 原子 lease claim / release | PostgreSQL Repository integration 已通过（上一轮） |
+| schedule slot 幂等 claim | PostgreSQL Repository integration 已覆盖（上一轮） |
+| WorkflowExecution 绑定 | Runtime Gate 已覆盖（上一轮） |
 | Tenant / Organization scope | Repository lease/slot 与状态查询 tenant isolation 已覆盖 |
-| Scheduler Runtime persistence 闭环 | 本地 Gate 已通过：4 passed |
-| Scheduler API Contract / 状态可观测性 | 本地 Gate 已通过：6 passed |
+| Scheduler Runtime persistence 闭环 | 本地 Gate 已通过：4 passed（上一轮） |
+| Scheduler API Contract / 状态可观测性 | 本地 Gate 已通过：6 passed（上一轮） |
 | Misfire policy Runtime integration | 已完成开发，待最终汇总验收 |
-| Frontend Regression Gate | 开发者本地实际通过：79 passed，production build 通过 |
-| Workflow Trigger Browser E2E | **开发者本地实际通过：1 passed，脚本最终输出 `[PASS]`** |
-| Organization Browser E2E | 待重新确认 |
-| Model Provider Browser E2E | 待重新确认 |
-| Backend default regression | 待重新确认 |
-| Tenant Safe Real API acceptance | 待重新确认 |
+| API / Scheduler Service 进程解耦 | **已实现，新增单元 Gate 待本轮执行** |
+| Frontend Regression Gate | 上轮开发者本地实际通过：79 passed，production build 通过；服务化后需按范围重新确认 |
+| Workflow Trigger Browser E2E | 上轮开发者本地实际通过：1 passed；服务化后需按范围重新确认 |
+| Organization Browser E2E | 上轮结果需按本轮范围重新确认 |
+| Model Provider Browser E2E | 上轮结果需按本轮范围重新确认 |
+| Backend default regression | **服务化后待重新执行** |
+| Tenant Safe Real API acceptance | **服务化后待重新执行** |
+| Scheduler Restart Acceptance | **服务化后待重新执行** |
 
-## 2. Workflow Trigger Browser E2E 最终结果
+## 2. API / Scheduler 服务化 Acceptance
 
-开发者在当前 `main` 基线执行：
+本轮完成的进程边界：
+
+```text
+API Service
+    backend/run.py
+    → app.main:app
+    → HTTP / Auth / API Router
+    → 不创建 Scheduler
+
+Scheduler Service
+    backend/run_scheduler.py
+    → app.entrypoints.scheduler
+    → ScheduledTriggerScheduler
+    → 不注册 HTTP Router
+```
+
+正式设计见 `docs/00-architecture/SERVICE_RUNTIME_ARCHITECTURE.md`。
+
+验收要求：
+
+1. API `/health` 返回 `service=api`；
+2. API 进程启动不产生 Scheduler 后台 task；
+3. Scheduler 入口复用唯一 `ScheduledTriggerScheduler`；
+4. `scheduler_enabled=false` 时 Scheduler 入口明确拒绝启动；
+5. API 与 Scheduler 的启动脚本互不调用对方；
+6. 不改变现有 API Contract、数据库模型、tenant isolation、slot/idempotency 与 misfire 规则；
+7. Worker Service 当前不创建空壳实现。
+
+## 3. 自动化验证入口
+
+服务职责边界单元测试：
+
+```powershell
+cd backend
+uv run pytest -q tests/unit/test_service_entrypoints.py
+```
+
+Backend 完整 Regression：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+```
+
+Tenant Safe Real API：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
+```
+
+Scheduler Restart Acceptance：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
+```
+
+Frontend Regression：
+
+```powershell
+cd frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_frontend_regression_gate.ps1
+```
+
+Workflow Trigger Browser E2E：
 
 ```powershell
 cd frontend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
 ```
 
-实际结果：
+## 4. 启动联调流程
 
-```text
-Running 1 test using 1 worker
-✓ Workflow Trigger Governance completes the real scheduled browser contract (4.1s)
-1 passed (5.0s)
-[PASS] Phase 2.4 Workflow Trigger browser E2E gate completed.
+### Terminal A — API Service
+
+```powershell
+cd backend
+$env:SCHEDULER_ENABLED="false"
+uv run python run.py
 ```
 
-本次真实浏览器验收覆盖：
+验证：
 
-1. 正式 `/workflows/triggers` 路由与真实登录 Session；
-2. Trigger 类型正式 Select Contract；
-3. 真实 Scheduled Trigger 创建并返回持久化实体；
-4. Scheduler API 持久化状态确认；
-5. Scheduler UI 异步初始化后的状态展示；
-6. `timezone / interval_seconds / misfire_policy / catch_up_limit` 四字段 PostgreSQL 持久化 Config 最终断言。
-
-因此 Workflow Trigger Browser Gate 现在可以标记为通过。
-
-## 3. 历史失败与修复链路
-
-本轮 Browser E2E 先后暴露并修复了以下工程问题：
-
-```text
-Workflow Version payload Contract
-        ↓
-正式 Workflow Trigger route Contract
-        ↓
-Browser Session / Auth Contract
-        ↓
-Element Plus Select pointer interception
-        ↓
-Trigger 创建 API 返回持久化实体
-        ↓
-Scheduler UI 异步初始化竞争
-        ↓
-持久化 Config 断言与正式 Contract 漂移
-        ↓
-Workflow Trigger Browser Gate 通过
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
 ```
 
-这些修复均保持真实 Browser → Vue → Backend HTTP → PostgreSQL 链路，没有使用 Mock、JSON fixture、固定 sleep 或旧路径兼容垫片。
+期望响应包含：
 
-## 4. 后续 Acceptance 目标
+```json
+{"status":"ok","service":"api"}
+```
 
-至少覆盖：
+### Terminal B — Scheduler Service
 
-- 多实例 lease 竞争；
-- lease 过期抢占；
-- 重复 schedule slot claim；
-- misfire：skip / fire_once / bounded_catch_up；
-- enabled / paused / disabled；
-- WorkflowExecution 关联；
-- Tenant Safe organization scope；
-- Audit / Trace 关联；
-- 服务重启后的 next_run_at / lease 恢复语义；
-- Scheduler 状态 API 的 tenant isolation 与错误边界；
-- Workflow Trigger 真实浏览器创建、状态查看、禁用、启用及持久化回读；
-- Organization 与 Model Provider Browser E2E；
-- Backend default regression 与 Tenant Safe Real API 最终确认。
+确认本地 PostgreSQL 已启动并完成：
 
-## 5. 当前结论
+```powershell
+cd backend
+uv run alembic upgrade head
+```
+
+然后：
+
+```powershell
+$env:SCHEDULER_ENABLED="true"
+uv run python run_scheduler.py
+```
+
+Scheduler Service 不提供 HTTP 入口；其运行证据来自 PostgreSQL Scheduler 状态、WorkflowExecution、Audit/Trace 与对应 Acceptance。
+
+### 关闭顺序
+
+```text
+先停止 Scheduler Service
+    ↓
+再停止 API Service
+```
+
+这样可以在联调时明确区分 API 生命周期与调度生命周期。
+
+## 5. 历史失败与修复链路
+
+此前 Browser / Real API 阶段曾暴露 Workflow Trigger Contract、Scheduler UI 初始化竞争、持久化 Config 漂移、Scheduler Restart 端口冲突以及历史空节点 Workflow Definition 兼容问题。相关修复均已经进入 main，并分别记录在对应 Error / Phase 文档。
+
+本轮新增架构风险是 API 与 Scheduler 生命周期耦合：原 API `lifespan` 创建 Scheduler 会让 API 多实例天然形成多个 Scheduler 进程。本轮通过独立 `run_scheduler.py` 消除该进程职责耦合，但不改变已有 PostgreSQL lease / slot 的多实例保护机制。
+
+## 6. Worker Service 范围控制
+
+Worker Service 当前仅作为架构扩展方向，不作为 Phase 2.4 的实现项。未定义 Queue/Broker、Task Contract、retry、DLQ、cancellation 与 worker lease 前，禁止创建 Worker 空壳并声称已完成服务化。
+
+## 7. 当前结论
 
 **Phase 2.4 尚不能标记 Passed。**
 
-Workflow Trigger Browser E2E 已通过，但最终阶段必须完成剩余 Browser / Backend / Real API Gate，并汇总 Scheduler 多实例、misfire、Execution、Audit / Trace、tenant isolation 与 restart recovery 的 Acceptance 结果后，才能形成 Phase 2.4 最终关闭结论。
+本轮服务化代码已经实现，但必须由开发者在最新 `main` 实际执行服务职责单测、Backend Regression、Tenant Safe Real API、Scheduler Restart Acceptance，并按影响范围重新确认 Frontend / Browser Gate 后，才能形成最终 Acceptance 结论。
