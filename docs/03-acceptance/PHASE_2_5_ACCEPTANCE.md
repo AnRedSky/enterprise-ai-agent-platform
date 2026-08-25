@@ -130,6 +130,18 @@ uv run pytest -q tests/unit/test_workflow_worker.py
 [PASS] WorkflowTraceEvent tenant/workflow/execution 关联正确
 ```
 
+### 8.1 Execution Idempotency 的状态语义
+
+幂等重放的验收重点是：相同 `Idempotency-Key` 必须解析到同一个 `WorkflowExecution`，而不是要求 HTTP 重放响应永远保持 `pending`。
+
+由于 Scheduler / Worker 已经形成独立进程边界，Worker 可以在两次 HTTP 请求之间消费该 Execution。因此真实 API 重放返回的 `status` 允许是当前持久化状态，例如：
+
+```text
+pending / running / completed / failed / cancelled
+```
+
+禁止用固定 `pending` 作为幂等契约，否则会把正常的异步执行进度误判为可靠性失败。
+
 ## 9. 禁止验收方式
 
 以下方式不能作为本阶段通过依据：

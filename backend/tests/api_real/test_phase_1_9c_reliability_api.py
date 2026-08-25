@@ -69,7 +69,9 @@ def test_execution_idempotency_replays_same_execution():
     assert second["id"] == first["id"]
     assert second["workflow_id"] == first["workflow_id"]
     assert second["idempotency_key"] == key
-    assert second["status"] == "pending"
+    # 幂等重放返回同一个 Execution 的当前持久化快照；Worker 可能已在两次 HTTP 请求之间完成执行，
+    # 因此不能把 pending 当作 HTTP 重放的固定状态。真正的幂等契约是 Execution 身份与 Idempotency-Key 不变。
+    assert second["status"] in {"pending", "running", "completed", "failed", "cancelled"}
 
 
 def test_execution_idempotency_is_race_safe_over_real_http():
