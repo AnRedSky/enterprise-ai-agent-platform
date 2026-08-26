@@ -1,6 +1,6 @@
 """Workflow DAG Resume Contract 单元测试。
 
-职责：验证 DAG Definition 的结构、边引用、重复边、孤立节点与环路安全边界。
+职责：验证 DAG Definition 的结构、边引用、重复边、根节点、孤立节点与环路安全边界。
 边界：只验证纯内存 Contract，不连接数据库、不读取 Node Execution、不调用 Runtime。
 关键依赖：WorkflowDagContractValidator。
 """
@@ -40,6 +40,15 @@ def test_dag_contract_freezes_nodes_edges_and_roots() -> None:
         ("branch-a", "output"),
         ("branch-b", "output"),
     ]
+
+
+def test_dag_contract_rejects_multiple_roots() -> None:
+    definition = _definition()
+    definition["nodes"].append({"id": "second-input", "type": "input", "config": {}})
+    definition["edges"].append({"source": "second-input", "target": "output"})
+
+    with pytest.raises(ValueError, match="第一版 Resume 必须只有一个 root"):
+        WorkflowDagContractValidator.validate(definition=definition)
 
 
 @pytest.mark.parametrize(
