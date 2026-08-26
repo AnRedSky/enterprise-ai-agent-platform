@@ -94,9 +94,11 @@ class WorkflowWorker:
             execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
 
         Returns:
-            当前 Worker 仍持有 Execution ownership 时返回 True；Execution 已不存在、已转移 ownership 或进入终态时返回 False。
+            当前 Worker 仍持有未过期 Execution ownership 时返回 True；Execution 已不存在、租约已失效、已转移 ownership 或进入终态时返回 False。
 
         事务边界：每次刷新使用独立短事务，避免占用 Runtime 执行事务。数据库瞬时异常向调用方传播，由 heartbeat 循环负责记录并继续下一轮；这避免一次网络抖动永久杀死 heartbeat 任务。
+
+        重要边界：租约一旦到期即视为 ownership 已失效，即使数据库中的 worker_owner 仍然是当前 Worker，也禁止旧 Worker 自行“复活”租约。这样可以保证 lease expiration 真正构成 ownership fencing 的时间边界。
         """
         now = datetime.now(UTC).replace(tzinfo=None)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
@@ -106,6 +108,7 @@ class WorkflowWorker:
                     WorkflowExecution.id == execution_id,
                     WorkflowExecution.worker_owner == self.owner,
                     WorkflowExecution.status.in_({"pending", "running"}),
+                    WorkflowExecution.worker_lease_expires_at > now,
                 )
             )
             execution = result.scalar_one_or_none()
@@ -122,9 +125,9 @@ class WorkflowWorker:
             execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
 
         Returns:
-            无；Execution 不再属于当前 Worker 或进入终态后自动退出。
+            无；Execution 不再属于当前 Worker 或租约已失效后自动退出。
 
-        事务边界：每次刷新使用独立短事务；单次数据库瞬时失败只记录日志并继续下一轮，避免 heartbeat 协程因一次连接抖动永久退出。若 ownership 已不存在则立即结束，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
+        事务边界：每次刷新使用独立短事务；单次数据库瞬时失败只记录日志并继续下一轮，避免 heartbeat 协程因一次连接抖动永久退出。若 ownership 已不存在或租约已经失效则立即结束，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
         """
         interval = max(0.1, self.lease_seconds / 3)
         while True:
