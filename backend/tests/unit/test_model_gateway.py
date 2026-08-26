@@ -1,8 +1,9 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import httpx
 import pytest
 from fastapi import HTTPException
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 from app.infrastructure.providers.mock_model import MockModelProvider
 from app.infrastructure.providers.openai_model import OpenAICompatibleProvider
@@ -66,15 +67,19 @@ async def test_openai_provider_http_status_still_uses_local_fallback_without_pro
 
 @pytest.mark.asyncio
 async def test_openai_provider_stream_http_status_preserves_503_for_governed_profile():
-    provider = AsyncMock()
     request = httpx.Request("POST", "http://127.0.0.1:8870/v1/chat/completions")
     response = httpx.Response(503, request=request)
-    provider.stream.side_effect = httpx.HTTPStatusError(
-        "Server error '503 Service Unavailable'",
-        request=request,
-        response=response,
-    )
-    gateway = ModelGateway(provider)
+
+    class FailingStreamProvider:
+        async def stream(self, model, messages, parameters=None):
+            raise httpx.HTTPStatusError(
+                "Server error '503 Service Unavailable'",
+                request=request,
+                response=response,
+            )
+            yield "unreachable"
+
+    gateway = ModelGateway(FailingStreamProvider())
     profile = SimpleNamespace(model_name="resume-fixture-model", parameters={})
 
     with pytest.raises(HTTPException) as exc:
