@@ -1,5 +1,8 @@
+import httpx
 import pytest
 from fastapi import HTTPException
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from app.infrastructure.providers.mock_model import MockModelProvider
 from app.infrastructure.providers.openai_model import OpenAICompatibleProvider
@@ -18,6 +21,66 @@ async def test_mock_http_503_provider_is_deterministic():
     gateway = ModelGateway(MockModelProvider())
     with pytest.raises(HTTPException) as exc:
         await gateway.generate("mock-http-503", [{"role": "user", "content": "circuit"}])
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_http_status_preserves_503_for_governed_profile():
+    provider = AsyncMock()
+    request = httpx.Request("POST", "http://127.0.0.1:8870/v1/chat/completions")
+    response = httpx.Response(503, request=request)
+    provider.complete.side_effect = httpx.HTTPStatusError(
+        "Server error '503 Service Unavailable'",
+        request=request,
+        response=response,
+    )
+    gateway = ModelGateway(provider)
+    profile = SimpleNamespace(model_name="resume-fixture-model", parameters={})
+
+    with pytest.raises(HTTPException) as exc:
+        await gateway.generate("legacy-model", [{"role": "user", "content": "resume"}], model_profile=profile)
+
+    assert exc.value.status_code == 503
+    assert "503 Service Unavailable" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_http_status_still_uses_local_fallback_without_profile(monkeypatch):
+    provider = AsyncMock()
+    request = httpx.Request("POST", "http://127.0.0.1:8870/v1/chat/completions")
+    response = httpx.Response(503, request=request)
+    provider.complete.side_effect = httpx.HTTPStatusError(
+        "Server error '503 Service Unavailable'",
+        request=request,
+        response=response,
+    )
+    monkeypatch.setattr("app.runtime.model.gateway.settings.model_fallback_to_mock", True)
+    monkeypatch.setattr("app.runtime.model.gateway.settings.model_default_name", "fallback-model")
+    gateway = ModelGateway(provider)
+
+    result = await gateway.generate("primary-model", [{"role": "user", "content": "fallback"}])
+
+    assert result.model == "fallback-model"
+    assert "fallback" in result.content
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_stream_http_status_preserves_503_for_governed_profile():
+    provider = AsyncMock()
+    request = httpx.Request("POST", "http://127.0.0.1:8870/v1/chat/completions")
+    response = httpx.Response(503, request=request)
+    provider.stream.side_effect = httpx.HTTPStatusError(
+        "Server error '503 Service Unavailable'",
+        request=request,
+        response=response,
+    )
+    gateway = ModelGateway(provider)
+    profile = SimpleNamespace(model_name="resume-fixture-model", parameters={})
+
+    with pytest.raises(HTTPException) as exc:
+        async for _ in gateway.stream("legacy-model", [{"role": "user", "content": "resume"}], model_profile=profile):
+            pass
+
     assert exc.value.status_code == 503
 
 

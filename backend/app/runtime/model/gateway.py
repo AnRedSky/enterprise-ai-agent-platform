@@ -9,6 +9,7 @@ import os
 from typing import AsyncIterator
 from uuid import UUID
 
+import httpx
 from fastapi import HTTPException
 
 from app.core.config import settings
@@ -51,6 +52,21 @@ class ModelGateway:
             return None
         return {key: value for key, value in (profile.parameters or {}).items() if key != "timeout_seconds"}
 
+    @staticmethod
+    def _raise_provider_http_error(exc: httpx.HTTPStatusError) -> None:
+        """把已确认的 Provider HTTP 状态转换为 API 可识别的 HTTPException。
+
+        Args:
+            exc: OpenAI-compatible Provider 返回非 2xx 状态时产生的 HTTPStatusError。
+
+        Returns:
+            无；始终抛出带原始 HTTP 状态码的 HTTPException。
+
+        Raises:
+            HTTPException: Provider 已返回明确 HTTP 状态时抛出，使 Workflow Runtime 能保留真实失败码。
+        """
+        raise HTTPException(status_code=exc.response.status_code, detail=str(exc)) from exc
+
     async def generate(
         self,
         model: str,
@@ -66,6 +82,10 @@ class ModelGateway:
             provider = MockModelProvider()
         try:
             return await provider.complete(actual_model, messages, parameters)
+        except httpx.HTTPStatusError as exc:
+            if model_profile is not None or not settings.model_fallback_to_mock or isinstance(provider, MockModelProvider):
+                self._raise_provider_http_error(exc)
+            return await MockModelProvider().complete(settings.model_default_name, messages)
         except Exception:
             if model_profile is not None or not settings.model_fallback_to_mock or isinstance(provider, MockModelProvider):
                 raise
@@ -86,6 +106,12 @@ class ModelGateway:
             provider = MockModelProvider()
         try:
             async for chunk in provider.stream(actual_model, messages, parameters):
+                if chunk:
+                    yield chunk
+        except httpx.HTTPStatusError as exc:
+            if model_profile is not None or not settings.model_fallback_to_mock or isinstance(provider, MockModelProvider):
+                self._raise_provider_http_error(exc)
+            async for chunk in MockModelProvider().stream(settings.model_default_name, messages):
                 if chunk:
                     yield chunk
         except Exception:
