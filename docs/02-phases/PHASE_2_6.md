@@ -1,6 +1,6 @@
 # Phase 2.6 — Durable Execution Checkpoint Foundation
 
-> 状态：**开发中**；Checkpoint 已接入 WorkflowExecutionService 的 Node completed 边界，并与 Node 状态转换共享同一数据库事务；尚未实现自动 Resume、Saga 或跨节点补偿。
+> 状态：**开发中**；Checkpoint 已接入 WorkflowExecutionService 的 Node completed 边界，并与 Node 状态转换共享同一数据库事务；自动 Resume 尚未实现。
 > 评估日期：2026-08-26
 > 优先级：**P1**
 
@@ -37,7 +37,8 @@ Checkpoint 是持久化事实，不承担调度、状态机推进或 Worker owne
 - Node 状态更新与 Checkpoint 追加在同一个数据库事务内提交；
 - 记录 Execution / Node 状态、attempt、业务 state、输入输出、错误与 Worker owner；
 - Checkpoint 集成单元测试；
-- Real API + PostgreSQL Checkpoint persistence 验收测试入口。
+- Real API + PostgreSQL Checkpoint persistence 验收测试入口；
+- 新增只读 `WorkflowExecutionCheckpointRecoveryService`，定义未来 Durable Resume 的最小前置条件，不执行实际恢复。
 
 ## 3. 事务边界
 
@@ -95,10 +96,43 @@ state_data 表示可持久化业务状态，不代表自动恢复授权
 worker_owner 只记录事实，不用于恢复时自行复活 ownership
 ```
 
-## 7. 下一步
+## 7. Durable Resume 前置条件基线
 
-1. 开发者验证新的 Runtime Checkpoint targeted tests；
+本阶段新增只读恢复候选评估器，用于把后续 Resume 的安全边界提前固定为可测试规则：
+
+```text
+WorkflowExecution.status == failed
+        ↓
+当前 worker_owner == None
+        ↓
+存在最新 Checkpoint
+        ↓
+checkpoint_reason == node.completed
+        ↓
+checkpoint.node_status == completed
+checkpoint.execution_status == running
+        ↓
+固定原 Execution.workflow_version_id
+        ↓
+生成确定性的 resume:<execution_id>:checkpoint:<sequence> 幂等键
+        ↓
+仅形成 Resume Candidate，不创建 Execution、不抢 Worker lease、不启动 Runtime
+```
+
+明确规则：
+
+1. `running` Execution 不能直接从 Checkpoint Resume；必须先经过独立的 Worker lease recovery 边界。
+2. 存在 `worker_owner` 时不得生成可执行恢复候选，防止绕过 ownership fencing。
+3. 只有 `node.completed` Checkpoint 才能作为当前阶段的恢复起点，失败、取消等其他原因暂不授权恢复。
+4. Resume 必须固定原 Execution 的 `workflow_version_id`，不得因为当前 published version 改变而发生隐式版本漂移。
+5. `execution_id + checkpoint.sequence` 形成确定性 Resume 幂等键；真正的 Resume 持久化实现必须再通过数据库唯一约束兜底。
+6. 当前评估器只读，不改变任何 Execution / Node 状态，不提交数据库事务。
+
+## 8. 下一步
+
+1. 开发者验证新的 Checkpoint Resume Candidate targeted tests；
 2. 执行 Tenant Safe Real API / Backend Regression，确认没有破坏既有 Runtime、Worker 与 Provider 治理；
 3. 验证 Real API + PostgreSQL Checkpoint persistence；
-4. 设计 durable resume 的 ownership / version / idempotency 约束；
-5. 仅在上述边界稳定后再开放自动恢复。
+4. 将 Resume Candidate 约束继续下沉到真实 Durable Resume 的 Execution 创建 / Idempotency Contract；
+5. 明确 `failed -> pending retry/resume` 的 ownership、版本冻结与审计语义；
+6. 仅在上述边界稳定后再开放自动恢复。
