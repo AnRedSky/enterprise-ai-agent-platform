@@ -7,18 +7,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID
 
 from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution
-from app.services.workflow.checkpoint.recovery.automatic import (
-    WorkflowExecutionAutomaticRecoveryService,
-)
+from app.services.workflow.checkpoint.recovery.automatic import WorkflowExecutionAutomaticRecoveryService
 from app.services.workflow.checkpoint.recovery.policy import WorkflowExecutionRecoveryPolicy
 
 logger = logging.getLogger(__name__)
@@ -41,16 +39,22 @@ class WorkflowRecoveryScheduler:
 
     DEFAULT_SCAN_LIMIT = 50
     MAX_SCAN_LIMIT = 500
+    DEFAULT_POLL_INTERVAL_SECONDS = 5.0
 
     def __init__(
         self,
         scan_limit: int = DEFAULT_SCAN_LIMIT,
         policy: WorkflowExecutionRecoveryPolicy | None = None,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
     ):
         if isinstance(scan_limit, bool) or not 1 <= scan_limit <= self.MAX_SCAN_LIMIT:
             raise ValueError(f"scan_limit 必须在 1-{self.MAX_SCAN_LIMIT} 范围内")
+        if poll_interval_seconds <= 0:
+            raise ValueError("poll_interval_seconds 必须大于 0")
         self.scan_limit = scan_limit
         self.policy = policy or WorkflowExecutionRecoveryPolicy()
+        self.poll_interval_seconds = poll_interval_seconds
+        self._stop_event = asyncio.Event()
 
     async def scan_once(self, now: datetime | None = None) -> WorkflowRecoveryScanResult:
         """执行一次全租户 Recovery Scan，并让 Domain 决定每个候选是否可恢复。
@@ -68,7 +72,6 @@ class WorkflowRecoveryScheduler:
         Source Execution 行锁、确定性 idempotency key 与数据库唯一约束收敛；Scanner 本身不假设单实例。
         """
         current = now or datetime.now(UTC)
-        result = WorkflowRecoveryScanResult()
         async with SessionLocal() as discovery_db:
             query = (
                 select(WorkflowExecution.id)
@@ -81,15 +84,7 @@ class WorkflowRecoveryScheduler:
             )
             execution_ids = list((await discovery_db.execute(query)).scalars().all())
 
-        candidates = len(execution_ids)
-        counters = {
-            "eligible": 0,
-            "recovered": 0,
-            "rejected": 0,
-            "contention": 0,
-            "failed": 0,
-        }
-
+        counters = {"eligible": 0, "recovered": 0, "rejected": 0, "contention": 0, "failed": 0}
         for execution_id in execution_ids:
             try:
                 async with SessionLocal() as db:
@@ -119,4 +114,32 @@ class WorkflowRecoveryScheduler:
                     extra={"execution_id": str(execution_id), "error_type": type(exc).__name__},
                 )
 
-        return WorkflowRecoveryScanResult(candidates=candidates, **counters)
+        return WorkflowRecoveryScanResult(candidates=len(execution_ids), **counters)
+
+    async def run_forever(self) -> None:
+        """持续执行 Recovery Scan，直到收到 stop 请求。
+
+        Args:
+            无。轮询间隔由 `poll_interval_seconds` 控制。
+
+        Returns:
+            None。停止由 `stop()` 或进程生命周期控制。
+
+        事务边界：每轮 Scan 自己创建并释放数据库 Session；轮询等待期间不持有数据库事务。
+        """
+        self._stop_event.clear()
+        while not self._stop_event.is_set():
+            try:
+                await self.scan_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Workflow automatic recovery scan loop failed")
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval_seconds)
+            except asyncio.TimeoutError:
+                continue
+
+    def stop(self) -> None:
+        """请求 Recovery Scan 循环停止。"""
+        self._stop_event.set()
