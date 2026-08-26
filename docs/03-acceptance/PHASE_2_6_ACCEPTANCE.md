@@ -2,20 +2,32 @@
 
 ## 1. 验收目标
 
-验证 WorkflowRuntime 的 Node completion 已形成真实 PostgreSQL Checkpoint 持久化边界，并验证 Durable Resume 的 Execution 创建安全契约：
+验证 WorkflowRuntime 的 Node completion 已形成真实 PostgreSQL Checkpoint 持久化边界，并验证 Durable Resume 的完整顺序恢复链路：
 
 ```text
-Worker / HTTP Runtime
+Real HTTP Source Execution
         ↓
-WorkflowExecutionService.transition_node(completed)
+Worker claim / lease / ownership fencing
         ↓
-Node state + Checkpoint append
+Node completion
         ↓
-同一 PostgreSQL transaction commit
+PostgreSQL immutable Checkpoint
         ↓
-Resume Candidate assessment
+Source failed
         ↓
-创建新的 pending Resume Execution
+WorkflowExecutionService.resume_from_latest_checkpoint()
+        ↓
+new pending Resume Execution
+        ↓
+Worker claim
+        ↓
+Source / Checkpoint / Version revalidation
+        ↓
+Resume Planner
+        ↓
+只执行 Checkpoint 之后的 Nodes
+        ↓
+Resume Execution 自己产生新的 Checkpoint
 ```
 
 Resume 创建不会修改来源 failed Execution，不直接启动 Runtime，也不绕过 Worker ownership。
@@ -30,7 +42,11 @@ uv run pytest -q `
   tests/unit/test_workflow_execution_checkpoint.py `
   tests/unit/test_workflow_checkpoint_integration.py `
   tests/unit/test_workflow_checkpoint_recovery.py `
-  tests/unit/test_workflow_execution_resume.py
+  tests/unit/test_workflow_execution_resume.py `
+  tests/unit/test_workflow_resume_planner.py `
+  tests/unit/test_workflow_worker.py `
+  tests/unit/test_workflow_execution_worker_fencing.py `
+  tests/unit/test_workflow_worker_lease_heartbeat.py
 ```
 
 ### Backend Regression
@@ -47,28 +63,32 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
 ```
 
-### Checkpoint Real PostgreSQL persistence
+### Durable Resume real Worker acceptance
 
 ```powershell
 cd backend
-uv run pytest -q tests/api_real/test_workflow_checkpoint_api.py -m real_api
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\03_run_durable_resume_acceptance.ps1
 ```
 
-该测试要求预先准备 Real API、Worker 与 PostgreSQL；不会启动、停止或重启任何服务。正式验收优先使用 Tenant Safe Real API Gate。
+该 Gate 只验证并使用开发者提前人工启动的 API Service 与 Worker Service，不启动、停止或重启任何 API / Scheduler / Worker 进程；测试进程内临时 Provider 仅用于模拟一次真实 503、随后 200 的外部 HTTP 调用。
 
-## 3. 服务版本前置
+## 3. 服务前置
 
-代码更新后必须人工重启受影响的 API Service 与 Worker Service，使进程载入最新代码；测试 Gate 禁止进行服务生命周期控制。
+本次 Durable Resume acceptance 依赖 API Service 与 Worker Service，必须由开发者提前手动启动。
 
 ```powershell
 # Terminal 1
+cd backend
 uv run python run.py
 
 # Terminal 2
+cd backend
 uv run python run_worker.py
 ```
 
-Scheduler 对本次 Checkpoint / Resume Execution 创建 Contract targeted gate 不是必需依赖；现有 Scheduler 若运行可保持不变。
+Scheduler Service 不是本次 Resume acceptance 的直接依赖；若本地已经运行 `run_scheduler.py`，保持现状即可，Gate 不控制其生命周期。
+
+代码更新后必须人工重启受影响服务，使 Worker / API 载入最新源码；不要依赖测试脚本自动重启。
 
 ## 4. 数据库前置
 
@@ -84,83 +104,123 @@ uv run alembic current
 0033_workflow_execution_resume_contract (head)
 ```
 
-## 5. Node completion 断言
+## 5. Source → Checkpoint 断言
 
-必须满足：
+验收用例创建一个两节点顺序 Workflow：
 
 ```text
-Node running
+prepare(input)
     ↓
-transition_node(..., completed)
-    ↓
-Checkpoint sequence = Execution 当前最大 sequence + 1
-    ↓
-Node + Checkpoint 同事务提交
+provider-call(agent)
 ```
 
-## 6. Durable Resume 创建断言
+临时 Provider 第一次返回 HTTP 503，因此 Source Execution 必须：
 
-必须满足：
+- `status == failed`；
+- `worker_owner == None`；
+- `prepare` 为 `completed`；
+- `provider-call` 为 `failed`；
+- PostgreSQL 中只有一条 Checkpoint；
+- `checkpoint.sequence == 1`；
+- `checkpoint.node_id == prepare`；
+- `checkpoint.node_status == completed`；
+- `checkpoint.state_data` 等于 `prepare` 完成时的输入状态。
+
+## 6. Resume Execution 创建断言
+
+测试通过正式 `WorkflowExecutionService.resume_from_latest_checkpoint()` 创建 Resume，而不是直接写表：
 
 ```text
 failed Source Execution
     + worker_owner == None
-    + 最新 Checkpoint 存在
+    + latest Checkpoint exists
     + checkpoint_reason == node.completed
     + checkpoint.execution_status == running
     + checkpoint.node_status == completed
-    + 固定原 workflow_version_id
-    ↓
-resume:<execution_id>:checkpoint:<sequence>
-    ↓
+    + workflow_version_id unchanged
+        ↓
 new pending Resume Execution
 ```
 
-需要同时断言：
+必须同时满足：
 
 - `resume_of_execution_id == Source Execution.id`；
 - `resume_checkpoint_sequence == Checkpoint.sequence`；
-- `workflow_version_id` 与 Source Execution 完全一致；
-- Source Execution 仍为 `failed`；
-- 重复调用同一 Source + Checkpoint 返回同一 Resume Execution；
-- Resume 创建不写 Worker owner / lease；
-- Resume 创建不调用 `WorkflowRuntime`；
-- Resume Execution 的 `input_data` 来自 Checkpoint `state_data`。
+- `workflow_version_id` 与 Source 完全一致；
+- Source 仍保持 `failed`；
+- Resume 初始状态为 `pending`；
+- Resume 未获取 Worker owner / lease；
+- Resume `input_data` 等于 Checkpoint `state_data`。
 
-## 7. Worker claim 边界
+## 7. Worker 顺序恢复断言
 
-Resume Execution 创建后必须仍然是普通 `pending` Execution，由 Worker 的标准 claim / lease / ownership fencing 路径处理。禁止 Resume Service 直接取得 owner 或调用 Runtime。
-
-## 8. 当前禁止验收能力
-
-当前禁止：
-
-- Source failed → pending 原地复活；
-- Source failed → running 原地复活；
-- 绕过 Worker ownership；
-- `resume_from_latest_checkpoint()` 内直接调用 WorkflowRuntime；
-- Runtime 自动跳过 Checkpoint 前已完成 Node；
-- HTTP `/resume`；
-- automatic resume。
-
-## 9. Real API / Backend Gate
-
-真实验收仍必须执行：
+创建 Resume 后，测试不调用 `/run`，而是等待已经人工启动的 Worker 按正常 pending claim 路径消费：
 
 ```text
-Source Baseline
+Resume pending
     ↓
-Backend targeted / regression
+Worker claim
     ↓
-Migration head
+Source / Checkpoint / Version revalidation
     ↓
-Tenant Safe Real API
+Resume Planner
     ↓
-Scheduler / Worker recovery acceptance（既有能力不回归时执行）
+丢弃 prepare
+    ↓
+只执行 provider-call
 ```
 
-所有 Gate 均不得自动启动、停止或重启 API、Scheduler、Worker。
+第二次 Provider 调用返回 HTTP 200，因此 Resume Execution 必须 `completed`。
 
-## 10. 当前状态
+必须同时满足：
 
-Phase 2.6 本轮新增 Resume Execution 创建契约后，仍处于开发中。下一阶段重点为 Resume Execution 的真实 PostgreSQL persistence、Worker claim/fencing 以及 Runtime 从 Checkpoint 后继续执行的确定性入口；完成前不标记 Phase 2.6 Closure。
+- Resume Execution 最终 `completed`；
+- Resume Execution 只存在一个 `WorkflowNodeExecution`：`provider-call=completed`；
+- Resume Execution 不重新创建 `prepare` Node Execution；
+- Resume Execution 产生自己的 Checkpoint，sequence 在本 Execution 内从 `1` 开始；
+- Resume Checkpoint 的 `node_id == provider-call`；
+- Source Execution 的 Checkpoint / Node 历史不被修改；
+- Source 与 Resume 之间通过 `resume_of_execution_id + resume_checkpoint_sequence` 保留 lineage。
+
+## 8. 并发与 ownership 边界
+
+必须保持：
+
+1. Source failed 后没有 active Worker ownership，才允许创建 Resume。
+2. Resume 必须进入普通 pending claim；禁止 Resume Service 直接进入 Runtime。
+3. Worker 对每个 Execution 使用独立数据库 Session。
+4. Worker heartbeat / fencing 仍由既有 Worker lease 机制负责。
+5. Source 与 Resume 绝不能同时推进同一 Node Execution。
+6. 不允许通过 Resume 重新让 Source Execution 从 `failed → pending → running`。
+
+## 9. 当前禁止验收能力
+
+当前仍禁止：
+
+- DAG 分支自动恢复；
+- running Execution checkpoint recovery；
+- Saga / compensation；
+- HTTP `/resume`；
+- automatic resume；
+- 绕过 Worker ownership fencing；
+- 将 Source / Resume 两个 Execution 的 Checkpoint sequence 合并为一个全局序列。
+
+## 10. Gate 生命周期规则
+
+所有 Gate 都不得自动启动、停止或重启 API、Scheduler、Worker。
+
+```text
+开发者手动启动服务
+        ↓
+Gate 检查服务是否存在
+        ↓
+Gate 执行测试
+        ↓
+Gate 退出
+        ↓
+服务继续保持开发者原有生命周期
+```
+
+## 11. 当前状态
+
+本轮已新增真实 Durable Resume Acceptance 自动化实现；是否通过以开发者本地实际执行反馈为准。该验收通过后，下一阶段进入 Resume lineage / Resume failure-after-resume 边界，再评估 DAG 图恢复规划器。

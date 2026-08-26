@@ -1,6 +1,6 @@
 # Phase 2.6 — Durable Execution Checkpoint Foundation
 
-> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约以及 Worker → Runtime 的第一版顺序 Resume 已完成；DAG 分支 Resume、自动恢复尚未实现。
+> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约以及 Worker → Runtime 的第一版顺序 Resume 已完成；本轮已补充真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 入口；DAG 分支 Resume、自动恢复尚未实现。
 > 评估日期：2026-08-26
 > 优先级：**P1**
 
@@ -59,6 +59,8 @@ Checkpoint 是持久化事实；Resume Execution 是新的 pending 任务，不�
 - Worker 每个并发 Execution 显式传递自己的数据库 Session，不在 Worker 实例上共享 Session；
 - Checkpoint / Resume / Planner targeted tests；
 - Real API + PostgreSQL Checkpoint persistence 验收测试入口；
+- `tests/api_real/test_workflow_resume_api.py`：以真实 HTTP 创建 Source Execution，以真实 PostgreSQL 检查 Checkpoint，再通过正式 Domain Service 创建 Resume Execution，并由人工启动的独立 Worker 执行恢复；
+- `scripts/test/api-real/03_run_durable_resume_acceptance.ps1`：只验证外部 API / Worker 前置条件，不启动、停止或重启任何服务；
 - Tenant Safe Real API Source Baseline Gate。
 
 ## 3. Checkpoint 事务边界
@@ -160,6 +162,8 @@ Resume Planner 找到 checkpoint.node_id
 Checkpoint.state_data 作为 current_data
         ↓
 只执行剩余 nodes
+        ↓
+Resume Execution 自己重新生成 Checkpoint
 ```
 
 安全边界：
@@ -171,6 +175,7 @@ Checkpoint.state_data 作为 current_data
 5. Resume 使用原 Workflow Version 的内存快照，不修改数据库中的 published Version。
 6. 每个并发 Worker Execution 使用自己的数据库 Session；不得通过 Worker 实例级属性保存“当前 Session”。
 7. Resume 前重新核对 Source / Checkpoint，而不是仅相信 Resume Execution 创建时的 metadata。
+8. Resume Execution 的 Node Execution 集合只记录真正重新执行的剩余节点；源 Execution 的已完成节点不会复制成新的 Node Execution。
 
 ## 6. Checkpoint 负责
 
@@ -199,6 +204,7 @@ Checkpoint.state_data 作为 current_data
 6. Resume 创建不获取 Worker ownership；Worker 仍从 `pending` 队列正常 claim。
 7. Resume Execution 的 `input_data` 使用 Checkpoint `state_data` 作为当前 Runtime 输入事实。
 8. Worker 在实际执行前重新读取 Source / Checkpoint，防止恢复元数据与持久化事实漂移。
+9. Resume 完成后的 Checkpoint sequence 在新的 Resume Execution 内重新从 `1` 开始，source lineage 由 `resume_of_execution_id + resume_checkpoint_sequence` 保留；禁止把两个 Execution 的 sequence 混写成单一序列。
 
 ## 9. 当前明确不实现
 
@@ -215,12 +221,12 @@ Checkpoint.state_data 作为 current_data
 
 Tenant Safe Real API Gate 在启动测试前运行 Source Baseline Gate，确认当前本地关键测试源码与远端 `main` 一致。
 
-Checkpoint / Resume / Worker Runtime 属于 API / Worker 进程内 Python 代码。代码更新后必须由开发者人工重启受影响进程，再执行 Real API / Worker acceptance；Gate 不负责进程生命周期。
+Checkpoint / Resume / Worker Runtime 属于 API / Worker 进程内 Python 代码。代码更新后必须由开发者人工重启受影响的 API Service 与 Worker Service，再执行 Real API / Worker acceptance；Gate 不负责进程生命周期。
 
 ## 11. 下一步
 
-1. 增加真实 PostgreSQL Resume Execution 创建与幂等验收；
-2. 增加真实 Worker 对 Resume Execution 的 claim / fencing / 顺序恢复验收；
-3. 完成 Resume 后 Node Checkpoint 连续性与终态验证；
-4. 评估 DAG Runtime 后再实现分支恢复规划；
-5. 在上述边界稳定后再评估 HTTP Resume 与自动恢复。
+1. 开发者本地执行 `03_run_durable_resume_acceptance.ps1`，验证真实 PostgreSQL、Worker claim/fencing 与顺序恢复；
+2. 根据真实结果补齐 Resume lineage、失败后再次 Resume、以及 ownership 失效边界；
+3. 顺序 Resume 边界稳定后，评估 DAG Runtime 图恢复规划器；
+4. DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
+5. 自动恢复仅在上述所有 ownership、checkpoint、planner 与终态边界稳定后进入设计。
