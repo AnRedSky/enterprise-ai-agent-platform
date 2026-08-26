@@ -1,6 +1,6 @@
 # Phase 2.6 — Durable Execution Checkpoint Foundation
 
-> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约以及 Worker → Runtime 的第一版顺序 Resume 已完成；本轮已补充真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 入口；DAG 分支 Resume、自动恢复尚未实现。
+> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约以及 Worker → Runtime 的第一版顺序 Resume 已完成；真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 与 failure-after-resume Acceptance 已由开发者本地实际执行通过；DAG 分支 Resume、自动恢复尚未实现。
 > 评估日期：2026-08-26
 > 优先级：**P1**
 
@@ -60,8 +60,11 @@ Checkpoint 是持久化事实；Resume Execution 是新的 pending 任务，不�
 - Checkpoint / Resume / Planner targeted tests；
 - Real API + PostgreSQL Checkpoint persistence 验收测试入口；
 - `tests/api_real/test_workflow_resume_api.py`：以真实 HTTP 创建 Source Execution，以真实 PostgreSQL 检查 Checkpoint，再通过正式 Domain Service 创建 Resume Execution，并由人工启动的独立 Worker 执行恢复；
+- `tests/api_real/test_workflow_resume_failure_api.py`：真实 HTTP + PostgreSQL + 独立 Worker 验证 Resume failure-after-resume 后的 lineage / terminal / Checkpoint / ownership 边界；
 - `scripts/test/api-real/03_run_durable_resume_acceptance.ps1`：只验证外部 API / Worker 前置条件，不启动、停止或重启任何服务；
-- Tenant Safe Real API Source Baseline Gate。
+- `scripts/test/api-real/04_run_durable_resume_failure_acceptance.ps1`：只验证外部 API / Worker 前置条件，不启动、停止或重启任何服务；
+- Tenant Safe Real API Source Baseline Gate；
+- 新增 Durable Resume Real API 测试模块已补充中文模块职责说明。
 
 ## 3. Checkpoint 事务边界
 
@@ -225,8 +228,9 @@ Checkpoint / Resume / Worker Runtime 属于 API / Worker 进程内 Python 代码
 
 ## 11. 下一步
 
-1. 开发者本地执行 `03_run_durable_resume_acceptance.ps1`，验证真实 PostgreSQL、Worker claim/fencing 与顺序恢复；
-2. 根据真实结果补齐 Resume lineage、失败后再次 Resume、以及 ownership 失效边界；
-3. 顺序 Resume 边界稳定后，评估 DAG Runtime 图恢复规划器；
-4. DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
-5. 自动恢复仅在上述所有 ownership、checkpoint、planner 与终态边界稳定后进入设计。
+1. 冻结 Phase 2.6 DAG Resume Runtime 恢复 Contract（GitHub Issue #49），明确 edge、frontier、分支/汇聚、状态合并、失败、幂等与拓扑安全边界；
+2. Contract 冻结后，实现纯内存 DAG Resume Planner，并先补齐单元测试；
+3. 将 Planner 接入 Runtime，建立 DAG integration 与 failure boundary；
+4. 执行真实 PostgreSQL + 独立 Worker 的 DAG Resume Acceptance；
+5. DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
+6. 自动恢复仅在上述 ownership、checkpoint、planner、终态与 DAG 边界稳定后进入设计。

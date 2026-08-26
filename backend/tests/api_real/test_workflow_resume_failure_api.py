@@ -1,3 +1,10 @@
+"""Durable Resume Failure-after-Resume Real API 验收测试。
+
+职责：通过真实 HTTP、真实 PostgreSQL 与独立 Worker 验证 Resume 再次失败时的 lineage、终态、Checkpoint 与 ownership 边界。
+边界：不启动、停止或重启 API、Scheduler、Worker；测试前置服务由开发者管理。
+关键依赖：独立 API Service、独立 Worker、PostgreSQL 与正式 WorkflowExecutionService。
+"""
+
 from __future__ import annotations
 
 import asyncio

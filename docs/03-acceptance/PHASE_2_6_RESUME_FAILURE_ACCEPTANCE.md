@@ -1,7 +1,8 @@
 # Phase 2.6 — Resume Failure-after-Resume Acceptance
 
-> 状态：**验收入口已实现，待开发者本地实际执行**。
-> 本文不预填测试通过结果；真实 PostgreSQL、真实 HTTP、独立 Worker 的结果以开发者本地执行反馈为准。
+> 状态：**开发者本地实际验收通过**。
+> 验收时间：2026-08-26
+> 真实 PostgreSQL、真实 HTTP、独立 Worker 的结果依据开发者本地执行反馈记录。
 
 ## 1. 目的
 
@@ -93,16 +94,51 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\04_run_durable_resume_failure_acceptance.ps1
 ```
 
-其中直接执行：
+直接针对 Real API 测试文件时必须显式启用 marker，否则项目 `pyproject.toml` 的默认 `addopts` 会自动排除 `real_api`：
 
 ```powershell
-uv run pytest -q tests/api_real/test_workflow_resume_failure_api.py
+uv run pytest -q tests/api_real/test_workflow_resume_failure_api.py -m real_api
 ```
 
-如果没有 `ACCESS_TOKEN` / `ORGANIZATION_ID` 等 Real API Context，或者未显式启用 `real_api` marker，不能作为 Real API Gate 通过依据；应使用上述正式 PowerShell Gate。
+因此 `uv run pytest -q tests/api_real/test_workflow_resume_api.py --collect-only` 出现 `no tests collected (1 deselected)` 是**预期行为，不是测试缺失**；它来自默认排除 Real API marker。正式验收必须使用上述 PowerShell Gate 或显式 `-m real_api`。
 
-## 6. 结果记录要求
+## 6. 本次开发者实际执行结果
 
-只有开发者实际执行后，才允许在 `docs/PROJECT_STATUS.md`、Phase 文档或错误记录中写入具体通过数量、耗时及最终验收结论。
+### Backend default regression
 
-若测试暴露新的工程错误，必须按照 `docs/01-governance/DEVELOPMENT.md` 将已完成分析的错误记录到 `docs/04-errors/`，并形成独立修复提交。
+```text
+438 passed, 3 skipped, 39 deselected in 31.09s
+```
+
+### Durable Resume Acceptance
+
+```text
+1 passed in 4.31s
+```
+
+验证结论：Source 在持久化 Checkpoint 后保持 `failed`；Resume 通过 `WorkflowExecutionService` 创建新的 pending Execution；独立 Worker 消费 Resume，并只执行 Checkpoint 之后的剩余 Node。
+
+### Durable Resume failure-after-resume Acceptance
+
+```text
+1 passed in 2.15s
+```
+
+验证结论：Resume 再次失败后仍保持 `failed`；Source lineage 与原 Workflow Version 保持不变；Resume 失败不会产生伪造 completion Checkpoint；终态 ownership 已清理。
+
+### Real API source baseline
+
+两次 Durable Resume Gate 均确认：
+
+```text
+HEAD == origin/main: 49d3cac3bb65fc110689c438753accde59b09d52
+Critical Real API / Checkpoint test sources are clean.
+Runtime Model Governance tests use unified claim-race helper.
+Checkpoint Resume Candidate tests do not use datetime.utcnow().
+```
+
+## 7. 结果记录要求
+
+本次结果来自开发者实际执行反馈，不使用 GitHub Actions 作为开发测试或验收依据。
+
+若后续测试暴露新的工程错误，必须按照 `docs/01-governance/DEVELOPMENT.md` 将已完成分析的错误记录到 `docs/04-errors/`，并形成独立修复提交。

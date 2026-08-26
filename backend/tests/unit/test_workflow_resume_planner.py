@@ -1,3 +1,10 @@
+"""Workflow Durable Resume 规划器单元测试。
+
+职责：验证顺序 Resume Planner 的恢复起点、数据快照隔离与非法恢复边界。
+边界：只验证纯内存 Planner，不连接数据库、不调用 Runtime。
+关键依赖：WorkflowExecutionResumePlanner。
+"""
+
 from __future__ import annotations
 
 import pytest
