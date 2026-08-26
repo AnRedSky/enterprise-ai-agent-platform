@@ -1,6 +1,6 @@
 """Workflow Checkpoint Resume 候选评估单元测试。"""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
@@ -29,7 +29,7 @@ def _checkpoint(
         output_data={"text": "ok"},
         checkpoint_reason=checkpoint_reason,
         worker_owner="worker:old",
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
     )
 
 

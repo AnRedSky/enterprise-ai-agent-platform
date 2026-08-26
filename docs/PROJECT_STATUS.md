@@ -15,19 +15,25 @@
 ## 最新 main 基线
 
 ```text
-563a233 docs(status): align checkpoint gate freshness baseline
+57e2b4d feat(durable): establish resume candidate safety boundary
 ```
 
 最近一次开发者本地验收：
 
 ```text
-Tenant Safe Real API: 36 passed in 70.71s
-Backend Regression: 422 passed, 3 skipped, 37 deselected in 32.29s
+Checkpoint + Resume Candidate targeted: 8 passed, 4 warnings
+Backend Regression: 425 passed, 3 skipped, 37 deselected, 4 warnings
 Migration head: 0032_workflow_execution_checkpoint
-Tenant Safe Real API (via Backend Gate): 36 passed in 66.88s
+Tenant Safe Real API: 36 passed, 1 failed
 ```
 
-以上结果来自开发者本地实际执行。`tests/api_real/test_runtime_model_governance_api.py` 直接执行时因未启用 `real_api` marker 被 pytest 全部 deselect，并非测试通过结论；完整 Tenant Safe Real API Gate 已实际执行并通过 36 项。
+本次本地反馈中已完成根因确认：
+
+1. Resume Candidate 单元测试使用 `datetime.utcnow()`，产生 Python 弃用警告；已改为 timezone-aware UTC 时间构造。
+2. Runtime Model Governance Real API 测试直接触发 `/run` 时没有统一处理独立 Worker 先 claim 的合法 `409` ownership race；已改用现有 `run_or_observe_execution`，不复制第二套竞态处理规则。
+3. `uv run pytest -q tests/api_real/test_runtime_model_governance_api.py` 无 Real API Context 时被 deselect / context failure，不能作为 Gate 通过依据；唯一正式入口仍为 Tenant Safe Real API Gate。
+
+以上修复提交后需要开发者重新执行完整本地 Gate，当前文档不预填修复后的测试结果。
 
 ## 当前产品级执行架构
 
@@ -79,7 +85,9 @@ Node transition
 - `WorkflowExecutionCheckpointRecoveryService`：只读 Resume Candidate 评估；
 - Resume Candidate 固定原 Execution Workflow Version；
 - Resume Candidate 拒绝 `running` Execution 与 active Worker ownership；
-- Resume Candidate 使用 `execution_id + checkpoint.sequence` 生成确定性幂等键基础。
+- Resume Candidate 使用 `execution_id + checkpoint.sequence` 生成确定性幂等键基础；
+- Runtime Model Governance Real API 测试复用统一 Worker claim race helper；
+- Resume Candidate 测试移除 `datetime.utcnow()` 弃用警告。
 
 ## Phase 2.6 设计边界
 

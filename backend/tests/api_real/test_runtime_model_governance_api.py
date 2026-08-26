@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import httpx
 import pytest
 
+from .execution_helpers import run_or_observe_execution
+
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
 ORGANIZATION_ID = os.getenv("ORGANIZATION_ID")
@@ -175,9 +177,9 @@ def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_a
                 assert execution.status_code == 201, execution.text
                 execution_id = execution.json()["id"]
 
-                run = client.post(f"/workflows/executions/{execution_id}/run")
-                assert run.status_code == 200, run.text
-                assert run.json()["status"] == "completed"
+                run_status, persisted = run_or_observe_execution(client, execution_id, expected_http_status=200)
+                assert run_status in (200, 409)
+                assert persisted["status"] == "completed", persisted
 
                 trace = client.get(f"/workflows/executions/{execution_id}/trace")
                 assert trace.status_code == 200, trace.text
@@ -304,14 +306,10 @@ def test_runtime_uses_published_model_profile_and_records_usage_identity_without
             )
             assert execution.status_code == 201, execution.text
             execution_id = execution.json()["id"]
-            run = client.post(f"/workflows/executions/{execution_id}/run")
-            assert run.status_code == 500, run.text
-
-            persisted = client.get(f"/workflows/executions/{execution_id}")
-            assert persisted.status_code == 200, persisted.text
-            payload = persisted.json()
-            assert payload["status"] == "failed"
-            assert payload["error_code"] == "HTTP_500"
+            run_status, persisted = run_or_observe_execution(client, execution_id, expected_http_status=500)
+            assert run_status in (500, 409)
+            assert persisted["status"] == "failed", persisted
+            assert persisted["error_code"] == "HTTP_500", persisted
 
             trace = client.get(f"/workflows/executions/{execution_id}/trace")
             assert trace.status_code == 200, trace.text
