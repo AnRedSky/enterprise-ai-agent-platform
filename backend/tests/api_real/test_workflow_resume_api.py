@@ -183,8 +183,12 @@ async def _create_resume_execution(source_id: str) -> WorkflowExecution:
         return await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
 
 
-def test_real_worker_executes_durable_resume_from_checkpoint():
-    """验证 Source failed → Checkpoint → Resume pending → 独立 Worker → 后续 Node 成功的真实链路。"""
+@pytest.mark.asyncio
+async def test_real_worker_executes_durable_resume_from_checkpoint():
+    """验证 Source failed → Checkpoint → Resume pending → 独立 Worker → 后续 Node 成功的真实链路。
+
+    事件循环边界：真实 PostgreSQL 使用 asyncpg 连接池，测试内所有数据库断言与 Resume 操作必须在同一测试事件循环执行，避免连接池连接跨事件循环复用。
+    """
     _require_context()
     suffix = uuid.uuid4().hex[:10]
     provider_id = None
@@ -292,8 +296,7 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
                 run = client.post(f"/workflows/executions/{source_id}/run")
                 assert run.status_code in (409, 503), run.text
 
-            import asyncio
-            source = asyncio.run(_wait_for_source_failure(source_id))
+            source = await _wait_for_source_failure(source_id)
             assert source.status == "failed"
 
             async def verify_source_checkpoint() -> tuple[WorkflowExecutionCheckpoint, list[WorkflowNodeExecution]]:
@@ -315,7 +318,7 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
                     assert len(checkpoints) == 1
                     return checkpoints[0], list(nodes)
 
-            source_checkpoint, source_nodes = asyncio.run(verify_source_checkpoint())
+            source_checkpoint, source_nodes = await verify_source_checkpoint()
             assert source_checkpoint.sequence == 1
             assert source_checkpoint.node_id == "prepare"
             assert source_checkpoint.node_status == "completed"
@@ -325,13 +328,13 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
                 ("provider-call", "failed"),
             ]
 
-            resume = asyncio.run(_create_resume_execution(source_id))
+            resume = await _create_resume_execution(source_id)
             assert resume.status == "pending"
             assert resume.resume_of_execution_id == source.id
             assert resume.resume_checkpoint_sequence == 1
             assert resume.input_data == source_checkpoint.state_data
 
-            resumed = asyncio.run(_wait_for_execution_status(str(resume.id), "completed"))
+            resumed = await _wait_for_execution_status(str(resume.id), "completed")
             assert resumed.status == "completed"
 
             async def verify_resume_result() -> tuple[list[WorkflowExecutionCheckpoint], list[WorkflowNodeExecution]]:
@@ -352,7 +355,7 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
                     ).scalars().all()
                     return list(checkpoints), list(nodes)
 
-            resume_checkpoints, resume_nodes = asyncio.run(verify_resume_result())
+            resume_checkpoints, resume_nodes = await verify_resume_result()
             assert len(resume_checkpoints) == 1
             assert resume_checkpoints[0].sequence == 1
             assert resume_checkpoints[0].node_id == "provider-call"
