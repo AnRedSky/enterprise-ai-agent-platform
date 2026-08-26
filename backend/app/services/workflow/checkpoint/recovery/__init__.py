@@ -1,9 +1,13 @@
 """Workflow Checkpoint Recovery 正式领域入口。
 
-职责：暴露只读恢复评估、自动恢复策略、顺序 Runtime Resume 规划、DAG Contract、frontier 与 Runtime 计划能力。
-边界：Recovery Planner / Policy 不执行 Runtime、不修改数据库状态；实际 Execution 仍由 Worker + WorkflowExecutionService 完成。
+职责：暴露只读恢复评估、自动恢复策略、自动恢复领域服务、顺序 Runtime Resume 规划、DAG Contract、frontier 与 Runtime 计划能力。
+边界：Recovery Planner / Policy / Automatic Recovery Service 不直接启动 Runtime；实际 Execution 仍由 Worker + WorkflowExecutionService 完成。
 """
 
+from app.services.workflow.checkpoint.recovery.automatic import (
+    WorkflowExecutionAutomaticRecoveryResult,
+    WorkflowExecutionAutomaticRecoveryService,
+)
 from app.services.workflow.checkpoint.recovery.dag_contract import (
     WorkflowDagContract,
     WorkflowDagContractValidator,
@@ -43,6 +47,8 @@ __all__ = [
     "WorkflowDagResumeRuntimePlan",
     "WorkflowDagResumeRuntimePlanner",
     "WorkflowDagResumeRuntimeSequencePlanner",
+    "WorkflowExecutionAutomaticRecoveryResult",
+    "WorkflowExecutionAutomaticRecoveryService",
     "WorkflowExecutionCheckpointRecoveryService",
     "WorkflowExecutionRecoveryDecision",
     "WorkflowExecutionRecoveryPolicy",
