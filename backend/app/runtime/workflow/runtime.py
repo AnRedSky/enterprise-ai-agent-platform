@@ -17,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.core import Agent, AgentVersion, User
 from app.models.organization import Organization
+from app.models.workflow_execution import WorkflowNodeExecution
 from app.runtime.model import ModelGateway
 from app.runtime.workflow.circuit_breaker import CircuitBreakerService, CircuitOpenError
 from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.model import RuntimeModelGovernanceService
+from app.services.workflow.checkpoint.recovery.dag_runtime_sequence import WorkflowDagResumeRuntimeSequencePlanner
 
 
 class WorkflowRuntime:
@@ -115,18 +117,7 @@ class WorkflowRuntime:
 
     @classmethod
     def validate_definition(cls, definition: dict, *, allow_legacy_empty_nodes: bool = False) -> list[dict]:
-        """校验 Workflow Definition，并在明确授权时兼容历史空节点版本。
-
-        Args:
-            definition: Workflow Definition 对象。
-            allow_legacy_empty_nodes: 仅供已发布历史版本的执行路径使用；新版本发布与普通执行必须保持默认严格校验。
-
-        Returns:
-            经过 Runtime Contract 归一化后的节点列表；历史空节点兼容数据返回空列表。
-
-        Raises:
-            HTTPException: Definition 或节点不满足当前 Runtime Contract 时抛出 422。
-        """
+        """校验 Workflow Definition，并在明确授权时兼容历史空节点版本。"""
         if not isinstance(definition, dict):
             raise HTTPException(422, "Workflow definition 必须为对象")
         nodes = definition.get("nodes")
@@ -134,8 +125,6 @@ class WorkflowRuntime:
             raise HTTPException(422, "Workflow definition 必须包含 nodes 数组")
         if not nodes:
             if allow_legacy_empty_nodes:
-                # 历史已发布版本可能在旧 Contract 下使用空 nodes 表示无操作 Workflow。
-                # 兼容只允许既有发布记录；新发布仍由严格默认分支拒绝。
                 nodes = []
             else:
                 raise HTTPException(422, "Workflow definition 必须包含非空 nodes")
@@ -167,20 +156,39 @@ class WorkflowRuntime:
             normalized.append({"id": node_id, "type": node_type, "config": config})
         return normalized
 
+    async def _resolve_resume_nodes(self, execution, definition: dict, state_data: dict, fallback_nodes: list[dict]) -> list[dict]:
+        """把 Durable Resume 的持久化完成事实转换为当前 Runtime 的线性 Node 序列。
+
+        Resume Execution 的 input_data 已经由 Checkpoint Recovery 固定为 checkpoint state；这里唯一
+        允许推断的执行事实来自 Source Execution 的已完成 Node Execution。DAG frontier 若出现多个节点，
+        当前 Runtime 明确拒绝执行，避免把一个分支的输出隐式喂给另一个分支。
+        """
+        source_execution_id = getattr(execution, "resume_of_execution_id", None)
+        if source_execution_id is None:
+            return fallback_nodes
+
+        source_nodes = (await self.db.execute(
+            select(WorkflowNodeExecution).where(
+                WorkflowNodeExecution.execution_id == source_execution_id,
+                WorkflowNodeExecution.status == "completed",
+            )
+        )).scalars().all()
+        completed_node_ids = {node.node_id for node in source_nodes}
+        try:
+            plans = WorkflowDagResumeRuntimeSequencePlanner.plan(
+                definition=definition,
+                completed_node_ids=completed_node_ids,
+                state_data=state_data,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not plans:
+            raise HTTPException(409, "Durable Resume 没有可继续执行的 DAG Node")
+        return [plan.node for plan in plans]
+
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
-        """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。
-
-        Args:
-            execution: 待执行的 Workflow Execution。
-            version: 当前执行对应的 Workflow Version。
-            actor_id: 执行发起者身份。
-            is_admin: 是否使用管理员权限执行 Agent 节点。
-            allow_legacy_empty_nodes: 是否允许已发布历史版本的空 nodes 兼容执行。
-
-        Returns:
-            Workflow 最终输出数据。
-        """
+        """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。"""
         if self.execution_service is None:
             from app.services.workflow import WorkflowExecutionService
 
@@ -198,6 +206,7 @@ class WorkflowRuntime:
             raise HTTPException(422, "retry_budget.max_retries 必须在 0-20 范围内")
 
         current_data = dict(execution.input_data or {})
+        nodes = await self._resolve_resume_nodes(execution, version.definition, current_data, nodes)
         started = asyncio.get_running_loop().time()
         workflow_retries = 0
 
