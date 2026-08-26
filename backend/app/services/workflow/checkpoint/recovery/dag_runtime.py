@@ -59,7 +59,7 @@ class WorkflowDagResumeRuntimePlanner:
         )
         if len(plan.frontier_node_ids) != 1:
             raise ValueError(
-                "DAG Resume Runtime 当前只允许单一 frontier Node，多个 frontier 分支需要先冻结状态合并 Contract"
+                "DAG Resume Runtime 当前只允许单一 frontier Node，多个分支需要先冻结状态合并 Contract"
             )
 
         frontier_node_id = plan.frontier_node_ids[0]
