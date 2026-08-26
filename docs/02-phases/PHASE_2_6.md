@@ -1,12 +1,12 @@
 # Phase 2.6 — Durable Execution Checkpoint Foundation
 
-> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约以及 Worker → Runtime 的第一版顺序 Resume 已完成；真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 与 failure-after-resume Acceptance 已由开发者本地实际执行通过；DAG 分支 Resume、自动恢复尚未实现。
+> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约、Worker → Runtime 的第一版顺序 Resume 与 HTTP Resume API 已完成；真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 与 failure-after-resume Acceptance 已由开发者本地实际执行通过；DAG 分支 Resume、自动恢复尚未实现。
 > 评估日期：2026-08-26
 > 优先级：**P1**
 
 ## 1. 目标
 
-在 Phase 2.5 已完成 Scheduler / Worker / Runtime 进程与 ownership 边界的基础上，为 durable execution 建立唯一 Checkpoint 持久化边界，并逐步形成安全的 Resume Execution 创建与运行边界：
+在 Phase 2.5 已完成 Scheduler / Worker / Runtime 进程与 ownership 边界的基础上，为 durable execution 建立唯一 Checkpoint 持久化边界，并逐步形成安全的 Resume Execution 创建、HTTP 调用与运行边界：
 
 ```text
 Worker claim / ownership fencing
@@ -23,6 +23,8 @@ Resume Candidate assessment
         ↓
 Resume Execution creation contract
         ↓
+HTTP Resume API
+        ↓
 Worker claim / lease
         ↓
 Resume Planner
@@ -36,6 +38,7 @@ Checkpoint 是持久化事实；Resume Execution 是新的 pending 任务，不�
 
 - Migration `0032_workflow_execution_checkpoint`；
 - Migration `0033_workflow_execution_resume_contract`；
+- Migration `0034_terminal_execution_releases_worker_lease`；
 - `WorkflowExecutionCheckpoint` 持久化模型；
 - `WorkflowExecutionCheckpointService.append()`；
 - `WorkflowExecutionCheckpointService.append_next_in_transaction()`；
@@ -67,7 +70,11 @@ Checkpoint 是持久化事实；Resume Execution 是新的 pending 任务，不�
 - 新增 Durable Resume Real API 测试模块已补充中文模块职责说明；
 - DAG Resume Contract 第一版只接受单一 root；
 - DAG Resume Planner 拒绝 predecessor 尚未完成的非闭包 completed facts；
-- 单一 frontier Runtime 继续拒绝多个分支，直到状态合并 Contract 冻结。
+- 单一 frontier Runtime 继续拒绝多个分支，直到状态合并 Contract 冻结；
+- `POST /api/v1/workflows/executions/{execution_id}/resume`：通过正式 `WorkflowExecutionService.resume_from_latest_checkpoint()` 创建或幂等命中 Resume Execution；
+- HTTP Resume API 只负责 tenant / actor 权限校验、读取 Source Execution、调用 Resume Domain Service 与响应组装，不直接抢 Worker lease、不直接启动 Runtime；
+- Execution HTTP 响应补充 `resume_of_execution_id` 与 `resume_checkpoint_sequence`，让客户端可追踪恢复 lineage；
+- `tests/unit/test_workflow_resume_api_contract.py`：验证 Resume API HTTP 方法、user/admin 权限契约、Domain Service 委托以及 lineage 响应字段。
 
 ## 3. Checkpoint 事务边界
 
@@ -142,7 +149,35 @@ Resume creation
 直接 WorkflowRuntime.execute()
 ```
 
-## 5. Runtime Resume 执行边界
+## 5. HTTP Resume API 边界
+
+当前正式 HTTP Contract：
+
+```text
+POST /api/v1/workflows/executions/{execution_id}/resume
+        ↓
+user / admin authorization
+        ↓
+WorkflowExecutionService.get(...)
+        ↓
+WorkflowExecutionService.resume_from_latest_checkpoint(...)
+        ↓
+new pending Resume Execution
+        ↓
+Scheduler / Worker 正常领取
+```
+
+安全边界：
+
+1. API 只能操作当前 tenant 内且当前用户有权访问的 Source Execution。
+2. API 不接受客户端指定 Checkpoint sequence；恢复来源必须由正式 Resume Candidate assessment 决定。
+3. API 不允许客户端修改 Resume Execution 的 `workflow_version_id`、`input_data`、ownership 或状态。
+4. API 不直接调用 WorkflowRuntime；Resume Execution 必须重新进入标准 pending → Worker claim → Runtime 路径。
+5. Resume 幂等键由 Domain Service 根据 Source Execution + Checkpoint sequence 确定性生成，客户端不能通过额外参数制造第二套 Resume 身份。
+6. Source failed Execution 保持失败状态；API 返回的是新的 pending Resume Execution。
+7. 响应返回 `resume_of_execution_id + resume_checkpoint_sequence`，用于客户端审计与 lineage 展示。
+
+## 6. Runtime Resume 执行边界
 
 第一版 Runtime Resume 只覆盖当前 Runtime 已明确实现的顺序执行模型：
 
@@ -187,14 +222,14 @@ Resume Execution 自己重新生成 Checkpoint
 9. `completed_node_ids` 必须形成从唯一 root 向下的 predecessor 闭包；否则拒绝恢复，避免把不可能由当前顺序 Runtime 产生的持久化事实当作合法输入。
 10. Resume Execution 的 Node Execution 集合只记录真正重新执行的剩余节点；源 Execution 的已完成节点不会复制成新的 Node Execution。
 
-## 6. Checkpoint 负责
+## 7. Checkpoint 负责
 
 - 保存可恢复的业务状态快照；
 - 保存 Node / Execution 当前状态上下文；
 - 保存产生快照时的 Worker owner；
 - 保留历史版本，支持后续恢复与审计。
 
-## 7. Checkpoint 不负责
+## 8. Checkpoint 不负责
 
 - 不自动把 `running` Execution 改回 `pending`；
 - 不执行 Runtime；
@@ -202,9 +237,9 @@ Resume Execution 自己重新生成 Checkpoint
 - 不修改 Node 状态机；
 - 不决定 Retry / Circuit Breaker；
 - 不实现 Saga / compensation；
-- 不直接提供 HTTP Resume 接口。
+- 不直接启动 Resume Runtime。
 
-## 8. Durable Resume 数据不变量
+## 9. Durable Resume 数据不变量
 
 1. Source Execution 永远保持 `failed`，不被 Resume 创建过程改写。
 2. Resume Execution 必须固定 Source Execution 的 `workflow_version_id`，不得隐式漂移到新的 published version。
@@ -216,29 +251,29 @@ Resume Execution 自己重新生成 Checkpoint
 8. Worker 在实际执行前重新读取 Source / Checkpoint，防止恢复元数据与持久化事实漂移。
 9. Resume 完成后的 Checkpoint sequence 在新的 Resume Execution 内重新从 `1` 开始，source lineage 由 `resume_of_execution_id + resume_checkpoint_sequence` 保留；禁止把两个 Execution 的 sequence 混写成单一序列。
 10. DAG Resume Contract 的第一版 root 必须唯一；Planner 接收到的 completed facts 必须满足所有 predecessor 已完成。
+11. HTTP Resume API 不改变上述 Domain 不变量，只提供受权限保护的调用入口。
 
-## 9. 当前明确不实现
+## 10. 当前明确不实现
 
 - DAG 分支自动恢复；
 - running Execution checkpoint recovery；
 - Saga / compensation；
-- HTTP Resume API；
+- 自动恢复失败 Execution；
+- HTTP API 直接启动 Runtime；
 - 绕过 Worker ownership fencing；
 - 用 Checkpoint 替代 Node 状态机；
-- Resume 创建后直接启动 Runtime；
-- 自动恢复失败 Execution。
+- Resume 创建后直接启动 Runtime。
 
-## 10. Real API 源码基线与服务版本
+## 11. Real API 源码基线与服务版本
 
 Tenant Safe Real API Gate 在启动测试前运行 Source Baseline Gate，确认当前本地关键测试源码与远端 `main` 一致。
 
 Checkpoint / Resume / Worker Runtime 属于 API / Worker 进程内 Python 代码。代码更新后必须由开发者人工重启受影响的 API Service 与 Worker Service，再执行 Real API / Worker acceptance；Gate 不负责进程生命周期。
 
-## 11. 下一步
+## 12. 下一步
 
-1. 在本地执行 DAG Contract / Planner / Runtime targeted tests，确认新增单 root 与 completed predecessor 闭包边界；
-2. 执行 Backend Regression，确认现有 Checkpoint / Resume / Worker 行为无回归；
-3. 重启最新 main 的 API Service 与 Worker Service，再执行真实 PostgreSQL + 独立 Worker 的 DAG Resume Acceptance；
-4. 补齐 DAG Runtime integration / failure boundary，特别是单一 frontier 执行失败后的 Resume Execution / Node / Checkpoint 终态；
-5. DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
-6. 自动恢复仅在上述 ownership、checkpoint、planner、终态与 DAG 边界稳定后进入设计。
+1. 在本地仅执行新增 Resume API / Planner / Runtime targeted unit tests，确认当前主线代码单元测试通过；
+2. 暂停完整 Backend / Frontend / Browser / Real API 验收流程，不以其作为当前开发推进门槛；
+3. 继续实现 Durable Resume 后续主线：Resume Runtime 完成事实、terminal boundary 与单一 frontier 稳定后的自动恢复设计；
+4. 自动恢复首先形成明确的 Recovery Policy / ownership / lease / retry 上限 Contract，再进入实现；
+5. DAG 分支恢复仍需先冻结分支状态合并 Contract，再实现多 frontier Runtime。
