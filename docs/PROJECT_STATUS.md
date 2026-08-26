@@ -15,10 +15,10 @@
 ## 最新 main 基线
 
 ```text
-378df8c docs(error): record real api source baseline parser failure
+8d0f252 fix(test): make tenant safe api gate directory independent
 ```
 
-最近一次开发者本地验收反馈仍以本轮用户实际反馈为准：
+本轮最近一次开发者本地验收反馈仍为修复前结果：
 
 ```text
 Checkpoint + Resume Candidate targeted: 8 passed, 4 warnings
@@ -31,8 +31,9 @@ Tenant Safe Real API: blocked at Source Baseline script parser stage
 
 1. 远端 `main` 的 Resume Candidate 测试已使用 timezone-aware UTC 时间；此前反馈中的 `datetime.utcnow()` 弃用警告已在远端源码修复。
 2. Runtime Model Governance Real API 测试已统一使用 `run_or_observe_execution()`，处理独立 Worker 先 claim 导致的合法 `409` ownership race；不允许恢复直接 `/run` 复制逻辑。
-3. Tenant Safe Real API 新增 Source Baseline Gate，用于阻断本地关键测试源码与 `origin/main` 漂移、关键测试文件未提交修改，以及 Worker claim-race helper 未接入。
+3. Tenant Safe Real API 增加 Source Baseline Gate，用于阻断本地关键测试源码与 `origin/main` 漂移、关键测试文件未提交修改，以及 Worker claim-race helper 未接入。
 4. Source Baseline 首版 PowerShell 脚本在本地反馈中发生 `ParserError`；根因是 PowerShell 字符串错误使用反斜杠转义双引号，同时存在 Git root 与 Backend root 路径假设。已重写脚本并记录 `docs/04-errors/2026-08-26-real-api-source-baseline-powershell-parser.md`。
+5. Tenant Safe Real API Gate 进一步改为从自身 `$PSScriptRoot` 定位 Backend root，并在执行前显式切换到 Backend root，消除调用者当前目录导致的脚本路径漂移。
 
 以上修复提交后需要开发者重新执行 Source Baseline、Targeted、Backend Regression、Migration、Tenant Safe Real API、Worker consistency 与 Scheduler recovery acceptance；当前文档不预填修复后的测试结果。
 
@@ -90,7 +91,8 @@ Node transition
 - Runtime Model Governance Real API 测试复用统一 Worker claim race helper；
 - Resume Candidate 测试使用 timezone-aware UTC 时间；
 - Tenant Safe Real API Source Baseline Gate 具备 Git root / Backend root 自适应路径解析；
-- Source Baseline Gate 检查关键测试源码、Worker claim-race helper 和 `datetime.utcnow()` 使用情况。
+- Source Baseline Gate 检查关键测试源码、Worker claim-race helper 和 `datetime.utcnow()` 使用情况；
+- Tenant Safe Real API Gate 自身具备调用目录独立性。
 
 ## Phase 2.6 设计边界
 
