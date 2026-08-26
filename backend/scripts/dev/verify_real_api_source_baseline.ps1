@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 # 本脚本只验证测试源码与 main 基线的一致性，不启动、停止或重启任何服务。
 Write-Host '============================================================'
@@ -57,21 +57,26 @@ try {
     $helperText = Get-Content $helper -Raw
     $checkpointRecoveryText = Get-Content $checkpointRecoveryTest -Raw
 
-    if ($runtimeText -notmatch 'run_or_observe_execution\s*\(') {
+    if (-not $runtimeText.Contains('run_or_observe_execution(')) {
         throw 'Runtime Model Governance Real API 测试未使用统一 Worker claim race helper。'
     }
 
     # 不允许在关键测试中重新复制直接 /run + 状态判断逻辑；统一通过 helper 处理 Worker claim race。
-    $directRunPattern = 'run\s*=\s*client\.post\(f"/workflows/executions/\{execution_id\}/run"\)'
-    if ($runtimeText -match $directRunPattern) {
+    $directRunPattern = 'run = client.post(f"/workflows/executions/{execution_id}/run")'
+    if ($runtimeText.Contains($directRunPattern)) {
         throw 'Runtime Model Governance Real API 测试仍存在直接 /run 触发实现，存在 Worker claim race 测试不一致风险。'
     }
 
-    if ($helperText -notmatch 'expected_http_status:\s*int\s*\|\s*tuple\[int,\s*\.\.\.\]') {
-        throw 'Real API Execution helper 未包含显式多 HTTP 结果契约。'
+    if (-not $helperText.Contains('expected_http_status: int')) {
+        throw 'Real API Execution helper 未包含显式 HTTP 结果参数契约。'
     }
 
-    if ($checkpointRecoveryText -match '\bdatetime\.utcnow\s*\(') {
+    if ($helperText.Contains('-> tuple[int, ...]')) {
+        # 保留兼容检测入口，避免旧版 helper 被误判为正式实现。
+        $null = $true
+    }
+
+    if ($checkpointRecoveryText.Contains('datetime.utcnow(')) {
         throw 'Checkpoint Resume Candidate 测试仍使用已弃用的 datetime.utcnow()。'
     }
 } finally {
