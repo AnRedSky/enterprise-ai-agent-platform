@@ -1,4 +1,4 @@
-"""Workflow Worker 单元测试：验证独立消费器的并发编排、恢复与停止语义。"""
+"""Workflow Worker 单元测试：验证独立消费器的并发编排、恢复、租约与停止语义。"""
 
 from __future__ import annotations
 
@@ -127,6 +127,33 @@ async def test_recover_orphaned_running_nodes_is_noop_when_state_is_consistent()
 
     assert recovered == 0
     assert service.transitions == []
+
+
+@pytest.mark.asyncio
+async def test_renew_lease_forever_retries_transient_failure_then_exits_on_lost_ownership(monkeypatch) -> None:
+    """Heartbeat 的瞬态失败必须继续重试，ownership 失效后才退出。"""
+    worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=1, lease_seconds=30)
+    calls = 0
+    sleeps = 0
+
+    async def fake_sleep(_seconds):
+        nonlocal sleeps
+        sleeps += 1
+
+    async def fake_renew(_execution_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ConnectionError("temporary database interruption")
+        return False
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    worker._renew_lease_once = fake_renew  # type: ignore[method-assign]
+
+    await worker._renew_lease_forever(uuid4())
+
+    assert calls == 2
+    assert sleeps == 2
 
 
 def test_worker_rejects_invalid_runtime_parameters() -> None:
