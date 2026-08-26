@@ -67,13 +67,8 @@ try {
         throw 'Runtime Model Governance Real API 测试仍存在直接 /run 触发实现，存在 Worker claim race 测试不一致风险。'
     }
 
-    if (-not $helperText.Contains('expected_http_status: int')) {
-        throw 'Real API Execution helper 未包含显式 HTTP 结果参数契约。'
-    }
-
-    if ($helperText.Contains('-> tuple[int, ...]')) {
-        # 保留兼容检测入口，避免旧版 helper 被误判为正式实现。
-        $null = $true
+    if (-not $helperText.Contains('expected_http_status: int | tuple[int, ...]')) {
+        throw 'Real API Execution helper 未包含显式多 HTTP 结果参数契约。'
     }
 
     if ($checkpointRecoveryText.Contains('datetime.utcnow(')) {
@@ -86,5 +81,5 @@ try {
 Write-Host "[PASS] HEAD == origin/main: $head"
 Write-Host '[PASS] Critical Real API / Checkpoint test sources are clean.'
 Write-Host '[PASS] Runtime Model Governance tests use unified claim-race helper.'
-Write-Host '[PASS] Checkpoint Resume Candidate tests do not use datetime.utcnow().'
+Write-Host '[PASS] Checkpoint Resume Candidate tests do not use datetime.utcnow().' 
 Write-Host '[PASS] Real API source baseline verification completed.'
