@@ -25,13 +25,13 @@ pytestmark = pytest.mark.real_api
 
 def _client() -> httpx.Client:
     if not TOKEN:
-        pytest.fail("ACCESS_TOKEN is required for real API validation")
+        pytest.skip("ACCESS_TOKEN is required for real API validation; use scripts/test/api-real/05_run_durable_resume_real_tests.ps1")
     return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20.0)
 
 
 def _require_context() -> None:
     if not ORGANIZATION_ID:
-        pytest.fail("ORGANIZATION_ID is required for durable resume validation")
+        pytest.skip("ORGANIZATION_ID is required; use scripts/test/api-real/05_run_durable_resume_real_tests.ps1")
 
 
 @contextmanager
@@ -167,7 +167,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                                       "retryable_error_codes": ["HTTP_503"]},
                         }},
                     ],
-                    "edges": [],
+                    "edges": [{"source": "prepare", "target": "provider-call"}],
                 }})
                 assert version.status_code == 201, version.text
                 version_id = version.json()["id"]
@@ -194,7 +194,6 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                     return checkpoints[0], list(nodes)
 
             source_checkpoint, source_nodes = await verify_source_checkpoint()
-            # Checkpoint contract is zero-based: the first completed node is sequence 0.
             assert source_checkpoint.sequence == 0
             assert source_checkpoint.node_id == "prepare"
             assert source_checkpoint.node_status == "completed"
