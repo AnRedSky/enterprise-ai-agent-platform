@@ -8,7 +8,7 @@
 
 ## 1. 本轮开发目标
 
-将 Durable Resume 从“人工 HTTP Resume Contract”继续推进到“可由 Scheduler 自动发现并安全创建 Resume Execution”的 Domain 边界。
+将 Durable Resume 从“人工 HTTP Resume Contract”继续推进到“可由 Scheduler 自动发现并安全创建 Resume Execution”的完整进程边界。
 
 核心原则：
 
@@ -95,11 +95,14 @@ pending Resume Execution
 
 ```text
 WorkflowRecoveryScheduler.scan_once()
+WorkflowRecoveryScheduler.run_forever()
 ```
 
 职责仅限：
 
 ```text
+Scheduler loop
+        ↓
 发现 failed + worker_owner IS NULL
         ↓
 调用 Recovery Domain
@@ -111,7 +114,7 @@ WorkflowRecoveryScheduler.scan_once()
 
 每个 Execution 使用独立数据库 Session，避免跨候选循环形成长事务。
 
-多 Scheduler 实例并发扫描同一 Execution 时，最终收敛依赖：
+多个 Scheduler 实例并发扫描同一 Execution 时，最终收敛依赖：
 
 ```text
 Source Execution row lock
@@ -121,11 +124,27 @@ deterministic Resume idempotency key
 Database unique constraint
 ```
 
-## 5. 当前尚未接入
+## 5. Scheduler Service 生命周期接入
 
-本轮已经实现 `WorkflowRecoveryScheduler.scan_once()`，但**尚未把 Recovery Scan 接入 `ScheduledTriggerScheduler.run_forever()` 主循环**。
+Recovery Scan 已接入 `backend/app/entrypoints/scheduler.py` 的独立 Scheduler Service 生命周期：
 
-原因是需要保持 Scheduled Trigger Dispatch 与 Recovery Scan 两套职责、计数器、异常边界和轮询节奏独立，下一提交再完成 Runtime 编排接入，避免在同一修改中复制生命周期控制逻辑。
+```text
+Scheduler Service Process
+    ├── ScheduledTriggerScheduler.run_forever()
+    │      └── Scheduled Trigger Dispatch
+    │
+    └── WorkflowRecoveryScheduler.run_forever()
+           └── Durable Recovery Scan
+```
+
+两条循环：
+
+- 共享同一 Scheduler 进程；
+- 不共享数据库 Session；
+- 不复制业务规则；
+- Recovery Scan 异常不会直接修改 Scheduled Trigger Dispatch 状态；
+- Scheduled Trigger Scheduler 停止时，Recovery Scheduler 同步收到 stop/cancel；
+- Recovery Scan 使用 `settings.scheduler_poll_interval_seconds` 作为默认轮询周期，避免建立第二套配置入口。
 
 ## 6. 单元测试
 
@@ -153,8 +172,7 @@ backend/tests/unit/test_workflow_recovery_scheduler.py
 
 ## 7. 下一任务
 
-1. 将 `WorkflowRecoveryScheduler.scan_once()` 接入 Scheduler Runtime 主循环；
-2. 为 Recovery Scan 增加独立 poll interval / scan limit 配置 Contract；
-3. 将 recovery counters 接入 Scheduler observability；
-4. 单元测试通过后，再进行自动恢复 Real API / Worker 验收；
-5. 自动恢复稳定后进入 DAG 分支状态合并 Contract 与多 frontier Resume。
+1. 将 Recovery counters 纳入 Scheduler observability / trace；
+2. 为自动恢复增加真实 HTTP + PostgreSQL + 独立 Worker 验收入口，但当前不以该验收阻塞主线；
+3. 验证 Recovery Scan 与 Scheduled Trigger Dispatch 的并发 / Session 隔离；
+4. 自动恢复稳定后进入 DAG 分支状态合并 Contract 与多 frontier Resume。
