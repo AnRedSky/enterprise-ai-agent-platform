@@ -15,19 +15,20 @@
 ## 最新 main 基线
 
 ```text
-fbea604 feat(durable): add workflow execution checkpoint foundation
+56dec95 feat(durable): persist checkpoints at node completion boundary
 ```
 
-最新开发者本地验收：
+最近一次开发者本地验收：
 
 ```text
-Checkpoint targeted unit: 3 passed in 0.95s
-Backend Regression: 420 passed, 3 skipped, 36 deselected in 30.49s
-Tenant Safe Real API: 35 passed in 63.27s
+Checkpoint targeted unit: 5 passed in 1.09s
+Backend Regression: 422 passed, 3 skipped, 37 deselected in 29.69s
 Migration head: 0032_workflow_execution_checkpoint
+Tenant Safe Real API: 35 passed, 1 failed
+Scheduler / Worker Recovery Acceptance: 1 passed
 ```
 
-以上结果均来自开发者本地实际执行；本次 Runtime Checkpoint 接入后的新 targeted / full Gate 尚未重新执行，因此不得预填为通过。
+Real API 的唯一失败来自旧 API / Worker 进程加载旧代码后复用历史 `WORKFLOW_EXECUTION_ID`；该 Gate 已在 `71c9f81` 修改为每轮新建 Execution，避免历史 Fixture 污染。**Runtime Checkpoint 接入后的最终 Real API / Backend Gate 尚未重新验证，因此 Phase 2.6 仍不得标记为 Passed。**
 
 ## 当前产品级执行架构
 
@@ -72,7 +73,8 @@ Node transition
 - Node 状态与 Checkpoint 同事务提交；
 - `execution_id + sequence` 数据库唯一约束；
 - Checkpoint 集成单元测试；
-- Real API + PostgreSQL persistence 验收测试入口。
+- Real API + PostgreSQL persistence 验收测试；
+- Real API Checkpoint Gate 改为每轮新建 Execution，避免历史 Execution 与旧进程污染验收。
 
 ## Phase 2.6 设计边界
 
@@ -84,6 +86,27 @@ Node transition
 - HTTP Resume API；
 - 绕过 Worker ownership fencing；
 - 用 Checkpoint 替代 Node 状态机。
+
+## 服务版本验收边界
+
+Checkpoint Runtime 接入属于进程内代码变更。代码更新后，必须由开发者人工重启 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。
+
+```text
+代码更新
+   ↓
+人工重启 API Service
+   ↓
+人工重启 Worker Service
+   ↓
+Real API / Backend Gate
+```
+
+当前推荐：
+
+```powershell
+uv run python run.py
+uv run python run_worker.py
+```
 
 ## 当前验收要求
 
