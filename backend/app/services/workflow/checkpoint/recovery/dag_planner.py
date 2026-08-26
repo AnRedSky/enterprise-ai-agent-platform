@@ -27,8 +27,19 @@ class WorkflowDagResumePlanner:
     def plan(*, definition: dict, completed_node_ids: set[str] | frozenset[str]) -> WorkflowDagResumePlan:
         """计算 DAG Resume frontier。
 
-        `completed_node_ids` 是外部已经验证的持久化完成事实；Planner 不推断它们，也不修改它们。
-        frontier 按 Definition.nodes 的稳定顺序返回，避免数据库/集合迭代顺序造成非确定性。
+        Args:
+            definition: 已冻结的 Workflow Version DAG Definition。
+            completed_node_ids: 外部已经验证的持久化完成事实集合。
+
+        Returns:
+            按 Definition.nodes 顺序返回确定性 completed 与 frontier Node 集合。
+
+        Raises:
+            ValueError: 完成事实类型、Node 引用或祖先完成关系不满足 DAG Resume Contract。
+
+        设计意图：第一版 Runtime 是顺序恢复，因此持久化完成事实必须形成从唯一 root 向下的闭包。
+        如果某个已完成 Node 的 predecessor 尚未完成，则该事实不能安全进入当前 Resume frontier；拒绝它
+        可以避免把不可能由当前顺序 Runtime 产生的数据库状态当成合法恢复输入。
         """
         contract = WorkflowDagContractValidator.validate(definition=definition)
         if not isinstance(completed_node_ids, (set, frozenset)):
@@ -44,6 +55,16 @@ class WorkflowDagResumePlanner:
         predecessors: dict[str, set[str]] = {node_id: set() for node_id in contract.node_ids}
         for edge in contract.edges:
             predecessors[edge.target].add(edge.source)
+
+        invalid_completed = sorted(
+            node_id
+            for node_id in completed_node_ids
+            if not predecessors[node_id].issubset(completed_node_ids)
+        )
+        if invalid_completed:
+            raise ValueError(
+                f"DAG Resume completed Node 缺少已完成 predecessor: {invalid_completed[0]}"
+            )
 
         frontier = tuple(
             node_id
