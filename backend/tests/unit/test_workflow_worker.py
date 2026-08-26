@@ -131,7 +131,7 @@ async def test_recover_orphaned_running_nodes_is_noop_when_state_is_consistent()
 
 @pytest.mark.asyncio
 async def test_renew_lease_forever_retries_transient_failure_then_exits_on_lost_ownership(monkeypatch) -> None:
-    """Heartbeat 的瞬态失败必须继续重试，ownership 失效后才退出。"""
+    """Heartbeat 的瞬态失败必须继续重试，ownership 失效后立即退出且不再等待下一轮。"""
     worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=1, lease_seconds=30)
     calls = 0
     sleeps = 0
@@ -153,7 +153,8 @@ async def test_renew_lease_forever_retries_transient_failure_then_exits_on_lost_
     await worker._renew_lease_forever(uuid4())
 
     assert calls == 2
-    assert sleeps == 2
+    # 第一次是瞬态异常后的下一轮等待；第二次 renew 已明确失去 ownership，必须立即退出。
+    assert sleeps == 1
 
 
 def test_worker_rejects_invalid_runtime_parameters() -> None:
