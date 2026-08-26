@@ -1,44 +1,54 @@
-# Phase 2.6 — Durable Execution Checkpoint Acceptance
+# Phase 2.6 — Durable Execution Checkpoint Foundation Acceptance
 
 ## 1. 验收目标
 
-验证 Workflow Execution 已具备独立、不可变的 Checkpoint 持久化基础，但尚未把 Checkpoint 错误地扩展为自动 Resume。
-
-## 2. 代码边界
+验证 WorkflowRuntime 的 Node completion 已形成真实 PostgreSQL Checkpoint 持久化边界：
 
 ```text
-WorkflowExecution
-      ↓
-Checkpoint Service
-      ↓
-workflow_execution_checkpoints
+Worker / HTTP Runtime
+        ↓
+WorkflowExecutionService.transition_node(completed)
+        ↓
+Node state + Checkpoint append
+        ↓
+同一 PostgreSQL transaction commit
 ```
 
-必须满足：
+Checkpoint 不承担 Resume、调度或 ownership 决策。
 
-- `execution_id + sequence` 唯一；
-- Checkpoint 只追加，不覆盖历史记录；
-- Checkpoint 可以保存 Execution / Node 状态快照；
-- Checkpoint 可以保存可恢复业务 state；
-- Checkpoint 保存当时 Worker owner 事实；
-- `latest()` 通过最高 sequence 读取最新快照；
-- 不改变现有 Execution / Node 状态机；
-- 不自动 Resume 已中断的 running Execution。
+## 2. 自动化入口
 
-## 3. 开发者本地前置服务
-
-当前 targeted unit test 不需要启动 API / Scheduler / Worker。
-
-真实 PostgreSQL migration / persistence Gate 需要开发者预先运行 PostgreSQL，服务进程本身由测试 Gate 管理规则决定；不得在测试脚本内私自启动、停止或重启本地业务服务。
-
-## 4. Targeted Test
+### Checkpoint targeted unit
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_workflow_execution_checkpoint.py
+uv run pytest -q tests/unit/test_workflow_execution_checkpoint.py tests/unit/test_workflow_checkpoint_integration.py
 ```
 
-## 5. Migration
+### Backend Regression
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+```
+
+### Tenant Safe Real API
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
+```
+
+### Checkpoint Real PostgreSQL persistence
+
+```powershell
+cd backend
+uv run pytest -q tests/api_real/test_workflow_checkpoint_api.py
+```
+
+该测试要求预先准备 Real API 与 PostgreSQL；不会启动、停止或重启任何服务。
+
+## 3. 数据库前置
 
 ```powershell
 cd backend
@@ -46,14 +56,54 @@ uv run alembic upgrade head
 uv run alembic current
 ```
 
-预期 head：
+预期：
 
 ```text
-0032_workflow_execution_checkpoint
+0032_workflow_execution_checkpoint (head)
 ```
 
-## 6. 下一阶段验收
+## 4. Node completion 断言
 
-Checkpoint 代码通过 targeted unit 与 migration 后，再增加真实 PostgreSQL persistence Gate；只有真实持久化链路通过后，才进入 Runtime completion boundary 接入。
+必须满足：
 
-当前不应记录自动 Resume / checkpoint recovery 已完成。
+```text
+Node running
+    ↓
+transition_node(..., completed)
+    ↓
+Checkpoint sequence = Execution 当前最大 sequence + 1
+    ↓
+Node + Checkpoint 同事务提交
+```
+
+禁止：
+
+```text
+Node committed
+Checkpoint commit failed / missing
+```
+
+## 5. Real PostgreSQL 断言
+
+真实 HTTP Execution 完成后，PostgreSQL 中必须存在：
+
+```text
+execution_id = HTTP Execution ID
+checkpoint_reason = node.completed
+node_status = completed
+sequence = 0..N 连续递增
+```
+
+测试必须读取真实 PostgreSQL，而不能使用 JSON fixture 或进程内 Mock 数据代替。
+
+## 6. 禁止验收方式
+
+- 不得通过 Mock Checkpoint Service 作为唯一完成依据；
+- 不得通过手工向 `workflow_execution_checkpoints` 插入数据证明 Runtime 已接入；
+- 不得修改 `running → running` 状态机；
+- 不得让 Gate 自动启动 / 停止 / 重启 API、Scheduler、Worker；
+- 不得把 Checkpoint 自动 Resume 能力提前混入本阶段。
+
+## 7. 当前状态
+
+`0032` migration、Checkpoint 基础服务和本地 targeted tests 已完成；Runtime Node completion 接入已提交到 `main`。开发者必须重新执行本次新增 targeted / Backend / Real PostgreSQL Gate 后，才能将本 Acceptance 标记为最终 Passed。

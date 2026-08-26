@@ -20,6 +20,7 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
+from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
 from app.services.workflow.governance import WorkflowGovernanceService
 
 
@@ -33,6 +34,7 @@ class WorkflowExecutionService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.governance = WorkflowGovernanceService(db)
+        self.checkpoint = WorkflowExecutionCheckpointService(db)
 
     async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict,
                      idempotency_key: str | None = None) -> WorkflowExecution:
@@ -134,7 +136,7 @@ class WorkflowExecutionService:
 
         Args:
             execution: 已加锁并重新读取的 Workflow Execution。
-            worker_owner: 当前执行调用方声明的 Worker owner；HTTP 手动执行为 None。
+            worker_owner: 当前 Worker 的 owner；HTTP 手动执行必须为 `None`。
 
         Returns:
             无；校验通过时返回。
@@ -240,7 +242,7 @@ class WorkflowExecutionService:
         Raises:
             HTTPException: 状态转换非法、Execution 已结束或 Worker ownership 已失效。
 
-        并发边界：先锁定并重新读取 Execution，再由 `_lock_execution` 比较 claim 时保存的 `worker_owner`。旧 Worker 即使本地 Runtime 仍在运行，也不能在新 Worker 接管后继续写节点状态。
+        并发边界：先锁定并重新读取 Execution，再由 `_lock_execution` 比较 claim 时保存的 `worker_owner`。Checkpoint 只在 Node 成功完成时记录，并与本次 Node 状态变化共享同一事务；这样不会出现 Node 已提交而 Checkpoint 丢失的半完成边界。
         """
         if target_status not in self.NODE_STATES:
             raise HTTPException(400, "不支持的 Node Execution 状态")
@@ -288,6 +290,19 @@ class WorkflowExecutionService:
         await self.governance.trace(execution, execution.created_by, "node.state_changed", target_status,
                                      node_id=node_id, error_code=error_code, error_message=error_message,
                                      data={"attempt": node.attempt})
+        if target_status == "completed":
+            await self.checkpoint.append_next_in_transaction(
+                execution_id=execution.id,
+                execution_status=execution.status,
+                state_data=dict(output_data if output_data is not None else (node.output_data or {})),
+                checkpoint_reason="node.completed",
+                node_id=node.node_id,
+                node_attempt=node.attempt,
+                node_status=node.status,
+                input_data=node.input_data,
+                output_data=node.output_data,
+                worker_owner=execution.worker_owner,
+            )
         await self.db.commit()
         await self.db.refresh(node)
         return node

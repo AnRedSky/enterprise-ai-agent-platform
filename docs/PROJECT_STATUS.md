@@ -9,25 +9,25 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；当前已完成 Checkpoint 数据模型、0032 migration、Checkpoint Service 与 targeted unit tests，尚未接入 Runtime 自动 checkpoint / resume。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；已完成 Checkpoint 模型、0032 migration、Checkpoint Service，并已接入 Node completed 事务边界；自动 Resume 尚未实现。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
 ```text
-b8cba41 test(worker): align heartbeat retry test with ownership exit contract
+fbea604 feat(durable): add workflow execution checkpoint foundation
 ```
 
-Phase 2.5 最终本地结果：
+最新开发者本地验收：
 
 ```text
-Worker targeted Unit: 13 passed in 1.23s
-Backend Regression: 417 passed, 3 skipped, 36 deselected in 29.44s
-Tenant Safe Real API: 35 passed in 63.01s
-Scheduler / Worker Recovery Acceptance: 1 passed
+Checkpoint targeted unit: 3 passed in 0.95s
+Backend Regression: 420 passed, 3 skipped, 36 deselected in 30.49s
+Tenant Safe Real API: 35 passed in 63.27s
+Migration head: 0032_workflow_execution_checkpoint
 ```
 
-这些结果均来自开发者本地实际执行。
+以上结果均来自开发者本地实际执行；本次 Runtime Checkpoint 接入后的新 targeted / full Gate 尚未重新执行，因此不得预填为通过。
 
 ## 当前产品级执行架构
 
@@ -50,55 +50,54 @@ WorkflowExecutionService
    ↓
 WorkflowRuntime
    ↓
-Node / Execution terminal state
-   ↓
-Audit / Trace / ownership cleanup
+Node transition
+   ├── failed / running / skipped
+   └── completed → Checkpoint append (same transaction)
+                    ↓
+             PostgreSQL immutable checkpoint
+                    ↓
+             Audit / Trace / ownership cleanup
 ```
 
-核心职责冻结：**Scheduler 负责“什么时候执行”，Worker 负责“执行什么”，WorkflowRuntime 负责“如何执行节点”。**
+核心职责冻结：**Scheduler 负责“什么时候执行”，Worker 负责“执行什么”，WorkflowRuntime 负责“如何执行节点”，Checkpoint 负责“记录已完成执行事实”。**
 
-## Phase 2.6 Durable Execution Checkpoint Foundation
+## Phase 2.6 当前实现
 
-当前目标：
-
-```text
-WorkflowExecution
-      ↓
-Checkpoint Service
-      ↓
-PostgreSQL immutable checkpoint
-      ↓
-后续 Durable Resume / Recovery
-```
-
-本轮已实现：
-
-- Migration `0032_workflow_execution_checkpoint`；
+- `0032_workflow_execution_checkpoint`；
 - `WorkflowExecutionCheckpoint` 不可变快照模型；
 - `WorkflowExecutionCheckpointService.append()`；
+- `WorkflowExecutionCheckpointService.append_next_in_transaction()`；
 - `WorkflowExecutionCheckpointService.latest()`；
-- `execution_id + sequence` 唯一约束；
-- Checkpoint targeted unit tests。
+- `Node completed` 自动生成 Checkpoint；
+- Node 状态与 Checkpoint 同事务提交；
+- `execution_id + sequence` 数据库唯一约束；
+- Checkpoint 集成单元测试；
+- Real API + PostgreSQL persistence 验收测试入口。
 
-明确不在当前范围：
+## Phase 2.6 设计边界
+
+当前明确不实现：
 
 - 自动 Resume；
 - running Execution checkpoint recovery；
 - Saga / compensation；
 - HTTP Resume API；
-- 绕过 Worker ownership fencing。
+- 绕过 Worker ownership fencing；
+- 用 Checkpoint 替代 Node 状态机。
 
 ## 当前验收要求
 
-Phase 2.6 必须先完成：
+Runtime Checkpoint 接入后必须重新执行：
 
-1. `uv run alembic upgrade head` 实际验证 `0032_workflow_execution_checkpoint`；
-2. Checkpoint targeted unit tests；
-3. 真实 PostgreSQL persistence Gate；
-4. Runtime Node completion boundary 接入；
-5. durable resume 的 ownership / version / idempotency 设计与实现。
+1. Worker / Checkpoint targeted tests；
+2. `uv run pytest -q`；
+3. `uv run alembic upgrade head` + `uv run alembic current`；
+4. Tenant Safe Real API；
+5. Real API + PostgreSQL Checkpoint persistence；
+6. Worker Runtime consistency diagnostic；
+7. Scheduler / Worker Recovery Acceptance。
 
-在以上步骤完成前，不得将 durable resume 标记为完成。
+在上述新代码完成本地实际验证前，不得将 Phase 2.6 标记为 Passed。
 
 ## 当前禁止事项
 
