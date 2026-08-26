@@ -15,13 +15,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow_execution import WorkflowExecution
-from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
 from app.services.workflow.checkpoint.recovery.policy import (
     WorkflowExecutionRecoveryDecision,
     WorkflowExecutionRecoveryPolicy,
     WorkflowExecutionRecoveryPolicyEvaluator,
 )
 from app.services.workflow.checkpoint.recovery.service import WorkflowExecutionCheckpointRecoveryService
+from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
 
 @dataclass(frozen=True)
