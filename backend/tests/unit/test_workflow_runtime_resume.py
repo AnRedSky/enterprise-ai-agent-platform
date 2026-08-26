@@ -1,3 +1,10 @@
+"""Workflow Runtime Durable Resume 单元测试模块。
+
+职责：验证 WorkflowRuntime 如何依据 Source Execution 的持久化完成事实选择 Resume Node。
+边界：只测试 Runtime 的 Resume 节点选择与错误边界，不连接真实数据库、Worker 或 Provider。
+关键依赖：WorkflowRuntime、DAG Resume Runtime Planner。
+"""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
