@@ -2,13 +2,14 @@
 
 职责：把每次只有一个 frontier 的 DAG Resume 计划展开为可交给现有顺序 Runtime 的确定性 Node 序列。
 边界：只做纯内存拓扑规划，不读取数据库、不执行 Node、不修改 Checkpoint，也不合并分支状态。
-关键依赖：WorkflowDagResumeRuntimePlanner；调用方仍负责在每个 Node 成功后使用新的状态重新计算真实 Runtime 数据。
+关键依赖：WorkflowDagResumePlanner、WorkflowDagResumeRuntimePlanner；调用方仍负责在每个 Node 成功后使用新的状态重新计算真实 Runtime 数据。
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
 
+from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import (
     WorkflowDagResumeRuntimePlan,
     WorkflowDagResumeRuntimePlanner,
@@ -49,26 +50,27 @@ class WorkflowDagResumeRuntimeSequencePlanner:
         }
         plans: list[WorkflowDagResumeRuntimePlan] = []
         while len(completed) < len(node_ids):
+            frontier = WorkflowDagResumePlanner.plan(
+                definition=definition,
+                completed_node_ids=completed,
+            )
+            if len(frontier.frontier_node_ids) != 1:
+                raise ValueError(
+                    "DAG Resume Runtime 当前无法展开为线性 Node 序列，多个 frontier 需要先冻结状态合并 Contract"
+                )
+
             frontier_plan = WorkflowDagResumeRuntimePlanner.plan(
                 definition=definition,
                 completed_node_ids=completed,
                 state_data=state_data,
             )
-            if len(frontier_plan.frontier_node_ids) != 1:
-                raise ValueError(
-                    "DAG Resume Runtime 当前无法展开为线性 Node 序列，多个 frontier 需要先冻结状态合并 Contract"
-                )
-            frontier_node_id = frontier_plan.frontier_node_ids[0]
-            node = next(
-                node for node in definition["nodes"]
-                if isinstance(node, dict) and node.get("id") == frontier_node_id
-            )
+            frontier_node_id = frontier_plan.frontier_node_id
             plans.append(
                 WorkflowDagResumeRuntimePlan(
                     completed_node_ids=frontier_plan.completed_node_ids,
                     frontier_node_id=frontier_node_id,
-                    node=deepcopy(node),
-                    state_data=deepcopy(state_data),
+                    node=deepcopy(frontier_plan.node),
+                    state_data=deepcopy(frontier_plan.state_data),
                 )
             )
             completed.add(frontier_node_id)
