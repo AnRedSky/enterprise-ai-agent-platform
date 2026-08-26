@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -147,11 +146,7 @@ class WorkflowWorker:
                 return
             await asyncio.sleep(interval)
 
-    async def _recover_orphaned_running_nodes(
-        self,
-        execution: WorkflowExecution,
-        service: WorkflowExecutionService,
-    ) -> int:
+    async def _recover_orphaned_running_nodes(self, execution: WorkflowExecution, service: WorkflowExecutionService) -> int:
         """在 Worker 接管 pending Execution 时收敛遗留的 running Node。"""
         result = await service.db.execute(
             select(WorkflowNodeExecution).where(
@@ -179,33 +174,10 @@ class WorkflowWorker:
             )
         return len(orphaned_nodes)
 
-    async def _prepare_resume_runtime(
-        self,
-        db,
-        execution: WorkflowExecution,
-        version: WorkflowVersion,
-    ) -> tuple[WorkflowExecution, object]:
-        """根据 Resume Execution 的来源 Checkpoint 准备 Runtime 输入状态。
-
-        Args:
-            db: 当前 Execution 专属的数据库 Session，禁止跨并发任务共享。
-            execution: 当前 Worker 已认领的 Resume Execution。
-            version: Resume Execution 固定引用的原 Workflow Version。
-
-        Returns:
-            `(execution, runtime_version)`，其中 execution 的输入状态来自 Checkpoint，runtime_version 保留
-            完整 DAG Definition，后续由 WorkflowRuntime 根据来源 Node 完成事实计算真实 resume frontier。
-
-        Raises:
-            RuntimeError: Resume 来源、Checkpoint 或版本边界不满足安全契约。
-
-        设计边界：Worker 只负责恢复 Checkpoint 状态和校验 Resume 来源，不提前裁剪 DAG。若这里先把
-        Definition 替换为剩余节点，Runtime 后续无法识别 source checkpoint 的 predecessor，反而会把
-        已完成的 Node 视为未知事实并阻断真实 Resume。
-        """
+    async def _prepare_resume_runtime(self, db, execution: WorkflowExecution, version: WorkflowVersion) -> tuple[WorkflowExecution, object]:
+        """根据 Resume Execution 的来源 Checkpoint 准备 Runtime 输入状态。"""
         if execution.resume_of_execution_id is None:
             return execution, version
-
         source_result = await db.execute(
             select(WorkflowExecution).where(
                 WorkflowExecution.id == execution.resume_of_execution_id,
@@ -217,9 +189,7 @@ class WorkflowWorker:
             raise RuntimeError("Resume 来源 Execution 不存在")
         if source.status != "failed" or source.worker_owner is not None:
             raise RuntimeError("Resume 来源 Execution 已不满足恢复安全边界")
-
         from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
-
         if execution.resume_checkpoint_sequence is None:
             raise RuntimeError("Resume Execution 缺少 checkpoint sequence")
         checkpoint_result = await db.execute(
@@ -237,22 +207,11 @@ class WorkflowWorker:
             raise RuntimeError("Resume Checkpoint Execution/Node 状态边界无效")
         if source.workflow_version_id != execution.workflow_version_id:
             raise RuntimeError("Resume 不允许发生 Workflow Version 漂移")
-
         execution.input_data = dict(checkpoint.state_data or {})
         return execution, version
 
     async def execute_claimed(self, execution_id: UUID) -> None:
-        """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
-
-        Args:
-            execution_id: 已由当前 Worker owner 认领的 Workflow Execution ID。
-
-        Returns:
-            无；Execution 最终状态由 WorkflowExecutionService 持久化。
-
-        Raises:
-            Exception: Workflow Runtime 原始执行异常会继续向 Worker 守护层传播。
-        """
+        """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。"""
         async with SessionLocal() as db:
             execution = (
                 await db.execute(
@@ -265,17 +224,10 @@ class WorkflowWorker:
             ).scalar_one_or_none()
             if execution is None:
                 return
-            version = (
-                await db.execute(
-                    select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id)
-                )
-            ).scalar_one_or_none()
-            workflow = (
-                await db.execute(select(Workflow).where(Workflow.id == execution.workflow_id))
-            ).scalar_one_or_none()
+            version = (await db.execute(select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id))).scalar_one_or_none()
+            workflow = (await db.execute(select(Workflow).where(Workflow.id == execution.workflow_id))).scalar_one_or_none()
             if version is None or workflow is None:
                 raise RuntimeError("Worker Execution 关联的 Workflow/Version 不存在")
-
             allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {})
             runtime_config = version.definition.get("config") if isinstance(version.definition, dict) else {}
             workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms(runtime_config or {})
@@ -285,29 +237,12 @@ class WorkflowWorker:
             execution, runtime_version = await self._prepare_resume_runtime(db, execution, version)
             lease_task = asyncio.create_task(self._renew_lease_forever(execution.id))
             try:
-                await asyncio.wait_for(
-                    service.run(
-                        execution,
-                        runtime_version,
-                        execution.created_by,
-                        allow_legacy_empty_nodes=allow_legacy_empty_nodes,
-                        worker_owner=self.owner,
-                    ),
-                    timeout=execution_timeout,
-                )
+                await asyncio.wait_for(service.run(execution, runtime_version, execution.created_by, allow_legacy_empty_nodes=allow_legacy_empty_nodes, worker_owner=self.owner), timeout=execution_timeout)
             except asyncio.TimeoutError as exc:
-                current = (
-                    await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))
-                ).scalar_one_or_none()
+                current = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))).scalar_one_or_none()
                 if current is not None and current.status == "running":
                     try:
-                        await service.transition(
-                            current,
-                            "failed",
-                            error_code="WORKER_EXECUTION_TIMEOUT",
-                            error_message="Worker Execution 超过受控执行时间",
-                            actor_id=current.created_by,
-                        )
+                        await service.transition(current, "failed", error_code="WORKER_EXECUTION_TIMEOUT", error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
                     except HTTPException:
                         await db.rollback()
                 raise RuntimeError("Worker Execution 超过受控执行时间") from exc
@@ -317,9 +252,7 @@ class WorkflowWorker:
                     await lease_task
                 except asyncio.CancelledError:
                     pass
-                current = (
-                    await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))
-                ).scalar_one_or_none()
+                current = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))).scalar_one_or_none()
                 if current is not None and current.status in {"completed", "failed", "cancelled"}:
                     current.worker_owner = None
                     current.worker_lease_expires_at = None
@@ -350,15 +283,9 @@ class WorkflowWorker:
                 raise
             except HTTPException as exc:
                 if exc.status_code == 409 and exc.detail == "Workflow Execution Worker ownership 已失效":
-                    logger.warning(
-                        "Workflow Worker lost execution ownership; abandoning stale consumer",
-                        extra={"execution_id": str(execution_id), "worker_owner": self.owner},
-                    )
+                    logger.warning("Workflow Worker lost execution ownership; abandoning stale consumer", extra={"execution_id": str(execution_id), "worker_owner": self.owner})
                     return
-                logger.exception(
-                    "Workflow Worker execution failed",
-                    extra={"execution_id": str(execution_id), "status_code": exc.status_code},
-                )
+                logger.exception("Workflow Worker execution failed", extra={"execution_id": str(execution_id), "status_code": exc.status_code})
             except Exception:
                 logger.exception("Workflow Worker execution failed", extra={"execution_id": str(execution_id)})
 
