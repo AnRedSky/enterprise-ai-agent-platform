@@ -21,7 +21,6 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
-from app.services.workflow.checkpoint.recovery.planner import WorkflowExecutionResumePlanner
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,7 @@ class WorkflowWorker:
         execution: WorkflowExecution,
         version: WorkflowVersion,
     ) -> tuple[WorkflowExecution, object]:
-        """根据 Resume Execution 的来源 Checkpoint 准备剩余顺序节点。
+        """根据 Resume Execution 的来源 Checkpoint 准备 Runtime 输入状态。
 
         Args:
             db: 当前 Execution 专属的数据库 Session，禁止跨并发任务共享。
@@ -182,11 +181,15 @@ class WorkflowWorker:
             version: Resume Execution 固定引用的原 Workflow Version。
 
         Returns:
-            `(execution, runtime_version)`，其中 execution 的输入状态来自 Checkpoint，runtime_version 是
-            仅存在于当前调用内存中的版本快照。
+            `(execution, runtime_version)`，其中 execution 的输入状态来自 Checkpoint，runtime_version 保留
+            完整 DAG Definition，后续由 WorkflowRuntime 根据来源 Node 完成事实计算真实 resume frontier。
 
         Raises:
             RuntimeError: Resume 来源、Checkpoint 或版本边界不满足安全契约。
+
+        设计边界：Worker 只负责恢复 Checkpoint 状态和校验 Resume 来源，不提前裁剪 DAG。若这里先把
+        Definition 替换为剩余节点，Runtime 后续无法识别 source checkpoint 的 predecessor，反而会把
+        已完成的 Node 视为未知事实并阻断真实 Resume。
         """
         if execution.resume_of_execution_id is None:
             return execution, version
@@ -223,21 +226,8 @@ class WorkflowWorker:
         if source.workflow_version_id != execution.workflow_version_id:
             raise RuntimeError("Resume 不允许发生 Workflow Version 漂移")
 
-        plan = WorkflowExecutionResumePlanner.plan(
-            definition=version.definition,
-            checkpoint_node_id=checkpoint.node_id,
-            checkpoint_sequence=checkpoint.sequence,
-            state_data=dict(checkpoint.state_data or {}),
-        )
-        execution.input_data = dict(plan.state_data)
-        runtime_definition = dict(version.definition)
-        runtime_definition["nodes"] = [dict(node) for node in plan.remaining_nodes]
-        runtime_version = SimpleNamespace(
-            id=version.id,
-            status=version.status,
-            definition=runtime_definition,
-        )
-        return execution, runtime_version
+        execution.input_data = dict(checkpoint.state_data or {})
+        return execution, version
 
     async def execute_claimed(self, execution_id: UUID) -> None:
         """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
