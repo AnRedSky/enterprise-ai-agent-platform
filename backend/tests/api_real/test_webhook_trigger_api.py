@@ -1,8 +1,9 @@
+"""真实 HTTP Webhook Trigger 验收：覆盖鉴权、幂等、事件身份与禁用边界。"""
+
 import asyncio
 import os
 import time
 import uuid
-from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -10,7 +11,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
-from app.infrastructure.db.session import engine as app_engine
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -21,22 +21,40 @@ pytestmark = pytest.mark.real_api
 
 @pytest.fixture(scope="module")
 def webhook_event_loop():
-    """为直接使用应用 AsyncEngine 的真实 Webhook API 测试保持单一事件循环生命周期。"""
+    """创建只由本模块主动驱动的测试事件循环，避免 pytest-asyncio 生命周期接管并提前关闭。
+
+    返回值：
+        本模块复用的独立事件循环。
+    """
     loop = asyncio.new_event_loop()
     try:
-        asyncio.set_event_loop(loop)
+        # 不把专用循环注册为当前事件循环。pytest-asyncio 可能在测试阶段管理并关闭
+        # 当前循环；本模块的异步操作全部显式通过 _run_async 驱动专用循环。
         yield loop
     finally:
-        loop.run_until_complete(app_engine.dispose())
-        loop.close()
-        asyncio.set_event_loop(None)
+        if not loop.is_closed():
+            loop.close()
 
 
 def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
+    """在测试专用事件循环中执行异步数据库操作。
+
+    参数：
+        loop: 当前模块复用的测试事件循环。
+        coroutine: 待执行的协程对象。
+
+    返回值：
+        协程实际返回值。
+    """
     return loop.run_until_complete(coroutine)
 
 
 def _client() -> httpx.Client:
+    """创建带真实 API Token 的 HTTP 客户端。
+
+    返回值：
+        指向当前 Real API 地址的 HTTP 客户端。
+    """
     if not TOKEN:
         pytest.fail("ACCESS_TOKEN is required for real API validation")
     return httpx.Client(
@@ -47,6 +65,14 @@ def _client() -> httpx.Client:
 
 
 async def _execution_rows(idempotency_key: str) -> list[dict]:
+    """读取真实 PostgreSQL 中指定 Webhook 幂等键的 WorkflowExecution。
+
+    参数：
+        idempotency_key: Webhook 持久化幂等键。
+
+    返回值：
+        按创建时间排序的真实 WorkflowExecution 行。
+    """
     engine = create_async_engine(settings.database_url, pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
@@ -65,6 +91,16 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
 
 
 def _wait_for_execution(loop: asyncio.AbstractEventLoop, idempotency_key: str, timeout_seconds: float = 15.0):
+    """轮询真实 PostgreSQL，等待 Webhook Execution 持久化。
+
+    参数：
+        loop: 当前模块复用的测试事件循环。
+        idempotency_key: 目标 Webhook 幂等键。
+        timeout_seconds: 最大等待秒数。
+
+    返回值：
+        当前数据库中该幂等键对应的全部 Execution 行。
+    """
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         rows = _run_async(loop, _execution_rows(idempotency_key))
@@ -75,6 +111,7 @@ def _wait_for_execution(loop: asyncio.AbstractEventLoop, idempotency_key: str, t
 
 
 def test_webhook_trigger_real_http_accepts_duplicate_and_rejects_invalid_secret(webhook_event_loop):
+    """验证真实 Webhook 鉴权、首次接收、重复事件幂等与最终 Execution。"""
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for webhook validation")
 
@@ -164,6 +201,7 @@ def test_webhook_trigger_real_http_accepts_duplicate_and_rejects_invalid_secret(
 
 
 def test_webhook_trigger_real_http_requires_event_identity():
+    """验证真实 Webhook 必须提供 Contract 要求的事件身份字段。"""
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for webhook validation")
 
@@ -191,6 +229,7 @@ def test_webhook_trigger_real_http_requires_event_identity():
 
 
 def test_webhook_trigger_real_http_bounds_long_idempotency_key_deterministically(webhook_event_loop):
+    """验证真实 Webhook 对超长事件身份生成固定长度的持久化幂等键。"""
     if not TRIGGER_WORKFLOW_ID:
         pytest.fail("TRIGGER_WORKFLOW_ID is required for webhook validation")
 
