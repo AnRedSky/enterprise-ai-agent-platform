@@ -1,8 +1,8 @@
 """Workflow Execution 领域服务。
 
-职责：管理 Workflow Execution 与 Node Execution 状态机、幂等创建、重试、取消及 Runtime 执行入口。
+职责：管理 Workflow Execution 与 Node Execution 状态机、幂等创建、重试、取消、Durable Resume 创建及 Runtime 执行入口。
 边界：不负责 Workflow Registry 生命周期、不复制 Runtime 节点执行算法；节点执行统一委托 WorkflowRuntime。
-关键依赖：Workflow/Execution ORM、WorkflowRuntime、WorkflowGovernanceService 与 Workflow Runtime CircuitBreaker。
+关键依赖：Workflow/Execution ORM、WorkflowRuntime、WorkflowGovernanceService、Checkpoint Recovery 服务与 Workflow Runtime CircuitBreaker。
 """
 
 from __future__ import annotations
@@ -20,12 +20,15 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
-from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
+from app.services.workflow.checkpoint import (
+    WorkflowExecutionCheckpointRecoveryService,
+    WorkflowExecutionCheckpointService,
+)
 from app.services.workflow.governance import WorkflowGovernanceService
 
 
 class WorkflowExecutionService:
-    """Workflow Execution 状态机与 Runtime 执行领域服务。"""
+    """Workflow Execution 状态机、创建与 Durable Resume 持久化契约的领域服务。"""
 
     EXECUTION_STATES = {"pending", "running", "completed", "failed", "cancelled"}
     NODE_STATES = {"pending", "running", "completed", "failed", "skipped"}
@@ -35,6 +38,7 @@ class WorkflowExecutionService:
         self.db = db
         self.governance = WorkflowGovernanceService(db)
         self.checkpoint = WorkflowExecutionCheckpointService(db)
+        self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
 
     async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict,
                      idempotency_key: str | None = None) -> WorkflowExecution:
@@ -221,6 +225,106 @@ class WorkflowExecutionService:
         await self.db.commit()
         await self.db.refresh(retry_execution)
         return retry_execution
+
+    async def resume_from_latest_checkpoint(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
+        """基于最新可恢复 Checkpoint 创建新的 pending Resume Execution，不启动 Runtime。
+
+        Args:
+            execution: 作为恢复来源的失败 Workflow Execution。
+            actor_id: 发起 Resume 请求的用户身份；用于新 Execution 与审计身份。
+
+        Returns:
+            新创建或幂等命中的 pending Resume Execution。
+
+        Raises:
+            HTTPException: 来源 Execution 不符合恢复安全边界、原 Workflow Version 不存在、
+                或相同 Resume 幂等键已经绑定到其他 Execution 时抛出。
+
+        事务边界：源码只在数据库中创建一个新的 pending Execution，并记录 source/Checkpoint 关系；
+        不修改来源 Execution、不抢 Worker lease、不调用 WorkflowRuntime。后续 Worker 仍通过正常
+        pending claim 路径领取该 Execution；真正从 Checkpoint node 之后继续执行属于下一阶段 Runtime Resume 实现。
+        """
+        execution = await self._lock_execution(execution)
+        checkpoint = await self.checkpoint.latest(execution.id)
+        assessment = self.checkpoint_recovery.assess(
+            execution_id=execution.id,
+            workflow_version_id=execution.workflow_version_id,
+            execution_status=execution.status,
+            worker_owner=execution.worker_owner,
+            checkpoint=checkpoint,
+        )
+        if not assessment.eligible:
+            raise HTTPException(409, f"Execution 不满足 Durable Resume 条件: {assessment.reason_code}")
+        if assessment.resume_idempotency_key is None or assessment.checkpoint_sequence is None:
+            raise HTTPException(409, "Resume Candidate 缺少确定性幂等键")
+
+        version = (await self.db.execute(
+            select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id)
+        )).scalar_one_or_none()
+        if version is None:
+            raise HTTPException(409, "Workflow Execution 原始版本不存在")
+        WorkflowRuntime.validate_definition(version.definition, allow_legacy_empty_nodes=True)
+
+        existing = (await self.db.execute(select(WorkflowExecution).where(
+            WorkflowExecution.tenant_id == execution.tenant_id,
+            WorkflowExecution.idempotency_key == assessment.resume_idempotency_key,
+        ))).scalar_one_or_none()
+        if existing is not None:
+            if existing.resume_of_execution_id != execution.id or existing.resume_checkpoint_sequence != assessment.checkpoint_sequence:
+                raise HTTPException(409, "Resume 幂等键已绑定其他 Execution")
+            return existing
+
+        resume_execution = WorkflowExecution(
+            tenant_id=execution.tenant_id,
+            workflow_id=execution.workflow_id,
+            workflow_version_id=execution.workflow_version_id,
+            created_by=actor_id,
+            resume_of_execution_id=execution.id,
+            resume_checkpoint_sequence=assessment.checkpoint_sequence,
+            idempotency_key=assessment.resume_idempotency_key,
+            status="pending",
+            input_data=dict(assessment.state_data or {}),
+        )
+        self.db.add(resume_execution)
+        try:
+            await self.db.flush()
+        except IntegrityError:
+            await self.db.rollback()
+            existing = (await self.db.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == execution.tenant_id,
+                WorkflowExecution.idempotency_key == assessment.resume_idempotency_key,
+            ))).scalar_one_or_none()
+            if existing is None:
+                raise
+            if existing.resume_of_execution_id != execution.id or existing.resume_checkpoint_sequence != assessment.checkpoint_sequence:
+                raise HTTPException(409, "Resume 幂等键已绑定其他 Execution")
+            return existing
+
+        await self.governance.audit(execution, actor_id, "workflow.execution.resume_requested", "success", metadata={
+            "resume_execution_id": str(resume_execution.id),
+            "checkpoint_id": str(assessment.checkpoint_id) if assessment.checkpoint_id else None,
+            "checkpoint_sequence": assessment.checkpoint_sequence,
+            "workflow_version_id": str(execution.workflow_version_id),
+        })
+        await self.governance.trace(execution, actor_id, "execution.resume_requested", execution.status, data={
+            "resume_execution_id": str(resume_execution.id),
+            "checkpoint_id": str(assessment.checkpoint_id) if assessment.checkpoint_id else None,
+            "checkpoint_sequence": assessment.checkpoint_sequence,
+        })
+        await self.governance.audit(resume_execution, actor_id, "workflow.execution.created", "success", metadata={
+            "creation_mode": "durable_resume",
+            "resume_of_execution_id": str(execution.id),
+            "resume_checkpoint_sequence": assessment.checkpoint_sequence,
+        })
+        await self.governance.trace(resume_execution, actor_id, "execution.created", "pending", data={
+            "creation_mode": "durable_resume",
+            "resume_of_execution_id": str(execution.id),
+            "resume_checkpoint_sequence": assessment.checkpoint_sequence,
+            "workflow_version_id": str(execution.workflow_version_id),
+        })
+        await self.db.commit()
+        await self.db.refresh(resume_execution)
+        return resume_execution
 
     async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,
                               input_data: dict | None = None, output_data: dict | None = None,

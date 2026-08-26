@@ -9,33 +9,29 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint 模型、0032 migration、Checkpoint Service、Node completed 同事务接入及 Resume Candidate 只读评估基线已完成；自动 Resume 尚未实现。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约已完成；自动从 Checkpoint 继续执行尚未实现。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
 ```text
-8d0f252 fix(test): make tenant safe api gate directory independent
+5c15c7c docs(error): record scheduler deadlock and persisted execution response contract
 ```
 
-本轮最近一次开发者本地验收反馈仍为修复前结果：
+最近一次开发者本地验收反馈：
 
 ```text
-Checkpoint + Resume Candidate targeted: 8 passed, 4 warnings
-Backend Regression: 425 passed, 3 skipped, 37 deselected, 4 warnings
-Migration head: 0032_workflow_execution_checkpoint
-Tenant Safe Real API: blocked at Source Baseline script parser stage
+Targeted Worker / Checkpoint: 18 passed
+Backend Regression: 425 passed, 3 skipped, 37 deselected
+Tenant Safe Real API: 36 passed
+Scheduler / Worker persisted recovery acceptance: 1 passed
 ```
 
-本轮工程处理：
+本轮闭环情况：
 
-1. 远端 `main` 的 Resume Candidate 测试已使用 timezone-aware UTC 时间；此前反馈中的 `datetime.utcnow()` 弃用警告已在远端源码修复。
-2. Runtime Model Governance Real API 测试已统一使用 `run_or_observe_execution()`，处理独立 Worker 先 claim 导致的合法 `409` ownership race；不允许恢复直接 `/run` 复制逻辑。
-3. Tenant Safe Real API 增加 Source Baseline Gate，用于阻断本地关键测试源码与 `origin/main` 漂移、关键测试文件未提交修改，以及 Worker claim-race helper 未接入。
-4. Source Baseline 首版 PowerShell 脚本在本地反馈中发生 `ParserError`；根因是 PowerShell 字符串错误使用反斜杠转义双引号，同时存在 Git root 与 Backend root 路径假设。已重写脚本并记录 `docs/04-errors/2026-08-26-real-api-source-baseline-powershell-parser.md`。
-5. Tenant Safe Real API Gate 进一步改为从自身 `$PSScriptRoot` 定位 Backend root，并在执行前显式切换到 Backend root，消除调用者当前目录导致的脚本路径漂移。
-
-以上修复提交后需要开发者重新执行 Source Baseline、Targeted、Backend Regression、Migration、Tenant Safe Real API、Worker consistency 与 Scheduler recovery acceptance；当前文档不预填修复后的测试结果。
+1. Runtime Model Governance Real API 的合法 Worker claim race 已统一通过 `run_or_observe_execution()` 观察真实 PostgreSQL 终态，不再直接读取 HTTP 错误体作为 Execution。
+2. Scheduler recovery 出现的 PostgreSQL `DeadlockDetectedError` 已通过拆分 Schedule lease / Slot+Execution / Schedule advancement 三阶段事务边界解决。
+3. Real API Source Baseline Gate 已验证关键测试源码与远端 `main` 一致，并保持调用目录独立性。
 
 ## 当前产品级执行架构
 
@@ -66,14 +62,17 @@ Node transition
                     ↓
              Read-only Resume Candidate assessment
                     ↓
-             后续 Durable Resume / Recovery
+             New pending Resume Execution
+                    ↓
+             后续 Durable Resume Runtime（未开放）
 ```
 
-核心职责冻结：**Scheduler 负责“什么时候执行”，Worker 负责“执行什么”，WorkflowRuntime 负责“如何执行节点”，Checkpoint 负责“记录已完成执行事实”，Resume Candidate assessment 负责“判断是否满足未来恢复前置条件”，Source Baseline Gate 负责“阻断源码版本漂移导致的伪失败”，但不执行恢复。**
+核心职责冻结：**Scheduler 负责“什么时候执行”，Worker 负责“执行什么”，WorkflowRuntime 负责“如何执行节点”，Checkpoint 负责“记录已完成执行事实”，Resume Candidate assessment 负责“判断是否满足恢复前置条件”，Resume Execution contract 负责“创建新的 pending 恢复任务并固定来源事实”，但当前仍不直接执行恢复。**
 
 ## Phase 2.6 当前实现
 
 - `0032_workflow_execution_checkpoint`；
+- `0033_workflow_execution_resume_contract`；
 - `WorkflowExecutionCheckpoint` 不可变快照模型；
 - `WorkflowExecutionCheckpointService.append()`；
 - `WorkflowExecutionCheckpointService.append_next_in_transaction()`；
@@ -88,36 +87,34 @@ Node transition
 - Resume Candidate 固定原 Execution Workflow Version；
 - Resume Candidate 拒绝 `running` Execution 与 active Worker ownership；
 - Resume Candidate 使用 `execution_id + checkpoint.sequence` 生成确定性幂等键基础；
-- Runtime Model Governance Real API 测试复用统一 Worker claim race helper；
-- Resume Candidate 测试使用 timezone-aware UTC 时间；
-- Tenant Safe Real API Source Baseline Gate 具备 Git root / Backend root 自适应路径解析；
-- Source Baseline Gate 检查关键测试源码、Worker claim-race helper 和 `datetime.utcnow()` 使用情况；
-- Tenant Safe Real API Gate 自身具备调用目录独立性。
+- `WorkflowExecutionService.resume_from_latest_checkpoint()`：创建新的 pending Resume Execution；
+- Resume Execution 持久化 `resume_of_execution_id + resume_checkpoint_sequence`；
+- Resume Execution 固定原 Workflow Version；
+- Resume Execution 使用 deterministic idempotency key，并由 `tenant_id + idempotency_key` 唯一约束兜底；
+- Source failed Execution 保持失败状态；
+- Resume Execution 不直接抢 Worker lease、不直接启动 WorkflowRuntime。
 
 ## Phase 2.6 设计边界
 
 当前明确不实现：
 
-- 自动 Resume；
+- 自动从 Checkpoint 继续执行；
+- Runtime 根据 Checkpoint 跳过已完成 Node；
 - running Execution checkpoint recovery；
 - Saga / compensation；
 - HTTP Resume API；
 - 绕过 Worker ownership fencing；
 - 用 Checkpoint 替代 Node 状态机；
-- 让 Resume Candidate assessment 直接创建 Execution 或启动 Runtime。
+- Resume Service 直接启动 Runtime。
+
+## 下一步
+
+1. 通过真实 PostgreSQL 验证 Resume Execution persistence 与幂等收敛；
+2. 验证 Resume Execution 被标准 Worker claim / lease / ownership fencing 路径正常领取；
+3. 在 Runtime 建立 `resume_checkpoint_sequence` 对应的确定性起点；
+4. 支持顺序 / DAG 节点状态重建后再执行剩余 Node；
+5. 完成后再评估 HTTP Resume 与自动恢复。
 
 ## 服务版本验收边界
 
-Checkpoint Runtime 与 Resume Candidate 评估都属于进程内代码变更。代码更新后，必须由开发者人工重启 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。
-
-```text
-代码更新
-   ↓
-人工重启 API Service
-   ↓
-人工重启 Worker Service
-   ↓
-Source Baseline Gate
-   ↓
-Real API / Backend Gate
-```
+Checkpoint Runtime、Resume Candidate 与 Resume Execution Contract 都属于 API / Worker 进程内代码变更。代码更新后必须由开发者人工重启 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。

@@ -10,7 +10,7 @@ from app.models.core import Base, utcnow_naive
 
 
 class WorkflowExecution(Base):
-    """Workflow 执行持久化模型，包含独立 Worker 的 ownership 租约。"""
+    """Workflow 执行持久化模型，包含独立 Worker 的 ownership 租约与 Durable Resume 关联。"""
 
     __tablename__ = "workflow_executions"
     __table_args__ = (
@@ -18,6 +18,7 @@ class WorkflowExecution(Base):
         Index("ix_workflow_execution_tenant_created", "tenant_id", "created_at"),
         Index("ix_workflow_execution_workflow_created", "workflow_id", "created_at"),
         Index("ix_workflow_execution_worker_claim", "status", "worker_lease_expires_at", "created_at"),
+        Index("ix_workflow_execution_resume_source", "resume_of_execution_id", "resume_checkpoint_sequence"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -28,6 +29,10 @@ class WorkflowExecution(Base):
     retry_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    resume_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    resume_checkpoint_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     current_node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
