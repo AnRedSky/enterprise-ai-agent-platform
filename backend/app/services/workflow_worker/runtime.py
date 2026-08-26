@@ -90,18 +90,7 @@ class WorkflowWorker:
             return execution
 
     async def _renew_lease_once(self, execution_id: UUID) -> bool:
-        """刷新一次当前 Worker 的 Execution 租约。
-
-        Args:
-            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
-
-        Returns:
-            当前 Worker 仍持有未过期 Execution ownership 时返回 True；Execution 已不存在、租约已失效、已转移 ownership 或进入终态时返回 False。
-
-        事务边界：每次刷新使用独立短事务，避免占用 Runtime 执行事务。数据库瞬时异常向调用方传播，由 heartbeat 循环负责记录并继续下一轮；这避免一次网络抖动永久杀死 heartbeat 任务。
-
-        重要边界：租约一旦到期即视为 ownership 已失效，即使数据库中的 worker_owner 仍然是当前 Worker，也禁止旧 Worker 自行“复活”租约。这样可以保证 lease expiration 真正构成 ownership fencing 的时间边界。
-        """
+        """刷新一次当前 Worker 的 Execution 租约。"""
         now = datetime.now(UTC).replace(tzinfo=None)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
         async with SessionLocal() as db:
@@ -121,7 +110,7 @@ class WorkflowWorker:
             return True
 
     async def _renew_lease_forever(self, execution_id: UUID) -> None:
-        """持续刷新当前 Worker 的 Execution 租约，避免长 Workflow 在 lease 到期后被误判失联。
+        """持续刷新当前 Worker 的 Execution 租约。
 
         Args:
             execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
@@ -129,7 +118,7 @@ class WorkflowWorker:
         Returns:
             无；Execution 不再属于当前 Worker 或租约已失效后自动退出。
 
-        事务边界：每次刷新使用独立短事务；单次数据库瞬时失败只记录日志并继续下一轮。heartbeat 首轮立即执行一次 ownership 检查与续租，不先等待一个完整 interval，避免短租约或刚完成 claim 的长任务在首次心跳前出现不必要的 ownership 暴露窗口。若 ownership 已不存在或租约已经失效则立即结束，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
+        事务边界：每次刷新使用独立短事务；数据库瞬时失败只记录日志并继续下一轮。heartbeat 首轮立即执行一次 ownership 检查，租约失效后立即退出，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
         """
         interval = max(0.1, self.lease_seconds / 3)
         while True:
@@ -152,19 +141,7 @@ class WorkflowWorker:
         execution: WorkflowExecution,
         service: WorkflowExecutionService,
     ) -> int:
-        """在 Worker 接管 pending Execution 时收敛遗留的 running Node。
-
-        Args:
-            execution: 当前 Worker 已经持有 ownership 的 pending Execution。
-            service: 唯一 Workflow Execution 状态机服务。
-
-        Returns:
-            本次被收敛为 failed 的遗留 running Node 数量。
-
-        设计意图：Worker 进程可能在 Node 已写入 running 后异常退出，导致数据库中的 Execution 仍为 pending，而 Node 保留 running。若再次消费该 Execution，Runtime 会再次调用 `transition_node(..., "running")`，严格状态机必然得到 running → running 的 409。这里不放宽状态机，而是在新的 Worker 正式接管后，把这种可证明属于恢复边界的遗留 Node 转为 `failed`，再由 Runtime 按现有 retry policy 决定是否重新执行。
-
-        并发边界：调用发生在 claim 后、Runtime 开始前；`transition_node` 会重新锁定 Execution 并执行 Worker ownership fencing，因此旧 Worker 无法借此恢复路径修改已被新 Worker 接管的 Execution。
-        """
+        """在 Worker 接管 pending Execution 时收敛遗留的 running Node。"""
         result = await service.db.execute(
             select(WorkflowNodeExecution).where(
                 WorkflowNodeExecution.execution_id == execution.id,
@@ -191,46 +168,58 @@ class WorkflowWorker:
             )
         return len(orphaned_nodes)
 
-    async def _prepare_resume_runtime(self, execution: WorkflowExecution, version: WorkflowVersion) -> tuple[WorkflowExecution, object]:
-        """根据 Resume Execution 的来源 Checkpoint 准备仅执行剩余节点的 Runtime 输入。
+    async def _prepare_resume_runtime(
+        self,
+        db,
+        execution: WorkflowExecution,
+        version: WorkflowVersion,
+    ) -> tuple[WorkflowExecution, object]:
+        """根据 Resume Execution 的来源 Checkpoint 准备剩余顺序节点。
 
         Args:
+            db: 当前 Execution 专属的数据库 Session，禁止跨并发任务共享。
             execution: 当前 Worker 已认领的 Resume Execution。
             version: Resume Execution 固定引用的原 Workflow Version。
 
         Returns:
             `(execution, runtime_version)`，其中 execution 的输入状态来自 Checkpoint，runtime_version 是
-            不修改数据库的内存版本快照，仅包含 Checkpoint 之后的顺序节点。
+            仅存在于当前调用内存中的版本快照。
 
         Raises:
-            RuntimeError: Resume 来源、Checkpoint 或原始节点边界不满足当前顺序 Runtime 的安全契约。
-
-        重要边界：Resume 不是从旧 Execution 重新进入 running，而是新 pending Execution 的正常 Worker 消费。
-        只有已完成 Checkpoint 对应的节点之前的工作被跳过；其后的节点才允许进入 Runtime。当前代码按
-        `nodes` 顺序执行，因此此处明确不支持尚未实现的 DAG 分支恢复。
+            RuntimeError: Resume 来源、Checkpoint 或版本边界不满足安全契约。
         """
         if execution.resume_of_execution_id is None:
             return execution, version
 
-        source = (
-            await self._get_resume_source(execution.resume_of_execution_id, execution.tenant_id)
+        source_result = await db.execute(
+            select(WorkflowExecution).where(
+                WorkflowExecution.id == execution.resume_of_execution_id,
+                WorkflowExecution.tenant_id == execution.tenant_id,
+            )
         )
+        source = source_result.scalar_one_or_none()
         if source is None:
             raise RuntimeError("Resume 来源 Execution 不存在")
         if source.status != "failed" or source.worker_owner is not None:
             raise RuntimeError("Resume 来源 Execution 已不满足恢复安全边界")
 
-        checkpoint = (
-            await self._get_resume_checkpoint(source.id, execution.resume_checkpoint_sequence)
+        from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
+
+        if execution.resume_checkpoint_sequence is None:
+            raise RuntimeError("Resume Execution 缺少 checkpoint sequence")
+        checkpoint_result = await db.execute(
+            select(WorkflowExecutionCheckpoint).where(
+                WorkflowExecutionCheckpoint.execution_id == source.id,
+                WorkflowExecutionCheckpoint.sequence == execution.resume_checkpoint_sequence,
+            )
         )
+        checkpoint = checkpoint_result.scalar_one_or_none()
         if checkpoint is None:
             raise RuntimeError("Resume 来源 Checkpoint 不存在")
         if checkpoint.checkpoint_reason != "node.completed" or checkpoint.node_status != "completed":
             raise RuntimeError("Resume Checkpoint 不是合法的 Node completed 边界")
         if checkpoint.execution_status != "running" or checkpoint.node_id is None:
             raise RuntimeError("Resume Checkpoint Execution/Node 状态边界无效")
-        if checkpoint.sequence != execution.resume_checkpoint_sequence:
-            raise RuntimeError("Resume Execution 与 Checkpoint sequence 不一致")
         if source.workflow_version_id != execution.workflow_version_id:
             raise RuntimeError("Resume 不允许发生 Workflow Version 漂移")
 
@@ -250,30 +239,6 @@ class WorkflowWorker:
         )
         return execution, runtime_version
 
-    async def _get_resume_source(self, execution_id: UUID, tenant_id: UUID):
-        """读取同租户 Resume 来源 Execution。"""
-        result = await self._active_db.execute(
-            select(WorkflowExecution).where(
-                WorkflowExecution.id == execution_id,
-                WorkflowExecution.tenant_id == tenant_id,
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def _get_resume_checkpoint(self, execution_id: UUID, sequence: int | None):
-        """读取 Resume Execution 指定 sequence 的 Checkpoint。"""
-        from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
-
-        if sequence is None:
-            return None
-        result = await self._active_db.execute(
-            select(WorkflowExecutionCheckpoint).where(
-                WorkflowExecutionCheckpoint.execution_id == execution_id,
-                WorkflowExecutionCheckpoint.sequence == sequence,
-            )
-        )
-        return result.scalar_one_or_none()
-
     async def execute_claimed(self, execution_id: UUID) -> None:
         """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
 
@@ -285,11 +250,8 @@ class WorkflowWorker:
 
         Raises:
             Exception: Workflow Runtime 原始执行异常会继续向 Worker 守护层传播。
-
-        设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，长 Workflow 通过独立 lease heartbeat 保持 ownership。Runtime 开始前还必须收敛 pending Execution 上遗留的 running Node，严格保持 Node 状态机不允许 running → running。
         """
         async with SessionLocal() as db:
-            self._active_db = db
             execution = (
                 await db.execute(
                     select(WorkflowExecution).where(
@@ -318,7 +280,7 @@ class WorkflowWorker:
             execution_timeout = workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS
             service = WorkflowExecutionService(db)
             await self._recover_orphaned_running_nodes(execution, service)
-            execution, runtime_version = await self._prepare_resume_runtime(execution, version)
+            execution, runtime_version = await self._prepare_resume_runtime(db, execution, version)
             lease_task = asyncio.create_task(self._renew_lease_forever(execution.id))
             try:
                 await asyncio.wait_for(
@@ -360,7 +322,6 @@ class WorkflowWorker:
                     current.worker_owner = None
                     current.worker_lease_expires_at = None
                     await db.commit()
-                self._active_db = None
 
     async def dispatch_once(self) -> int:
         """批量认领并并发执行当前可用任务。
