@@ -1,6 +1,6 @@
 """Workflow Execution API 路由。
 
-职责：提供 Workflow Execution 的创建、运行、取消、重试、状态转换与追踪协议。
+职责：提供 Workflow Execution 的创建、运行、取消、重试、Durable Resume、状态转换与追踪协议。
 边界：只负责 HTTP 协议、鉴权和响应组装；Execution 生命周期规则统一由 app.services.workflow 领域服务处理。
 关键依赖：WorkflowRegistry、WorkflowExecutionService、SQLAlchemy AsyncSession 与 Workflow ORM。
 """
@@ -58,7 +58,8 @@ def _tenant_id(claims: dict) -> UUID:
 def _execution_response(item):
     return {"id": item.id, "tenant_id": item.tenant_id, "workflow_id": item.workflow_id,
             "workflow_version_id": item.workflow_version_id, "created_by": item.created_by,
-            "retry_of_execution_id": item.retry_of_execution_id, "idempotency_key": item.idempotency_key,
+            "retry_of_execution_id": item.retry_of_execution_id, "resume_of_execution_id": item.resume_of_execution_id,
+            "resume_checkpoint_sequence": item.resume_checkpoint_sequence, "idempotency_key": item.idempotency_key,
             "status": item.status, "current_node_id": item.current_node_id, "input_data": item.input_data,
             "output_data": item.output_data, "error_code": item.error_code, "error_message": item.error_message,
             "started_at": item.started_at, "ended_at": item.ended_at, "created_at": item.created_at}
@@ -85,10 +86,15 @@ async def list_workflow_executions(
     claims=Depends(current_claims),
     db: AsyncSession = Depends(get_db),
 ):
-    """List executions belonging to a workflow, including scheduler-created executions.
+    """查询 Workflow 下的 Execution，包括 Scheduler 创建的 Execution。
 
-    Authorization is based on workflow ownership rather than execution.created_by because
-    scheduled executions are created by the scheduler service identity.
+    Args:
+        workflow_id: Workflow 标识。
+        claims: 当前用户身份声明。
+        db: 当前数据库会话。
+
+    Returns:
+        当前租户且用户有权访问的 Execution 列表。
     """
     tenant_id = _tenant_id(claims)
     actor_id = UUID(claims["sub"])
@@ -154,6 +160,32 @@ async def retry_execution(execution_id: UUID, claims=Depends(require_roles("user
     actor_id = UUID(claims["sub"])
     execution = await service.get(execution_id, _tenant_id(claims), actor_id, "admin" in claims.get("roles", []))
     return _execution_response(await service.retry(execution, actor_id))
+
+
+@router.post("/executions/{execution_id}/resume", status_code=201)
+async def resume_execution(execution_id: UUID, claims=Depends(require_roles("user", "admin")),
+                           db: AsyncSession = Depends(get_db)):
+    """通过 Durable Resume Contract 创建新的 pending Execution。
+
+    Args:
+        execution_id: 作为恢复来源的 failed Execution 标识。
+        claims: 当前用户身份声明。
+        db: 当前数据库会话。
+
+    Returns:
+        新创建或幂等命中的 Resume Execution；来源 Execution 保持原状态。
+
+    Raises:
+        HTTPException: 来源 Execution 不存在、越权或不满足 Durable Resume 安全边界。
+
+    事务边界：HTTP 层只调用正式 Resume Domain Service，不直接修改来源状态、抢占 Worker
+    ownership 或启动 Runtime；新 Execution 仍通过 pending 队列进入标准 Worker claim。
+    """
+    service = WorkflowExecutionService(db)
+    actor_id = UUID(claims["sub"])
+    execution = await service.get(execution_id, _tenant_id(claims), actor_id, "admin" in claims.get("roles", []))
+    resume_execution_item = await service.resume_from_latest_checkpoint(execution, actor_id)
+    return _execution_response(resume_execution_item)
 
 
 @router.get("/executions/{execution_id}")
