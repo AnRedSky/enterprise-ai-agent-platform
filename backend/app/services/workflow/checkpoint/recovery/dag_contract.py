@@ -45,8 +45,9 @@ class WorkflowDagContractValidator:
             ValueError: Definition、Node ID、Edge、重复边、孤立节点或拓扑结构不满足 Contract。
 
         设计意图：当前顺序 Runtime 可以接受空 edges，但 DAG Resume 必须显式进入图模式；因此本校验器
-        不修改现有顺序 Resume 行为，也不在没有正式图 Contract 时偷偷解释 edges。第一版暂不接受条件边，
-        不承诺并行执行，frontier 完成事实仍必须来自 Source Execution 持久化 Node Execution / Checkpoint。
+        不修改现有顺序 Resume 行为，也不在没有正式图 Contract 时偷偷解释 edges。第一版只接受单一根节点，
+        不接受条件边或多根图，不承诺并行执行，frontier 完成事实仍必须来自 Source Execution 持久化
+        Node Execution / Checkpoint。
         """
         if not isinstance(definition, dict):
             raise ValueError("DAG Workflow definition 必须为对象")
@@ -100,6 +101,9 @@ class WorkflowDagContractValidator:
             raise ValueError(f"DAG 不允许孤立 Node: {isolated[0]}")
 
         roots = tuple(node_id for node_id in node_ids if incoming_count[node_id] == 0)
+        if len(roots) != 1:
+            raise ValueError("DAG Workflow 第一版 Resume 必须只有一个 root")
+
         queue = deque(roots)
         visited_count = 0
         remaining_incoming = dict(incoming_count)
