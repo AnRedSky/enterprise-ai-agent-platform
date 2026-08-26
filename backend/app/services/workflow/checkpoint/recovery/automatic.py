@@ -8,20 +8,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow_execution import WorkflowExecution
+from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
 from app.services.workflow.checkpoint.recovery.policy import (
     WorkflowExecutionRecoveryDecision,
     WorkflowExecutionRecoveryPolicy,
     WorkflowExecutionRecoveryPolicyEvaluator,
 )
 from app.services.workflow.checkpoint.recovery.service import WorkflowExecutionCheckpointRecoveryService
-from app.services.workflow.execution import WorkflowExecutionService
 
 
 @dataclass(frozen=True)
@@ -43,9 +43,10 @@ class WorkflowExecutionAutomaticRecoveryService:
         self.db = db
         self.policy = WorkflowExecutionRecoveryPolicyEvaluator(policy)
         self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
+        self.checkpoint = WorkflowExecutionCheckpointService(db)
 
     async def _count_resume_ancestors(self, execution: WorkflowExecution) -> int:
-        """沿 Resume lineage 统计该 Execution 之前已经发生的自动恢复链长度。
+        """沿 Resume lineage 统计该 Execution 之前已经发生的恢复链长度。
 
         Args:
             execution: 当前需要判断恢复次数的 Execution。
@@ -89,11 +90,11 @@ class WorkflowExecutionAutomaticRecoveryService:
             只读自动恢复结果；不满足条件时 resume_execution_id 为 None。
 
         Raises:
-            ValueError: lineage 数据非法时由底层策略或数据访问直接暴露。
+            ValueError: 恢复次数为负数等策略输入非法时由策略直接抛出。
 
         重要边界：只读评估不会创建 Resume Execution；调用方必须显式调用 recover() 才会产生副作用。
         """
-        checkpoint = await self.checkpoint_recovery_service().latest(execution.id)
+        checkpoint = await self.checkpoint.latest(execution.id)
         assessment = self.checkpoint_recovery.assess(
             execution_id=execution.id,
             workflow_version_id=execution.workflow_version_id,
@@ -111,11 +112,6 @@ class WorkflowExecutionAutomaticRecoveryService:
             now=now,
         )
         return WorkflowExecutionAutomaticRecoveryResult(decision=decision)
-
-    def checkpoint_recovery_service(self):
-        """创建使用当前数据库会话的 Checkpoint Service，保持恢复查询与调用方事务一致。"""
-        from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
-        return WorkflowExecutionCheckpointService(self.db)
 
     async def recover(
         self,
@@ -140,8 +136,9 @@ class WorkflowExecutionAutomaticRecoveryService:
         result = await self.evaluate(execution, now=now)
         if not result.decision.eligible:
             return result
-        service = WorkflowExecutionService(self.db)
-        resume_execution = await service.resume_from_latest_checkpoint(
+        # 延迟导入避免 recovery package 与 WorkflowExecutionService 之间形成循环依赖。
+        from app.services.workflow.execution import WorkflowExecutionService
+        resume_execution = await WorkflowExecutionService(self.db).resume_from_latest_checkpoint(
             execution,
             actor_id or execution.created_by,
         )
