@@ -219,6 +219,11 @@ class ScheduledTriggerScheduler:
                         await db.rollback()
                         continue
 
+                    # Lease claim 必须先独立提交。后续 Execution / Slot 写入以及 Worker 消费
+                    # 不应与 Scheduler schedule 行保持同一数据库事务，否则可能形成
+                    # schedule -> execution 与 execution -> schedule 的 PostgreSQL lock inversion。
+                    await db.commit()
+
                     planned_at = claimed.next_run_at.replace(tzinfo=UTC) if claimed.next_run_at.tzinfo is None else claimed.next_run_at.astimezone(UTC)
                     policy = MisfirePolicy(claimed.misfire_policy)
                     due_slots = build_due_slots(
@@ -295,6 +300,10 @@ class ScheduledTriggerScheduler:
                             counters["dispatched"] += 1
                         else:
                             counters["skipped"] += 1
+
+                    # Slot bind 是独立的幂等持久化边界。先提交，再更新 Schedule，
+                    # 保证 Scheduler 与 Worker 不会跨事务形成反向锁等待。
+                    await db.commit()
 
                     if len(due_slots) > 1:
                         next_run_at = next_run_after_misfire(
