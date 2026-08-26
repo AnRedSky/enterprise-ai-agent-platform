@@ -2,14 +2,13 @@
 
 职责：把每次只有一个 frontier 的 DAG Resume 计划展开为可交给现有顺序 Runtime 的确定性 Node 序列。
 边界：只做纯内存拓扑规划，不读取数据库、不执行 Node、不修改 Checkpoint，也不合并分支状态。
-关键依赖：WorkflowDagResumePlanner、WorkflowDagResumeRuntimePlanner；调用方仍负责在每个 Node 成功后使用新的状态重新计算真实 Runtime 数据。
+关键依赖：WorkflowDagResumeRuntimePlanner；调用方仍负责在每个 Node 成功后使用新的状态重新计算真实 Runtime 数据。
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
 
-from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import (
     WorkflowDagResumeRuntimePlan,
     WorkflowDagResumeRuntimePlanner,
@@ -41,7 +40,7 @@ class WorkflowDagResumeRuntimeSequencePlanner:
 
         设计边界：该规划器只模拟“完成当前 frontier”来确定拓扑顺序，不模拟 Node 输出或 state merge。
         因此实际执行时每个 Node 都必须使用 Runtime 当前状态，不能把这里的初始 `state_data` 当作所有
-        后续 Node 的输入。
+        后续 Node 的输入。frontier 校验统一委托给 Runtime Planner，避免顺序规划器复制 DAG Resume 规则。
         """
         completed = set(completed_node_ids)
         node_ids = {
@@ -50,15 +49,6 @@ class WorkflowDagResumeRuntimeSequencePlanner:
         }
         plans: list[WorkflowDagResumeRuntimePlan] = []
         while len(completed) < len(node_ids):
-            frontier = WorkflowDagResumePlanner.plan(
-                definition=definition,
-                completed_node_ids=completed,
-            )
-            if len(frontier.frontier_node_ids) != 1:
-                raise ValueError(
-                    "DAG Resume Runtime 当前无法展开为线性 Node 序列，多个 frontier 需要先冻结状态合并 Contract"
-                )
-
             frontier_plan = WorkflowDagResumeRuntimePlanner.plan(
                 definition=definition,
                 completed_node_ids=completed,
