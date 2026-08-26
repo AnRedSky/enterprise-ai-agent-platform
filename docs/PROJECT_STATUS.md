@@ -9,7 +9,7 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Execution Contract、第一版顺序 Runtime Resume、HTTP Resume API、自动恢复 Policy / Domain Service、Recovery Scan 与 Scheduler Service 生命周期接入已完成基础实现；Recovery observability、自动恢复 Real API / Worker 验收与 DAG 分支 Resume 仍在主线推进。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Execution Contract、第一版顺序 Runtime Resume、HTTP Resume API、自动恢复 Policy / Domain Service、Recovery Scan 与 Scheduler Service 生命周期接入、Scan observability 已完成基础实现；自动恢复 Real API / Worker 验收、统一 observability / trace 接入与 DAG 分支 Resume 仍在主线推进。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 当前产品级执行架构
@@ -65,9 +65,11 @@ Checkpoint append / terminal lease release
 - `WorkflowRecoveryScheduler.run_forever()`：独立 Recovery Scan 生命周期；
 - `backend/app/entrypoints/scheduler.py`：Scheduled Trigger 与 Recovery Scan 同进程双循环、独立 Session、独立异常边界；
 - Recovery Scan 聚合 `candidates / eligible / recovered / rejected / contention / failed`；
+- Recovery Scan 每轮输出结构化 INFO 聚合日志，字段与 Scan Result 对齐；
+- 单 Execution 异常保留 `execution_id + error_type`，不阻断后续候选；
 - `tests/unit/test_workflow_recovery_policy.py`；
 - `tests/unit/test_workflow_automatic_recovery_service.py`；
-- `tests/unit/test_workflow_recovery_scheduler.py`；
+- `tests/unit/test_workflow_recovery_scheduler.py`，增加 Scan observability 日志字段回归；
 - 原有 Durable Resume Real API / Worker / DAG / failure-boundary 验收入口继续保留，但当前不作为主线阻塞项。
 
 ## Durable Recovery Policy Contract
@@ -124,6 +126,25 @@ Scheduler 不复制 Recovery Policy、不直接修改 failed 状态、不直接�
 
 多个 Scheduler 实例可以同时扫描同一 Execution，Source row lock + deterministic idempotency + DB unique constraint 负责最终收敛。
 
+## Scheduler Observability Contract
+
+每轮 Recovery Scan 完成后输出固定结构化 INFO 日志：
+
+```text
+message = Workflow automatic recovery scan completed
+candidates
+eligible
+recovered
+rejected
+contention
+failed
+scan_limit
+```
+
+日志只记录聚合指标，不写入 Checkpoint `state_data`、Secret 或其他业务敏感数据。单 Execution 异常只记录 `execution_id + error_type`，并继续处理剩余候选。
+
+`contention` 当前作为预留聚合维度；在 Domain 明确区分 row-lock / idempotency contention 与普通 rejection 前，Scheduler 不根据异常猜测竞争类型。
+
 ## 当前开发策略
 
 按当前要求暂停完整测试流程，不把 Backend Regression、Frontend Gate、Browser E2E、Real API Acceptance 或服务重启作为当前主线开发门槛。当前开发阶段只保留新增 / 修改代码的单元测试作为验证目标，并继续推进主线实现。
@@ -132,7 +153,7 @@ Scheduler 不复制 Recovery Policy、不直接修改 failed 状态、不直接�
 
 ## 本轮测试状态
 
-本轮新增测试源码已经提交，但当前执行环境无法直接访问仓库运行本地 `uv run pytest`，因此**不得虚构新增测试通过结果**。上一轮开发者实际反馈的稳定基线仍为：
+本轮新增 Scheduler observability 单元测试源码已经提交，但当前执行环境无法直接访问仓库运行本地 `uv run pytest`，因此**不得虚构新增测试通过结果**。上一轮开发者实际反馈的稳定基线仍为：
 
 ```text
 DAG / Resume targeted unit tests
@@ -149,7 +170,7 @@ failure-boundary real_api: 1 passed in 2.13s
 
 ## 下一步主线
 
-1. Recovery Scan counters 接入 Scheduler observability / trace；
+1. 将 Recovery Scan 聚合指标接入项目统一 observability / trace 入口，复用已有基础设施，不新增平行 metrics 系统；
 2. 增加自动恢复 Real API + PostgreSQL + 独立 Worker 验收入口，但不作为当前主线阻塞项；
 3. 验证 Scheduled Trigger Dispatch 与 Recovery Scan 的并发 / Session / failure isolation；
 4. 自动恢复稳定后冻结 DAG 分支状态合并 Contract；

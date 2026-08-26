@@ -146,7 +146,25 @@ Scheduler Service Process
 - Scheduled Trigger Scheduler 停止时，Recovery Scheduler 同步收到 stop/cancel；
 - Recovery Scan 使用 `settings.scheduler_poll_interval_seconds` 作为默认轮询周期，避免建立第二套配置入口。
 
-## 6. 单元测试
+## 6. Scheduler Observability
+
+Recovery Scan 每轮完成后输出一条结构化 INFO 日志，消息固定为 `Workflow automatic recovery scan completed`，并携带：
+
+```text
+candidates
+eligible
+recovered
+rejected
+contention
+failed
+scan_limit
+```
+
+该日志只记录聚合结果，不记录输入数据、Checkpoint `state_data`、Secret 或其他业务敏感内容。单 Execution 异常仍保留 `execution_id + error_type` 的结构化异常日志，并继续处理下一候选。
+
+当前 `contention` 字段保留为 Scan Contract 的并发竞争指标；后续当 Recovery Domain 明确区分 row-lock / idempotency contention 与普通 rejection 后，再增加精确分类，不在 Scheduler 中猜测异常类型。
+
+## 7. 单元测试
 
 新增：
 
@@ -166,13 +184,14 @@ backend/tests/unit/test_workflow_recovery_scheduler.py
 - 最大恢复次数；
 - lineage 次数；
 - Scheduler Domain delegation；
-- Scheduler rejected / recovered / failed 聚合计数。
+- Scheduler rejected / recovered / failed 聚合计数；
+- Scheduler 聚合日志字段。
 
 当前环境未实际执行新增测试，因此文档不得把这些测试记录为已通过。
 
-## 7. 下一任务
+## 8. 下一任务
 
-1. 将 Recovery counters 纳入 Scheduler observability / trace；
-2. 为自动恢复增加真实 HTTP + PostgreSQL + 独立 Worker 验收入口，但当前不以该验收阻塞主线；
-3. 验证 Recovery Scan 与 Scheduled Trigger Dispatch 的并发 / Session 隔离；
-4. 自动恢复稳定后进入 DAG 分支状态合并 Contract 与多 frontier Resume。
+1. 增加自动恢复真实 HTTP + PostgreSQL + 独立 Worker 验收入口，但当前不以该验收阻塞主线；
+2. 验证 Recovery Scan 与 Scheduled Trigger Dispatch 的并发 / Session 隔离；
+3. 将 Recovery Scan 聚合指标接入项目统一 observability / trace 入口（如已有统一入口则复用，不新增平行 metrics 系统）；
+4. 自动恢复稳定后冻结 DAG 分支状态合并 Contract 与多 frontier Resume。
