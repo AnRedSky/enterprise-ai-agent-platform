@@ -1,8 +1,8 @@
 """Workflow 自动恢复 Scheduler 扫描器单元测试。
 
-职责：验证 Scheduler 只负责发现 failed Execution 并委托 Recovery Domain，不复制恢复规则。
+职责：验证 Scheduler 只负责发现 failed Execution、委托 Recovery Domain 并产生可观测扫描结果。
 边界：不连接 PostgreSQL、不启动 Scheduler 进程、不创建真实 Resume Execution。
-关键依赖：WorkflowRecoveryScheduler、WorkflowExecutionAutomaticRecoveryService。
+关键依赖：WorkflowRecoveryScheduler、WorkflowExecutionAutomaticRecoveryService、Python logging。
 """
 
 from datetime import datetime
@@ -86,3 +86,31 @@ async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) ->
     assert result.recovered == 1
     assert result.rejected == 1
     assert result.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_recovery_scheduler_logs_scan_aggregate(monkeypatch, caplog) -> None:
+    execution_id = uuid4()
+    execution = SimpleNamespace(id=execution_id)
+    sessions = iter([_FakeDb([execution]), _FakeDb([execution])])
+
+    def fake_session_local():
+        return _FakeSessionContext(next(sessions))
+
+    monkeypatch.setattr(recovery_module, "SessionLocal", fake_session_local)
+    monkeypatch.setattr(recovery_module, "WorkflowExecutionAutomaticRecoveryService", _FakeService)
+    caplog.set_level("INFO", logger=recovery_module.logger.name)
+
+    result = await WorkflowRecoveryScheduler(scan_limit=7).scan_once(
+        now=datetime(2026, 8, 26, 12, 0),
+    )
+
+    assert result.recovered == 1
+    record = next(record for record in caplog.records if record.message == "Workflow automatic recovery scan completed")
+    assert record.candidates == 1
+    assert record.eligible == 1
+    assert record.recovered == 1
+    assert record.rejected == 0
+    assert record.contention == 0
+    assert record.failed == 0
+    assert record.scan_limit == 7
