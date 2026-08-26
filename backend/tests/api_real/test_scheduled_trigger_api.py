@@ -12,7 +12,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
-from app.infrastructure.db.session import engine as app_engine
 from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
@@ -24,15 +23,19 @@ pytestmark = pytest.mark.real_api
 
 @pytest.fixture(scope="module")
 def scheduler_event_loop():
-    """为直接使用应用 AsyncEngine 的真实 API 测试保持单一事件循环生命周期。"""
+    """创建只由本模块主动驱动的测试事件循环，避免 pytest-asyncio 生命周期接管并提前关闭。
+
+    返回值：
+        本模块复用的独立事件循环。
+    """
     loop = asyncio.new_event_loop()
     try:
-        asyncio.set_event_loop(loop)
+        # 不把专用循环注册为当前事件循环。pytest-asyncio 可能在测试阶段管理并关闭
+        # 当前循环；本模块的异步操作全部显式通过 _run_async 驱动专用循环。
         yield loop
     finally:
-        loop.run_until_complete(app_engine.dispose())
-        loop.close()
-        asyncio.set_event_loop(None)
+        if not loop.is_closed():
+            loop.close()
 
 
 def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
