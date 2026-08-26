@@ -189,7 +189,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                     ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
                     nodes = (await db.execute(select(WorkflowNodeExecution).where(
                         WorkflowNodeExecution.execution_id == source.id
-                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())).scalars().all()
+                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
                     assert len(checkpoints) == 1
                     return checkpoints[0], list(nodes)
 
@@ -217,7 +217,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                     ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
                     nodes = (await db.execute(select(WorkflowNodeExecution).where(
                         WorkflowNodeExecution.execution_id == resume.id
-                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())).scalars().all()
+                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
                     return list(checkpoints), list(nodes)
 
             resume_checkpoints, resume_nodes = await verify_resume_result()
