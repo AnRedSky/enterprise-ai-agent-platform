@@ -1,7 +1,7 @@
 # Worker 执行架构产品设计记录
 
 > 适用版本：Phase 2.5
-> 更新日期：2026-08-25
+> 更新日期：2026-08-26
 > 架构基线：`main`
 
 ## 1. 产品级执行职责
@@ -68,7 +68,7 @@ WorkflowRuntime
                                ▼
                     ┌──────────────────────┐
                     │ Lease Heartbeat      │
-                    │ 独立刷新 ownership    │
+                    │ 只能续未过期 lease  │
                     └──────────┬───────────┘
                                │
                                ▼
@@ -131,16 +131,19 @@ WorkflowRuntime 使用既有 failed → running 合法入口
 
 Worker 执行长 Workflow 时独立刷新 lease，避免 Runtime 执行时间超过初始 lease 后被其他 Worker 错误接管。Runtime 外层同时受 Workflow deadline + 固定宽限控制，防止异常 Runtime 永久占用 Worker 消费协程。
 
-Heartbeat 的单轮刷新属于可重试的基础设施操作：
+Heartbeat 的单轮刷新属于可重试的基础设施操作，但 **lease 一旦到期即代表 ownership 已失效**：
 
 ```text
 heartbeat tick
     ↓
 renew lease
-    ├── success → 下一 tick
+    ├── success + lease 未过期 → 下一 tick
     ├── transient DB error → 记录日志 → 下一 tick 重试
+    ├── lease 已过期 → heartbeat 退出
     └── ownership 不存在/Execution 已终态 → heartbeat 退出
 ```
+
+续租查询必须同时满足 `worker_owner == 当前 Worker` 与 `worker_lease_expires_at > now`。不能仅凭残留 `worker_owner` 在 lease 到期后重新延长租约，否则旧 Worker 可能在 ownership 已失效后复活自己的 lease，破坏 claim / fencing 的时间边界。
 
 这一区分非常重要：**瞬时数据库异常不能让 heartbeat task 静默死亡；ownership 已经失效也不能通过继续 heartbeat 伪造所有权。** Runtime 本身不因为单次 heartbeat 网络抖动被强制重置；若最终 lease 到期并被其他 Worker 接管，旧 Worker 后续状态写入必须由 ownership fencing 拒绝。
 
@@ -184,9 +187,10 @@ pending Execution + orphaned running Node
 2. Worker 可以独立 claim pending Execution；
 3. claim 后 ownership fencing 生效；
 4. Worker lease 可以持续刷新，且单次瞬态刷新异常不会永久终止 heartbeat；
-5. pending + orphaned running Node 能在 Runtime 前恢复；
-6. `running → running` 仍被状态机拒绝；
-7. Worker 使用唯一 WorkflowExecutionService / WorkflowRuntime；
-8. Manual `/run` 与 Worker claim 的 409 竞态不会产生第二个 Runtime；
-9. Execution、Node、Audit、Trace 的 tenant / workflow / execution 关联保持一致；
-10. Scheduler restart / Worker recovery 使用真实 PostgreSQL 链路验收。
+5. lease 到期后旧 Worker 不能自行复活 lease；
+6. pending + orphaned running Node 能在 Runtime 前恢复；
+7. `running → running` 仍被状态机拒绝；
+8. Worker 使用唯一 WorkflowExecutionService / WorkflowRuntime；
+9. Manual `/run` 与 Worker claim 的 409 竞态不会产生第二个 Runtime；
+10. Execution、Node、Audit、Trace 的 tenant / workflow / execution 关联保持一致；
+11. Scheduler restart / Worker recovery 使用真实 PostgreSQL 链路验收。
