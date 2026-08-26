@@ -127,11 +127,10 @@ class WorkflowWorker:
         Returns:
             无；Execution 不再属于当前 Worker 或租约已失效后自动退出。
 
-        事务边界：每次刷新使用独立短事务；单次数据库瞬时失败只记录日志并继续下一轮，避免 heartbeat 协程因一次连接抖动永久退出。若 ownership 已不存在或租约已经失效则立即结束，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
+        事务边界：每次刷新使用独立短事务；单次数据库瞬时失败只记录日志并继续下一轮。heartbeat 首轮立即执行一次 ownership 检查与续租，不先等待一个完整 interval，避免短租约或刚完成 claim 的长任务在首次心跳前出现不必要的 ownership 暴露窗口。若 ownership 已不存在或租约已经失效则立即结束，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
         """
         interval = max(0.1, self.lease_seconds / 3)
         while True:
-            await asyncio.sleep(interval)
             try:
                 owned = await self._renew_lease_once(execution_id)
             except asyncio.CancelledError:
@@ -141,9 +140,10 @@ class WorkflowWorker:
                     "Workflow Worker lease heartbeat failed; will retry",
                     extra={"execution_id": str(execution_id), "worker_owner": self.owner},
                 )
-                continue
+                owned = True
             if not owned:
                 return
+            await asyncio.sleep(interval)
 
     async def _recover_orphaned_running_nodes(
         self,

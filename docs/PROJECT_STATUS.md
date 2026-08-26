@@ -8,25 +8,26 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler restart acceptance 已通过。**
-- Phase 2.5 Scheduler → Worker Execution Decoupling：**核心代码实现完成；Worker ownership fencing、orphaned running Node recovery、Scheduler/Worker Recovery Acceptance 已形成实现与验收闭环；当前继续进行 Worker lease ownership 边界硬化。**
+- Phase 2.5 Scheduler → Worker Execution Decoupling：**核心代码实现完成；Worker ownership fencing、orphaned running Node recovery、Scheduler/Worker Recovery Acceptance 已形成实现与验收闭环；当前继续进行 heartbeat 首轮执行边界硬化。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-当前远端 `main` 已包含本轮 Worker lease ownership hardening：
+当前远端 `main` 基线为：
 
 ```text
-dae9a95 docs(phase): record worker lease ownership boundary
+33530ff docs(status): align latest worker hardening baseline
 ```
 
-本轮核心代码与测试变更：
+本轮继续整改：
 
 ```text
-fix(worker): prevent expired lease heartbeat resurrection
-test(worker): cover heartbeat retry and ownership expiry
+fix(worker): run lease heartbeat ownership check immediately
+ test(worker): cover immediate heartbeat ownership check
+ docs(worker): record heartbeat first-tick regression
 ```
 
-本轮实现建立在远端 `main` 的 Worker heartbeat hardening 基线上，重点补齐 lease 到期后的 ownership 时间边界。
+本轮问题来自开发者实际 Backend Regression 结果：heartbeat 首轮先等待完整 interval，导致 ownership 已失效时不能在测试门限内立即退出。整改只调整 heartbeat 调度顺序，不放宽 ownership fencing 或 Node 状态机。
 
 ```text
 API Service       run.py
@@ -59,7 +60,7 @@ ownership fencing
       ↓
 recover orphaned running Node
       ↓
-lease heartbeat（仅允许续未过期 lease）
+lease heartbeat：首轮立即检查，后续周期续租
       ↓
 WorkflowExecutionService
       ↓
@@ -94,31 +95,37 @@ WorkflowRuntime retry policy
 
 ## Worker Lease Ownership Boundary
 
-本轮新增硬化规则：
+当前正式规则：
 
 ```text
+heartbeat task 创建
+      ↓
+立即检查并续租
+      ↓
 worker_owner == current worker
 AND
 worker_lease_expires_at > now
-        ↓
-允许 heartbeat 续租
+      ↓
+允许后续周期续租
 ```
 
 lease 已过期时，即使数据库仍保留旧 `worker_owner`，旧 Worker 也不得自行复活 lease；heartbeat 必须退出，后续 Runtime 写入由 ownership fencing 保护。
 
-该规则解决 lease 到期与 heartbeat 恢复之间的 ownership resurrection 窗口，不修改 Node 状态机，也不新增第二套 Runtime。
+本轮新增边界：heartbeat 首轮不能先等待 `lease_seconds / 3`。周期 interval 只用于成功续租后的下一轮调度；首轮立即检查 ownership，避免无意义的初始等待扩大 ownership 暴露窗口。
 
-## 当前待本地验收工作
+## 当前本地验收状态
 
-1. 拉取最新远端 `main`；
-2. 执行 Worker targeted Unit，确认 recovery、ownership fencing、heartbeat retry 与 lease expiry case；
-3. 执行 Tenant Safe Real API Gate；
-4. 执行 Backend Regression Gate；
-5. 执行只读 Worker Runtime consistency diagnostic；
-6. 执行 Scheduler / Worker Recovery Acceptance；
-7. 根据开发者实际结果更新 Phase 2.5 Acceptance 和 Project Status。
+开发者最新反馈：
 
-以上结果在开发者本地实际执行前，不记录为 Passed。
+```text
+Worker targeted Unit: 10 passed in 1.18s
+Backend Regression: 415 passed, 3 skipped, 36 deselected，失败于 test_lease_heartbeat_stops_when_ownership_is_lost
+Tenant Safe Real API: 35 passed in 67.73s
+Worker Runtime consistency: PASS，但存在历史 expired running lease warning
+Scheduler / Worker Recovery Acceptance: 1 passed in 8.67s
+```
+
+Backend Regression 的 heartbeat 失败已完成代码级定位与整改，并新增首轮 heartbeat 防回归测试。**整改后的本地 Gate 尚未执行，因此当前不得标记 Backend Regression 为 Passed。**
 
 ## 当前禁止事项
 

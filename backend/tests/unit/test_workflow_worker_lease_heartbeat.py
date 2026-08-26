@@ -35,6 +35,28 @@ async def test_lease_heartbeat_retries_after_transient_failure(monkeypatch: pyte
 
 
 @pytest.mark.asyncio
+async def test_lease_heartbeat_checks_ownership_before_first_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """heartbeat 首轮必须立即检查 ownership，不能先等待完整 lease interval。"""
+    worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=1, lease_seconds=3)
+    calls = 0
+
+    async def fake_sleep(_interval: float) -> None:
+        raise AssertionError("首次 heartbeat 不应先等待 interval")
+
+    async def fake_renew(_execution_id):
+        nonlocal calls
+        calls += 1
+        return False
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    worker._renew_lease_once = fake_renew  # type: ignore[method-assign]
+
+    await asyncio.wait_for(worker._renew_lease_forever(uuid4()), timeout=1)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
 async def test_lease_heartbeat_stops_when_ownership_is_lost() -> None:
     """heartbeat 发现 Execution ownership 已不存在后必须立即退出。"""
     worker = WorkflowWorker(poll_interval_seconds=0.01, concurrency=1, lease_seconds=3)

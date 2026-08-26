@@ -68,7 +68,8 @@ WorkflowRuntime
                                ▼
                     ┌──────────────────────┐
                     │ Lease Heartbeat      │
-                    │ 只能续未过期 lease  │
+                    │ 首轮立即检查/续租    │
+                    │ 后续按 interval 周期 │
                     └──────────┬───────────┘
                                │
                                ▼
@@ -134,16 +135,18 @@ Worker 执行长 Workflow 时独立刷新 lease，避免 Runtime 执行时间超
 Heartbeat 的单轮刷新属于可重试的基础设施操作，但 **lease 一旦到期即代表 ownership 已失效**：
 
 ```text
-heartbeat tick
+heartbeat task 创建
     ↓
-renew lease
-    ├── success + lease 未过期 → 下一 tick
-    ├── transient DB error → 记录日志 → 下一 tick 重试
+立即 renew / ownership check
+    ├── success + lease 未过期 → sleep(interval) → 下一轮
+    ├── transient DB error → 记录日志 → sleep(interval) → 重试
     ├── lease 已过期 → heartbeat 退出
     └── ownership 不存在/Execution 已终态 → heartbeat 退出
 ```
 
 续租查询必须同时满足 `worker_owner == 当前 Worker` 与 `worker_lease_expires_at > now`。不能仅凭残留 `worker_owner` 在 lease 到期后重新延长租约，否则旧 Worker 可能在 ownership 已失效后复活自己的 lease，破坏 claim / fencing 的时间边界。
+
+首轮立即检查是 ownership 生命周期的一部分，而不是普通 polling 优化：Worker claim 后马上建立 heartbeat，必须立即确认当前 ownership 仍然有效；周期 `interval` 只控制成功检查后的下一次续租时间。这样可以避免短 lease、任务调度抖动或测试/进程调度延迟造成无意义的初始 ownership 暴露窗口。
 
 这一区分非常重要：**瞬时数据库异常不能让 heartbeat task 静默死亡；ownership 已经失效也不能通过继续 heartbeat 伪造所有权。** Runtime 本身不因为单次 heartbeat 网络抖动被强制重置；若最终 lease 到期并被其他 Worker 接管，旧 Worker 后续状态写入必须由 ownership fencing 拒绝。
 
@@ -186,7 +189,7 @@ pending Execution + orphaned running Node
 1. Scheduler 不直接调用 Runtime；
 2. Worker 可以独立 claim pending Execution；
 3. claim 后 ownership fencing 生效；
-4. Worker lease 可以持续刷新，且单次瞬态刷新异常不会永久终止 heartbeat；
+4. Worker lease 可以持续刷新，且首轮立即检查、单次瞬态刷新异常不会永久终止 heartbeat；
 5. lease 到期后旧 Worker 不能自行复活 lease；
 6. pending + orphaned running Node 能在 Runtime 前恢复；
 7. `running → running` 仍被状态机拒绝；
