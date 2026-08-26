@@ -5,7 +5,6 @@ import os
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import UTC
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
@@ -25,6 +24,14 @@ pytestmark = pytest.mark.real_api
 
 
 def _client() -> httpx.Client:
+    """创建带认证的真实 HTTP 客户端。
+
+    Returns:
+        `httpx.Client`：指向真实 API Service 的认证客户端。
+
+    Raises:
+        pytest.fail: 缺少 Real API 访问令牌时终止验收。
+    """
     if not TOKEN:
         pytest.fail("ACCESS_TOKEN is required for real API validation")
     return httpx.Client(
@@ -35,6 +42,7 @@ def _client() -> httpx.Client:
 
 
 def _require_context() -> None:
+    """确认验收所需租户上下文已经由测试 Bootstrap 准备。"""
     if not ORGANIZATION_ID:
         pytest.fail("ORGANIZATION_ID is required for durable resume validation")
 
@@ -43,29 +51,22 @@ def _require_context() -> None:
 def _resume_fixture_server():
     """提供一次失败、下一次成功的真实 OpenAI-compatible HTTP Provider。
 
-    Args:
-        无。
-
     Returns:
-        一个可用于 Model Provider endpoint 的本地 HTTP URL。
-
-    Raises:
-        无；Provider 响应由测试内的计数器决定。
+        tuple[str, dict[str, int], threading.Lock]：Provider endpoint、请求计数状态及并发锁。
 
     副作用：启动测试进程内的临时 HTTP Provider；该服务不属于 API、Scheduler 或 Worker，测试结束后立即关闭。
     """
-    calls = 0
+    state = {"calls": 0}
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
-            nonlocal calls
             length = int(self.headers.get("Content-Length", "0"))
             if length:
                 self.rfile.read(length)
             with lock:
-                calls += 1
-                call_no = calls
+                state["calls"] += 1
+                call_no = state["calls"]
             status = 503 if call_no == 1 else 200
             content = "resume source failure" if call_no == 1 else "resume completed"
             payload = {
@@ -95,7 +96,7 @@ def _resume_fixture_server():
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}/v1", calls, lock
+        yield f"http://127.0.0.1:{server.server_port}/v1", state, lock
     finally:
         server.shutdown()
         server.server_close()
@@ -179,8 +180,7 @@ async def _create_resume_execution(source_id: str) -> WorkflowExecution:
         ).scalar_one_or_none()
         if source is None:
             raise AssertionError(f"Source Execution not found: {source_id}")
-        resume = await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
-        return resume
+        return await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
 
 
 def test_real_worker_executes_durable_resume_from_checkpoint():
@@ -191,7 +191,7 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
     profile_id = None
 
     with _resume_fixture_server() as fixture:
-        endpoint, calls, lock = fixture
+        endpoint, state, lock = fixture
         try:
             with _client() as client:
                 provider = client.post(
@@ -298,7 +298,7 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
 
             async def verify_source_checkpoint() -> tuple[WorkflowExecutionCheckpoint, list[WorkflowNodeExecution]]:
                 async with SessionLocal() as db:
-                    checkpoint = (
+                    checkpoints = (
                         await db.execute(
                             select(WorkflowExecutionCheckpoint)
                             .where(WorkflowExecutionCheckpoint.execution_id == source.id)
@@ -312,8 +312,8 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
                             .order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
                         )
                     ).scalars().all()
-                    assert len(checkpoint) == 1
-                    return checkpoint[0], list(nodes)
+                    assert len(checkpoints) == 1
+                    return checkpoints[0], list(nodes)
 
             source_checkpoint, source_nodes = asyncio.run(verify_source_checkpoint())
             assert source_checkpoint.sequence == 1
@@ -348,8 +348,8 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
                             select(WorkflowNodeExecution)
                             .where(WorkflowNodeExecution.execution_id == resume.id)
                             .order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
-                        ).scalars().all()
-                    )
+                        )
+                    ).scalars().all()
                     return list(checkpoints), list(nodes)
 
             resume_checkpoints, resume_nodes = asyncio.run(verify_resume_result())
@@ -360,7 +360,7 @@ def test_real_worker_executes_durable_resume_from_checkpoint():
             assert [(node.node_id, node.status) for node in resume_nodes] == [("provider-call", "completed")]
 
             with lock:
-                assert calls == 2
+                assert state["calls"] == 2
         finally:
             if profile_id or provider_id:
                 with _client() as cleanup:
