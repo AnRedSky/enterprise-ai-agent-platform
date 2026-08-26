@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -14,10 +14,11 @@ from app.services.workflow.execution import WorkflowExecutionService
 @pytest.fixture
 def resume_service() -> WorkflowExecutionService:
     db = SimpleNamespace(
-        add=AsyncMock(),
+        add=Mock(),
         flush=AsyncMock(),
         commit=AsyncMock(),
         refresh=AsyncMock(),
+        rollback=AsyncMock(),
         execute=AsyncMock(),
     )
     service = WorkflowExecutionService(db)  # type: ignore[arg-type]
@@ -78,7 +79,7 @@ async def test_resume_creates_pending_execution_with_fixed_version_and_checkpoin
     version = SimpleNamespace(id=source.workflow_version_id, definition={"config": {}, "nodes": []})
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=checkpoint)
-    resume_service.checkpoint_recovery.assess = AsyncMock(return_value=_assessment(source, checkpoint))
+    resume_service.checkpoint_recovery.assess = Mock(return_value=_assessment(source, checkpoint))
     resume_service.db.execute = AsyncMock(
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: version),
@@ -113,7 +114,7 @@ async def test_resume_is_idempotent_for_same_source_and_checkpoint(resume_servic
     version = SimpleNamespace(id=source.workflow_version_id, definition={"config": {}, "nodes": []})
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=checkpoint)
-    resume_service.checkpoint_recovery.assess = AsyncMock(return_value=_assessment(source, checkpoint))
+    resume_service.checkpoint_recovery.assess = Mock(return_value=_assessment(source, checkpoint))
     resume_service.db.execute = AsyncMock(
         side_effect=[
             SimpleNamespace(scalar_one_or_none=lambda: version),
@@ -125,7 +126,7 @@ async def test_resume_is_idempotent_for_same_source_and_checkpoint(resume_servic
 
     assert result is existing
     resume_service.db.commit.assert_not_awaited()
-    resume_service.db.add.assert_not_awaited()
+    resume_service.db.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -133,6 +134,12 @@ async def test_resume_rejects_live_worker_ownership(resume_service):
     source = _source_execution(worker_owner="worker:live")
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=None)
+    resume_service.checkpoint_recovery.assess = Mock(return_value=WorkflowExecutionResumeAssessment(
+        eligible=False,
+        reason_code="worker_ownership_active",
+        execution_id=source.id,
+        workflow_version_id=source.workflow_version_id,
+    ))
 
     with pytest.raises(HTTPException) as exc:
         await resume_service.resume_from_latest_checkpoint(source, uuid4())
@@ -147,7 +154,7 @@ async def test_resume_rejects_missing_or_invalid_checkpoint(resume_service):
     source = _source_execution()
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=None)
-    resume_service.checkpoint_recovery.assess = AsyncMock(return_value=WorkflowExecutionResumeAssessment(
+    resume_service.checkpoint_recovery.assess = Mock(return_value=WorkflowExecutionResumeAssessment(
         eligible=False,
         reason_code="checkpoint_missing",
         execution_id=source.id,
