@@ -31,6 +31,7 @@
 | ERR-0023 | 2026-08-23 | Knowledge Retrieval Real Provider 评估脚本旧 Provider 导入路径 |
 | ERR-0024 | 2026-08-23 | Backend 模块重构后的测试边界残留 |
 | ERR-0025 | 2026-08-24 | Backend Refactor Closure Gate 将 canonical Service 包入口误判为旧 import |
+| ERR-0026 | 2026-08-26 | Real API Trigger 测试专用事件循环被 pytest 生命周期提前关闭 |
 
 ## 迁移规则
 
