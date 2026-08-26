@@ -30,9 +30,8 @@ dev = [
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# SQLAlchemy asyncpg 连接池绑定创建它的事件循环；项目集成测试共享同一会话级事件循环，避免连接池跨函数事件循环复用。
-asyncio_default_fixture_loop_scope = "session"
-# pytest-asyncio 0.25.0 不支持独立的默认测试 loop scope 配置；测试级 loop 由 pytest-asyncio 版本能力与测试标记共同管理，避免产生未知配置警告。
+# 异步 fixture 默认与测试使用同一函数级事件循环，避免 session fixture loop 与 function test loop 交叉复用。
+asyncio_default_fixture_loop_scope = "function"
 # unit/integration 下允许存在同名测试文件；使用 importlib 模式避免 pytest 以顶层模块名导入造成 import file mismatch。
 addopts = "-m 'not real_api' --import-mode=importlib"
 markers = [
