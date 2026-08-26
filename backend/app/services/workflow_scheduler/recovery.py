@@ -114,7 +114,20 @@ class WorkflowRecoveryScheduler:
                     extra={"execution_id": str(execution_id), "error_type": type(exc).__name__},
                 )
 
-        return WorkflowRecoveryScanResult(candidates=len(execution_ids), **counters)
+        result = WorkflowRecoveryScanResult(candidates=len(execution_ids), **counters)
+        logger.info(
+            "Workflow automatic recovery scan completed",
+            extra={
+                "candidates": result.candidates,
+                "eligible": result.eligible,
+                "recovered": result.recovered,
+                "rejected": result.rejected,
+                "contention": result.contention,
+                "failed": result.failed,
+                "scan_limit": self.scan_limit,
+            },
+        )
+        return result
 
     async def run_forever(self) -> None:
         """持续执行 Recovery Scan，直到收到 stop 请求。
