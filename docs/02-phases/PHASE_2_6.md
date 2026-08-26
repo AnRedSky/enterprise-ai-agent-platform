@@ -64,7 +64,10 @@ Checkpoint 是持久化事实；Resume Execution 是新的 pending 任务，不�
 - `scripts/test/api-real/03_run_durable_resume_acceptance.ps1`：只验证外部 API / Worker 前置条件，不启动、停止或重启任何服务；
 - `scripts/test/api-real/04_run_durable_resume_failure_acceptance.ps1`：只验证外部 API / Worker 前置条件，不启动、停止或重启任何服务；
 - Tenant Safe Real API Source Baseline Gate；
-- 新增 Durable Resume Real API 测试模块已补充中文模块职责说明。
+- 新增 Durable Resume Real API 测试模块已补充中文模块职责说明；
+- DAG Resume Contract 第一版只接受单一 root；
+- DAG Resume Planner 拒绝 predecessor 尚未完成的非闭包 completed facts；
+- 单一 frontier Runtime 继续拒绝多个分支，直到状态合并 Contract 冻结。
 
 ## 3. Checkpoint 事务边界
 
@@ -160,7 +163,9 @@ Worker claim + ownership fencing
         ↓
 Resume Planner 找到 checkpoint.node_id
         ↓
-丢弃 checkpoint node 及其之前的 nodes
+DAG Contract / Frontier Planner 校验图与完成事实
+        ↓
+单一 frontier / 顺序 Runtime Sequence Planner
         ↓
 Checkpoint.state_data 作为 current_data
         ↓
@@ -173,12 +178,14 @@ Resume Execution 自己重新生成 Checkpoint
 
 1. 原 Source Execution 永不恢复成 `running`。
 2. Resume Execution 仍必须从标准 Worker claim 路径进入 Runtime。
-3. Planner 不复制 DAG 算法；当前只按 `nodes` 数组顺序确定恢复起点。
-4. 当前不声明支持 DAG 分支恢复。未来 DAG Runtime 必须提供独立的图恢复规划器。
-5. Resume 使用原 Workflow Version 的内存快照，不修改数据库中的 published Version。
-6. 每个并发 Worker Execution 使用自己的数据库 Session；不得通过 Worker 实例级属性保存“当前 Session”。
-7. Resume 前重新核对 Source / Checkpoint，而不是仅相信 Resume Execution 创建时的 metadata。
-8. Resume Execution 的 Node Execution 集合只记录真正重新执行的剩余节点；源 Execution 的已完成节点不会复制成新的 Node Execution。
+3. Planner 不复制 DAG 算法；DAG Contract / Frontier Planner 负责图结构与完成事实，Runtime Planner 负责单一 frontier 收敛。
+4. 第一版 DAG Resume 只接受单一 root；不接受多 root、条件边或隐式状态合并。
+5. 当前不声明支持 DAG 分支恢复；多个 frontier 必须等待明确的分支状态合并 Contract。
+6. Resume 使用原 Workflow Version 的内存快照，不修改数据库中的 published Version。
+7. 每个并发 Worker Execution 使用自己的数据库 Session；不得通过 Worker 实例级属性保存“当前 Session”。
+8. Resume 前重新核对 Source / Checkpoint，而不是仅相信 Resume Execution 创建时的 metadata。
+9. `completed_node_ids` 必须形成从唯一 root 向下的 predecessor 闭包；否则拒绝恢复，避免把不可能由当前顺序 Runtime 产生的持久化事实当作合法输入。
+10. Resume Execution 的 Node Execution 集合只记录真正重新执行的剩余节点；源 Execution 的已完成节点不会复制成新的 Node Execution。
 
 ## 6. Checkpoint 负责
 
@@ -208,6 +215,7 @@ Resume Execution 自己重新生成 Checkpoint
 7. Resume Execution 的 `input_data` 使用 Checkpoint `state_data` 作为当前 Runtime 输入事实。
 8. Worker 在实际执行前重新读取 Source / Checkpoint，防止恢复元数据与持久化事实漂移。
 9. Resume 完成后的 Checkpoint sequence 在新的 Resume Execution 内重新从 `1` 开始，source lineage 由 `resume_of_execution_id + resume_checkpoint_sequence` 保留；禁止把两个 Execution 的 sequence 混写成单一序列。
+10. DAG Resume Contract 的第一版 root 必须唯一；Planner 接收到的 completed facts 必须满足所有 predecessor 已完成。
 
 ## 9. 当前明确不实现
 
@@ -228,9 +236,9 @@ Checkpoint / Resume / Worker Runtime 属于 API / Worker 进程内 Python 代码
 
 ## 11. 下一步
 
-1. 冻结 Phase 2.6 DAG Resume Runtime 恢复 Contract（GitHub Issue #49），明确 edge、frontier、分支/汇聚、状态合并、失败、幂等与拓扑安全边界；
-2. Contract 冻结后，实现纯内存 DAG Resume Planner，并先补齐单元测试；
-3. 将 Planner 接入 Runtime，建立 DAG integration 与 failure boundary；
-4. 执行真实 PostgreSQL + 独立 Worker 的 DAG Resume Acceptance；
+1. 在本地执行 DAG Contract / Planner / Runtime targeted tests，确认新增单 root 与 completed predecessor 闭包边界；
+2. 执行 Backend Regression，确认现有 Checkpoint / Resume / Worker 行为无回归；
+3. 重启最新 main 的 API Service 与 Worker Service，再执行真实 PostgreSQL + 独立 Worker 的 DAG Resume Acceptance；
+4. 补齐 DAG Runtime integration / failure boundary，特别是单一 frontier 执行失败后的 Resume Execution / Node / Checkpoint 终态；
 5. DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
 6. 自动恢复仅在上述 ownership、checkpoint、planner、终态与 DAG 边界稳定后进入设计。
