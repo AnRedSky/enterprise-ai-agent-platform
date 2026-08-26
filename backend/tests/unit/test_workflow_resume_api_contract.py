@@ -75,5 +75,6 @@ def test_resume_route_uses_post_and_requires_user_or_admin_role() -> None:
     route = next(route for route in executions_api.router.routes if route.path.endswith("/executions/{execution_id}/resume"))
 
     assert route.methods == {"POST"}
-    assert "user" in str(route.dependant.dependencies[0].call)
-    assert "admin" in str(route.dependant.dependencies[0].call)
+    dependency = route.dependant.dependencies[0].call
+    required_roles = next(cell.cell_contents for cell in dependency.__closure__ if cell.cell_contents == ("user", "admin"))
+    assert required_roles == ("user", "admin")
