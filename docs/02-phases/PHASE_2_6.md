@@ -128,11 +128,41 @@ checkpoint.execution_status == running
 5. `execution_id + checkpoint.sequence` 形成确定性 Resume 幂等键；真正的 Resume 持久化实现必须再通过数据库唯一约束兜底。
 6. 当前评估器只读，不改变任何 Execution / Node 状态，不提交数据库事务。
 
-## 8. 下一步
+## 8. Real API 源码基线与警告处理
 
-1. 开发者验证新的 Checkpoint Resume Candidate targeted tests；
-2. 执行 Tenant Safe Real API / Backend Regression，确认没有破坏既有 Runtime、Worker 与 Provider 治理；
-3. 验证 Real API + PostgreSQL Checkpoint persistence；
-4. 将 Resume Candidate 约束继续下沉到真实 Durable Resume 的 Execution 创建 / Idempotency Contract；
-5. 明确 `failed -> pending retry/resume` 的 ownership、版本冻结与审计语义；
-6. 仅在上述边界稳定后再开放自动恢复。
+Real API 验收不只验证 Git 提交号，还必须验证实际执行源码与远端 `main` 一致。Tenant Safe Real API Gate 在启动测试前运行：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\verify_real_api_source_baseline.ps1
+```
+
+Source Baseline Gate 强制检查：
+
+```text
+HEAD == origin/main
+        ↓
+关键 Real API / Checkpoint 测试文件无未提交修改
+        ↓
+Runtime Model Governance 使用统一 run_or_observe_execution
+        ↓
+才允许进入 Real API Gate
+```
+
+这样可以阻断以下错误诊断：
+
+- 本地仍运行旧的直接 `/run` 测试实现，却误认为 Worker 业务回归；
+- 本地使用旧 `datetime.utcnow()`，却误认为当前 `main` 仍存在弃用警告；
+- 直接执行 Real API 测试文件但没有 Tenant Safe Context，却把环境前置失败当成产品失败。
+
+`run_or_observe_execution()` 是 Worker claim race 的唯一测试处理入口；禁止在具体 Real API 测试中复制第二套 `409` 竞态处理。
+
+## 9. 下一步
+
+1. 开发者同步最新 `main` 并通过 Source Baseline Gate；
+2. 验证 Checkpoint / Resume Candidate targeted tests 无 warning；
+3. 执行 Tenant Safe Real API / Backend Regression，确认没有破坏既有 Runtime、Worker 与 Provider 治理；
+4. 验证 Real API + PostgreSQL Checkpoint persistence；
+5. 将 Resume Candidate 约束继续下沉到真实 Durable Resume 的 Execution 创建 / Idempotency Contract；
+6. 明确 `failed -> pending retry/resume` 的 ownership、版本冻结与审计语义；
+7. 仅在上述边界稳定后再开放自动恢复。

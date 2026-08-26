@@ -29,11 +29,15 @@ function Assert-WorkerAvailable {
 }
 
 try{
-  Write-Host "[1/3] Verify required external services (no service is started by this gate)"
+  Write-Host "[0/4] Verify Real API source baseline"
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\verify_real_api_source_baseline.ps1
+  if($LASTEXITCODE -ne 0){throw "Real API source baseline verification failed. Gate is blocked."}
+
+  Write-Host "[1/4] Verify required external services (no service is started by this gate)"
   Assert-ApiAvailable
   Assert-WorkerAvailable
 
-  Write-Host "[2/3] Prepare tenant-safe real API test context"
+  Write-Host "[2/4] Prepare tenant-safe real API test context"
   uv run python .\scripts\test\api-real\00_bootstrap_real_api_tenant_safe.py
   if($LASTEXITCODE -ne 0){throw "Real API bootstrap failed."}
   if(-not(Test-Path $contextFile)){throw "Real API context file was not created."}
@@ -60,7 +64,7 @@ try{
   $env:ORGANIZATION_MEMBER_USER_ID=[string]$context.ORGANIZATION_MEMBER_USER_ID
   $env:ORGANIZATION_MEMBER_ACCESS_TOKEN=[string]$context.ORGANIZATION_MEMBER_ACCESS_TOKEN
 
-  Write-Host "[3/3] Execute tenant-safe real HTTP API tests"
+  Write-Host "[3/4] Execute tenant-safe real HTTP API tests"
   uv run pytest -q tests/api_real -m real_api --ignore=tests/api_real/test_scheduler_restart_api.py
   if($LASTEXITCODE -ne 0){throw "Real API test suite failed."}
   Write-Host "[PASS] Tenant-safe Real API gate completed."

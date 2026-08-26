@@ -18,7 +18,7 @@
 57e2b4d feat(durable): establish resume candidate safety boundary
 ```
 
-最近一次开发者本地验收：
+最近一次开发者本地验收反馈：
 
 ```text
 Checkpoint + Resume Candidate targeted: 8 passed, 4 warnings
@@ -27,11 +27,12 @@ Migration head: 0032_workflow_execution_checkpoint
 Tenant Safe Real API: 36 passed, 1 failed
 ```
 
-本次本地反馈中已完成根因确认：
+本次反馈的工程结论：
 
-1. Resume Candidate 单元测试使用 `datetime.utcnow()`，产生 Python 弃用警告；已改为 timezone-aware UTC 时间构造。
-2. Runtime Model Governance Real API 测试直接触发 `/run` 时没有统一处理独立 Worker 先 claim 的合法 `409` ownership race；已改用现有 `run_or_observe_execution`，不复制第二套竞态处理规则。
-3. `uv run pytest -q tests/api_real/test_runtime_model_governance_api.py` 无 Real API Context 时被 deselect / context failure，不能作为 Gate 通过依据；唯一正式入口仍为 Tenant Safe Real API Gate。
+1. 远端 `main` 的 Resume Candidate 测试已经使用 timezone-aware UTC 时间，不应再产生 `datetime.utcnow()` 弃用警告；若本地仍出现该警告，说明实际执行源码与当前 `origin/main` 不一致，必须先通过 Source Baseline Gate。
+2. 远端 `main` 的 Runtime Model Governance Real API 测试已经统一使用 `run_or_observe_execution()` 处理独立 Worker 先 claim 的合法 `409` ownership race，不允许在具体测试中恢复直接 `/run` 调用。
+3. 直接执行 Real API 测试文件时，如果没有 Tenant Safe Context 环境变量，失败属于测试前置条件缺失，不构成产品 Gate 通过依据；正式 Real API 验收必须通过 Tenant Safe Real API Gate。
+4. 新增 `backend/scripts/dev/verify_real_api_source_baseline.ps1`，在 Tenant Safe Real API Gate 前强制验证 `HEAD == origin/main`、关键测试源码无本地修改，以及 Worker claim race helper 已实际接入。
 
 以上修复提交后需要开发者重新执行完整本地 Gate，当前文档不预填修复后的测试结果。
 
@@ -67,7 +68,7 @@ Node transition
              后续 Durable Resume / Recovery
 ```
 
-核心职责冻结：**Scheduler 负责“什么时候执行”，Worker 负责“执行什么”，WorkflowRuntime 负责“如何执行节点”，Checkpoint 负责“记录已完成执行事实”，Resume Candidate assessment 负责“判断是否满足未来恢复前置条件”，但不执行恢复。**
+核心职责冻结：**Scheduler 负责“什么时候执行”，Worker 负责“执行什么”，WorkflowRuntime 负责“如何执行节点”，Checkpoint 负责“记录已完成执行事实”，Resume Candidate assessment 负责“判断是否满足未来恢复前置条件”，Source Baseline Gate 负责“阻断源码版本漂移导致的伪失败”，但不执行恢复。**
 
 ## Phase 2.6 当前实现
 
@@ -87,7 +88,8 @@ Node transition
 - Resume Candidate 拒绝 `running` Execution 与 active Worker ownership；
 - Resume Candidate 使用 `execution_id + checkpoint.sequence` 生成确定性幂等键基础；
 - Runtime Model Governance Real API 测试复用统一 Worker claim race helper；
-- Resume Candidate 测试移除 `datetime.utcnow()` 弃用警告。
+- Resume Candidate 测试使用 timezone-aware UTC 时间；
+- Tenant Safe Real API 增加 Source Baseline Gate，阻断旧测试源码、未提交关键文件和非 `origin/main` HEAD 进入正式 Real API 验收。
 
 ## Phase 2.6 设计边界
 
@@ -103,7 +105,7 @@ Node transition
 
 ## 服务版本验收边界
 
-Checkpoint Runtime 接入与 Resume Candidate 评估都属于进程内代码变更。代码更新后，必须由开发者人工重启 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。
+Checkpoint Runtime 与 Resume Candidate 评估都属于进程内代码变更。代码更新后，必须由开发者人工重启 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。
 
 ```text
 代码更新
@@ -111,6 +113,8 @@ Checkpoint Runtime 接入与 Resume Candidate 评估都属于进程内代码变�
 人工重启 API Service
    ↓
 人工重启 Worker Service
+   ↓
+Source Baseline Gate
    ↓
 Real API / Backend Gate
 ```
@@ -145,4 +149,5 @@ Runtime Checkpoint / Resume Candidate 接入后必须重新执行：
 - 禁止 Real API Gate 自动启动、停止或重启 API / Scheduler / Worker；
 - 禁止 lease 到期后旧 Worker 自行复活 ownership；
 - 禁止在 Phase 2.6 中未经设计评审直接增加自动 Resume；
-- 禁止把 Resume Candidate assessment 当成实际 Resume。
+- 禁止把 Resume Candidate assessment 当成实际 Resume；
+- 禁止在未通过 Source Baseline Gate 的情况下把 Real API 失败归因于产品代码。
