@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -20,6 +21,7 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
+from app.services.workflow.checkpoint.recovery.planner import WorkflowExecutionResumePlanner
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +191,89 @@ class WorkflowWorker:
             )
         return len(orphaned_nodes)
 
+    async def _prepare_resume_runtime(self, execution: WorkflowExecution, version: WorkflowVersion) -> tuple[WorkflowExecution, object]:
+        """根据 Resume Execution 的来源 Checkpoint 准备仅执行剩余节点的 Runtime 输入。
+
+        Args:
+            execution: 当前 Worker 已认领的 Resume Execution。
+            version: Resume Execution 固定引用的原 Workflow Version。
+
+        Returns:
+            `(execution, runtime_version)`，其中 execution 的输入状态来自 Checkpoint，runtime_version 是
+            不修改数据库的内存版本快照，仅包含 Checkpoint 之后的顺序节点。
+
+        Raises:
+            RuntimeError: Resume 来源、Checkpoint 或原始节点边界不满足当前顺序 Runtime 的安全契约。
+
+        重要边界：Resume 不是从旧 Execution 重新进入 running，而是新 pending Execution 的正常 Worker 消费。
+        只有已完成 Checkpoint 对应的节点之前的工作被跳过；其后的节点才允许进入 Runtime。当前代码按
+        `nodes` 顺序执行，因此此处明确不支持尚未实现的 DAG 分支恢复。
+        """
+        if execution.resume_of_execution_id is None:
+            return execution, version
+
+        source = (
+            await self._get_resume_source(execution.resume_of_execution_id, execution.tenant_id)
+        )
+        if source is None:
+            raise RuntimeError("Resume 来源 Execution 不存在")
+        if source.status != "failed" or source.worker_owner is not None:
+            raise RuntimeError("Resume 来源 Execution 已不满足恢复安全边界")
+
+        checkpoint = (
+            await self._get_resume_checkpoint(source.id, execution.resume_checkpoint_sequence)
+        )
+        if checkpoint is None:
+            raise RuntimeError("Resume 来源 Checkpoint 不存在")
+        if checkpoint.checkpoint_reason != "node.completed" or checkpoint.node_status != "completed":
+            raise RuntimeError("Resume Checkpoint 不是合法的 Node completed 边界")
+        if checkpoint.execution_status != "running" or checkpoint.node_id is None:
+            raise RuntimeError("Resume Checkpoint Execution/Node 状态边界无效")
+        if checkpoint.sequence != execution.resume_checkpoint_sequence:
+            raise RuntimeError("Resume Execution 与 Checkpoint sequence 不一致")
+        if source.workflow_version_id != execution.workflow_version_id:
+            raise RuntimeError("Resume 不允许发生 Workflow Version 漂移")
+
+        plan = WorkflowExecutionResumePlanner.plan(
+            definition=version.definition,
+            checkpoint_node_id=checkpoint.node_id,
+            checkpoint_sequence=checkpoint.sequence,
+            state_data=dict(checkpoint.state_data or {}),
+        )
+        execution.input_data = dict(plan.state_data)
+        runtime_definition = dict(version.definition)
+        runtime_definition["nodes"] = [dict(node) for node in plan.remaining_nodes]
+        runtime_version = SimpleNamespace(
+            id=version.id,
+            status=version.status,
+            definition=runtime_definition,
+        )
+        return execution, runtime_version
+
+    async def _get_resume_source(self, execution_id: UUID, tenant_id: UUID):
+        """读取同租户 Resume 来源 Execution。"""
+        result = await self._active_db.execute(
+            select(WorkflowExecution).where(
+                WorkflowExecution.id == execution_id,
+                WorkflowExecution.tenant_id == tenant_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def _get_resume_checkpoint(self, execution_id: UUID, sequence: int | None):
+        """读取 Resume Execution 指定 sequence 的 Checkpoint。"""
+        from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
+
+        if sequence is None:
+            return None
+        result = await self._active_db.execute(
+            select(WorkflowExecutionCheckpoint).where(
+                WorkflowExecutionCheckpoint.execution_id == execution_id,
+                WorkflowExecutionCheckpoint.sequence == sequence,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def execute_claimed(self, execution_id: UUID) -> None:
         """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
 
@@ -204,6 +289,7 @@ class WorkflowWorker:
         设计约束：Worker 不能让异常或卡死的 Runtime 永久占用消费协程；外层超时采用 Workflow deadline 加固定宽限，长 Workflow 通过独立 lease heartbeat 保持 ownership。Runtime 开始前还必须收敛 pending Execution 上遗留的 running Node，严格保持 Node 状态机不允许 running → running。
         """
         async with SessionLocal() as db:
+            self._active_db = db
             execution = (
                 await db.execute(
                     select(WorkflowExecution).where(
@@ -232,12 +318,13 @@ class WorkflowWorker:
             execution_timeout = workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS
             service = WorkflowExecutionService(db)
             await self._recover_orphaned_running_nodes(execution, service)
+            execution, runtime_version = await self._prepare_resume_runtime(execution, version)
             lease_task = asyncio.create_task(self._renew_lease_forever(execution.id))
             try:
                 await asyncio.wait_for(
                     service.run(
                         execution,
-                        version,
+                        runtime_version,
                         execution.created_by,
                         allow_legacy_empty_nodes=allow_legacy_empty_nodes,
                         worker_owner=self.owner,
@@ -273,6 +360,7 @@ class WorkflowWorker:
                     current.worker_owner = None
                     current.worker_lease_expires_at = None
                     await db.commit()
+                self._active_db = None
 
     async def dispatch_once(self) -> int:
         """批量认领并并发执行当前可用任务。
