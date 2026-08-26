@@ -30,29 +30,17 @@ pytestmark = pytest.mark.real_api
 
 def _client() -> httpx.Client:
     if not TOKEN:
-        pytest.fail("ACCESS_TOKEN is required for real API validation")
+        pytest.skip("ACCESS_TOKEN is required for real API validation; use scripts/test/api-real/05_run_durable_resume_real_tests.ps1")
     return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20.0)
 
 
 def _require_context() -> None:
     if not ORGANIZATION_ID:
-        pytest.fail("ORGANIZATION_ID is required for durable resume validation")
+        pytest.skip("ORGANIZATION_ID is required; use scripts/test/api-real/05_run_durable_resume_real_tests.ps1")
 
 
 async def _wait_for_terminal(execution_id: str, expected: str, timeout_seconds: float = 30.0) -> WorkflowExecution:
-    """等待真实 Worker 将 Execution 持久化到指定终态。
-
-    Args:
-        execution_id: 待观察的 Workflow Execution ID。
-        expected: 期望的终态，例如 `failed`。
-        timeout_seconds: 最大等待时间。
-
-    Returns:
-        达到期望状态的真实 WorkflowExecution。
-
-    Raises:
-        AssertionError: 超时仍未达到期望终态。
-    """
+    """等待真实 Worker 将 Execution 持久化到指定终态。"""
     deadline = monotonic() + timeout_seconds
     while monotonic() < deadline:
         async with SessionLocal() as db:
@@ -117,7 +105,7 @@ async def test_real_worker_resume_failure_preserves_lineage_and_source_terminal_
                             },
                         },
                     ],
-                    "edges": [],
+                    "edges": [{"source": "prepare", "target": "broken-agent"}],
                 }
             },
         )
