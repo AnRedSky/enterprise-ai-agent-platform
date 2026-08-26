@@ -9,12 +9,12 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Execution Contract、第一版顺序 Runtime Resume、真实 PostgreSQL + 独立 Worker 的 Resume Acceptance 与 failure-after-resume Acceptance 已完成；当前正在收敛 DAG Resume Runtime Integration。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Execution Contract、第一版顺序 Runtime Resume、真实 PostgreSQL + 独立 Worker 的 Resume Acceptance 与 failure-after-resume Acceptance 已完成；当前继续收敛 DAG Resume Runtime Integration 的拓扑与完成事实安全边界。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 最新 main 基线
 
-当前 main 已进入 DAG Resume Runtime Integration：Source failed Execution 的 Checkpoint 恢复边界由 Worker 重新校验，完整 Workflow Version Definition 交给 WorkflowRuntime，由 Runtime 根据 Source Node 完成事实计算真实 Resume frontier。此前 Worker 提前裁剪 Definition 导致真实 Resume 无法完成的问题已修复，并补充了 Worker 单元回归测试与错误记录。真实 PostgreSQL + 独立 Worker 的修复后 acceptance 需要开发者重启 API / Worker 后重新执行确认。
+当前 main 已进入 DAG Resume Runtime Integration：Source failed Execution 的 Checkpoint 恢复边界由 Worker 重新校验，完整 Workflow Version Definition 交给 WorkflowRuntime，由 Runtime 根据 Source Node 完成事实计算真实 Resume frontier。Worker 提前裁剪 Definition 的问题已修复；当前进一步冻结第一版 DAG Resume 的单一 root 与 completed predecessor 闭包约束，避免不可能由顺序 Runtime 产生的持久化完成事实进入恢复规划。
 
 ## 当前产品级执行架构
 
@@ -50,9 +50,9 @@ WorkflowExecutionService
           ↓
        完整 DAG Definition
           ↓
-       WorkflowRuntime DAG Resume Planner
+       DAG Contract / Frontier Planner
           ↓
-       当前单一 frontier Node
+       WorkflowRuntime 单一 frontier
           ↓
        新 Checkpoint append
 ```
@@ -85,6 +85,8 @@ WorkflowExecutionService
 - Resume Execution 不直接抢 Worker lease、不直接启动 WorkflowRuntime；
 - `WorkflowExecutionResumePlanner`：纯内存计算 Checkpoint 后续顺序 nodes；
 - DAG Resume Contract / Frontier Planner / Runtime Planner / Linear Sequence Planner；
+- DAG Resume Contract 第一版只接受单一 root；
+- DAG Resume Planner 拒绝 predecessor 尚未完成的非闭包完成事实；
 - Worker 在执行 Resume 前重新校验 Source / Checkpoint / Version；
 - Worker 使用 Checkpoint `state_data` 作为 Resume Execution 的 Runtime 输入；
 - Worker Resume 准备阶段保留完整 DAG Definition，由 WorkflowRuntime 统一计算 Resume frontier；
@@ -94,7 +96,6 @@ WorkflowExecutionService
 - `tests/api_real/test_workflow_resume_failure_api.py`：真实 HTTP + PostgreSQL + 独立 Worker failure-after-resume lineage / terminal boundary 验证；
 - `scripts/test/api-real/05_run_durable_resume_real_tests.ps1`：只验证并使用开发者人工启动的 API / Worker，不控制服务生命周期；
 - Tenant Safe Real API Source Baseline Gate；
-- 两个新增 Real API 验收测试模块已补充中文模块职责说明，符合 Backend 模块说明规则；
 - Worker Resume DAG Definition 提前裁剪问题已记录到 `docs/04-errors/2026-08-26-durable-resume-worker-dag-definition-truncation.md`，并补充 Worker 单元回归测试。
 
 ## Phase 2.6 设计边界
@@ -112,30 +113,32 @@ WorkflowExecutionService
 
 ## 本地实际验收结果
 
-开发者于 2026-08-26 已实际反馈修复前基线：
+开发者已实际反馈的上一稳定基线：
 
 ```text
-DAG targeted unit tests
-32 passed in 0.91s
+DAG / Resume targeted unit tests
+40 passed in 1.08s
 
 uv run pytest -q
-464 passed, 3 skipped, 39 deselected in 30.30s
+466 passed, 3 skipped, 39 deselected in 32.08s
 
 05_run_durable_resume_real_tests.ps1
-修复前：success real_api 在等待 Resume Execution completed 时超时；failure-boundary 尚未进入本轮结果。
+success real_api: 1 passed in 4.33s
+failure-boundary real_api: 1 passed in 2.17s
 ```
 
-上述结果属于修复前事实，不能作为当前修复后的通过证据。当前修复后的本地测试结果必须由开发者重新执行并记录；在此之前不得标记为 acceptance passed。
+以上为开发者实际反馈的上一稳定基线；本次新增 DAG Contract / Planner 边界修复后的测试结果尚未由开发环境重新执行，因此不得把它们标记为本次修复的通过证据。
 
 ## 下一步
 
-1. 重启最新 main 的 API Service 与 Worker Service，使进程载入本次 Worker Resume 修复；
-2. 执行 Worker targeted unit tests 与 Backend Regression；
-3. 执行 `05_run_durable_resume_real_tests.ps1`，确认真实 PostgreSQL + HTTP + 独立 Worker 的 success / failure acceptance；
-4. 若 DAG 单一 frontier Runtime acceptance 通过，继续补齐 DAG Runtime integration / failure boundary；
-5. 在 DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
-6. 自动恢复仅在 ownership、checkpoint、planner、终态与 DAG 边界全部稳定后进入设计。
+1. 在本地执行 DAG Contract / Planner / Runtime targeted tests，确认新增单 root 与 completed predecessor 闭包约束；
+2. 执行 `uv run pytest -q`，确认 Backend Regression 未回归；
+3. 重启最新 main 的 API Service 与 Worker Service，使进程载入当前 Runtime 代码；
+4. 执行 `05_run_durable_resume_real_tests.ps1`，确认真实 PostgreSQL + HTTP + 独立 Worker 的 success / failure acceptance；
+5. 在单一 frontier acceptance 稳定后，继续补齐 DAG Runtime integration / failure boundary；
+6. 在 DAG 恢复安全边界稳定后，再评估 HTTP Resume API；
+7. 自动恢复仅在 ownership、checkpoint、planner、终态与 DAG 边界全部稳定后进入设计。
 
 ## 服务版本验收边界
 
-Checkpoint Runtime、Resume Candidate、Resume Execution Contract、Resume Planner 与 Worker Resume Runtime 都属于 API / Worker 进程内代码变更。代码更新后必须由开发者人工重启 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。
+Checkpoint Runtime、Resume Candidate、Resume Execution Contract、Resume Planner 与 Worker Resume Runtime 都属于 API / Worker 进程内代码变更。代码更新后必须由开发者人工重启受影响的 API Service 与 Worker Service，使进程载入最新代码；Real API / Backend Gate 绝不负责启动、停止或重启服务。
