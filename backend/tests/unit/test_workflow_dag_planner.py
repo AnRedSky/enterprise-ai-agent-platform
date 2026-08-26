@@ -1,6 +1,6 @@
 """Workflow DAG Resume Frontier 规划器单元测试。
 
-职责：验证多分支、汇聚、完成事实校验与确定性 frontier 边界。
+职责：验证多分支、汇聚、完成事实闭包与确定性 frontier 边界。
 边界：只验证纯内存 Planner，不连接数据库、不调用 Worker 或 Runtime。
 关键依赖：WorkflowDagResumePlanner。
 """
@@ -66,6 +66,14 @@ def test_planner_rejects_unknown_completed_node() -> None:
         WorkflowDagResumePlanner.plan(
             definition=_definition(),
             completed_node_ids={"input", "missing"},
+        )
+
+
+def test_planner_rejects_non_prefix_completed_nodes() -> None:
+    with pytest.raises(ValueError, match="缺少已完成 predecessor"):
+        WorkflowDagResumePlanner.plan(
+            definition=_definition(),
+            completed_node_ids={"input", "output"},
         )
 
 
