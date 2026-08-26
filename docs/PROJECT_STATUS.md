@@ -13,13 +13,20 @@
 
 ## 最新 main 基线
 
-当前远端 `main` 已推进到 Worker lease heartbeat hardening：
+当前远端 `main` 已包含本轮 Worker lease ownership hardening：
 
 ```text
-b6b6861 fix(worker): harden lease heartbeat recovery
+dae9a95 docs(phase): record worker lease ownership boundary
 ```
 
-随后本轮在该基线上继续完成 lease expiry ownership boundary 的代码与测试整改，并准备重新执行本地 Gate。
+本轮核心代码与测试变更：
+
+```text
+fix(worker): prevent expired lease heartbeat resurrection
+test(worker): cover heartbeat retry and ownership expiry
+```
+
+本轮实现建立在远端 `main` 的 Worker heartbeat hardening 基线上，重点补齐 lease 到期后的 ownership 时间边界。
 
 ```text
 API Service       run.py
