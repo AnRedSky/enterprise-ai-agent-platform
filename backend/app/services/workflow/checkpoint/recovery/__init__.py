@@ -17,6 +17,9 @@ from app.services.workflow.checkpoint.recovery.dag_runtime import (
     WorkflowDagResumeRuntimePlan,
     WorkflowDagResumeRuntimePlanner,
 )
+from app.services.workflow.checkpoint.recovery.dag_runtime_sequence import (
+    WorkflowDagResumeRuntimeSequencePlanner,
+)
 from app.services.workflow.checkpoint.recovery.planner import (
     WorkflowExecutionResumePlanner,
     WorkflowResumePlan,
@@ -34,6 +37,7 @@ __all__ = [
     "WorkflowDagResumePlanner",
     "WorkflowDagResumeRuntimePlan",
     "WorkflowDagResumeRuntimePlanner",
+    "WorkflowDagResumeRuntimeSequencePlanner",
     "WorkflowExecutionCheckpointRecoveryService",
     "WorkflowExecutionResumeAssessment",
     "WorkflowExecutionResumePlanner",
