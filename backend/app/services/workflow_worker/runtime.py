@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
@@ -53,16 +53,7 @@ class WorkflowWorker:
         self._semaphore = asyncio.Semaphore(concurrency)
 
     async def claim_one(self, now: datetime | None = None) -> WorkflowExecution | None:
-        """原子认领一个 pending Execution。
-
-        Args:
-            now: 可选的当前时间；主要用于确定性测试和租约计算。
-
-        Returns:
-            成功认领的 WorkflowExecution；没有可消费任务时返回 None。
-
-        事务边界：在 PostgreSQL 行锁事务中写入 Worker owner、租约到期时间和尝试次数并立即提交。
-        """
+        """原子认领一个 pending Execution。"""
         now = now or datetime.now(UTC)
         now_naive = now.replace(tzinfo=None)
         lease_expires_at = now_naive + timedelta(seconds=self.lease_seconds)
@@ -89,36 +80,33 @@ class WorkflowWorker:
             return execution
 
     async def _renew_lease_once(self, execution_id: UUID) -> bool:
-        """刷新一次当前 Worker 的 Execution 租约。"""
+        """以单条带 ownership/status fencing 的 UPDATE 原子刷新 Execution 租约。
+
+        不能先 SELECT ORM 对象再赋值提交：Runtime 可能在 SELECT 与 COMMIT 之间把 Execution
+        推进到 completed/failed/cancelled 并释放 worker ownership。旧 Worker 随后只更新
+        ``worker_lease_expires_at`` 就会违反 worker lease pair constraint。
+        """
         now = datetime.now(UTC).replace(tzinfo=None)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
         async with SessionLocal() as db:
             result = await db.execute(
-                select(WorkflowExecution).where(
+                update(WorkflowExecution)
+                .where(
                     WorkflowExecution.id == execution_id,
                     WorkflowExecution.worker_owner == self.owner,
                     WorkflowExecution.status.in_({"pending", "running"}),
                     WorkflowExecution.worker_lease_expires_at > now,
                 )
+                .values(worker_lease_expires_at=lease_expires_at)
             )
-            execution = result.scalar_one_or_none()
-            if execution is None:
+            if result.rowcount != 1:
+                await db.rollback()
                 return False
-            execution.worker_lease_expires_at = lease_expires_at
             await db.commit()
             return True
 
     async def _renew_lease_forever(self, execution_id: UUID) -> None:
-        """持续刷新当前 Worker 的 Execution 租约。
-
-        Args:
-            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
-
-        Returns:
-            无；Execution 不再属于当前 Worker 或租约已失效后自动退出。
-
-        事务边界：每次刷新使用独立短事务；数据库瞬时失败只记录日志并继续下一轮。heartbeat 首轮立即执行一次 ownership 检查，租约失效后立即退出，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
-        """
+        """持续刷新当前 Worker 的 Execution 租约。"""
         interval = max(0.1, self.lease_seconds / 3)
         while True:
             try:
@@ -173,24 +161,7 @@ class WorkflowWorker:
         execution: WorkflowExecution,
         version: WorkflowVersion,
     ) -> tuple[WorkflowExecution, object]:
-        """根据 Resume Execution 的来源 Checkpoint 准备 Runtime 输入状态。
-
-        Args:
-            db: 当前 Execution 专属的数据库 Session，禁止跨并发任务共享。
-            execution: 当前 Worker 已认领的 Resume Execution。
-            version: Resume Execution 固定引用的原 Workflow Version。
-
-        Returns:
-            `(execution, runtime_version)`，其中 execution 的输入状态来自 Checkpoint，runtime_version 保留
-            完整 DAG Definition，后续由 WorkflowRuntime 根据来源 Node 完成事实计算真实 resume frontier。
-
-        Raises:
-            RuntimeError: Resume 来源、Checkpoint 或版本边界不满足安全契约。
-
-        设计边界：Worker 只负责恢复 Checkpoint 状态和校验 Resume 来源，不提前裁剪 DAG。若这里先把
-        Definition 替换为剩余节点，Runtime 后续无法识别 source checkpoint 的 predecessor，反而会把
-        已完成的 Node 视为未知事实并阻断真实 Resume。
-        """
+        """根据 Resume Execution 的来源 Checkpoint 准备 Runtime 输入状态。"""
         if execution.resume_of_execution_id is None:
             return execution, version
 
@@ -230,17 +201,7 @@ class WorkflowWorker:
         return execution, version
 
     async def execute_claimed(self, execution_id: UUID) -> None:
-        """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。
-
-        Args:
-            execution_id: 已由当前 Worker owner 认领的 Workflow Execution ID。
-
-        Returns:
-            无；Execution 最终状态由 WorkflowExecutionService 持久化。
-
-        Raises:
-            Exception: Workflow Runtime 原始执行异常会继续向 Worker 守护层传播。
-        """
+        """执行已认领的 Workflow Execution，并限制单次 Runtime 执行时间。"""
         async with SessionLocal() as db:
             execution = (
                 await db.execute(
@@ -314,11 +275,7 @@ class WorkflowWorker:
                     await db.commit()
 
     async def dispatch_once(self) -> int:
-        """批量认领并并发执行当前可用任务。
-
-        Returns:
-            本轮成功认领的 Execution 数量。
-        """
+        """批量认领并并发执行当前可用任务。"""
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
             execution = await self.claim_one()
