@@ -1,8 +1,8 @@
 """Workflow Durable Resume 自动恢复领域服务。
 
 职责：将恢复策略、Checkpoint 候选评估与现有 Resume Domain Contract 串成一次受控的自动恢复操作。
-边界：不负责 Scheduler 轮询时间、不直接抢 Worker ownership、不直接启动 Runtime；真正创建 Resume Execution 委托 WorkflowExecutionService。
-关键依赖：WorkflowExecution ORM、Checkpoint Recovery Service、Recovery Policy、WorkflowExecutionService、Recovery Observability Event。
+边界：不负责 Scheduler 轮询时间、不直接抢 Worker ownership、不直接启动 Runtime；真正创建 Resume Execution 委托 Resume Contract。
+关键依赖：WorkflowExecution ORM、Checkpoint Recovery Service、Recovery Policy、WorkflowExecutionService、Resume Outcome Contract、Recovery Observability Event。
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from app.services.workflow.checkpoint.recovery.policy import (
     WorkflowExecutionRecoveryPolicy,
     WorkflowExecutionRecoveryPolicyEvaluator,
 )
+from app.services.workflow.checkpoint.recovery.resume_contract import WorkflowExecutionResumeContractService
 from app.services.workflow.checkpoint.recovery.service import WorkflowExecutionCheckpointRecoveryService
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
@@ -52,6 +53,7 @@ class WorkflowExecutionAutomaticRecoveryService:
         self.policy = WorkflowExecutionRecoveryPolicyEvaluator(policy)
         self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
         self.checkpoint = WorkflowExecutionCheckpointService(db)
+        self.resume_contract = WorkflowExecutionResumeContractService(db)
         self.event_logger = event_logger or WorkflowRecoveryEventLogger(logging.getLogger(__name__))
 
     async def _count_resume_ancestors(self, execution: WorkflowExecution) -> int:
@@ -134,16 +136,14 @@ class WorkflowExecutionAutomaticRecoveryService:
             self._emit_attempt(execution, rejected)
             return rejected
 
-        from app.services.workflow.execution import WorkflowExecutionService
-
-        resume_execution = await WorkflowExecutionService(self.db).resume_from_latest_checkpoint(
+        resume_result = await self.resume_contract.resume_with_outcome(
             execution,
             actor_id or execution.created_by,
         )
         recovered = WorkflowExecutionAutomaticRecoveryResult(
             decision=result.decision,
-            resume_execution_id=resume_execution.id,
-            outcome="recovered",
+            resume_execution_id=resume_result.execution.id,
+            outcome=resume_result.outcome,
         )
         self._emit_attempt(execution, recovered)
         return recovered
