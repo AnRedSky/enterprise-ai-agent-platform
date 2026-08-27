@@ -60,16 +60,19 @@ async def test_schedule_frontier_retry_reuses_same_frontier(monkeypatch: pytest.
     assert result is frontier
     assert result.available_at == now + timedelta(seconds=20)
     assert result.error_code == "NODE_TIMEOUT"
+    assert result.error_message == "node timed out"
     assert calls[0]["frontier_id"] == frontier_id
     assert calls[0]["target_status"] == "retry_wait"
     assert calls[0]["attempt"] == 2
 
 
 @pytest.mark.asyncio
-async def test_exhausted_retry_transitions_to_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_exhausted_retry_transitions_to_failed_and_preserves_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.services.workflow import frontier_retry
 
-    frontier = SimpleNamespace(id=uuid4())
+    frontier = SimpleNamespace(id=uuid4(), error_code=None, error_message=None)
     calls: list[dict] = []
 
     async def fake_transition(*args, **kwargs):
@@ -90,3 +93,5 @@ async def test_exhausted_retry_transitions_to_failed(monkeypatch: pytest.MonkeyP
     )
 
     assert calls[0]["target_status"] == "failed"
+    assert frontier.error_code == "NODE_TIMEOUT"
+    assert frontier.error_message == "node timed out"
