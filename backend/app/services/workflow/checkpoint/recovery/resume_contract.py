@@ -1,6 +1,6 @@
-"""Durable Resume creation outcome contract.
+"""Durable Resume creation outcome contract。
 
-职责：在 Resume Domain 边界内把“创建 Resume”与“幂等命中”显式区分。
+职责：在 Resume Domain 边界内把“创建 Resume”与“幂等命中”显式区分，并约束恢复候选使用确定性的幂等键。
 边界：不复制 Resume 创建持久化逻辑；实际创建仍委托 WorkflowExecutionService。
 并发语义：先锁定 Source Execution，再检查确定性 Resume 幂等键。所有正式 Resume 路径都会锁定同一 Source 行，因此同一 Source 的并发恢复调用在 Domain 内串行化；数据库唯一约束仍是最终安全兜底。
 """
@@ -42,9 +42,19 @@ class WorkflowExecutionResumeContractService:
     ) -> WorkflowExecutionResumeOutcome:
         """在 Source Execution 锁内判断并执行一次确定性 Resume。
 
-        这里不复制 WorkflowExecutionService 的创建逻辑；创建、审计、Trace、唯一约束兜底
-        仍统一委托既有 Resume Domain。Source row lock 只用于保证本次 outcome 判断与
-        Resume 创建处于同一个并发串行边界。
+        Args:
+            execution: 当前需要恢复的源 Workflow Execution。
+            actor_id: 创建 Resume 时记录的操作者身份。
+
+        Returns:
+            明确区分 `created` 与 `idempotency_hit` 的 Resume 结果。
+
+        Raises:
+            ValueError: 恢复候选缺少确定性幂等键，或候选键与本地确定性规则不一致，
+                或已有 Resume 的 lineage 与当前恢复请求不一致。
+
+        事务边界：Source Execution 锁定与候选判断发生在调用方数据库事务内；实际 Resume 创建
+        仍委托既有 WorkflowExecutionService，不在本 Contract 中复制持久化逻辑。
         """
         from app.services.workflow.execution import WorkflowExecutionService
 
@@ -61,8 +71,14 @@ class WorkflowExecutionResumeContractService:
             worker_owner=locked_execution.worker_owner,
             checkpoint=checkpoint,
         )
-        if assessment.resume_idempotency_key is None:
+        if assessment.resume_idempotency_key is None or assessment.checkpoint_sequence is None:
             raise ValueError("Resume Candidate 缺少确定性幂等键")
+
+        expected_idempotency_key = (
+            f"resume:{locked_execution.id}:checkpoint:{assessment.checkpoint_sequence}"
+        )
+        if assessment.resume_idempotency_key != expected_idempotency_key:
+            raise ValueError("Resume Candidate 幂等键与 Source Execution / Checkpoint 不一致")
 
         existing = (await self.db.execute(select(WorkflowExecution).where(
             WorkflowExecution.tenant_id == locked_execution.tenant_id,
