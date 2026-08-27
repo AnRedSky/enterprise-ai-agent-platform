@@ -2,7 +2,7 @@
 
 职责：把单个 Durable Frontier 接入现有 WorkflowRuntime 的 Planner / Node 执行能力，并将运行异常统一收敛到 Frontier Retry / Failed 生命周期。
 边界：不复制 Runtime、Planner、Checkpoint 或 Retry 算法；只编排一次 Frontier dispatch 及异常状态收敛。
-关键依赖：DurableFrontierWorkflowWorker、WorkflowRuntime、WorkflowDagResumePlanner、Frontier Repository、Frontier Retry Policy。
+关键依赖：DurableFrontierWorkflowWorker、WorkflowRuntime、WorkflowDagResumePlanner、Frontier Repository、Frontier Progression、Frontier Retry Policy。
 """
 
 from __future__ import annotations
@@ -22,7 +22,8 @@ from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.frontier import WorkflowFrontierIdentity
-from app.services.workflow.frontier_repository import enqueue_frontier, transition_owned_frontier
+from app.services.workflow.frontier_progression import complete_frontier_with_checkpoint
+from app.services.workflow.frontier_repository import transition_owned_frontier
 from app.services.workflow.frontier_retry import FrontierRetryPolicy, schedule_frontier_retry
 from app.services.workflow_worker.frontier_runtime import DurableFrontierWorkflowWorker
 
@@ -38,27 +39,15 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
 
     @staticmethod
     def _classify_failure(exc: Exception) -> tuple[bool, str, str]:
-        """将 Runtime 异常分类为 Durable Retry 或终态失败。
-
-        Args:
-            exc: Runtime、Provider 或 Planner 执行阶段抛出的异常。
-
-        Returns:
-            tuple[bool, str, str]: 是否可重试、稳定错误码、面向持久化记录的错误信息。
-
-        设计约束：仅将明确的临时故障视为可重试；业务 Contract、Planner 不一致和参数错误不能
-        通过 Frontier Retry 无限掩盖。HTTP 5xx、429、408、网络连接异常和 Circuit Open 属于
-        基础设施临时故障，进入 Frontier retry_wait；其余异常进入 Frontier failed。
-        """
+        """将 Runtime 异常分类为 Durable Retry 或终态失败。"""
         if isinstance(exc, CircuitOpenError):
             return True, "WORKFLOW_CIRCUIT_OPEN", str(exc)
         if isinstance(exc, (TimeoutError, ConnectionError)):
             return True, "WORKFLOW_TRANSIENT_FAILURE", str(exc) or exc.__class__.__name__
         if isinstance(exc, HTTPException):
-            if exc.status_code in {408, 429, 500, 502, 503, 504}:
-                detail = exc.detail if isinstance(exc.detail, str) else repr(exc.detail)
-                return True, f"WORKFLOW_HTTP_{exc.status_code}", detail
             detail = exc.detail if isinstance(exc.detail, str) else repr(exc.detail)
+            if exc.status_code in {408, 429, 500, 502, 503, 504}:
+                return True, f"WORKFLOW_HTTP_{exc.status_code}", detail
             return False, f"WORKFLOW_HTTP_{exc.status_code}", detail
         return False, "WORKFLOW_EXECUTION_FAILED", str(exc) or exc.__class__.__name__
 
@@ -75,19 +64,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         )
 
     async def _converge_failure(self, frontier: WorkflowFrontier, exc: Exception) -> None:
-        """在独立补偿事务中将 Runtime 异常收敛到 retry_wait 或 failed。
-
-        Args:
-            frontier: 本次 Claim 的 Durable Frontier 及其 fencing generation。
-            exc: 导致本次 Frontier dispatch 失败的异常。
-
-        Returns:
-            None。状态变化通过新的 caller-owned 事务提交。
-
-        事务边界：Runtime 原事务发生异常后先回滚未提交事实，再重新锁定同一 Frontier 与
-        Execution；Retry / Failed 状态和 Execution ownership 释放在同一补偿事务中提交。
-        这样不会把半完成 Node fact 与 Retry 状态拆成两个提交。
-        """
+        """在独立补偿事务中将 Runtime 异常收敛到 retry_wait 或 failed。"""
         retryable, error_code, error_message = self._classify_failure(exc)
         now = datetime.now(UTC).replace(tzinfo=None)
         async with SessionLocal() as db:
@@ -124,7 +101,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 if version is None:
                     await db.rollback()
                     return
-                policy = self._retry_policy(version)
                 updated_frontier = await schedule_frontier_retry(
                     db,
                     frontier=locked_frontier,
@@ -133,7 +109,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     now=now,
                     error_code=error_code,
                     error_message=error_message,
-                    policy=policy,
+                    policy=self._retry_policy(version),
                 )
                 if updated_frontier.status == "failed":
                     execution_service = WorkflowExecutionService(db)
@@ -144,6 +120,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         error_message=error_message,
                         actor_id=execution.created_by,
                     )
+                    await db.commit()
                     return
                 execution.worker_owner = None
                 execution.worker_lease_expires_at = None
@@ -168,22 +145,10 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 error_message=error_message,
                 actor_id=execution.created_by,
             )
+            await db.commit()
 
     async def execute_frontier(self, frontier: WorkflowFrontier) -> None:
-        """执行一个 Durable Frontier，并在异常时进入统一 Retry / Failed 生命周期。
-
-        Args:
-            frontier: 已由当前 Worker Claim 且携带 fencing generation 的 Frontier。
-
-        Returns:
-            None。成功结果通过当前事务持久化；失败结果通过 Durable Frontier 异常收敛事务持久化。
-
-        Raises:
-            Exception: 异常收敛完成后继续向 dispatch 层传播原始异常，便于 Worker 监控和日志记录。
-
-        事务边界：正常路径由当前 Frontier Runtime 事务负责提交；异常路径先回滚 Runtime 事务，
-        再由 _converge_failure 使用独立事务提交 Retry / Failed 状态，避免半完成事实与异常状态拆分。
-        """
+        """执行一个 Durable Frontier，并通过统一 Progression primitive 完成成功提交。"""
         heartbeat = asyncio.create_task(self._renew_frontier_forever(frontier.id, frontier.attempt))
         try:
             async with SessionLocal() as db:
@@ -222,6 +187,11 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     retry_counter = [0]
                     started = time.monotonic()
                     now = datetime.now(UTC).replace(tzinfo=None)
+                    checkpoint_state: dict = dict(execution.input_data or {})
+                    checkpoint_node_id: str | None = None
+                    checkpoint_node_attempt: int | None = None
+                    checkpoint_node_status: str | None = None
+                    checkpoint_output: dict | None = None
 
                     if version.definition.get("edges"):
                         plan = WorkflowDagResumePlanner.plan(
@@ -229,8 +199,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                             completed_node_ids=completed_ids,
                             state_data_by_node=state_by_node,
                         )
-                        # Scheduled Trigger 历史记录曾以完整 nodes 集合作为首个 Frontier。
-                        # 首次 dispatch 允许该 bootstrap Frontier 包含 Planner root；从第二个 Frontier 起必须严格一致。
                         if completed_ids and tuple(frontier.node_ids) != plan.frontier_node_ids:
                             raise HTTPException(409, "Durable Frontier 与当前 Planner frontier 不一致")
                         branch_state = runtime._build_frontier_branch_states(
@@ -246,14 +214,14 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                             )
                             if not result.join_ready:
                                 raise HTTPException(409, "DAG Multi-frontier Branch 尚未全部完成")
-                            state_data = result.merged_state_data or {}
+                            checkpoint_state = result.merged_state_data or {}
                         elif plan.frontier_node_ids:
-                            node_id = plan.frontier_node_ids[0]
-                            state_data = await runtime._execute_node_with_policy(
+                            checkpoint_node_id = plan.frontier_node_ids[0]
+                            checkpoint_state = await runtime._execute_node_with_policy(
                                 service,
                                 execution,
-                                node_by_id[node_id],
-                                branch_state.get(node_id, dict(execution.input_data or {})),
+                                node_by_id[checkpoint_node_id],
+                                branch_state.get(checkpoint_node_id, dict(execution.input_data or {})),
                                 execution.created_by,
                                 False,
                                 timeout,
@@ -261,8 +229,20 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                                 started,
                                 retry_counter,
                             )
+                            node_execution = (
+                                await db.execute(
+                                    select(WorkflowNodeExecution).where(
+                                        WorkflowNodeExecution.execution_id == execution.id,
+                                        WorkflowNodeExecution.node_id == checkpoint_node_id,
+                                    ).order_by(WorkflowNodeExecution.attempt.desc()).limit(1)
+                                )
+                            ).scalar_one_or_none()
+                            if node_execution is not None:
+                                checkpoint_node_attempt = node_execution.attempt
+                                checkpoint_node_status = node_execution.status
+                                checkpoint_output = dict(node_execution.output_data or {})
                         else:
-                            state_data = dict(execution.output_data or execution.input_data or {})
+                            checkpoint_state = dict(execution.output_data or execution.input_data or {})
 
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}
@@ -283,48 +263,62 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         if not executable_ids:
                             remaining = tuple(node_id for node_id in ordered if node_id not in completed_ids)
                             executable_ids = remaining[:1]
-                        state_data = dict(execution.input_data or {})
+                        checkpoint_state = dict(execution.input_data or {})
                         for node_id in executable_ids:
-                            state_data = await runtime._execute_node_with_policy(
-                                service, execution, node_by_id[node_id], state_data,
+                            checkpoint_node_id = node_id
+                            checkpoint_state = await runtime._execute_node_with_policy(
+                                service, execution, node_by_id[node_id], checkpoint_state,
                                 execution.created_by, False, timeout, max_retries,
                                 started, retry_counter,
                             )
+                            node_execution = (
+                                await db.execute(
+                                    select(WorkflowNodeExecution).where(
+                                        WorkflowNodeExecution.execution_id == execution.id,
+                                        WorkflowNodeExecution.node_id == node_id,
+                                    ).order_by(WorkflowNodeExecution.attempt.desc()).limit(1)
+                                )
+                            ).scalar_one_or_none()
+                            if node_execution is not None:
+                                checkpoint_node_attempt = node_execution.attempt
+                                checkpoint_node_status = node_execution.status
+                                checkpoint_output = dict(node_execution.output_data or {})
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}
                         next_ids = tuple(node_id for node_id in ordered if node_id not in after_ids)[:1]
                         fingerprint = self._bootstrap_fingerprint(execution.id, version.id, ordered)
 
-                    await transition_owned_frontier(
-                        db,
-                        frontier_id=frontier.id,
-                        worker_owner=self.owner,
-                        attempt=frontier.attempt,
-                        target_status="completed",
-                        now=now,
-                    )
+                    next_identity = None
                     if next_ids:
-                        identity = WorkflowFrontierIdentity(
+                        next_identity = WorkflowFrontierIdentity(
                             execution_id=execution.id,
                             workflow_version_id=version.id,
                             decision_fingerprint=fingerprint,
                             node_ids=tuple(next_ids),
                         )
-                        await enqueue_frontier(
-                            db,
-                            tenant_id=frontier.tenant_id,
-                            identity=identity,
-                            node_ids=identity.node_ids,
-                            now=now,
-                        )
-                        await db.commit()
-                    else:
+
+                    await complete_frontier_with_checkpoint(
+                        db,
+                        frontier=frontier,
+                        worker_owner=self.owner,
+                        attempt=frontier.attempt,
+                        checkpoint_state=checkpoint_state,
+                        checkpoint_reason="frontier_completed",
+                        node_id=checkpoint_node_id,
+                        node_attempt=checkpoint_node_attempt,
+                        node_status=checkpoint_node_status,
+                        output_data=checkpoint_output,
+                        next_identity=next_identity,
+                        now=now,
+                    )
+                    if next_identity is None:
                         await service.transition(
                             execution,
                             "completed",
-                            output_data=state_data,
+                            output_data=checkpoint_state,
                             actor_id=execution.created_by,
                         )
+                    await db.commit()
                 except Exception:
                     await db.rollback()
                     raise
