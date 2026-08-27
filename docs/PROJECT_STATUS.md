@@ -32,7 +32,8 @@
 - **Durable Frontier Completion Contract Hardening：`frontier_completed` 在统一 progression primitive 内强制保持 Execution-level snapshot，禁止混入 Node identity/status/input/output：✅**
 - **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活：✅**
 - **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致；stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact：✅**
-- **Durable Frontier Identity Canonicalization：并行 Frontier identity key 现在对 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier：✅ 本轮**
+- **Durable Frontier Identity Canonicalization：并行 Frontier identity key 现在对 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier：✅**
+- **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再调用会提前 `commit()` 的通用 Execution transition；Frontier、`frontier_completed` Checkpoint、Execution `completed` 及 Next Frontier 现在由同一 progression transaction 统一提交或回滚：✅ 本轮**
 
 ## 当前实现边界
 
@@ -44,8 +45,12 @@ WorkflowFrontierIdentity
   └── canonical Node-set identity key
   ↓
 complete_frontier_with_checkpoint()
+  ├── current Frontier → completed
+  ├── one frontier_completed Checkpoint
+  ├── terminal Execution → completed（终态 Frontier）
+  └── deterministic Next Frontier（非终态）
   ↓
-Durable Frontier
+唯一 COMMIT / ROLLBACK
   ↓
 Execution-aware Worker Claim
   ↓
@@ -65,20 +70,12 @@ WorkflowRuntime
   ↓
 Node / Checkpoint durable facts
   ↓
-frontier_completed
-  ↓
-Next Frontier
-  ↓
-Execution terminalization
-  ↓
-Checkpoint lifecycle guard
-  ↓
 Recovery / Replay
 ```
 
 ## 当前开发策略
 
-暂停完整测试流程，只保留 Unit Test 实现作为当前开发验证范围。Backend Full Regression、Frontend Release Gate、Browser E2E、Real API Acceptance 暂不阻塞主线。不得把未执行测试写成通过。
+**继续暂停完整测试流程，优先完成全部主线任务。** 当前仅实现 Unit Test，不执行 pytest、Backend Full Regression、Frontend Release Gate、Browser E2E、Real API Acceptance；全部主线生产代码完成后，再统一启动测试与验收流程。不得把未执行测试写成通过。
 
 ## 最新执行限制
 
@@ -86,22 +83,22 @@ Recovery / Replay
 
 ## 下一主线
 
-继续收口 Next Frontier / Execution terminalization / Recovery consistency，重点检查：
+继续收口：
 
 ```text
-Frontier completion
-  ↓
 Next Frontier deterministic identity
-  ↓
+        ↓
 Execution terminalization
-  ↓
-Checkpoint durable write
-  ↓
+        ↓
 Expired Frontier Recovery
-  ↓
+        ↓
 Worker Claim / Fencing
-  ↓
-Recovery / Replay
+        ↓
+Recovery re-entry
+        ↓
+Replay convergence
+        ↓
+Phase 2.7 主线完成
 ```
 
 核心不变量：
@@ -112,14 +109,16 @@ Recovery / Replay
 - Checkpoint 的 `execution_status` 必须与锁定后的当前 Execution status 一致；
 - Next Frontier 的 deterministic identity 与 tenant / workflow version / execution lineage 必须继续保持单一事实来源；
 - 同一 Execution / Version / Decision 下，等价并行 Node 集合必须收敛到同一个 Frontier identity；
-- stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact。
+- stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact；
+- **终态 Frontier 的 Frontier、Checkpoint、Execution terminalization 必须共享同一数据库事务，不允许普通 commit 型状态入口提前提交。**
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier.py`
-- `backend/tests/unit/test_frontier_identity.py`
+- `backend/app/services/workflow/frontier_progression.py`
+- `backend/app/services/workflow_worker/durable_frontier_execution.py`
+- `backend/tests/unit/test_frontier_terminalization_contract.py`
 - `docs/PROJECT_STATUS.md`
 - `docs/02-phases/PHASE_2_7.md`
-- `docs/04-errors/2026-08-27-frontier-identity-canonicalization.md`
+- `docs/04-errors/2026-08-27-frontier-terminalization-transaction-boundary.md`
 
 **Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
