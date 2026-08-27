@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from time import monotonic
 from uuid import UUID
 
 from sqlalchemy import select
@@ -20,6 +21,7 @@ from app.services.workflow.checkpoint.recovery.observability import (
     RECOVERY_ATTEMPT,
     WorkflowRecoveryEvent,
     WorkflowRecoveryEventLogger,
+    WorkflowRecoveryTelemetry,
 )
 from app.services.workflow.checkpoint.recovery.policy import (
     WorkflowExecutionRecoveryDecision,
@@ -48,13 +50,16 @@ class WorkflowExecutionAutomaticRecoveryService:
         db: AsyncSession,
         policy: WorkflowExecutionRecoveryPolicy | None = None,
         event_logger: WorkflowRecoveryEventLogger | None = None,
+        telemetry: WorkflowRecoveryTelemetry | None = None,
     ):
         self.db = db
         self.policy = WorkflowExecutionRecoveryPolicyEvaluator(policy)
         self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
         self.checkpoint = WorkflowExecutionCheckpointService(db)
         self.resume_contract = WorkflowExecutionResumeContractService(db)
+        # 保留 event_logger 兼容现有调用方，同时把新 telemetry 作为统一出口。
         self.event_logger = event_logger or WorkflowRecoveryEventLogger(logging.getLogger(__name__))
+        self.telemetry = telemetry or WorkflowRecoveryTelemetry(event_logger=self.event_logger)
 
     async def _count_resume_ancestors(self, execution: WorkflowExecution) -> int:
         """沿 Resume lineage 统计该 Execution 之前已经发生的恢复链长度。"""
@@ -106,9 +111,12 @@ class WorkflowExecutionAutomaticRecoveryService:
         self,
         execution: WorkflowExecution,
         result: WorkflowExecutionAutomaticRecoveryResult,
+        *,
+        trace_id: str | None = None,
+        duration_ms: float | None = None,
     ) -> None:
         """输出一次 Recovery attempt 事件；事件不包含业务 payload。"""
-        self.event_logger.emit(
+        self.telemetry.emit(
             WorkflowRecoveryEvent(
                 event_name=RECOVERY_ATTEMPT,
                 execution_id=execution.id,
@@ -117,6 +125,9 @@ class WorkflowExecutionAutomaticRecoveryService:
                 reason_code=result.decision.reason_code,
                 attempt_count=result.decision.attempt_count,
                 max_attempts=result.decision.max_attempts,
+                trace_id=trace_id,
+                phase="automatic_recovery",
+                duration_ms=duration_ms,
             )
         )
 
@@ -128,13 +139,27 @@ class WorkflowExecutionAutomaticRecoveryService:
         now: datetime | None = None,
     ) -> WorkflowExecutionAutomaticRecoveryResult:
         """执行一次受策略约束的自动 Resume，并返回可区分的恢复结果。"""
+        started = monotonic()
+        trace_id = self.telemetry.start_trace(
+            execution_id=execution.id,
+            phase="automatic_recovery",
+        )
         result = await self.evaluate(execution, now=now)
         if not result.decision.eligible:
             rejected = WorkflowExecutionAutomaticRecoveryResult(
                 decision=result.decision,
                 outcome="rejected",
             )
-            self._emit_attempt(execution, rejected)
+            duration_ms = (monotonic() - started) * 1000
+            self._emit_attempt(execution, rejected, trace_id=trace_id, duration_ms=duration_ms)
+            self.telemetry.finish_trace(
+                trace_id,
+                execution_id=execution.id,
+                outcome=rejected.outcome,
+                reason_code=rejected.decision.reason_code,
+                phase="automatic_recovery",
+                duration_ms=duration_ms,
+            )
             return rejected
 
         resume_result = await self.resume_contract.resume_with_outcome(
@@ -146,5 +171,15 @@ class WorkflowExecutionAutomaticRecoveryService:
             resume_execution_id=resume_result.execution.id,
             outcome=resume_result.outcome,
         )
-        self._emit_attempt(execution, recovered)
+        duration_ms = (monotonic() - started) * 1000
+        self._emit_attempt(execution, recovered, trace_id=trace_id, duration_ms=duration_ms)
+        self.telemetry.finish_trace(
+            trace_id,
+            execution_id=execution.id,
+            resume_execution_id=recovered.resume_execution_id,
+            outcome=recovered.outcome,
+            reason_code=recovered.decision.reason_code,
+            phase="automatic_recovery",
+            duration_ms=duration_ms,
+        )
         return recovered
