@@ -20,6 +20,7 @@ class WorkflowRecoveryTraceLinkService:
     """持久化 Recovery → Resume Execution 的 trace lineage。"""
 
     EVENT_TYPE = "recovery.trace_linked"
+    DAG_DECISION_EVENT = "workflow.dag.frontier_decided"
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -72,6 +73,39 @@ class WorkflowRecoveryTraceLinkService:
         await self.db.commit()
         await self.db.refresh(event)
         return event
+
+    async def assert_dag_decision_replay_consistent(
+        self,
+        execution: WorkflowExecution,
+        trace_id: str,
+        completed_node_ids: list[str],
+        decision_fingerprint: str,
+    ) -> None:
+        """校验同一 Recovery trace 下相同 durable completed facts 的 Decision fingerprint。
+
+        Recovery replay 允许 workflow 继续产生新的 frontier，但同一个 durable snapshot
+        不能产生两个不同的 Decision identity。该检查只读取 Trace metadata，不把 Trace
+        当作业务 state source of truth；真正的 state 仍来自 NodeExecution / Checkpoint。
+        """
+        result = await self.db.execute(
+            select(WorkflowTraceEvent.data)
+            .where(
+                WorkflowTraceEvent.tenant_id == execution.tenant_id,
+                WorkflowTraceEvent.workflow_version_id == execution.workflow_version_id,
+                WorkflowTraceEvent.trace_id == trace_id,
+                WorkflowTraceEvent.event_type == self.DAG_DECISION_EVENT,
+            )
+            .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
+        )
+        for data in result.scalars().all():
+            if not isinstance(data, dict):
+                continue
+            previous_completed = data.get("completed_node_ids")
+            previous_fingerprint = data.get("decision_id")
+            if previous_completed == completed_node_ids and previous_fingerprint and previous_fingerprint != decision_fingerprint:
+                raise ValueError(
+                    "DAG Recovery Decision fingerprint 不一致：同一 durable completed facts 产生了不同 Decision"
+                )
 
     async def get_trace_id(self, resume_execution: WorkflowExecution) -> str | None:
         """从持久化 Recovery lineage 恢复 Resume Execution 对应的 trace_id。
