@@ -114,6 +114,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 state_data=state_data,
                 branch_state_data=branch_state_data if len(plan.frontier_node_ids) > 1 else None,
                 state_data_by_node=state_data_by_node,
+                resume_plan=plan,
             )
             await self._record_dag_frontier_decision(
                 execution,
