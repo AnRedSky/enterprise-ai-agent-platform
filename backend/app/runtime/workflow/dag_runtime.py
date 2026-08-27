@@ -10,7 +10,9 @@ from __future__ import annotations
 from time import monotonic
 
 from fastapi import HTTPException
+from sqlalchemy import select
 
+from app.models.workflow_execution import WorkflowNodeExecution
 from app.runtime.workflow.runtime import WorkflowRuntime as BaseWorkflowRuntime
 from app.services.workflow.checkpoint.recovery import WorkflowDagContractValidator, WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlanner
@@ -34,6 +36,28 @@ class WorkflowRuntime(BaseWorkflowRuntime):
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
         return nodes
+
+    async def _load_completed_resume_nodes(self, execution) -> list[WorkflowNodeExecution]:
+        """读取当前 Execution 与 Resume Source 的完成事实。
+
+        Args:
+            execution: 当前 Workflow Execution。
+
+        Returns:
+            当前 Execution 与 Resume Source 的已完成 NodeExecution。
+
+        设计意图：NodeExecution 表没有独立 tenant_id 列，tenant boundary 已由关联的 Execution 身份确定；
+        因此这里必须按 execution_id 收敛事实，不能引用不存在的 NodeExecution.tenant_id 字段。
+        """
+        execution_ids = [execution.id]
+        source_execution_id = getattr(execution, "resume_of_execution_id", None)
+        if source_execution_id is not None:
+            execution_ids.insert(0, source_execution_id)
+        query = select(WorkflowNodeExecution).where(
+            WorkflowNodeExecution.execution_id.in_(execution_ids),
+            WorkflowNodeExecution.status == "completed",
+        ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
+        return list((await self.db.execute(query)).scalars().all())
 
     async def _record_dag_frontier_decision(self, execution, version_definition: dict, plan, actor_id, trace_link=None) -> None:
         """将 Planner 的确定性 decision fingerprint 持久化为可审计 Trace fact，并校验 replay 一致性。"""
