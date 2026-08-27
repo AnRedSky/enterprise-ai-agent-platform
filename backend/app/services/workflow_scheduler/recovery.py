@@ -23,6 +23,7 @@ from app.services.workflow.checkpoint.recovery.observability import (
     WorkflowRecoveryEventLogger,
 )
 from app.services.workflow.checkpoint.recovery.policy import WorkflowExecutionRecoveryPolicy
+from app.services.workflow_scheduler.trace import SchedulerTraceContext, WorkflowSchedulerTraceService
 
 logger = logging.getLogger(__name__)
 event_logger = WorkflowRecoveryEventLogger(logger)
@@ -54,6 +55,7 @@ class WorkflowRecoveryScheduler:
         scan_limit: int = DEFAULT_SCAN_LIMIT,
         policy: WorkflowExecutionRecoveryPolicy | None = None,
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+        trace_service: WorkflowSchedulerTraceService | None = None,
     ):
         if isinstance(scan_limit, bool) or not 1 <= scan_limit <= self.MAX_SCAN_LIMIT:
             raise ValueError(f"scan_limit 必须在 1-{self.MAX_SCAN_LIMIT} 范围内")
@@ -62,22 +64,28 @@ class WorkflowRecoveryScheduler:
         self.scan_limit = scan_limit
         self.policy = policy or WorkflowExecutionRecoveryPolicy()
         self.poll_interval_seconds = poll_interval_seconds
+        self.trace_service = trace_service or WorkflowSchedulerTraceService()
         self._stop_event = asyncio.Event()
 
     async def scan_once(self, now: datetime | None = None) -> WorkflowRecoveryScanResult:
         """执行一次全租户 Recovery Scan，并让 Domain 决定每个候选是否可恢复。"""
         current = now or datetime.now(UTC)
-        async with SessionLocal() as discovery_db:
-            query = (
-                select(WorkflowExecution.id)
-                .where(
-                    WorkflowExecution.status == "failed",
-                    WorkflowExecution.worker_owner.is_(None),
+        trace_context = self.trace_service.start_scan(occurred_at=current)
+        try:
+            async with SessionLocal() as discovery_db:
+                query = (
+                    select(WorkflowExecution.id)
+                    .where(
+                        WorkflowExecution.status == "failed",
+                        WorkflowExecution.worker_owner.is_(None),
+                    )
+                    .order_by(WorkflowExecution.ended_at.asc().nulls_last(), WorkflowExecution.id.asc())
+                    .limit(self.scan_limit)
                 )
-                .order_by(WorkflowExecution.ended_at.asc().nulls_last(), WorkflowExecution.id.asc())
-                .limit(self.scan_limit)
-            )
-            execution_ids = list((await discovery_db.execute(query)).scalars().all())
+                execution_ids = list((await discovery_db.execute(query)).scalars().all())
+        except Exception:
+            self.trace_service.finish_scan(trace_context, failed=1, occurred_at=current)
+            raise
 
         counters = {
             "eligible": 0,
@@ -101,7 +109,11 @@ class WorkflowRecoveryScheduler:
                         continue
 
                     service = WorkflowExecutionAutomaticRecoveryService(db, self.policy)
-                    recovery = await service.recover(execution, now=current)
+                    recovery = await service.recover(
+                        execution,
+                        now=current,
+                        parent_trace_id=trace_context.trace_id,
+                    )
                     if recovery.decision.eligible:
                         counters["eligible"] += 1
                     else:
@@ -125,6 +137,16 @@ class WorkflowRecoveryScheduler:
                 )
 
         result = WorkflowRecoveryScanResult(candidates=len(execution_ids), **counters)
+        self.trace_service.finish_scan(
+            trace_context,
+            candidates=result.candidates,
+            eligible=result.eligible,
+            recovered=result.recovered,
+            rejected=result.rejected,
+            contention=result.contention,
+            failed=result.failed,
+            occurred_at=current,
+        )
         event_logger.emit(
             WorkflowRecoveryEvent(
                 event_name=RECOVERY_SCAN_COMPLETED,
@@ -135,6 +157,8 @@ class WorkflowRecoveryScheduler:
                 contention=result.contention,
                 failed=result.failed,
                 scan_limit=self.scan_limit,
+                trace_id=trace_context.trace_id,
+                phase="scheduler",
                 occurred_at=current,
             )
         )
