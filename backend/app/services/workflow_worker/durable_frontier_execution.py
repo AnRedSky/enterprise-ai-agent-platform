@@ -2,7 +2,7 @@
 
 职责：把单个 Durable Frontier 接入现有 WorkflowRuntime 的 Planner / Node 执行能力，并将运行异常统一收敛到 Frontier Retry / Failed 生命周期。
 边界：不复制 Runtime、Planner、Checkpoint 或 Retry 算法；只编排一次 Frontier dispatch 及异常状态收敛。
-关键依赖：DurableFrontierWorkflowWorker、WorkflowRuntime、WorkflowDagResumePlanner、Frontier Repository、Frontier Progression、Frontier Retry Policy。
+关键依赖：DurableFrontierWorkflowWorker、WorkflowRuntime、WorkflowDagResumePlanner、WorkflowDagMultiFrontierExecutor、Frontier Repository、Frontier Progression、Frontier Retry Policy。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from app.models.workflow import WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
+from app.services.workflow.checkpoint.recovery.dag_executor import WorkflowDagMultiFrontierExecutor
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_progression import complete_frontier_with_checkpoint
@@ -61,6 +62,65 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             max_attempts=max(1, max_retries + 1),
             base_delay_seconds=float(retry_budget.get("base_delay_seconds", 1.0)),
             max_delay_seconds=float(retry_budget.get("max_delay_seconds", 300.0)),
+        )
+
+    async def _execute_multi_frontier_without_checkpoint(
+        self,
+        runtime: WorkflowRuntime,
+        service,
+        execution,
+        plan,
+        branch_state_data,
+        actor_id,
+        is_admin,
+        workflow_timeout,
+        max_retries,
+        started,
+        workflow_retry_counter,
+    ):
+        """执行 Multi-frontier，但把 Checkpoint 持久化交给 Durable Frontier progression。
+
+        Args:
+            runtime: 唯一 WorkflowRuntime 实例，提供 Node 执行与 Retry 策略。
+            service: 当前 Execution Service。
+            execution: 当前 Workflow Execution。
+            plan: 已确定的 DAG frontier plan。
+            branch_state_data: Planner 计算出的各 Branch 输入状态。
+            actor_id: 当前执行操作者。
+            is_admin: 是否使用管理员执行权限。
+            workflow_timeout: Workflow 总超时时间，单位毫秒。
+            max_retries: Workflow Retry budget。
+            started: Runtime 开始时间。
+            workflow_retry_counter: 当前 Runtime 已消耗的 Retry 次数。
+
+        Returns:
+            Multi-frontier Executor 结果。Branch NodeExecution 仍写入当前事务，
+            但不提前追加 `frontier_completed` Checkpoint；外层 progression 会把 Frontier、
+            Checkpoint 与 Next Frontier 一次性提交，避免同一 frontier 产生两个完成快照。
+        """
+        async def execute_branch(node, input_data):
+            return await runtime._execute_node_with_policy(
+                service,
+                execution,
+                node,
+                input_data,
+                actor_id,
+                is_admin,
+                workflow_timeout,
+                max_retries,
+                started,
+                workflow_retry_counter,
+            )
+
+        async def checkpoint_branch(node_id, output):
+            if not isinstance(output, dict):
+                raise ValueError(f"DAG frontier Node {node_id} Checkpoint state 必须为对象")
+
+        return await WorkflowDagMultiFrontierExecutor.execute(
+            plan,
+            branch_state_data=branch_state_data,
+            executor=execute_branch,
+            checkpoint_writer=checkpoint_branch,
         )
 
     async def _converge_failure(self, frontier: WorkflowFrontier, exc: Exception) -> None:
@@ -177,8 +237,8 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                             plan.selected_predecessor_node_ids,
                         ) if completed_ids else {}
                         if len(plan.frontier_node_ids) > 1:
-                            result = await runtime._execute_multi_frontier(
-                                service, execution, plan, branch_state, execution.created_by, False,
+                            result = await self._execute_multi_frontier_without_checkpoint(
+                                runtime, service, execution, plan, branch_state, execution.created_by, False,
                                 timeout, max_retries, started, retry_counter,
                             )
                             if not result.join_ready:
