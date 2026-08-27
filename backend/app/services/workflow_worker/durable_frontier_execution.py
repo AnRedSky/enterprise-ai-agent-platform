@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import WorkflowVersion
-from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier, WorkflowNodeExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
@@ -163,10 +163,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     started = time.monotonic()
                     now = datetime.now(UTC).replace(tzinfo=None)
                     checkpoint_state: dict = dict(execution.input_data or {})
-                    checkpoint_node_id: str | None = None
-                    checkpoint_node_attempt: int | None = None
-                    checkpoint_node_status: str | None = None
-                    checkpoint_output: dict | None = None
 
                     if version.definition.get("edges"):
                         plan = WorkflowDagResumePlanner.plan(
@@ -196,18 +192,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                                 execution.created_by, False, timeout, max_retries,
                                 started, retry_counter,
                             )
-                            node_execution = (
-                                await db.execute(
-                                    select(WorkflowNodeExecution).where(
-                                        WorkflowNodeExecution.execution_id == execution.id,
-                                        WorkflowNodeExecution.node_id == checkpoint_node_id,
-                                    ).order_by(WorkflowNodeExecution.attempt.desc()).limit(1)
-                                )
-                            ).scalar_one_or_none()
-                            if node_execution is not None:
-                                checkpoint_node_attempt = node_execution.attempt
-                                checkpoint_node_status = node_execution.status
-                                checkpoint_output = dict(node_execution.output_data or {})
                         else:
                             checkpoint_state = dict(execution.output_data or execution.input_data or {})
                         completed_after = await runtime._load_completed_resume_nodes(execution)
@@ -231,24 +215,11 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                             executable_ids = remaining[:1]
                         checkpoint_state = dict(execution.input_data or {})
                         for node_id in executable_ids:
-                            checkpoint_node_id = node_id
                             checkpoint_state = await runtime._execute_node_with_policy(
                                 service, execution, node_by_id[node_id], checkpoint_state,
                                 execution.created_by, False, timeout, max_retries,
                                 started, retry_counter,
                             )
-                            node_execution = (
-                                await db.execute(
-                                    select(WorkflowNodeExecution).where(
-                                        WorkflowNodeExecution.execution_id == execution.id,
-                                        WorkflowNodeExecution.node_id == node_id,
-                                    ).order_by(WorkflowNodeExecution.attempt.desc()).limit(1)
-                                )
-                            ).scalar_one_or_none()
-                            if node_execution is not None:
-                                checkpoint_node_attempt = node_execution.attempt
-                                checkpoint_node_status = node_execution.status
-                                checkpoint_output = dict(node_execution.output_data or {})
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}
                         next_ids = tuple(node_id for node_id in ordered if node_id not in after_ids)[:1]
@@ -263,8 +234,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     await complete_frontier_with_checkpoint(
                         db, frontier=frontier, worker_owner=self.owner, attempt=frontier.attempt,
                         checkpoint_state=checkpoint_state, checkpoint_reason="frontier_completed",
-                        node_id=checkpoint_node_id, node_attempt=checkpoint_node_attempt,
-                        node_status=checkpoint_node_status, output_data=checkpoint_output,
                         next_identity=next_identity, now=now,
                     )
                     if next_identity is None:
