@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import WorkflowVersion
@@ -105,6 +105,33 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             checkpoint_writer=checkpoint_branch,
         )
 
+    async def _mark_active_sibling_frontiers_failed(
+        self,
+        db,
+        execution: WorkflowExecution,
+        *,
+        now: datetime,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        """Execution 进入 failed 时，同事务关闭仍可消费的 sibling Frontier。"""
+        await db.execute(
+            update(WorkflowFrontier)
+            .where(
+                WorkflowFrontier.tenant_id == execution.tenant_id,
+                WorkflowFrontier.execution_id == execution.id,
+                WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
+            )
+            .values(
+                status="failed",
+                completed_at=now,
+                worker_owner=None,
+                worker_lease_expires_at=None,
+                error_code=error_code,
+                error_message=error_message,
+            )
+        )
+
     async def _mark_execution_failed_in_transaction(
         self,
         db,
@@ -114,10 +141,13 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         error_code: str,
         error_message: str,
     ) -> None:
-        """在当前 Frontier failure 事务内 terminalize Execution。"""
+        """在当前 Frontier failure 事务内 terminalize Execution，并关闭其活动 sibling Frontier。"""
         if execution.status in {"completed", "failed", "cancelled"}:
             if execution.status != "failed":
                 raise HTTPException(409, f"Execution 已进入终态 {execution.status}，拒绝重复 failure")
+            await self._mark_active_sibling_frontiers_failed(
+                db, execution, now=now, error_code=error_code, error_message=error_message,
+            )
             return
         if execution.status not in {"pending", "running"}:
             raise HTTPException(409, f"Execution 当前状态 {execution.status} 不允许 failure terminalization")
@@ -129,6 +159,9 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         execution.error_message = error_message
         execution.worker_owner = None
         execution.worker_lease_expires_at = None
+        await self._mark_active_sibling_frontiers_failed(
+            db, execution, now=now, error_code=error_code, error_message=error_message,
+        )
         actor_id = execution.created_by
         governance = WorkflowGovernanceService(db)
         await governance.trace(
