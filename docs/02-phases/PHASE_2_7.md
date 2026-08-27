@@ -48,18 +48,25 @@ existing Branch / Join / Runtime
 新增：
 
 ```text
+backend/tests/unit/test_workflow_condition_evaluator.py
 backend/tests/unit/test_workflow_conditional_branching.py
 ```
 
-覆盖：
+`test_workflow_condition_evaluator.py` 覆盖：
 
-- 严格类型比较；
-- 数字比较；
-- 字符串 / 数组 contains；
-- 缺失 path；
-- and / or / not；
-- 非法字段与结构；
-- 深度 / 节点数限制；
+- `eq / ne / gt / gte / lt / lte`；
+- 严格 JSON 类型比较，特别是 `bool` 与 `number`；
+- `in` 严格元素匹配；
+- 字符串 / 数组 `contains`；
+- 缺失 path 与显式 `null`；
+- `and / or / not` 短路求值；
+- 数组 / 对象递归严格相等；
+- 非法字段、结构、path 与缺失 `value`；
+- 非对象 Runtime state；
+- Condition 深度 / 节点数限制。
+
+`test_workflow_conditional_branching.py` 覆盖：
+
 - condition frontier；
 - default fallback；
 - 多条件同时命中顺序；
@@ -68,7 +75,7 @@ backend/tests/unit/test_workflow_conditional_branching.py
 - 混合 edge / 多 default Contract 拒绝；
 - 缺失持久化 source state 拒绝。
 
-**本轮当前执行环境未运行本地 pytest，因此不得记录 Unit Test 为 PASS。** 按当前开发策略，完整 Backend / Frontend / Browser / Real API Gate 继续暂停，不作为主线阻塞条件。
+**当前运行环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。** 按当前开发策略，完整 Backend / Frontend / Browser / Real API Gate 继续暂停，不作为主线阻塞条件。
 
 ## 4. 下一交付
 
