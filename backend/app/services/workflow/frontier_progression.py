@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -148,8 +149,7 @@ async def complete_frontier_with_checkpoint(
         output_data=output_data,
     )
 
-    # 第一阶段：先验证并锁定当前 Frontier。只有当前 fencing generation 仍有效，
-    # 才允许写入 Checkpoint；因此 stale Worker 不会产生新的持久化事实。
+    # 第一阶段：先锁定当前 Frontier，保证只有匹配的 Worker ownership/fencing 才能完成它。
     await transition_owned_frontier(
         db,
         frontier_id=frontier.id,
@@ -159,11 +159,10 @@ async def complete_frontier_with_checkpoint(
         now=now,
     )
 
-    # 第二阶段：终态 Frontier 必须先在同一事务内把 Execution 切换为 completed，
-    # 因为 Checkpoint Durable Write 会锁定 Execution 并要求快照状态与当前状态一致。
-    # 这里绝不 commit；后续 Checkpoint / Next Frontier 任一阶段失败都会整体 rollback。
+    # 第二阶段：终态 Frontier 必须在同一事务内先完成 Execution terminalization，
+    # 再写入 completed Checkpoint；任何后续失败都必须随外层事务整体回滚。
     if next_identity is None:
-        execution_query = (
+        execution_result = await db.execute(
             select(WorkflowExecution)
             .where(
                 WorkflowExecution.id == frontier.execution_id,
@@ -171,7 +170,6 @@ async def complete_frontier_with_checkpoint(
             )
             .with_for_update()
         )
-        execution_result = await db.execute(execution_query)
         execution = execution_result.scalar_one_or_none()
         if execution is None:
             raise FrontierProgressionContractError("Frontier 对应的 Workflow Execution 不存在")
@@ -205,8 +203,7 @@ async def complete_frontier_with_checkpoint(
             metadata={"frontier_id": str(frontier.id)},
         )
 
-    # 第三阶段：同一事务中追加不可变 Checkpoint。Checkpoint Service 会锁定 Execution，
-    # 并串行分配 sequence，同时再次校验 Execution owner/generation。
+    # 第三阶段：同一事务中追加不可变 Checkpoint。
     checkpoint_service = WorkflowExecutionCheckpointService(db)
     checkpoint = await checkpoint_service.append_next_in_transaction(
         execution_id=frontier.execution_id,
