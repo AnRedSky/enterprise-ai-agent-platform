@@ -1,0 +1,79 @@
+name: one-shot-runtime-transaction-migration
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: ${{ !contains(github.event.head_commit.message, '[runtime-transaction-migration]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Apply runtime transaction ownership boundary
+        shell: python
+        run: |
+          from pathlib import Path
+
+          execution = Path('backend/app/services/workflow/execution.py')
+          text = execution.read_text(encoding='utf-8')
+          old = '''    async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,\n                              input_data: dict | None = None, output_data: dict | None = None,\n                              error_code: str | None = None, error_message: str | None = None) -> WorkflowNodeExecution:\n'''
+          new = '''    async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,\n                              input_data: dict | None = None, output_data: dict | None = None,\n                              error_code: str | None = None, error_message: str | None = None,\n                              *, commit: bool = True) -> WorkflowNodeExecution:\n'''
+          if old not in text:
+              raise SystemExit('transition_node signature anchor not found')
+          text = text.replace(old, new, 1)
+          old = '''        await self.db.commit()\n        await self.db.refresh(node)\n        return node\n\n    async def run('''
+          new = '''        if commit:\n            await self.db.commit()\n            await self.db.refresh(node)\n        return node\n\n    async def run('''
+          if old not in text:
+              raise SystemExit('transition_node commit anchor not found')
+          text = text.replace(old, new, 1)
+          execution.write_text(text, encoding='utf-8')
+
+          runtime = Path('backend/app/runtime/workflow/runtime.py')
+          text = runtime.read_text(encoding='utf-8')
+          replacements = [
+              ('await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded")',
+               'await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded", commit=False)'),
+              ('await service.transition_node(execution, node["id"], "running", input_data=current_data)',
+               'await service.transition_node(execution, node["id"], "running", input_data=current_data, commit=False)'),
+              ('await service.transition_node(execution, node["id"], "completed", output_data=output)',
+               'await service.transition_node(execution, node["id"], "completed", output_data=output, commit=False)'),
+              ('await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code=error_code, error_message=error_message)',
+               'await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code=error_code, error_message=error_message, commit=False)'),
+          ]
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f'runtime transition anchor not found: {old}')
+              text = text.replace(old, new, 1)
+          runtime.write_text(text, encoding='utf-8')
+
+          test = Path('backend/tests/unit/test_workflow_runtime_transaction_boundary.py')
+          test.parent.mkdir(parents=True, exist_ok=True)
+          test.write_text('''from __future__ import annotations\n\nimport inspect\n\nfrom app.services.workflow.execution import WorkflowExecutionService\n\n\ndef test_transition_node_exposes_explicit_commit_ownership() -> None:\n    parameter = inspect.signature(WorkflowExecutionService.transition_node).parameters["commit"]\n    assert parameter.default is True\n    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY\n''', encoding='utf-8')
+
+          status = Path('docs/PROJECT_STATUS.md')
+          status_text = status.read_text(encoding='utf-8')
+          marker = '- Recovery Commit Ownership Boundary：**已完成；Resume Domain Service 支持显式 `commit=False`，HTTP Recovery endpoint 负责调用方事务的唯一 commit。**\n'
+          addition = marker + '- Runtime Durable Commit Ownership：**本轮完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由 `WorkflowExecutionService.run()` 的最终 completed/failed transition 统一提交。**\n'
+          if marker not in status_text:
+              raise SystemExit('PROJECT_STATUS marker not found')
+          status.write_text(status_text.replace(marker, addition, 1), encoding='utf-8')
+
+          error = Path('docs/04-errors/2026-08-27-runtime-durable-commit-ownership.md')
+          error.write_text('''# Runtime Durable Commit Ownership\n\n## Problem\n\n`WorkflowRuntime` previously called `transition_node()` without an explicit transaction contract, while `transition_node()` committed every NodeExecution/Checkpoint transition. That allowed a completed branch to become durable before the Runtime had finished the current execution frontier.\n\n## Fix\n\n`transition_node(..., commit=False)` is now the Runtime contract. NodeExecution state changes, governance trace, and completed-node Checkpoint writes remain in the caller transaction. The outer `WorkflowExecutionService.run()` commits through the final `completed` or `failed` Execution transition.\n\n## Invariant\n\n```text\nRuntime node transition\n  -> NodeExecution\n  -> Trace\n  -> Checkpoint\n  -> no intermediate commit\n  -> Execution completed/failed transition\n  -> single durable commit\n```\n\nDirect legacy callers retain the default `commit=True` behavior.\n''', encoding='utf-8')
+
+          workflow = Path('.github/workflows/one-shot-runtime-transaction-migration.yml')
+          workflow.unlink()
+      - name: Commit migration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/app/services/workflow/execution.py backend/app/runtime/workflow/runtime.py backend/tests/unit/test_workflow_runtime_transaction_boundary.py docs/PROJECT_STATUS.md docs/04-errors/2026-08-27-runtime-durable-commit-ownership.md .github/workflows/one-shot-runtime-transaction-migration.yml
+          git commit -m "fix(workflow): close runtime durable commit boundary [runtime-transaction-migration]"
+          git push
