@@ -1,9 +1,4 @@
-"""Durable Frontier progression contract and atomic persistence boundary。
-
-职责：在调用方事务内，将当前 Frontier 的成功结果固化为 Checkpoint，并幂等创建下一 Frontier。
-边界：不负责 DAG Planner；next_identity 必须由调用方提供并保持确定性。
-事务：本模块绝不 commit，当前 Frontier、Checkpoint、Next Frontier、Execution terminalization 必须在同一外层事务中提交。
-"""
+"""Durable Frontier progression contract and atomic persistence boundary。"""
 
 from __future__ import annotations
 
@@ -30,7 +25,6 @@ def validate_frontier_progression_contract(
     checkpoint_reason: str = "frontier_completed", node_id: str | None = None, node_attempt: int | None = None,
     node_status: str | None = None, input_data: dict | None = None, output_data: dict | None = None,
 ) -> None:
-    """在任何持久化动作前校验 Frontier progression 的最终一致性边界。"""
     if execution_status not in {"running", "completed"}:
         raise FrontierProgressionContractError(f"成功 Frontier 只能对应 running/completed Execution: {execution_status}")
     if checkpoint_reason == "frontier_completed" and any(
@@ -58,7 +52,6 @@ def validate_frontier_progression_contract(
 async def _assert_next_frontier_has_no_active_node_overlap(
     db: AsyncSession, *, frontier: WorkflowFrontier, next_identity: WorkflowFrontierIdentity,
 ) -> None:
-    """证明下一 Frontier 不会与同一 Execution 的其他活动 Frontier 重复消费 Node。"""
     result = await db.execute(
         select(WorkflowFrontier).where(
             WorkflowFrontier.tenant_id == frontier.tenant_id,
@@ -69,8 +62,7 @@ async def _assert_next_frontier_has_no_active_node_overlap(
     )
     next_nodes = set(next_identity.node_ids)
     for active in result.scalars().all():
-        active_nodes = set(active.node_ids or [])
-        overlap = next_nodes & active_nodes
+        overlap = next_nodes & set(active.node_ids or [])
         if overlap:
             ordered = ", ".join(sorted(overlap))
             raise FrontierProgressionContractError(
@@ -78,11 +70,29 @@ async def _assert_next_frontier_has_no_active_node_overlap(
             )
 
 
+async def _assert_no_active_sibling_frontiers_for_terminal_execution(
+    db: AsyncSession, *, frontier: WorkflowFrontier,
+) -> None:
+    """Execution terminalization 前证明不存在仍可消费的同 Execution sibling Frontier。"""
+    result = await db.execute(
+        select(WorkflowFrontier.id).where(
+            WorkflowFrontier.tenant_id == frontier.tenant_id,
+            WorkflowFrontier.execution_id == frontier.execution_id,
+            WorkflowFrontier.id != frontier.id,
+            WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
+        )
+    )
+    sibling_id = result.scalar_one_or_none()
+    if sibling_id is not None:
+        raise FrontierProgressionContractError(
+            "Execution 不得在仍存在活动 sibling Frontier 时进入 completed terminalization"
+        )
+
+
 async def _resolve_completed_frontier_idempotency(
     db: AsyncSession, *, frontier: WorkflowFrontier, worker_owner: str, checkpoint_state: dict,
     checkpoint_reason: str, next_identity: WorkflowFrontierIdentity | None,
 ) -> tuple[WorkflowExecutionCheckpoint, WorkflowFrontier | None] | None:
-    """只根据 source Frontier 精确收敛重复 completion，禁止跨并行 Frontier 误认最新 Checkpoint。"""
     result = await db.execute(
         select(WorkflowFrontier).where(
             WorkflowFrontier.id == frontier.id, WorkflowFrontier.tenant_id == frontier.tenant_id,
@@ -91,7 +101,6 @@ async def _resolve_completed_frontier_idempotency(
     current = result.scalar_one_or_none()
     if current is None or current.status != "completed":
         return None
-
     checkpoint_result = await db.execute(
         select(WorkflowExecutionCheckpoint).where(
             WorkflowExecutionCheckpoint.execution_id == current.execution_id,
@@ -104,24 +113,12 @@ async def _resolve_completed_frontier_idempotency(
         raise FrontierProgressionContractError("已完成 Frontier 缺少绑定 source Frontier 的 completion Checkpoint，拒绝再次 completion")
     if checkpoint.state_data != checkpoint_state or checkpoint.worker_owner != worker_owner:
         raise FrontierProgressionContractError("重复 completion 的 Checkpoint payload 与既有 Durable fact 不一致")
-
-    # Replay 必须复现第一次 terminalization 的生命周期边界：
-    # running checkpoint 必须仍然带有 Next Frontier；completed checkpoint 必须明确是 Execution terminalization。
-    # 不能因为调用方第二次 replay 时省略 next_identity，就把一次“有后继 Frontier”的 completion
-    # 错误收敛成“无后继”的另一种 durable 结果。
     if checkpoint.execution_status == "running" and next_identity is None:
-        raise FrontierProgressionContractError(
-            "既有 completion Checkpoint 表明 Execution 仍在 running，Replay 必须提供原始 Next Frontier identity"
-        )
+        raise FrontierProgressionContractError("既有 completion Checkpoint 表明 Execution 仍在 running，Replay 必须提供原始 Next Frontier identity")
     if checkpoint.execution_status == "completed" and next_identity is not None:
-        raise FrontierProgressionContractError(
-            "既有 completion Checkpoint 已 terminalize Execution，Replay 不得追加 Next Frontier identity"
-        )
+        raise FrontierProgressionContractError("既有 completion Checkpoint 已 terminalize Execution，Replay 不得追加 Next Frontier identity")
     if checkpoint.execution_status not in {"running", "completed"}:
-        raise FrontierProgressionContractError(
-            f"completion Checkpoint 的 execution_status 非法，拒绝 Replay convergence: {checkpoint.execution_status}"
-        )
-
+        raise FrontierProgressionContractError(f"completion Checkpoint 的 execution_status 非法，拒绝 Replay convergence: {checkpoint.execution_status}")
     next_frontier = None
     if next_identity is not None:
         next_result = await db.execute(
@@ -141,7 +138,6 @@ async def _resolve_completed_frontier_idempotency(
             raise FrontierProgressionContractError("既有 Next Frontier 的 decision fingerprint 与原 completion 不一致")
         if set(next_frontier.node_ids or []) != set(next_identity.node_ids):
             raise FrontierProgressionContractError("既有 Next Frontier 的 Node 集合与原 completion 不一致")
-
     return checkpoint, next_frontier
 
 
@@ -152,7 +148,6 @@ async def complete_frontier_with_checkpoint(
     error_code: str | None = None, error_message: str | None = None,
     next_identity: WorkflowFrontierIdentity | None = None, now: datetime, actor_id: UUID | None = None,
 ) -> tuple[WorkflowExecutionCheckpoint, WorkflowFrontier | None]:
-    """原子完成当前 Frontier、追加 Checkpoint、Terminalize Execution 并幂等创建 Next Frontier。"""
     execution_status = "running" if next_identity is not None else "completed"
     validate_frontier_progression_contract(
         frontier=frontier, next_identity=next_identity, execution_status=execution_status,
@@ -165,7 +160,6 @@ async def complete_frontier_with_checkpoint(
     )
     if existing is not None:
         return existing
-
     execution_result = await db.execute(
         select(WorkflowExecution).where(
             WorkflowExecution.id == frontier.execution_id,
@@ -180,12 +174,12 @@ async def complete_frontier_with_checkpoint(
         raise FrontierProgressionContractError("Execution Worker ownership 已失效")
     if execution.worker_lease_expires_at is None or execution.worker_lease_expires_at <= now:
         raise FrontierProgressionContractError("Execution Worker lease 已失效")
-
+    if next_identity is None:
+        await _assert_no_active_sibling_frontiers_for_terminal_execution(db, frontier=frontier)
     await transition_owned_frontier(
         db, frontier_id=frontier.id, worker_owner=worker_owner, attempt=attempt,
         target_status="completed", now=now,
     )
-
     if next_identity is None:
         if execution.status != "running":
             raise FrontierProgressionContractError(f"终态 Frontier 只能从 running Execution 收敛: {execution.status}")
@@ -205,7 +199,6 @@ async def complete_frontier_with_checkpoint(
             execution, audit_actor, "workflow.execution.completed", "success",
             metadata={"frontier_id": str(frontier.id), "worker_attempt": execution_worker_attempt},
         )
-
     checkpoint_service = WorkflowExecutionCheckpointService(db)
     checkpoint = await checkpoint_service.append_next_in_transaction(
         execution_id=frontier.execution_id, execution_status=execution_status, state_data=checkpoint_state,
@@ -216,12 +209,9 @@ async def complete_frontier_with_checkpoint(
         expected_worker_attempt=execution_worker_attempt if next_identity is not None else None,
         frontier_id=frontier.id if checkpoint_reason == "frontier_completed" else None,
     )
-
     next_frontier = None
     if next_identity is not None:
-        await _assert_next_frontier_has_no_active_node_overlap(
-            db, frontier=frontier, next_identity=next_identity,
-        )
+        await _assert_next_frontier_has_no_active_node_overlap(db, frontier=frontier, next_identity=next_identity)
         next_frontier = await enqueue_frontier(
             db, tenant_id=frontier.tenant_id, identity=next_identity, node_ids=next_identity.node_ids, now=now,
         )
