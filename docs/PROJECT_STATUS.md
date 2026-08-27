@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 本轮最新代码提交：`fd5f691ed53ddce66644024afff56c577158bf39`。
-- 本轮已完成：**Conditional Branching Durable Recovery 的 Conditional Decision Trace 持久化**；Runtime 现在把 Planner 的 deterministic frontier / selected predecessor metadata 作为 `workflow.dag.frontier_decided` Trace fact 持久化，但不写入业务 state_data，Recovery source of truth 仍为 PostgreSQL completed Node / Checkpoint facts。
+- 本轮最新代码提交：`d163ae8e70269bb74c575d8972dacbb80738af33`。
+- 本轮已完成：**Durable Resume Contract 的 Checkpoint tenant scope 收敛**；Resume Contract 在锁定 Source Execution 后，Checkpoint lookup 现在强制携带当前 `tenant_id`，避免 Recovery Domain 的正式 Resume 路径重新退回无租户边界读取。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -30,7 +30,8 @@
 - Conditional Join 只消费 Planner selected predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
-- Runtime 现在持久化 `workflow.dag.frontier_decided` decision metadata，包含 deterministic `decision_id`、completed Node、frontier 与 selected predecessor；
+- Resume Contract 在 Source Execution row lock 后再次强制使用 `locked_execution.tenant_id` 查询最新 Checkpoint；
+- Runtime 持久化 `workflow.dag.frontier_decided` decision metadata，包含 deterministic `decision_id`、completed Node、frontier 与 selected predecessor；
 - Decision Trace 不保存业务 state_data，不能替代 PostgreSQL durable facts；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
 
@@ -56,7 +57,8 @@ Phase 2.7-A Conditional Branching
   ├── Conditional Join             ✅
   ├── Durable tenant boundary      ✅
   ├── Checkpoint tenant boundary   ✅
-  ├── Conditional Decision Trace   ✅ 本轮完成
+  ├── Conditional Decision Trace   ✅
+  ├── Resume Contract tenant scope ✅ 本轮完成
   ├── Unit Test 实际执行            ⏳
   └── Real API acceptance           ⏸ 暂停
           ↓
