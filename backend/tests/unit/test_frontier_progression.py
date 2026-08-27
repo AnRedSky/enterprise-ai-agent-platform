@@ -71,7 +71,7 @@ def test_progression_contract_requires_running_execution_with_next_frontier() ->
 
 
 @pytest.mark.asyncio
-async def test_complete_frontier_with_checkpoint_is_atomic_and_idempotent() -> None:
+async def test_complete_frontier_with_checkpoint_keeps_execution_checkpoint_free_of_node_fact() -> None:
     db = AsyncMock()
     frontier = _frontier()
     next_identity = WorkflowFrontierIdentity(
@@ -96,11 +96,7 @@ async def test_complete_frontier_with_checkpoint_is_atomic_and_idempotent() -> N
             worker_owner="worker-a",
             attempt=4,
             checkpoint_state={"node": "node-a"},
-            checkpoint_reason="node_completed",
-            node_id="node-a",
-            node_attempt=1,
-            node_status="completed",
-            output_data={"value": 1},
+            checkpoint_reason="frontier_completed",
             next_identity=next_identity,
             now=now,
         )
@@ -110,6 +106,13 @@ async def test_complete_frontier_with_checkpoint_is_atomic_and_idempotent() -> N
     append.assert_awaited_once()
     enqueue.assert_awaited_once()
     assert transition.await_args.kwargs["target_status"] == "completed"
+    assert append.await_args.kwargs["checkpoint_reason"] == "frontier_completed"
+    assert append.await_args.kwargs["node_id"] is None
+    assert append.await_args.kwargs["node_attempt"] is None
+    assert append.await_args.kwargs["node_status"] is None
+    assert append.await_args.kwargs["output_data"] is None
+    assert append.await_args.kwargs["expected_worker_owner"] == "worker-a"
+    assert append.await_args.kwargs["expected_worker_attempt"] == 4
     assert enqueue.await_args.kwargs["tenant_id"] == frontier.tenant_id
     assert enqueue.await_args.kwargs["node_ids"] == ("node-b",)
     db.commit.assert_not_awaited()
@@ -133,7 +136,7 @@ async def test_complete_frontier_with_checkpoint_rejects_cross_execution_next_fr
             worker_owner="worker-a",
             attempt=1,
             checkpoint_state={},
-            checkpoint_reason="node_completed",
+            checkpoint_reason="frontier_completed",
             next_identity=next_identity,
             now=datetime(2026, 8, 27, 8, 0),
         )
@@ -141,7 +144,7 @@ async def test_complete_frontier_with_checkpoint_rejects_cross_execution_next_fr
 
 
 @pytest.mark.asyncio
-async def test_complete_terminal_frontier_creates_checkpoint_without_next_frontier() -> None:
+async def test_complete_terminal_frontier_creates_execution_checkpoint_without_node_fact() -> None:
     db = AsyncMock()
     frontier = _frontier()
     checkpoint = MagicMock()
@@ -157,10 +160,13 @@ async def test_complete_terminal_frontier_creates_checkpoint_without_next_fronti
             worker_owner="worker-a",
             attempt=2,
             checkpoint_state={"done": True},
-            checkpoint_reason="workflow_completed",
+            checkpoint_reason="frontier_completed",
             now=datetime(2026, 8, 27, 8, 0),
         )
 
     assert result == (checkpoint, None)
     enqueue.assert_not_awaited()
     assert append.await_args.kwargs["execution_status"] == "completed"
+    assert append.await_args.kwargs["node_id"] is None
+    assert append.await_args.kwargs["node_attempt"] is None
+    assert append.await_args.kwargs["node_status"] is None
