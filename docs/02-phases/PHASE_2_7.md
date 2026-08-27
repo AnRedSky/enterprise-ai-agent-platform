@@ -52,6 +52,8 @@ Recovery Resume
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
 - Resume Contract 在 Source Execution row lock 后再次强制使用 `locked_execution.tenant_id` 查询最新 Checkpoint；
 - Runtime 持久化 `workflow.dag.frontier_decided` decision metadata；
+- Planner 生成 deterministic `decision_fingerprint`，并绑定 completed Node facts、条件 source state、frontier 与 selected predecessor；
+- Runtime Plan 显式携带 Planner fingerprint，Runtime 不复制 Decision identity 计算逻辑；
 - Decision Trace 不保存业务 `state_data`，不能替代 PostgreSQL durable facts；
 - Multi-frontier Executor 只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state 并声明 `join_ready=true`；
 - 未提供 Checkpoint writer 时仍可收集 Branch execution result，但保持 `join_ready=false` 且不生成 merged state；
@@ -67,9 +69,10 @@ Planner 得到：
 completed_node_ids
 frontier_node_ids
 selected_predecessor_node_ids
+condition source state
 ```
 
-Runtime 将这些可重建 metadata 持久化为 `workflow.dag.frontier_decided` Trace fact，并使用 deterministic `decision_id` 支持审计与消费端去重。
+Runtime 将这些可重建 metadata 持久化为 `workflow.dag.frontier_decided` Trace fact，并使用 Planner 生成的 deterministic `decision_fingerprint` 支持审计与 replay 对账。
 
 **不持久化业务 `state_data`。** Trace 不是 Recovery source of truth。
 
@@ -92,7 +95,7 @@ PostgreSQL
        selected frontier
 ```
 
-`workflow.dag.frontier_decided` 只能用于审计，Worker 重启后仍必须从 durable Node / Checkpoint facts 重新计算 frontier。
+`workflow.dag.frontier_decided` 只能用于审计与 replay consistency guard，Worker 重启后仍必须从 durable Node / Checkpoint facts 重新计算 frontier。
 
 ### 3.3 Tenant Boundary
 
@@ -140,6 +143,42 @@ join_ready = true
 
 因此 Join readiness 不再可能仅凭内存中的 Branch output 推断。
 
+### 3.6 Recovery Frontier Replay Guard
+
+同一 Recovery trace 下，如果 Planner 再次面对相同的 durable `completed_node_ids`，必须得到相同的 `decision_fingerprint`：
+
+```text
+Worker #1
+  ↓
+Durable completed facts
+  ↓
+Planner
+  ↓
+Fingerprint = F1
+  ↓
+Trace
+  ↓
+Worker crash
+  ↓
+Worker #2
+  ↓
+同一 durable completed facts
+  ↓
+Planner
+  ↓
+Fingerprint = F1       → 允许继续
+```
+
+若相同 durable completed facts 得到不同 fingerprint：
+
+```text
+Recovery Decision Inconsistency
+        ↓
+立即拒绝继续该 Recovery Decision
+```
+
+Replay Guard 只读取 Trace metadata 做一致性对账，不把 Trace 当作业务状态来源；实际条件计算仍以 PostgreSQL Node / Checkpoint facts 为准。
+
 ## 4. 单元测试
 
 已有：
@@ -152,15 +191,20 @@ backend/tests/unit/test_workflow_dag_runtime_initialization.py
 backend/tests/unit/test_workflow_checkpoint_tenant_scope.py
 backend/tests/unit/test_workflow_dag_decision_trace.py
 backend/tests/unit/test_workflow_resume_contract_tenant_scope.py
+backend/tests/unit/test_workflow_dag_executor_checkpoint_gate.py
 ```
 
 本轮新增：
 
 ```text
-backend/tests/unit/test_workflow_dag_executor_checkpoint_gate.py
+backend/tests/unit/test_workflow_dag_replay_guard.py
 ```
 
-覆盖单 frontier / Multi-frontier 在缺少 Checkpoint writer 时不得声明 Join ready，以及所有 Branch checkpoint 成功后才能产生 merged state。
+覆盖：
+
+- 相同 durable completed facts + 相同 fingerprint → 允许 replay；
+- 相同 durable completed facts + 不同 fingerprint → 抛出 Recovery Decision Inconsistency；
+- Guard 使用 tenant + workflow version + trace_id 限定对账范围。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
@@ -179,13 +223,15 @@ NodeExecution tenant boundary   ✅
 Checkpoint tenant boundary      ✅
 Conditional Decision Trace      ✅
 Resume Contract tenant scope    ✅
-Branch Checkpoint Gate          ✅ 本轮完成
+Branch Checkpoint Gate          ✅
+Decision Fingerprint             ✅
+Runtime Plan fingerprint         ✅
+Recovery Frontier Replay Guard   ✅ 本轮完成
         ↓
 Durable Recovery Closure
         ├── Checkpoint fact 完整性       ← 继续
         ├── Conditional decision 可重建性 ← 继续
-        ├── Trace lineage 连续性         ← 继续
-        └── Recovery 后 frontier 一致性   ← 继续
+        └── Trace lineage 连续性         ← 继续
         ↓
 Phase 2.7-A Closure
         ↓
