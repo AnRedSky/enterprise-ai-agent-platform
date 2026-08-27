@@ -36,7 +36,8 @@
 - **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再通过会提前 `commit()` 的普通 Execution transition 完成 terminalization；Frontier、`frontier_completed` Checkpoint、Execution `completed` 与 Next Frontier 现在由同一 progression transaction 统一提交或回滚：✅**
 - **Durable Frontier Terminalization Ownership Recheck：终态 Frontier 在 Execution terminalization 前再次锁定并校验当前 Worker owner / fencing generation，防止 Frontier 已被占有但 Execution owner 已变更时旧 Worker 结束 Execution：✅**
 - **Durable Frontier Duplicate Completion Convergence：重复 completion 在已提交 Frontier 上先校验既有 `frontier_completed` Durable fact 与 payload/owner；一致时直接返回既有 Checkpoint 与 Next Frontier，drift 或不完整链路立即拒绝，不再重复生成 completion fact：✅**
-- **Durable Frontier Recovery Execution Lease Guard：Frontier lease 过期不再单独触发 Recovery；关联 Execution 仍持有有效 owner/lease 时保持原 Frontier，不允许第二个 Worker 抢占形成双重消费窗口：✅ 本轮**
+- **Durable Frontier Recovery Execution Lease Guard：Frontier lease 过期不再单独触发 Recovery；关联 Execution 仍持有有效 owner/lease 时保持原 Frontier，不允许第二个 Worker 抢占形成双重消费窗口：✅**
+- **Durable Frontier Claim Head-of-Line Guard：Worker 不再仅按最早 Frontier 选择 tenant；tenant candidate 现在复用与实际 Claim 相同的 Execution eligibility predicate，避免最早 Frontier 被其他 Worker 有效 Execution lease 阻塞时，连带阻塞其他 tenant 中可立即执行的 Frontier：✅ 本轮**
 
 ## 当前实现边界
 
@@ -57,6 +58,8 @@ complete_frontier_with_checkpoint()
 唯一 COMMIT / ROLLBACK
   ↓
 Execution-aware Worker Claim
+  ├── tenant candidate 与 Claim 使用同一 Execution eligibility
+  └── blocked tenant 不阻塞其他可执行 tenant
   ↓
 Execution Ownership / Fencing
   ↓
@@ -109,22 +112,23 @@ Phase 2.7 主线完成
 
 - completed / failed / cancelled Execution 不得重新产生可消费 Frontier；
 - 旧 Worker lease 到期只能回收仍属于可恢复 Execution 的 Frontier；
-- **Frontier lease 过期但 Execution lease 仍有效时不得 Recovery；**
+- Frontier lease 过期但 Execution lease 仍有效时不得 Recovery；
 - Recovery 不得改变已经 terminalize 的 Execution 状态；
 - Checkpoint 的 `execution_status` 必须与锁定后的当前 Execution status 一致；
 - Next Frontier 的 deterministic identity 与 tenant / workflow version / execution lineage 必须继续保持单一事实来源；
 - 同一 Execution / Version / Decision 下，等价并行 Node 集合必须收敛到同一个 Frontier identity；
 - stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact；
-- **终态 Frontier 的 Frontier、Checkpoint、Execution terminalization 必须共享同一数据库事务，不允许普通 commit 型状态入口提前提交；**
-- **终态 Frontier terminalization 前必须再次证明 Frontier owner、Execution owner 与 fencing generation 属于同一 Worker epoch；**
-- **已提交 Frontier 的重复 completion 必须幂等返回同一 Durable Checkpoint / Next Frontier；payload drift、缺失 Next Frontier 或缺失 completion Checkpoint 必须拒绝收敛；**
-- **Recovery 只有在 Frontier lease 与关联 Execution ownership 同时失效后才能把 Frontier 重新放入 retry 队列。**
+- 终态 Frontier 的 Frontier、Checkpoint、Execution terminalization 必须共享同一数据库事务，不允许普通 commit 型状态入口提前提交；
+- 终态 Frontier terminalization 前必须再次证明 Frontier owner、Execution owner 与 fencing generation 属于同一 Worker epoch；
+- 已提交 Frontier 的重复 completion 必须幂等返回同一 Durable Checkpoint / Next Frontier；payload drift、缺失 Next Frontier 或缺失 completion Checkpoint 必须拒绝收敛；
+- Recovery 只有在 Frontier lease 与关联 Execution ownership 同时失效后才能把 Frontier 重新放入 retry 队列；
+- **Worker tenant candidate 必须与实际 Frontier Claim 使用相同的 Execution eligibility 规则，不得因单个 tenant 的 blocked Frontier 形成全局 Head-of-Line Blocking。**
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier_repository.py`
-- `backend/tests/unit/test_frontier_recovery_lease_guard.py`
+- `backend/app/services/workflow_worker/frontier_runtime.py`
+- `backend/tests/unit/test_frontier_tenant_candidate.py`
 - `docs/PROJECT_STATUS.md`
-- `docs/04-errors/2026-08-27-frontier-recovery-execution-lease-guard.md`
+- `docs/04-errors/2026-08-27-frontier-claim-head-of-line-blocking.md`
 
 **Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
