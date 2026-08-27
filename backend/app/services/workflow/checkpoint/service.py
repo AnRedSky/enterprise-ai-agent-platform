@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -86,7 +87,7 @@ class WorkflowExecutionCheckpointService:
         locked_attempt = int(execution.worker_attempt or 0)
         if execution.worker_owner != expected_worker_owner or locked_attempt != expected_worker_attempt:
             raise HTTPException(409, "Checkpoint Worker ownership 或 fencing generation 已失效")
-        now = __import__("datetime").datetime.now(__import__("datetime").UTC).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         if execution.worker_lease_expires_at is None or execution.worker_lease_expires_at <= now:
             raise HTTPException(409, "Checkpoint Worker lease 已失效")
 
