@@ -4,6 +4,8 @@ from app.services.workflow_worker.lease_guard import (
     WorkflowWorkerLeaseGuard,
     WorkflowWorkerLeaseLost,
 )
-from app.services.workflow_worker.runtime import WorkflowWorker
+from app.services.workflow_worker.lease_runtime import LeaseAwareWorkflowWorker
 
-__all__ = ["WorkflowWorker", "WorkflowWorkerLeaseGuard", "WorkflowWorkerLeaseLost"]
+WorkflowWorker = LeaseAwareWorkflowWorker
+
+__all__ = ["WorkflowWorker", "WorkflowWorkerLeaseGuard", "WorkflowWorkerLeaseLost", "LeaseAwareWorkflowWorker"]
