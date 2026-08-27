@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Recovery / Replay Checkpoint Node Fact lineage 收敛**；Automatic Recovery 与 Resume Contract 在生成 Recovery Candidate 前统一使用 `latest_recovery_fact()`，强制 Node-level Checkpoint 与同一 Execution 的 Durable Node Fact 在 status / attempt / output_data 上保持一致。
+- 本轮已完成：**Recovery / Replay Resume Checkpoint lineage 收敛**；Resume Bootstrap 在复制 Durable Node Facts 前重新读取 Source 的 `latest_recovery_fact()`，强制 `resume_checkpoint_sequence` 与实际 Source Checkpoint sequence 一致，明确 Source lineage 与 Resume 自身未来 Checkpoint sequence 的语义隔离。
 - Durable Recovery Resume Trace 原子事务闭环已完成；Automatic Recovery 现在将 Resume 创建、completed Node lineage、首个 Durable Frontier 与 `recovery.trace_linked` 在同一外层事务中提交，避免恢复审计事实与 Resume durable state 分裂。
 - Durable Resume 现在固定 Source Workflow Version，使用 `execution_id + checkpoint_sequence` 生成确定性 Resume idempotency key；并通过 Resume Bootstrap 计算首个 Planner frontier。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
@@ -17,7 +17,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环、Join predecessor Contract、Resume tenant boundary 以及 Recovery Checkpoint Node Fact lineage guard。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环、Join predecessor Contract、Resume tenant boundary、Recovery Checkpoint Node Fact lineage guard 以及 Resume Checkpoint lineage guard。**
 
 ## Phase 2.7 当前实现
 
@@ -37,6 +37,7 @@
 - Resume Contract 创建 Resume 时使用 `commit=False`，随后由 `WorkflowExecutionResumeBootstrapService` 在同一事务复制 completed Node lineage 并 enqueue 首个 Frontier；
 - Resume Contract 支持 caller-owned commit，Automatic Recovery 将 Resume、Bootstrap 与 trace link 放入同一外层事务；
 - Resume Bootstrap 固定 Source Workflow Version，不复制新的 Runtime/Planner；DAG 使用 `WorkflowDagResumePlanner` 计算首个 frontier，无 Edge 顺序 Workflow 按 Definition 顺序选择下一个未完成 Node；
+- Resume Bootstrap 现在在 Node lineage 复制前重新读取 Source `latest_recovery_fact()`，并强制 `resume_checkpoint_sequence == source_checkpoint.sequence`；该字段只表示 Source lineage，不作为 Resume 自身新 Checkpoint 的序号；
 - Runtime 持久化 `workflow.dag.frontier_decided` decision metadata；
 - Planner 生成 deterministic `decision_fingerprint`，同时绑定 completed Node facts、条件 source state、frontier 与 selected predecessor；
 - Runtime Plan 显式携带 Planner fingerprint，Runtime 不再复制 Decision identity 计算逻辑；
@@ -113,11 +114,11 @@ Durable Frontier Scheduling
   ├── Recovery Trace atomic transaction  ✅
   ├── Join predecessor contract         ✅
   ├── Resume tenant boundary            ✅
-  └── Recovery Node Fact lineage guard  ✅ 本轮
+  └── Recovery Node Fact lineage guard  ✅
           ↓
 继续主线直到全部任务完成
 ```
 
-下一主线：**Recovery / Replay Closure**，继续收敛 Resume Checkpoint sequence / Source checkpoint lineage、Recovery fencing generation、Replay identity、旧 Worker late-write 防护以及 Multi-frontier Join Recovery 的完整生命周期。
+下一主线：**Recovery / Replay Closure**，继续收敛 Recovery fencing generation、Replay identity、旧 Worker late-write 防护以及 Multi-frontier Join Recovery 的完整生命周期。
 
 Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint → Next Frontier → Recovery 生命周期。

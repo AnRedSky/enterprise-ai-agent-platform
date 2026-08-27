@@ -8,6 +8,7 @@ import pytest
 
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.services.workflow.checkpoint.recovery import WorkflowExecutionCheckpointRecoveryService
+from app.services.workflow.checkpoint.recovery.resume_bootstrap import _validate_resume_checkpoint_lineage
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
 
@@ -175,3 +176,16 @@ def test_assert_node_fact_complete_rejects_output_drift() -> None:
             checkpoint=checkpoint,
             node_execution=node_execution,
         )
+
+
+def test_validate_resume_checkpoint_lineage_accepts_matching_sequence() -> None:
+    """Resume 指向实际 Source Checkpoint 时允许继续 Bootstrap。"""
+    _validate_resume_checkpoint_lineage(source_checkpoint_sequence=3, resume_checkpoint_sequence=3)
+
+
+def test_validate_resume_checkpoint_lineage_rejects_missing_or_drifted_sequence() -> None:
+    """Resume 未绑定 Source Checkpoint 或序号漂移时必须拒绝 Bootstrap。"""
+    with pytest.raises(ValueError, match="缺少 Source Checkpoint"):
+        _validate_resume_checkpoint_lineage(source_checkpoint_sequence=3, resume_checkpoint_sequence=None)
+    with pytest.raises(ValueError, match="sequence 不一致"):
+        _validate_resume_checkpoint_lineage(source_checkpoint_sequence=3, resume_checkpoint_sequence=4)

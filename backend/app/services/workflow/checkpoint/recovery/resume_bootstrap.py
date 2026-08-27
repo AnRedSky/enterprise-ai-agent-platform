@@ -2,7 +2,7 @@
 
 职责：把 Source Execution 的已完成 Node Durable Facts 复制到新的 Resume Execution，并计算首个 Resume Frontier。
 边界：不启动 Runtime、不执行 Node；只在调用方事务中完成 Resume lineage 的 durable bootstrap 与 Frontier 入队。
-关键依赖：WorkflowDagResumePlanner、WorkflowFrontierIdentity、WorkflowFrontier Repository、WorkflowNodeExecution。
+关键依赖：WorkflowDagResumePlanner、WorkflowFrontierIdentity、WorkflowFrontier Repository、WorkflowNodeExecution、WorkflowExecutionCheckpointService。
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
+from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier
@@ -38,11 +39,34 @@ def _validate_resume_tenant_scope(*, source_execution: WorkflowExecution, resume
         raise ValueError("Resume Execution 与 Source Execution 必须属于同一 tenant")
 
 
+def _validate_resume_checkpoint_lineage(*, source_checkpoint_sequence: int, resume_checkpoint_sequence: int | None) -> None:
+    """校验 Resume 必须明确指向创建它的 Source Checkpoint 序号。
+
+    Args:
+        source_checkpoint_sequence: Source Execution 最新可恢复 Checkpoint 的 sequence。
+        resume_checkpoint_sequence: Resume Execution 持久化记录的 Source Checkpoint sequence。
+
+    Returns:
+        None：两个序号一致时正常返回。
+
+    Raises:
+        ValueError: Resume 未记录 Source Checkpoint 序号或序号与实际 Source Checkpoint 不一致。
+
+    设计意图：Resume Checkpoint sequence 表示 Source lineage，而不是 Resume 自身未来 Checkpoint 的序号；
+    Bootstrap 必须再次验证这一关系，避免绕过 Resume Contract 的调用方直接产生错误 lineage。
+    """
+    if resume_checkpoint_sequence is None:
+        raise ValueError("Resume Execution 缺少 Source Checkpoint sequence")
+    if resume_checkpoint_sequence != source_checkpoint_sequence:
+        raise ValueError("Resume Checkpoint lineage 与 Source Checkpoint sequence 不一致")
+
+
 class WorkflowExecutionResumeBootstrapService:
     """在 Resume Execution 创建后建立 completed Node lineage 与首个 Durable Frontier。"""
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
+        self.checkpoint = WorkflowExecutionCheckpointService(db)
 
     async def bootstrap(
         self,
@@ -62,7 +86,7 @@ class WorkflowExecutionResumeBootstrapService:
             tuple[str, ...]: 首个 Resume Frontier 的有序 Node IDs。
 
         Raises:
-            ValueError: Source/Resume lineage、租户、Workflow Version 或 completed Node facts 不一致。
+            ValueError: Source/Resume lineage、租户、Workflow Version、Checkpoint lineage 或 completed Node facts 不一致。
 
         事务边界：本方法不 commit；调用方必须将 Node lineage 与 Frontier enqueue 与 Resume 创建放入同一事务。
         """
@@ -76,6 +100,17 @@ class WorkflowExecutionResumeBootstrapService:
             raise ValueError("Resume Execution 必须固定 Source Workflow Version")
         if resume_execution.status != "pending":
             raise ValueError("只有 pending Resume Execution 才能进行 Bootstrap")
+
+        source_checkpoint = await self.checkpoint.latest_recovery_fact(
+            source_execution.id,
+            tenant_id=source_execution.tenant_id,
+        )
+        if source_checkpoint is None:
+            raise ValueError("Resume Source Checkpoint 不存在")
+        _validate_resume_checkpoint_lineage(
+            source_checkpoint_sequence=source_checkpoint.sequence,
+            resume_checkpoint_sequence=resume_execution.resume_checkpoint_sequence,
+        )
 
         version = (
             await self.db.execute(
@@ -150,7 +185,7 @@ class WorkflowExecutionResumeBootstrapService:
         else:
             ordered_ids = tuple(node["id"] for node in version.definition.get("nodes", []))
             next_ids = tuple(node_id for node_id in ordered_ids if node_id not in completed_ids)[:1]
-            fingerprint = f"resume:{source_execution.id}:{resume_execution.resume_checkpoint_sequence or 0}"
+            fingerprint = f"resume:{source_execution.id}:{resume_checkpoint_sequence if (resume_checkpoint_sequence := resume_execution.resume_checkpoint_sequence) is not None else 0}"
 
         if not next_ids:
             raise ValueError("Resume Bootstrap 没有可调度 Frontier；Source Checkpoint 与 Node facts 不一致")
