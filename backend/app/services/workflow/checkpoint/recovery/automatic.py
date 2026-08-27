@@ -59,7 +59,6 @@ class WorkflowExecutionAutomaticRecoveryService:
         self.checkpoint = WorkflowExecutionCheckpointService(db)
         self.resume_contract = WorkflowExecutionResumeContractService(db)
         self.trace_link = WorkflowRecoveryTraceLinkService(db)
-        # 保留 event_logger 兼容现有调用方，同时把新 telemetry 作为统一出口。
         self.event_logger = event_logger or WorkflowRecoveryEventLogger(logging.getLogger(__name__))
         self.telemetry = telemetry or WorkflowRecoveryTelemetry(event_logger=self.event_logger)
 
@@ -115,6 +114,7 @@ class WorkflowExecutionAutomaticRecoveryService:
         result: WorkflowExecutionAutomaticRecoveryResult,
         *,
         trace_id: str | None = None,
+        parent_trace_id: str | None = None,
         duration_ms: float | None = None,
     ) -> None:
         """输出一次 Recovery attempt 事件；事件不包含业务 payload。"""
@@ -128,6 +128,7 @@ class WorkflowExecutionAutomaticRecoveryService:
                 attempt_count=result.decision.attempt_count,
                 max_attempts=result.decision.max_attempts,
                 trace_id=trace_id,
+                parent_trace_id=parent_trace_id,
                 phase="automatic_recovery",
                 duration_ms=duration_ms,
             )
@@ -139,12 +140,14 @@ class WorkflowExecutionAutomaticRecoveryService:
         *,
         actor_id: UUID | None = None,
         now: datetime | None = None,
+        parent_trace_id: str | None = None,
     ) -> WorkflowExecutionAutomaticRecoveryResult:
         """执行一次受策略约束的自动 Resume，并返回可区分的恢复结果。"""
         started = monotonic()
         trace_id = self.telemetry.start_trace(
             execution_id=execution.id,
             phase="automatic_recovery",
+            parent_trace_id=parent_trace_id,
         )
         result = await self.evaluate(execution, now=now)
         if not result.decision.eligible:
@@ -153,13 +156,14 @@ class WorkflowExecutionAutomaticRecoveryService:
                 outcome="rejected",
             )
             duration_ms = (monotonic() - started) * 1000
-            self._emit_attempt(execution, rejected, trace_id=trace_id, duration_ms=duration_ms)
+            self._emit_attempt(execution, rejected, trace_id=trace_id, parent_trace_id=parent_trace_id, duration_ms=duration_ms)
             self.telemetry.finish_trace(
                 trace_id,
                 execution_id=execution.id,
                 outcome=rejected.outcome,
                 reason_code=rejected.decision.reason_code,
                 phase="automatic_recovery",
+                parent_trace_id=parent_trace_id,
                 duration_ms=duration_ms,
             )
             return rejected
@@ -180,7 +184,7 @@ class WorkflowExecutionAutomaticRecoveryService:
             actor_id or execution.created_by,
         )
         duration_ms = (monotonic() - started) * 1000
-        self._emit_attempt(execution, recovered, trace_id=trace_id, duration_ms=duration_ms)
+        self._emit_attempt(execution, recovered, trace_id=trace_id, parent_trace_id=parent_trace_id, duration_ms=duration_ms)
         self.telemetry.finish_trace(
             trace_id,
             execution_id=execution.id,
@@ -188,6 +192,7 @@ class WorkflowExecutionAutomaticRecoveryService:
             outcome=recovered.outcome,
             reason_code=recovered.decision.reason_code,
             phase="automatic_recovery",
+            parent_trace_id=parent_trace_id,
             duration_ms=duration_ms,
         )
         return recovered
