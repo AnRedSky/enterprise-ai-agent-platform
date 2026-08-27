@@ -107,6 +107,65 @@ class WorkflowRecoveryTraceLinkService:
                     "DAG Recovery Decision fingerprint 不一致：同一 durable completed facts 产生了不同 Decision"
                 )
 
+    async def record_dag_decision(
+        self,
+        execution: WorkflowExecution,
+        trace_id: str | None,
+        actor_id: UUID | None,
+        decision_id: str,
+        completed_node_ids: list[str],
+        frontier_node_ids: list[str],
+        selected_predecessors: list[dict[str, object]],
+    ) -> WorkflowTraceEvent | None:
+        """幂等持久化 DAG frontier decision，并保持 Decision Trace 不重复增长。
+
+        Decision identity 由 Planner 生成。相同 execution + tenant + trace + decision_id 只保留
+        一个事件；该事件仍然只保存审计 metadata，不保存业务 state_data。
+        """
+        if not trace_id:
+            return None
+
+        existing = (
+            await self.db.execute(
+                select(WorkflowTraceEvent)
+                .where(
+                    WorkflowTraceEvent.execution_id == execution.id,
+                    WorkflowTraceEvent.tenant_id == execution.tenant_id,
+                    WorkflowTraceEvent.workflow_version_id == execution.workflow_version_id,
+                    WorkflowTraceEvent.trace_id == trace_id,
+                    WorkflowTraceEvent.event_type == self.DAG_DECISION_EVENT,
+                    WorkflowTraceEvent.data["decision_id"].as_string() == decision_id,
+                )
+                .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+
+        event = WorkflowTraceEvent(
+            tenant_id=execution.tenant_id,
+            execution_id=execution.id,
+            workflow_id=execution.workflow_id,
+            workflow_version_id=execution.workflow_version_id,
+            event_type=self.DAG_DECISION_EVENT,
+            status=execution.status,
+            trace_id=trace_id,
+            actor_id=actor_id,
+            data={
+                "decision_id": decision_id,
+                "workflow_version_id": str(getattr(execution, "workflow_version_id", "")),
+                "completed_node_ids": completed_node_ids,
+                "frontier_node_ids": frontier_node_ids,
+                "selected_predecessors": selected_predecessors,
+            },
+        )
+        self.db.add(event)
+        await self.db.flush()
+        await self.db.commit()
+        await self.db.refresh(event)
+        return event
+
     async def get_trace_id(self, resume_execution: WorkflowExecution) -> str | None:
         """从持久化 Recovery lineage 恢复 Resume Execution 对应的 trace_id。
 
