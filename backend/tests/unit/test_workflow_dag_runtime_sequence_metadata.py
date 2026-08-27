@@ -24,7 +24,7 @@ def test_sequence_plan_preserves_fingerprint_and_selected_predecessors() -> None
 
     assert len(plans) == 1
     assert plans[0].decision_fingerprint
-    assert plans[0].selected_predecessor_node_ids == ()
+    assert plans[0].selected_predecessor_node_ids == (("next", ("start",)),)
 
 
 def test_sequence_plan_carries_conditional_selected_predecessors() -> None:
