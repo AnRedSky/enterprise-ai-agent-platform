@@ -37,7 +37,7 @@ class WorkflowExecutionResumeBootstrapService:
         Args:
             source_execution: 失败且已通过 Resume Contract 校验的源 Execution。
             resume_execution: 尚未启动 Runtime 的 pending Resume Execution。
-            actor_id: Resume 创建操作者；用于复制 NodeExecution 的审计归属字段。
+            actor_id: Resume 创建操作者；保留参数以明确调用方审计边界。
 
         Returns:
             tuple[str, ...]: 首个 Resume Frontier 的有序 Node IDs。
@@ -61,7 +61,6 @@ class WorkflowExecutionResumeBootstrapService:
         ).scalar_one_or_none()
         if version is None:
             raise ValueError("Resume Source Workflow Version 不存在")
-        nodes = WorkflowDagResumePlanner.plan if version.definition.get("edges") else None
 
         source_nodes_result = await self.db.execute(
             select(WorkflowNodeExecution)
@@ -105,7 +104,7 @@ class WorkflowExecutionResumeBootstrapService:
             )
         await self.db.flush()
 
-        if nodes is not None:
+        if version.definition.get("edges"):
             plan = WorkflowDagResumePlanner.plan(
                 definition=version.definition,
                 completed_node_ids=completed_ids,
@@ -114,7 +113,7 @@ class WorkflowExecutionResumeBootstrapService:
             next_ids = plan.frontier_node_ids
             fingerprint = plan.decision_fingerprint
         else:
-            ordered_ids = tuple(node["id"] for node in WorkflowDagResumePlanner._ordered_nodes(version.definition)) if hasattr(WorkflowDagResumePlanner, "_ordered_nodes") else tuple(node["id"] for node in version.definition.get("nodes", []))
+            ordered_ids = tuple(node["id"] for node in version.definition.get("nodes", []))
             next_ids = tuple(node_id for node_id in ordered_ids if node_id not in completed_ids)[:1]
             fingerprint = f"resume:{source_execution.id}:{resume_execution.resume_checkpoint_sequence or 0}"
 
