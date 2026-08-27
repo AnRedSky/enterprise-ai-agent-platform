@@ -236,7 +236,12 @@ class WorkflowExecutionService:
         return retry_execution
 
     async def resume_from_latest_checkpoint(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
-        """基于最新可恢复 Checkpoint 创建新的 pending Resume Execution，不启动 Runtime。"""
+        """基于最新可恢复 Checkpoint 创建新的 pending Resume Execution，不启动 Runtime。
+
+        事务边界：Source Execution 行锁、Resume Candidate 判断与 Resume 创建属于同一调用方事务。
+        Resume 的唯一键竞争只能回滚 SAVEPOINT，不能调用 Session.rollback() 破坏调用方已有的
+        Recovery Assessment、Source lock 或其他 Durable 写入。
+        """
         execution = await self._lock_execution(execution)
         checkpoint = await self.checkpoint.latest(execution.id)
         assessment = self.checkpoint_recovery.assess(
@@ -278,11 +283,11 @@ class WorkflowExecutionService:
             status="pending",
             input_data=dict(assessment.state_data or {}),
         )
-        self.db.add(resume_execution)
         try:
-            await self.db.flush()
+            async with self.db.begin_nested():
+                self.db.add(resume_execution)
+                await self.db.flush()
         except IntegrityError:
-            await self.db.rollback()
             existing = (await self.db.execute(select(WorkflowExecution).where(
                 WorkflowExecution.tenant_id == execution.tenant_id,
                 WorkflowExecution.idempotency_key == assessment.resume_idempotency_key,
