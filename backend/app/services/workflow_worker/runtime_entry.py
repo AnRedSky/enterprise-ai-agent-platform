@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
-from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
+from app.runtime.workflow import CircuitOpenError
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.observability import (
     RECOVERY_WORKER_FINISHED,
@@ -26,6 +26,7 @@ from app.services.workflow.checkpoint.recovery.observability import (
 )
 from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
 from app.services.workflow_worker.lease_guard import WorkflowWorkerLeaseGuard, WorkflowWorkerLeaseLost
+from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRuntime
 
 
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
@@ -54,7 +55,7 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
 
         allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {})
         runtime_config = version.definition.get("config") if isinstance(version.definition, dict) else {}
-        execution_timeout = WorkflowRuntime.resolve_timeout_ms(runtime_config or {}) / 1000 + worker.EXECUTION_TIMEOUT_GRACE_SECONDS
+        execution_timeout = DurableResumeWorkflowRuntime.resolve_timeout_ms(runtime_config or {}) / 1000 + worker.EXECUTION_TIMEOUT_GRACE_SECONDS
         service = WorkflowExecutionService(db)
         trace_link = WorkflowRecoveryTraceLinkService(db)
         recovery_trace_id = await trace_link.get_trace_id(execution)
@@ -85,7 +86,7 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             return
 
         async def _run_runtime() -> object:
-            runtime = WorkflowRuntime(db, execution_service=service)
+            runtime = DurableResumeWorkflowRuntime(db, execution_service=service)
             return await asyncio.wait_for(
                 runtime.execute(
                     execution,
@@ -105,7 +106,6 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         except WorkflowWorkerLeaseLost:
             outcome = "aborted"
             reason_code = "WORKER_LEASE_LOST"
-            # 失去 ownership 后不再尝试修改 Execution；新 Worker 会通过 fencing 接管。
             return
         except CircuitOpenError:
             outcome = "failed"
