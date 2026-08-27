@@ -24,6 +24,7 @@ class WorkflowRecoveryEvent:
     event_name: str
     execution_id: UUID | None = None
     resume_execution_id: UUID | None = None
+    outcome: str | None = None
     reason_code: str | None = None
     attempt_count: int | None = None
     max_attempts: int | None = None
@@ -60,15 +61,5 @@ class WorkflowRecoveryEventLogger:
         self.logger = logger or logging.getLogger(__name__)
 
     def emit(self, event: WorkflowRecoveryEvent, *, level: int = logging.INFO) -> None:
-        """输出一个 Recovery 结构化事件。
-
-        Args:
-            event: 要输出的 Recovery 事件；调用方不得把业务 payload、Secret 或 Checkpoint state_data 放入事件。
-            level: Python logging 日志等级。
-
-        Returns:
-            None。
-
-        副作用：写入当前应用日志；不会修改数据库或 Recovery 状态。
-        """
+        """输出一个 Recovery 结构化事件。"""
         self.logger.log(level, event.event_name, extra=event.to_log_fields())
