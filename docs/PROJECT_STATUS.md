@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前 `main` HEAD：继续推进 Phase 2.7-A Durable Recovery Closure。
-- 本轮已完成：**Recovery Commit Ownership Boundary**；Resume Domain Service 支持显式 `commit=False`，HTTP Recovery endpoint 负责调用方事务的唯一 commit。
+- 当前 `main` HEAD：继续推进 Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
+- 本轮已完成：**Durable Workflow Frontier Persistence Foundation**；新增 `WorkflowFrontier` 持久化模型、0035 Alembic migration、tenant-scoped durable claim repository 与 Unit Test Contract。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution `completed/failed` transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
@@ -14,15 +14,15 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization / Checkpoint Durable Fact completeness / Recovery Trace Checkpoint Lineage / Conditional Decision Rebuild / Trace Lineage 连续性 / Decision Trace 幂等 Payload Drift Guard / Deterministic Decision Fingerprint JSON Boundary / Single DAG Decision Planning Boundary / Checkpoint Durable Write Tenant Boundary / Resume Idempotency Lineage Drift Guard / Resume Idempotency Key Determinism Guard / Resume Transaction Savepoint Boundary / Recovery Commit Ownership Boundary，并继续进行 Phase 2.7-A Closure。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，并继续推进 Durable Frontier Scheduling。**
 
-## Phase 2.7-A 当前实现
+## Phase 2.7 当前实现
 
 - `WorkflowConditionEvaluator` 是唯一条件求值入口；
 - DSL 支持 `eq / ne / gt / gte / lt / lte / in / contains / and / or / not`；
 - 条件只读取当前持久化 Node state，禁止代码执行、外部调用和危险类型转换；
 - 已实现深度 / 节点数上限；
-- DAG Edge 支持 `condition` / `default`，统一 Contract 校验 source、default 数量、重复 edge、未知 Node 和循环图；当前第一版 DAG Contract 要求单 root，不能将多个静态 root 视为已完成能力；
+- DAG Edge 支持 `condition` / `default`，统一 Contract 校验 source、default 数量、重复 edge、未知 Node 和循环图；当前第一版 DAG Contract 要求单 root；
 - Conditional frontier 按 Definition 顺序确定性选择并允许多个条件同时命中形成并行 frontier；
 - Planner 输出 selected predecessor facts，Join readiness 不复制条件解析；
 - 首次执行与 Resume 均通过统一 DAG Planner；
@@ -35,26 +35,16 @@
 - Runtime Plan 显式携带 Planner fingerprint，Runtime 不再复制 Decision identity 计算逻辑；
 - Decision Trace 不保存业务 state_data，只保存 fingerprint 和可审计的节点选择 metadata，不能替代 PostgreSQL durable facts；
 - Multi-frontier Executor 只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state / `join_ready=true`；
-- 未提供 Checkpoint writer 时仍可收集 Branch execution result，但明确保持 `join_ready=false` 且不生成 merged state；
 - 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
-- DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity，Recovery 重试不会重复创建相同 Decision event；
-- 顺序 Resume Sequence Planner 完整传递 Planner 的 selected predecessor 与 decision fingerprint，不允许在顺序 Runtime 边界丢失 Durable Decision identity；
-- 无 DAG edges 的历史顺序 Workflow 保留原执行路径；
-- Checkpoint 自动序号分配现在先锁定目标 `WorkflowExecution` 再读取最大 sequence，确保同一 Execution 的并发 Checkpoint 写入具有确定的序号分配边界；
-- Checkpoint 若绑定 Node，则 Recovery 可通过 `assert_node_fact_complete()` 校验 NodeExecution 的 node、status、attempt、output_data；execution-level checkpoint 不要求 NodeExecution；
-- Recovery Trace → Resume lineage 强制校验 `resume_of_execution_id`、tenant、workflow version 与真实存在的 `resume_checkpoint_sequence`，并将 checkpoint sequence 作为 lineage audit metadata；
-- Conditional Decision Replay 不仅比较 fingerprint，还比较历史 Decision 的 frontier 与 selected predecessor outputs，保证同一 durable completed facts 的 Decision 能完整重建；
-- Recovery Trace 幂等命中已有 lineage event 后重新校验 Source / Resume / Checkpoint identity，避免旧数据污染被静默接受；
-- `get_trace_id()` 同时限定 Resume Execution 的 tenant 与 workflow version，避免跨版本恢复错误 trace；
-- Decision Trace 幂等命中已有 event 后重新校验 decision_id、completed_node_ids、frontier_node_ids、selected_predecessors，避免历史 Decision payload drift 被静默接受；
-- Decision fingerprint canonicalization 严格要求 JSON-safe condition state，禁止 `default=str` 隐式转换，并拒绝 NaN / Infinity 等非标准 JSON 数值；
-- `WorkflowDagResumeRuntimePlanner` 可以直接消费已计算的 immutable `WorkflowDagResumePlan`，正式 `_resolve_dag_context()` 不再对同一 Runtime Resolution 二次运行 Planner，保证单一 Decision calculation boundary；
-- `WorkflowExecutionCheckpointService.append_next_in_transaction()` 支持调用方显式传入 `tenant_id`，并在锁定 Execution 时执行 tenant scope 校验；
-- `latest_recovery_fact()` 的 NodeExecution 查询通过 `WorkflowExecution` JOIN 继承 tenant scope，不假设 NodeExecution 自身存在独立 tenant 字段；
-- Resume idempotency hit 除 source execution 与 checkpoint sequence 外，还强制校验 tenant、workflow 与 workflow version lineage；发现 drift 立即拒绝，不允许幂等命中掩盖历史关联污染；
-- Resume Contract 在创建/命中前再次校验幂等键严格等于 `resume:{source_execution_id}:checkpoint:{checkpoint_sequence}`，不允许 Assessment 返回非确定性 Resume identity；
-- Resume 幂等 INSERT 使用 `begin_nested()` SAVEPOINT；并发 `IntegrityError` 只回滚当前 Resume INSERT，不再调用 `Session.rollback()` 破坏 Source Execution lock、Recovery Assessment 或其他调用方事务状态；
-- Resume Domain Service 现在支持显式 `commit=False`，将 Recovery transaction 的 commit ownership 交给调用方；HTTP Resume endpoint 使用 `commit=False` 后统一执行唯一 commit，避免 Domain Service 隐式结束调用方事务。
+- DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity；
+- Checkpoint 自动序号分配锁定目标 `WorkflowExecution` 后读取最大 sequence；
+- Checkpoint Node fact completeness、Recovery Trace lineage、Decision rebuild、Trace lineage continuity、payload drift guard、fingerprint JSON boundary、single DAG planning boundary、tenant boundary、Resume idempotency lineage/key determinism、SAVEPOINT、Recovery Commit Ownership 与 Runtime Durable Commit Ownership 均已完成；
+- `WorkflowFrontierIdentity` 提供基于 execution + workflow version + decision fingerprint + ordered node IDs 的确定性 Frontier key；
+- `WorkflowFrontierStatus` 提供 `pending → claimed → running → completed/failed` 及 `retry_wait` 生命周期；terminal Frontier 不允许重新 claim；
+- `WorkflowFrontier` 已建立 PostgreSQL 持久化模型，包含 tenant、execution、workflow version、decision fingerprint、frontier key、node IDs、attempt、Worker lease、available time、terminal/error facts；
+- Alembic `0035_workflow_frontier` 已加入 migration chain，正式建立 `workflow_frontiers` 表及 tenant/key 唯一约束、claim/execution/lease 索引；
+- `claim_next_frontier()` 使用 tenant scope + `FOR UPDATE SKIP LOCKED`，只负责 claim 与 flush，不负责 commit；Scheduler/Worker 保持 caller-owned transaction；
+- `release_frontier_lease()` 强制校验当前 Worker ownership，不允许 stale Worker 释放其它 Worker 的 Frontier。
 
 ## 当前开发策略
 
@@ -67,7 +57,7 @@
 ## 当前主线
 
 ```text
-Phase 2.7-A Conditional Branching
+Phase 2.7 Conditional Branching
   ├── Evaluator                         ✅
   ├── DAG Contract                     ✅
   ├── Conditional Planner              ✅
@@ -78,17 +68,16 @@ Phase 2.7-A Conditional Branching
   ├── Checkpoint tenant boundary       ✅
   ├── Conditional Decision Trace       ✅
   ├── Resume Contract tenant scope     ✅
-  ├── Branch Checkpoint Gate           ✅
-  ├── Decision Fingerprint             ✅
-  ├── Runtime Plan fingerprint         ✅
-  ├── Recovery Frontier Replay Guard   ✅
-  ├── Decision Trace Idempotency       ✅
-  ├── Sequence Plan metadata           ✅
+  ├── Branch Checkpoint Gate            ✅
+  ├── Decision Fingerprint              ✅
+  ├── Runtime Plan fingerprint          ✅
+  ├── Recovery Frontier Replay Guard    ✅
+  ├── Decision Trace Idempotency        ✅
   ├── Checkpoint sequence serialization ✅
-  ├── Checkpoint fact completeness     ✅
+  ├── Checkpoint fact completeness      ✅
   ├── Recovery Trace Checkpoint Lineage ✅
-  ├── Conditional Decision Rebuild     ✅
-  ├── Trace Lineage 连续性             ✅
+  ├── Conditional Decision Rebuild      ✅
+  ├── Trace Lineage 连续性              ✅
   ├── Decision Trace payload drift guard ✅
   ├── Deterministic fingerprint JSON boundary ✅
   ├── Single DAG Decision Planning Boundary ✅
@@ -96,14 +85,21 @@ Phase 2.7-A Conditional Branching
   ├── Resume Idempotency Lineage Drift Guard ✅
   ├── Resume Idempotency Key Determinism Guard ✅
   ├── Resume Transaction Savepoint Boundary ✅
-  ├── Recovery Commit Ownership Boundary ✅ 本轮完成
-  ├── Unit Test 实际执行               ⏳
-  └── Real API acceptance              ⏸ 暂停
+  ├── Recovery Commit Ownership Boundary ✅
+  ├── Runtime Durable Commit Ownership  ✅
+  └── Conditional Branching Closure     ✅ 当前实现范围
           ↓
-Phase 2.7-A Closure
-  └── Closure review / invariant sweep  ← 当前
-          ↓
-Phase 2.7 后续 orchestration capability
+Durable Frontier Scheduling
+  ├── Frontier deterministic identity   ✅
+  ├── Frontier lifecycle contract       ✅
+  ├── PostgreSQL Durable Frontier       ✅ 本轮
+  ├── Tenant/key uniqueness             ✅ 本轮
+  ├── Claim repository                  ✅ 本轮
+  ├── Worker lease fencing              ⏭ 下一任务
+  ├── Scheduler integration             ⏭
+  ├── Worker integration                ⏭
+  ├── Retry / expired lease recovery    ⏭
+  └── Frontier → Checkpoint progression ⏭
           ↓
 继续主线直到全部任务完成
 ```
