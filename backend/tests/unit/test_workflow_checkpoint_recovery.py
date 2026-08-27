@@ -17,7 +17,7 @@ def _checkpoint(
     execution_id,
     execution_status: str = "running",
     checkpoint_reason: str = "node.completed",
-    node_status: str = "completed",
+    node_status: str | None = "completed",
     node_id: str | None = "agent-1",
 ) -> WorkflowExecutionCheckpoint:
     """构造不依赖数据库的 Checkpoint 测试对象。"""
@@ -26,7 +26,7 @@ def _checkpoint(
         execution_id=execution_id,
         sequence=3,
         node_id=node_id,
-        node_attempt=1,
+        node_attempt=1 if node_id is not None else None,
         execution_status=execution_status,
         node_status=node_status,
         state_data={"cursor": "agent-2"},
@@ -84,6 +84,52 @@ def test_assess_accepts_execution_level_frontier_checkpoint() -> None:
     assert assessment.eligible is True
     assert assessment.reason_code == "eligible"
     assert assessment.node_id is None
+
+
+def test_assess_rejects_node_bound_frontier_checkpoint() -> None:
+    """frontier_completed 如果携带 Node identity，必须拒绝，避免混淆 Multi-frontier 与 Node fact。"""
+    execution_id = uuid4()
+    version_id = uuid4()
+    checkpoint = _checkpoint(
+        execution_id=execution_id,
+        checkpoint_reason="frontier_completed",
+        node_status=None,
+        node_id="branch-a",
+    )
+
+    assessment = WorkflowExecutionCheckpointRecoveryService.assess(
+        execution_id=execution_id,
+        workflow_version_id=version_id,
+        execution_status="failed",
+        worker_owner=None,
+        checkpoint=checkpoint,
+    )
+
+    assert assessment.eligible is False
+    assert assessment.reason_code == "checkpoint_boundary_invalid"
+
+
+def test_assess_rejects_status_bound_frontier_checkpoint() -> None:
+    """frontier_completed 如果携带 Node status，也必须拒绝恢复。"""
+    execution_id = uuid4()
+    version_id = uuid4()
+    checkpoint = _checkpoint(
+        execution_id=execution_id,
+        checkpoint_reason="frontier_completed",
+        node_status="completed",
+        node_id=None,
+    )
+
+    assessment = WorkflowExecutionCheckpointRecoveryService.assess(
+        execution_id=execution_id,
+        workflow_version_id=version_id,
+        execution_status="failed",
+        worker_owner=None,
+        checkpoint=checkpoint,
+    )
+
+    assert assessment.eligible is False
+    assert assessment.reason_code == "checkpoint_boundary_invalid"
 
 
 def test_assess_rejects_live_worker_ownership_and_running_execution() -> None:
