@@ -33,9 +33,7 @@ class WorkflowExecutionCheckpointService:
             raise ValueError("Checkpoint reason 不能为空")
 
     @staticmethod
-    def _validate_checkpoint_boundary(
-        *, checkpoint_reason: str, node_id: str | None, node_attempt: int | None, node_status: str | None,
-    ) -> None:
+    def _validate_checkpoint_boundary(*, checkpoint_reason: str, node_id: str | None, node_attempt: int | None, node_status: str | None) -> None:
         """在 Durable Write 边界强制区分 Node-level 与 Execution-level Checkpoint。"""
         if checkpoint_reason == "frontier_completed":
             if node_id is not None or node_attempt is not None or node_status is not None:
@@ -138,20 +136,20 @@ class WorkflowExecutionCheckpointService:
         self._validate_worker_fencing(expected_worker_owner=expected_worker_owner, expected_worker_attempt=expected_worker_attempt, execution=execution)
 
         if checkpoint_reason == "frontier_completed":
-            latest_boundary = await self.db.execute(
+            boundary_result = await self.db.execute(
                 select(WorkflowExecutionCheckpoint).where(
                     WorkflowExecutionCheckpoint.execution_id == execution_id,
                     WorkflowExecutionCheckpoint.frontier_id == frontier_id,
                     WorkflowExecutionCheckpoint.checkpoint_reason == "frontier_completed",
-                ).order_by(desc(WorkflowExecutionCheckpoint.sequence)).limit(1)
+                ).order_by(desc(WorkflowExecutionCheckpoint.sequence))
             )
-            existing_boundary = latest_boundary.scalar_one_or_none()
-            if (
-                existing_boundary is not None
-                and existing_boundary.execution_status == execution_status
-                and existing_boundary.state_data == state_data
-            ):
-                return existing_boundary
+            existing_boundaries = list(boundary_result.scalars().all())
+            if len(existing_boundaries) > 1:
+                raise HTTPException(409, "同一 source Frontier 存在多个 completion Checkpoint，Durable fact 已分叉")
+            if existing_boundaries:
+                existing_boundary = existing_boundaries[0]
+                if existing_boundary.execution_status == execution_status and existing_boundary.state_data == state_data:
+                    return existing_boundary
 
         self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
         latest_sequence = await self.db.execute(
