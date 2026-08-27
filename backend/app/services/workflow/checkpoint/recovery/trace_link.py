@@ -1,7 +1,6 @@
 """Durable Recovery trace lineage link。
 
-职责：把 Automatic Recovery 创建的 trace_id 持久化关联到 Resume Execution，
-并验证 Source、Resume、Checkpoint 与已有 Trace 之间的同一条 lineage。
+职责：把 Automatic Recovery 创建的 trace_id 持久化关联到 Resume Execution，并验证 Source、Resume、Checkpoint 与已有 Trace 之间的同一条 lineage。
 边界：不创建新的 Trace/Telemetry SDK，不修改业务 input_data；只复用已有 WorkflowTraceEvent 治理事实。
 """
 
@@ -82,7 +81,32 @@ class WorkflowRecoveryTraceLinkService:
             if data.get(key) != value:
                 raise ValueError(f"DAG Decision Trace 已存在但 {key} 不一致")
 
-    async def link(self, source_execution: WorkflowExecution, resume_execution: WorkflowExecution, trace_id: str, actor_id: UUID | None) -> WorkflowTraceEvent:
+    async def link(
+        self,
+        source_execution: WorkflowExecution,
+        resume_execution: WorkflowExecution,
+        trace_id: str,
+        actor_id: UUID | None,
+        *,
+        commit: bool = True,
+    ) -> WorkflowTraceEvent:
+        """建立 Recovery → Resume trace lineage。
+
+        Args:
+            source_execution: 失败且作为恢复来源的 Execution。
+            resume_execution: 已完成 Resume Bootstrap 的目标 Execution。
+            trace_id: 本次自动恢复的 trace 标识。
+            actor_id: 触发恢复的操作者身份。
+            commit: 是否由本方法提交事务；自动恢复主事务传入 False，统一由上层提交。
+
+        Returns:
+            WorkflowTraceEvent: 已存在或新建的 trace lineage 事件。
+
+        Raises:
+            ValueError: Source、Resume、Checkpoint lineage 不一致时拒绝写入。
+
+        事务边界：commit=False 时只 flush 不 commit，使 trace lineage 与 Resume、Node lineage、Frontier 在同一事务提交。
+        """
         checkpoint_sequence = await self._assert_resume_checkpoint_lineage(source_execution, resume_execution)
         existing = (
             await self.db.execute(
@@ -119,8 +143,9 @@ class WorkflowRecoveryTraceLinkService:
         )
         self.db.add(event)
         await self.db.flush()
-        await self.db.commit()
-        await self.db.refresh(event)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(event)
         return event
 
     async def assert_dag_decision_replay_consistent(
