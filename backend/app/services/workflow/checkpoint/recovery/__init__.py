@@ -10,6 +10,7 @@ from app.services.workflow.checkpoint.recovery.condition import WorkflowConditio
 from app.services.workflow.checkpoint.recovery.dag_contract import WorkflowDagContract, WorkflowDagContractValidator, WorkflowDagEdge
 from app.services.workflow.checkpoint.recovery.dag_join import WorkflowDagJoinReadiness, WorkflowDagJoinReadinessService
 from app.services.workflow.checkpoint.recovery.dag_join_executor import WorkflowDagJoinExecutionResult, WorkflowDagJoinExecutor
+from app.services.workflow.checkpoint.recovery.dag_join_recovery import WorkflowDagJoinRecoveryService
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlan, WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlan, WorkflowDagResumeRuntimePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime_sequence import WorkflowDagResumeRuntimeSequencePlanner
@@ -25,7 +26,7 @@ from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecover
 __all__ = [
     "WorkflowConditionEvaluation", "WorkflowConditionEvaluator",
     "WorkflowDagBranchState", "WorkflowDagBranchStateMergeService", "WorkflowDagContract", "WorkflowDagContractValidator", "WorkflowDagEdge",
-    "WorkflowDagJoinExecutionResult", "WorkflowDagJoinExecutor", "WorkflowDagJoinReadiness", "WorkflowDagJoinReadinessService",
+    "WorkflowDagJoinExecutionResult", "WorkflowDagJoinExecutor", "WorkflowDagJoinReadiness", "WorkflowDagJoinReadinessService", "WorkflowDagJoinRecoveryService",
     "WorkflowDagResumePlan", "WorkflowDagResumePlanner", "WorkflowDagResumeRuntimePlan", "WorkflowDagResumeRuntimePlanner", "WorkflowDagResumeRuntimeSequencePlanner", "WorkflowDagStateMergePlan",
     "WorkflowExecutionAutomaticRecoveryResult", "WorkflowExecutionAutomaticRecoveryService", "WorkflowExecutionCheckpointRecoveryService", "WorkflowExecutionRecoveryDecision", "WorkflowExecutionRecoveryPolicy", "WorkflowExecutionRecoveryPolicyEvaluator", "WorkflowExecutionResumeAssessment", "WorkflowExecutionResumeBootstrapService", "WorkflowExecutionResumeContractService", "WorkflowExecutionResumeOutcome", "WorkflowExecutionResumePlanner",
     "WorkflowRecoveryEvent", "WorkflowRecoveryEventLogger", "WorkflowRecoveryTelemetry", "WorkflowRecoveryTraceLinkService", "WorkflowResumePlan",

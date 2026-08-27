@@ -2,7 +2,7 @@
 
 职责：把 Source Execution 的已完成 Node Durable Facts 复制到新的 Resume Execution，并计算首个 Resume Frontier。
 边界：不启动 Runtime、不执行 Node；只在调用方事务中完成 Resume lineage 的 durable bootstrap 与 Frontier 入队。
-关键依赖：WorkflowDagResumePlanner、WorkflowFrontierIdentity、WorkflowFrontier Repository、WorkflowNodeExecution、WorkflowExecutionCheckpointService。
+关键依赖：WorkflowDagResumePlanner、WorkflowDagJoinRecoveryService、WorkflowFrontierIdentity、WorkflowFrontier Repository、WorkflowNodeExecution、WorkflowExecutionCheckpointService。
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.workflow import WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
+from app.services.workflow.checkpoint.recovery.dag_join_recovery import WorkflowDagJoinRecoveryService
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier
@@ -52,8 +53,7 @@ def _validate_resume_checkpoint_lineage(*, source_checkpoint_sequence: int, resu
     Raises:
         ValueError: Resume 未记录 Source Checkpoint 序号或序号与实际 Source Checkpoint 不一致。
 
-    设计意图：Resume Checkpoint sequence 表示 Source lineage，而不是 Resume 自身未来 Checkpoint 的序号；
-    Bootstrap 必须再次验证这一关系，避免绕过 Resume Contract 的调用方直接产生错误 lineage。
+    设计意图：Resume Checkpoint sequence 表示 Source lineage，而不是 Resume 自身未来 Checkpoint 的序号；Bootstrap 必须再次验证这一关系，避免绕过 Resume Contract 的调用方直接产生错误 lineage。
     """
     if resume_checkpoint_sequence is None:
         raise ValueError("Resume Execution 缺少 Source Checkpoint sequence")
@@ -86,7 +86,7 @@ class WorkflowExecutionResumeBootstrapService:
             tuple[str, ...]: 首个 Resume Frontier 的有序 Node IDs。
 
         Raises:
-            ValueError: Source/Resume lineage、租户、Workflow Version、Checkpoint lineage 或 completed Node facts 不一致。
+            ValueError: Source/Resume lineage、租户、Workflow Version、Checkpoint lineage、Join merged state 或 completed Node facts 不一致。
 
         事务边界：本方法不 commit；调用方必须将 Node lineage 与 Frontier enqueue 与 Resume 创建放入同一事务。
         """
@@ -182,6 +182,26 @@ class WorkflowExecutionResumeBootstrapService:
             )
             next_ids = plan.frontier_node_ids
             fingerprint = plan.decision_fingerprint
+
+            node_by_id = {
+                node["id"]: node
+                for node in version.definition.get("nodes", [])
+                if isinstance(node, dict) and isinstance(node.get("id"), str)
+            }
+            selected_predecessors = dict(plan.selected_predecessor_node_ids)
+            if source_checkpoint.checkpoint_reason == "frontier_completed":
+                for join_node_id in next_ids:
+                    if node_by_id.get(join_node_id, {}).get("type") != "join":
+                        continue
+                    predecessors = selected_predecessors.get(join_node_id, ())
+                    WorkflowDagJoinRecoveryService.validate_checkpoint_state(
+                        definition=version.definition,
+                        node_id=join_node_id,
+                        completed_node_ids=completed_ids,
+                        node_outputs=state_data_by_node,
+                        predecessor_node_ids=tuple(predecessors),
+                        checkpoint_state=dict(source_checkpoint.state_data or {}),
+                    )
         else:
             ordered_ids = tuple(node["id"] for node in version.definition.get("nodes", []))
             next_ids = tuple(node_id for node_id in ordered_ids if node_id not in completed_ids)[:1]
