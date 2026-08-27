@@ -52,9 +52,25 @@ pending Resume Execution
 
 每个候选使用独立 DB Session；多 Scheduler 并发最终依赖 Source row lock、deterministic idempotency key 与数据库唯一约束收敛。
 
-## 4. Recovery Observability Contract
+## 4. Recovery Outcome Contract
 
-新增正式领域入口：
+自动恢复 Domain Result 现在显式携带：
+
+```text
+outcome = rejected | recovered
+```
+
+规则：
+
+- `rejected`：Policy 不允许自动恢复，不创建 Resume；`reason_code` 给出拒绝原因；
+- `recovered`：Resume Contract 返回新建或幂等命中的 Resume Execution，并提供 `resume_execution_id`；
+- 当前不在 Domain 外部猜测 `created` 与 `idempotency_hit`；这一区分必须由 Resume Domain 正式返回。
+
+这样 Scheduler 可以消费稳定 outcome，而不需要根据对象时间、状态或异常类型旁路推断幂等竞争。
+
+## 5. Recovery Observability Contract
+
+正式入口：
 
 ```text
 WorkflowRecoveryEvent
@@ -68,7 +84,7 @@ workflow.recovery.attempt
 workflow.recovery.scan.completed
 ```
 
-统一字段包括：
+自动恢复每次 attempt 都输出：
 
 ```text
 execution_id
@@ -76,6 +92,12 @@ resume_execution_id
 reason_code
 attempt_count
 max_attempts
+occurred_at
+```
+
+Scheduler 每轮 Scan 输出：
+
+```text
 candidates
 eligible
 recovered
@@ -83,16 +105,15 @@ rejected
 contention
 failed
 scan_limit
-occurred_at
 ```
 
 事件模型只允许记录恢复控制面信息；Checkpoint `state_data`、Secret、Provider credential、完整业务 payload 等敏感内容禁止进入事件。
 
-Recovery Scan 每轮输出 `workflow.recovery.scan.completed`；单候选评估/恢复输出 `workflow.recovery.attempt`。后续 Metrics / Trace 接入必须复用该事件 Contract，不建立平行 Recovery 日志字段体系。
+后续 Metrics / Trace 接入必须复用该事件 Contract，不建立平行 Recovery 日志字段体系。
 
 当前 `contention` 仍是聚合维度；在 Domain 能够可靠区分 row-lock / idempotency contention 前，禁止 Scheduler 根据异常类型猜测并计数。
 
-## 5. Scheduler 生命周期
+## 6. Scheduler 生命周期
 
 `backend/app/entrypoints/scheduler.py` 当前同时运行：
 
@@ -103,7 +124,7 @@ WorkflowRecoveryScheduler
 
 两条循环共享进程但不共享 DB Session；Recovery Scan 异常不会直接终止 Scheduled Trigger Dispatch。
 
-## 6. 单元测试
+## 7. 单元测试
 
 覆盖：
 
@@ -114,11 +135,17 @@ backend/tests/unit/test_workflow_recovery_scheduler.py
 backend/tests/unit/test_workflow_recovery_observability.py
 ```
 
-测试重点：Policy eligibility、lineage、cooldown、Domain delegation、Scheduler aggregate、结构化事件字段与敏感字段边界。
+本轮新增覆盖：
 
-本轮代码提交时不虚构测试通过结果；只有开发者本地实际执行结果才允许写入“通过”。
+- `rejected` outcome；
+- `recovered` outcome；
+- `workflow.recovery.attempt` 事件；
+- reason_code / attempt_count / max_attempts；
+- Resume execution lineage 字段。
 
-## 7. API / Real Worker 主线
+当前环境未实际执行新增测试，因此不得记录为“已通过”。
+
+## 8. API / Real Worker 主线
 
 保留并继续推进真实链路：
 
@@ -138,13 +165,14 @@ Resume Runtime
 新 Checkpoint / terminal state
 ```
 
-Real API 测试可以作为当前交付验证，但不阻塞本轮主线代码继续向下推进；服务生命周期必须由开发者人工启动、停止和重启。
+Real API 测试当前不作为主线阻塞条件。
 
-## 8. 下一任务
+## 9. 下一任务
 
-1. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口；
-2. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，则先保持领域事件出口，不新增平行 exporter；
-3. 精确区分 recovery contention / idempotency convergence；
-4. 冻结 DAG Branch State Merge Contract；
-5. 实现多 frontier Resume；
-6. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
+1. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，则先保持领域事件出口，不新增平行 exporter；
+2. 修改 Resume Domain，使其显式返回 `created` / `idempotency_hit` outcome；
+3. 基于正式 outcome 精确收敛 recovery contention / idempotency convergence；
+4. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口；
+5. 冻结 DAG Branch State Merge Contract；
+6. 实现多 frontier Resume；
+7. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
