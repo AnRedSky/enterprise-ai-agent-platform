@@ -19,6 +19,7 @@ from .contract import (
     resolve_local_time,
 )
 from .runtime import ScheduledTriggerScheduler
+from .trace import SchedulerTraceContext, WorkflowSchedulerTraceService
 
 __all__ = [
     "MisfirePolicy",
@@ -28,6 +29,8 @@ __all__ = [
     "SchedulerStatus",
     "WorkflowScheduleContract",
     "ScheduledTriggerScheduler",
+    "SchedulerTraceContext",
+    "WorkflowSchedulerTraceService",
     "build_schedule_slot",
     "choose_misfire_slots",
     "lease_available",
