@@ -124,7 +124,11 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 state_data_by_node=state_data_by_node,
             )
             if not completed_node_ids:
-                branch_state_data = {node_id: dict(state_data) for node_id in plan.frontier_node_ids}
+                branch_state_data = (
+                    {node_id: dict(state_data) for node_id in plan.frontier_node_ids}
+                    if len(plan.frontier_node_ids) > 1
+                    else {}
+                )
             else:
                 branch_state_data = self._build_frontier_branch_states(
                     definition,
@@ -149,6 +153,106 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         return runtime_plan, branch_state_data
+
+    async def _execute_node_with_policy(self, service, execution, node: dict, current_data: dict, actor_id,
+                                        is_admin: bool, workflow_timeout: int, max_retries: int, started: float,
+                                        workflow_retry_counter: list[int]) -> dict:
+        """复用基础 Runtime 的 Retry 策略，并在预算或 Workflow deadline 耗尽时补充统一治理事实。
+
+        Args:
+            service: Execution 领域服务。
+            execution: 当前 Workflow Execution。
+            node: 当前节点定义。
+            current_data: 节点输入状态。
+            actor_id: 当前执行者。
+            is_admin: 是否以管理员身份执行。
+            workflow_timeout: Workflow 总超时毫秒数。
+            max_retries: Workflow 级 Retry 总预算。
+            started: Workflow Runtime 开始时间。
+            workflow_retry_counter: 当前 Workflow 已消费的 Retry 次数。
+
+        Returns:
+            基础 Runtime 执行器返回的节点输出。
+
+        Raises:
+            BaseException: 基础 Runtime 判定节点不可继续重试时原样抛出。
+
+        设计意图：Retry 算法仍只有基础 Runtime 一个正式实现；DAG 扩展层只负责补齐“耗尽”治理事实，避免成功调度事件与最终耗尽事件之间出现可观测性断层。
+        """
+        try:
+            return await super()._execute_node_with_policy(
+                service,
+                execution,
+                node,
+                current_data,
+                actor_id,
+                is_admin,
+                workflow_timeout,
+                max_retries,
+                started,
+                workflow_retry_counter,
+            )
+        except HTTPException as exc:
+            detail = str(exc.detail)
+            if exc.status_code == 504 and detail == "Retry backoff exceeds workflow deadline":
+                await service.governance.trace(
+                    execution,
+                    actor_id,
+                    "node.retry.exhausted",
+                    "failed",
+                    node_id=node["id"],
+                    error_code="WORKFLOW_TIMEOUT",
+                    data={"reason": "workflow_deadline"},
+                )
+                await service.governance.audit(
+                    execution,
+                    actor_id,
+                    "workflow.node.retry_exhausted",
+                    "failed",
+                    error_code="WORKFLOW_TIMEOUT",
+                    metadata={"node_id": node["id"], "reason": "workflow_deadline"},
+                )
+            elif workflow_retry_counter[0] >= max_retries:
+                error_code = self.classify_error(exc)
+                await service.governance.trace(
+                    execution,
+                    actor_id,
+                    "node.retry.exhausted",
+                    "failed",
+                    node_id=node["id"],
+                    error_code=error_code,
+                    data={"reason": "retry_budget"},
+                )
+                await service.governance.audit(
+                    execution,
+                    actor_id,
+                    "workflow.node.retry_exhausted",
+                    "failed",
+                    error_code=error_code,
+                    metadata={"node_id": node["id"], "reason": "retry_budget"},
+                )
+            raise
+        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as exc:
+            if workflow_retry_counter[0] >= max_retries:
+                error_code = self.classify_error(exc)
+                await service.governance.trace(
+                    execution,
+                    actor_id,
+                    "node.retry.exhausted",
+                    "failed",
+                    node_id=node["id"],
+                    error_code=error_code,
+                    data={"reason": "retry_budget"},
+                )
+                await service.governance.audit(
+                    execution,
+                    actor_id,
+                    "workflow.node.retry_exhausted",
+                    "failed",
+                    error_code=error_code,
+                    metadata={"node_id": node["id"], "reason": "retry_budget"},
+                )
+            raise
 
     async def execute_node(self, node: dict, input_data: dict, actor_id, is_admin: bool,
                            session_id, tenant_id=None, execution=None) -> dict:
