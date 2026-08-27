@@ -7,17 +7,73 @@ from uuid import uuid4
 import pytest
 
 from app.services.workflow.frontier import WorkflowFrontierIdentity
-from app.services.workflow.frontier_progression import complete_frontier_with_checkpoint
+from app.services.workflow.frontier_progression import (
+    FrontierProgressionContractError,
+    complete_frontier_with_checkpoint,
+    validate_frontier_progression_contract,
+)
 
 
-@pytest.mark.asyncio
-async def test_complete_frontier_with_checkpoint_is_atomic_and_idempotent() -> None:
-    db = AsyncMock()
+def _frontier() -> MagicMock:
     frontier = MagicMock()
     frontier.id = uuid4()
     frontier.execution_id = uuid4()
     frontier.workflow_version_id = uuid4()
     frontier.tenant_id = uuid4()
+    frontier.frontier_key = "current-key"
+    return frontier
+
+
+def test_progression_contract_rejects_self_loop_identity() -> None:
+    frontier = _frontier()
+    next_identity = WorkflowFrontierIdentity(
+        execution_id=frontier.execution_id,
+        workflow_version_id=frontier.workflow_version_id,
+        decision_fingerprint="current",
+        node_ids=("node-a",),
+    )
+    frontier.frontier_key = next_identity.key()
+
+    with pytest.raises(FrontierProgressionContractError, match="不能与当前 Frontier 相同"):
+        validate_frontier_progression_contract(
+            frontier=frontier,
+            next_identity=next_identity,
+            execution_status="running",
+        )
+
+
+def test_progression_contract_requires_completed_execution_without_next_frontier() -> None:
+    frontier = _frontier()
+
+    with pytest.raises(FrontierProgressionContractError, match="必须进入 completed"):
+        validate_frontier_progression_contract(
+            frontier=frontier,
+            next_identity=None,
+            execution_status="running",
+        )
+
+
+def test_progression_contract_requires_running_execution_with_next_frontier() -> None:
+    frontier = _frontier()
+    next_identity = WorkflowFrontierIdentity(
+        execution_id=frontier.execution_id,
+        workflow_version_id=frontier.workflow_version_id,
+        decision_fingerprint="next-decision",
+        node_ids=("node-b",),
+    )
+
+    with pytest.raises(FrontierProgressionContractError, match="必须保持 running"):
+        validate_frontier_progression_contract(
+            frontier=frontier,
+            next_identity=next_identity,
+            execution_status="completed",
+        )
+
+
+@pytest.mark.asyncio
+async def test_complete_frontier_with_checkpoint_is_atomic_and_idempotent() -> None:
+    db = AsyncMock()
+    frontier = _frontier()
     next_identity = WorkflowFrontierIdentity(
         execution_id=frontier.execution_id,
         workflow_version_id=frontier.workflow_version_id,
@@ -62,10 +118,7 @@ async def test_complete_frontier_with_checkpoint_is_atomic_and_idempotent() -> N
 @pytest.mark.asyncio
 async def test_complete_frontier_with_checkpoint_rejects_cross_execution_next_frontier() -> None:
     db = AsyncMock()
-    frontier = MagicMock()
-    frontier.execution_id = uuid4()
-    frontier.workflow_version_id = uuid4()
-    frontier.tenant_id = uuid4()
+    frontier = _frontier()
     next_identity = WorkflowFrontierIdentity(
         execution_id=uuid4(),
         workflow_version_id=frontier.workflow_version_id,
@@ -90,11 +143,7 @@ async def test_complete_frontier_with_checkpoint_rejects_cross_execution_next_fr
 @pytest.mark.asyncio
 async def test_complete_terminal_frontier_creates_checkpoint_without_next_frontier() -> None:
     db = AsyncMock()
-    frontier = MagicMock()
-    frontier.id = uuid4()
-    frontier.execution_id = uuid4()
-    frontier.workflow_version_id = uuid4()
-    frontier.tenant_id = uuid4()
+    frontier = _frontier()
     checkpoint = MagicMock()
 
     with patch("app.services.workflow.frontier_progression.transition_owned_frontier", new_callable=AsyncMock), patch(
