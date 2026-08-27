@@ -1,4 +1,4 @@
-"""Workflow Execution 自动恢复扫描器。"""
+"""Workflow Execution / Durable Frontier 自动恢复扫描器。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution
 from app.services.workflow.checkpoint.recovery.automatic import WorkflowExecutionAutomaticRecoveryService
 from app.services.workflow.checkpoint.recovery.policy import WorkflowExecutionRecoveryPolicy
+from app.services.workflow.frontier_repository import recover_expired_frontiers
 from app.services.workflow_scheduler.trace import WorkflowSchedulerTraceService
 
 logger = logging.getLogger(__name__)
@@ -31,10 +32,11 @@ class WorkflowRecoveryScanResult:
     created: int = 0
     idempotency_hit: int = 0
     reconciled: int = 0
+    expired_frontiers: int = 0
 
 
 class WorkflowRecoveryScheduler:
-    """按轮询时间发现 failed Execution，并委托 Recovery Domain 执行自动恢复。"""
+    """发现 failed Execution 并回收过期 Durable Frontier，委托正式 Recovery Domain 完成恢复。"""
 
     DEFAULT_SCAN_LIMIT = 50
     MAX_SCAN_LIMIT = 500
@@ -58,9 +60,23 @@ class WorkflowRecoveryScheduler:
         self._stop_event = asyncio.Event()
 
     async def scan_once(self, now: datetime | None = None) -> WorkflowRecoveryScanResult:
-        """执行一次全租户 Recovery Scan，并让 Domain 决定每个候选是否可恢复。"""
+        """执行一次全租户 Recovery Scan，并先回收过期 Frontier，再处理 failed Execution。"""
         current = now or datetime.now(UTC)
         trace_context = self.trace_service.start_scan(occurred_at=current)
+        expired_frontier_count = 0
+        try:
+            async with SessionLocal() as frontier_db:
+                expired = await recover_expired_frontiers(
+                    frontier_db,
+                    now=current.replace(tzinfo=None),
+                    limit=self.scan_limit,
+                )
+                expired_frontier_count = len(expired)
+                await frontier_db.commit()
+        except Exception:
+            self.trace_service.finish_scan(trace_context, failed=1, occurred_at=current)
+            raise
+
         try:
             async with SessionLocal() as discovery_db:
                 query = (
@@ -86,15 +102,14 @@ class WorkflowRecoveryScheduler:
             "created": 0,
             "idempotency_hit": 0,
             "reconciled": 0,
+            "expired_frontiers": expired_frontier_count,
         }
         for execution_id in execution_ids:
             try:
                 async with SessionLocal() as db:
                     execution = (
                         await db.execute(
-                            select(WorkflowExecution).where(
-                                WorkflowExecution.id == execution_id
-                            )
+                            select(WorkflowExecution).where(WorkflowExecution.id == execution_id)
                         )
                     ).scalar_one_or_none()
                     if execution is None:
