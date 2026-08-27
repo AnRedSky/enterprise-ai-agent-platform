@@ -5,8 +5,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
+from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery import WorkflowExecutionCheckpointRecoveryService
 from app.services.workflow.checkpoint.recovery.resume_bootstrap import _validate_resume_checkpoint_lineage
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
@@ -251,3 +253,35 @@ def test_validate_resume_checkpoint_lineage_rejects_missing_or_drifted_sequence(
         _validate_resume_checkpoint_lineage(source_checkpoint_sequence=3, resume_checkpoint_sequence=None)
     with pytest.raises(ValueError, match="sequence 不一致"):
         _validate_resume_checkpoint_lineage(source_checkpoint_sequence=3, resume_checkpoint_sequence=4)
+
+
+def test_validate_execution_fencing_accepts_matching_owner_and_generation() -> None:
+    """Worker owner 与 fencing generation 同时匹配时允许继续 Durable 写入。"""
+    WorkflowExecutionService._validate_execution_fencing(
+        expected_worker_owner="worker:a",
+        expected_worker_attempt=3,
+        locked_worker_owner="worker:a",
+        locked_worker_attempt=3,
+    )
+
+
+def test_validate_execution_fencing_rejects_stale_generation() -> None:
+    """同一 Worker owner 在重新 claim 后 generation 变化时，旧执行上下文必须失效。"""
+    with pytest.raises(HTTPException, match="fencing generation"):
+        WorkflowExecutionService._validate_execution_fencing(
+            expected_worker_owner="worker:a",
+            expected_worker_attempt=3,
+            locked_worker_owner="worker:a",
+            locked_worker_attempt=4,
+        )
+
+
+def test_validate_execution_fencing_rejects_reclaimed_owner() -> None:
+    """Execution 被其他 Worker reclaim 后，即使旧 generation 相同也必须拒绝。"""
+    with pytest.raises(HTTPException, match="ownership"):
+        WorkflowExecutionService._validate_execution_fencing(
+            expected_worker_owner="worker:a",
+            expected_worker_attempt=3,
+            locked_worker_owner="worker:b",
+            locked_worker_attempt=4,
+        )
