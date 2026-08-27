@@ -50,9 +50,11 @@ Recovery Resume
 - Conditional Join 只消费 Planner selected predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
-- Resume Contract 在 Source Execution row lock 后，Checkpoint lookup 强制使用 locked Execution 的 `tenant_id`；
+- Resume Contract 在 Source Execution row lock 后再次强制使用 `locked_execution.tenant_id` 查询最新 Checkpoint；
 - Runtime 持久化 `workflow.dag.frontier_decided` decision metadata；
 - Decision Trace 不保存业务 `state_data`，不能替代 PostgreSQL durable facts；
+- Multi-frontier Executor 只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state 并声明 `join_ready=true`；
+- 未提供 Checkpoint writer 时仍可收集 Branch execution result，但保持 `join_ready=false` 且不生成 merged state；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行兼容语义。
 
 ## 3. 本轮 Durable Recovery Closure 推进
@@ -114,6 +116,30 @@ Node completed facts、Checkpoint、Resume Contract 的读取均不得退回无 
 
 首次执行且没有 completed Node 时，每个 root 使用独立 input state snapshot，避免后续 branch state 互相污染。
 
+### 3.5 Branch Checkpoint Gate
+
+Multi-frontier Branch execution 现在严格区分：
+
+```text
+Branch executed
+      ↓
+Branch Checkpoint callback
+      ↓ success for every frontier Branch
+merged state
+      ↓
+join_ready = true
+```
+
+若没有 Checkpoint writer，或者任一 Branch Checkpoint callback 抛出异常：
+
+```text
+不生成 merged state
+不声明 Join ready
+异常交由上层 Worker / ExecutionService 处理
+```
+
+因此 Join readiness 不再可能仅凭内存中的 Branch output 推断。
+
 ## 4. 单元测试
 
 已有：
@@ -125,15 +151,16 @@ backend/tests/unit/test_workflow_runtime.py
 backend/tests/unit/test_workflow_dag_runtime_initialization.py
 backend/tests/unit/test_workflow_checkpoint_tenant_scope.py
 backend/tests/unit/test_workflow_dag_decision_trace.py
+backend/tests/unit/test_workflow_resume_contract_tenant_scope.py
 ```
 
 本轮新增：
 
 ```text
-backend/tests/unit/test_workflow_resume_contract_tenant_scope.py
+backend/tests/unit/test_workflow_dag_executor_checkpoint_gate.py
 ```
 
-覆盖 Resume Contract 锁定 Source Execution 后使用 tenant-scoped Checkpoint lookup。
+覆盖单 frontier / Multi-frontier 在缺少 Checkpoint writer 时不得声明 Join ready，以及所有 Branch checkpoint 成功后才能产生 merged state。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
@@ -151,7 +178,8 @@ Runtime inheritance cleanup     ✅
 NodeExecution tenant boundary   ✅
 Checkpoint tenant boundary      ✅
 Conditional Decision Trace      ✅
-Resume Contract tenant scope    ✅ 本轮完成
+Resume Contract tenant scope    ✅
+Branch Checkpoint Gate          ✅ 本轮完成
         ↓
 Durable Recovery Closure
         ├── Checkpoint fact 完整性       ← 继续
