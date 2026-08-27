@@ -109,8 +109,22 @@ class WorkflowExecutionService:
         ).order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc()))
         return list(result.scalars().all())
 
+    @staticmethod
+    def _validate_execution_fencing(
+        *,
+        expected_worker_owner: str | None,
+        expected_worker_attempt: int,
+        locked_worker_owner: str | None,
+        locked_worker_attempt: int,
+    ) -> None:
+        """校验 Execution ownership + fencing generation，阻断 stale Worker。"""
+        if expected_worker_owner is None:
+            return
+        if locked_worker_owner != expected_worker_owner or locked_worker_attempt != expected_worker_attempt:
+            raise HTTPException(409, "Workflow Execution Worker ownership 或 fencing generation 已失效")
+
     async def _lock_execution(self, execution: WorkflowExecution) -> WorkflowExecution:
-        """在状态转换前重新读取 Execution 行并加锁，同时阻断失去租约的旧 Worker。"""
+        """在状态转换前重新读取 Execution 行并加锁，同时阻断失去租约或 generation 失效的旧 Worker。"""
         if not isinstance(self.db, AsyncSession):
             return execution
         locked = (await self.db.execute(
@@ -118,9 +132,12 @@ class WorkflowExecutionService:
         )).scalar_one_or_none()
         if locked is None:
             raise HTTPException(404, "Workflow Execution 不存在")
-        expected_worker_owner = execution.worker_owner
-        if expected_worker_owner is not None and locked.worker_owner != expected_worker_owner:
-            raise HTTPException(409, "Workflow Execution Worker ownership 已失效")
+        self._validate_execution_fencing(
+            expected_worker_owner=execution.worker_owner,
+            expected_worker_attempt=int(execution.worker_attempt or 0),
+            locked_worker_owner=locked.worker_owner,
+            locked_worker_attempt=int(locked.worker_attempt or 0),
+        )
         return locked
 
     def _validate_run_owner(self, execution: WorkflowExecution, worker_owner: str | None) -> None:
@@ -206,18 +223,7 @@ class WorkflowExecutionService:
 
     async def resume_from_latest_checkpoint(self, execution: WorkflowExecution, actor_id: UUID,
                                             *, commit: bool = True) -> WorkflowExecution:
-        """基于最新可恢复 Checkpoint 创建新的 pending Resume Execution，不启动 Runtime。
-
-        Args:
-            execution: 作为恢复来源的 Execution。
-            actor_id: 创建 Resume 的操作者。
-            commit: 是否由本领域服务提交事务。HTTP Recovery 默认保持兼容；调用方需要把
-                Resume 与后续 Durable 写入纳入同一事务时传 False，并由调用方负责 commit。
-
-        事务边界：Source Execution 行锁、Resume Candidate 判断与 Resume 创建属于同一调用方事务。
-        Resume 的唯一键竞争只能回滚 SAVEPOINT，不能调用 Session.rollback() 破坏调用方已有的
-        Recovery Assessment、Source lock 或其他 Durable 写入。
-        """
+        """基于最新可恢复 Checkpoint 创建新的 pending Resume Execution，不启动 Runtime。"""
         execution = await self._lock_execution(execution)
         checkpoint = await self.checkpoint.latest(execution.id)
         assessment = self.checkpoint_recovery.assess(
