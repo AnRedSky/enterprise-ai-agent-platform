@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前 `main` HEAD：本轮继续推进 Durable Recovery Decision Trace 幂等性。
-- 本轮已完成：**Decision Trace Idempotency**；同一 execution + tenant + workflow version + recovery trace + decision fingerprint 的 DAG Decision 只允许幂等复用，不因 Recovery 重试重复创建相同 Trace event。
+- 当前 `main` HEAD：继续推进 Phase 2.7-A Durable Recovery Closure。
+- 本轮已完成：**DAG Resume 顺序计划的 Durable Decision metadata 传递**；`WorkflowDagResumeRuntimeSequencePlanner` 不再丢失 Planner 生成的 `selected_predecessor_node_ids` 与 `decision_fingerprint`，使顺序 Runtime 与 Conditional Recovery 使用同一 Decision identity。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -37,6 +37,7 @@
 - 未提供 Checkpoint writer 时仍可收集 Branch execution result，但明确保持 `join_ready=false` 且不生成 merged state；
 - 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
 - DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity，Recovery 重试不会重复创建相同 Decision event；
+- 顺序 Resume Sequence Planner 现在完整传递 Planner 的 selected predecessor 与 decision fingerprint，不允许在顺序 Runtime 边界丢失 Durable Decision identity；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
 
 ## 当前开发策略
@@ -51,23 +52,24 @@
 
 ```text
 Phase 2.7-A Conditional Branching
-  ├── Evaluator                     ✅
-  ├── DAG Contract                 ✅
-  ├── Conditional Planner          ✅
-  ├── Initial Execution Runtime    ✅
-  ├── Resume Runtime Integration   ✅
-  ├── Conditional Join             ✅
-  ├── Durable tenant boundary      ✅
-  ├── Checkpoint tenant boundary   ✅
-  ├── Conditional Decision Trace   ✅
-  ├── Resume Contract tenant scope ✅
-  ├── Branch Checkpoint Gate       ✅
-  ├── Decision Fingerprint         ✅
-  ├── Runtime Plan fingerprint     ✅
-  ├── Recovery Frontier Replay Guard ✅
-  ├── Decision Trace Idempotency    ✅ 本轮完成
-  ├── Unit Test 实际执行            ⏳
-  └── Real API acceptance           ⏸ 暂停
+  ├── Evaluator                       ✅
+  ├── DAG Contract                   ✅
+  ├── Conditional Planner            ✅
+  ├── Initial Execution Runtime      ✅
+  ├── Resume Runtime Integration     ✅
+  ├── Conditional Join               ✅
+  ├── Durable tenant boundary        ✅
+  ├── Checkpoint tenant boundary     ✅
+  ├── Conditional Decision Trace     ✅
+  ├── Resume Contract tenant scope   ✅
+  ├── Branch Checkpoint Gate         ✅
+  ├── Decision Fingerprint            ✅
+  ├── Runtime Plan fingerprint        ✅
+  ├── Recovery Frontier Replay Guard  ✅
+  ├── Decision Trace Idempotency       ✅
+  ├── Sequence Plan metadata          ✅ 本轮完成
+  ├── Unit Test 实际执行              ⏳
+  └── Real API acceptance              ⏸ 暂停
           ↓
 Phase 2.7-A Durable Recovery Closure
   ├── Checkpoint fact 完整性
