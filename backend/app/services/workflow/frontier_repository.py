@@ -162,7 +162,7 @@ async def recover_expired_frontiers(
     now: datetime,
     limit: int = 100,
 ) -> list[WorkflowFrontier]:
-    """回收仍属于可恢复 Execution 的过期 Frontier，不复活已结束 Execution 的旧 Frontier。
+    """只回收 Frontier 与关联 Execution 都已失去租约的可恢复任务。
 
     Args:
         db: 当前数据库会话。
@@ -175,12 +175,19 @@ async def recover_expired_frontiers(
     Raises:
         ValueError: limit 非正数。
 
-    设计意图：过期租约只回收调度权，不直接递增 attempt；同时必须检查关联 Execution
-    仍处于 pending/running。completed/failed/cancelled Execution 已经 terminalize 后，
-    旧 Worker 的迟到租约恢复不能重新制造 retry_wait Frontier，否则会重新打开已经结束的 Execution。
+    设计意图：Frontier lease 与 Execution lease 是同一个 Worker ownership 生命周期的两层事实。
+    只看到 Frontier 过期而 Execution 仍持有有效 lease 时，不能立即把 Frontier 放回 retry 队列，
+    否则第二个 Worker 可能在第一个 Worker 仍拥有 Execution 时抢占 Frontier，形成双重消费窗口。
+    因此 running Execution 必须同时满足“无 owner 或 Execution lease 已过期”；pending Execution
+    则只能在没有有效 owner 时恢复。回收动作只清除 Frontier 调度权，不递增 attempt，最终事务由调用方提交。
     """
     if limit <= 0:
         raise ValueError("limit must be positive")
+    execution_recoverable = or_(
+        WorkflowExecution.worker_owner.is_(None),
+        WorkflowExecution.worker_lease_expires_at.is_(None),
+        WorkflowExecution.worker_lease_expires_at <= now,
+    )
     stmt = (
         select(WorkflowFrontier)
         .join(
@@ -195,6 +202,7 @@ async def recover_expired_frontiers(
             WorkflowFrontier.worker_lease_expires_at.is_not(None),
             WorkflowFrontier.worker_lease_expires_at <= now,
             WorkflowExecution.status.in_(("pending", "running")),
+            execution_recoverable,
         )
         .order_by(WorkflowFrontier.worker_lease_expires_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
         .with_for_update(skip_locked=True)
@@ -230,7 +238,6 @@ async def transition_owned_frontier(
         worker_owner: 当前 Worker ownership 标识。
         attempt: 当前 fencing generation。
         target_status: 目标状态。
-        now: 当前时间。
 
     Returns:
         完成状态变更后的 Frontier。
