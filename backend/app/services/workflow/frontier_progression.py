@@ -120,8 +120,22 @@ async def _resolve_completed_frontier_idempotency(
     if len(checkpoints) > 1:
         raise FrontierProgressionContractError("同一 Frontier 存在多个 completion Checkpoint，Durable fact 已分叉，拒绝 Replay convergence")
     checkpoint = checkpoints[0]
-    if checkpoint.state_data != checkpoint_state or checkpoint.worker_owner != worker_owner:
+    if checkpoint.state_data != checkpoint_state:
         raise FrontierProgressionContractError("重复 completion 的 Checkpoint payload 与既有 Durable fact 不一致")
+
+    execution_result = await db.execute(
+        select(WorkflowExecution).where(
+            WorkflowExecution.id == current.execution_id,
+            WorkflowExecution.tenant_id == current.tenant_id,
+        )
+    )
+    execution = execution_result.scalar_one_or_none()
+    if execution is None:
+        raise FrontierProgressionContractError("已完成 Frontier 缺少关联 Workflow Execution，拒绝 Replay convergence")
+    if checkpoint.execution_status != execution.status:
+        raise FrontierProgressionContractError(
+            "重复 completion 的 Checkpoint execution_status 与当前 Execution lifecycle 不一致"
+        )
     if checkpoint.execution_status == "running" and next_identity is None:
         raise FrontierProgressionContractError("既有 completion Checkpoint 表明 Execution 仍在 running，Replay 必须提供原始 Next Frontier identity")
     if checkpoint.execution_status == "completed" and next_identity is not None:
