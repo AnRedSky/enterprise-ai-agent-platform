@@ -11,19 +11,20 @@ from app.services.workflow import WorkflowExecutionService
 
 
 def _execution(*, status: str) -> SimpleNamespace:
-    """Build a test execution that satisfies the WorkflowExecution governance contract."""
+    """构造满足 Workflow Execution 状态机契约的测试对象。"""
     return SimpleNamespace(
         id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), created_by=uuid4(),
         status=status, current_node_id=None, started_at=None, ended_at=None, output_data=None,
-        error_code=None, error_message=None, input_data={},
+        error_code=None, error_message=None, input_data={}, worker_owner=None, worker_attempt=0,
     )
 
 
 def _db() -> AsyncMock:
-    """Build an async-session test double with sync SQLAlchemy add()."""
+    """构造异步 Session 测试替身，并为同步 SQLAlchemy Result 方法提供确定返回值。"""
     db = AsyncMock()
     db.add = Mock()
     db.refresh = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))
     return db
 
 
