@@ -149,8 +149,6 @@ async def complete_frontier_with_checkpoint(
     if next_identity is None:
         if execution.status != "running":
             raise FrontierProgressionContractError(f"终态 Frontier 只能从 running Execution 收敛: {execution.status}")
-        if execution_worker_attempt != int(execution.worker_attempt or 0):
-            raise FrontierProgressionContractError("Execution Worker fencing generation 在事务内发生变化")
         execution.status = "completed"
         execution.ended_at = now
         execution.current_node_id = None
@@ -161,11 +159,11 @@ async def complete_frontier_with_checkpoint(
         governance = WorkflowGovernanceService(db)
         await governance.trace(
             execution, audit_actor, "execution.state_changed", "completed",
-            data={"from": "running", "to": "completed", "frontier_id": str(frontier.id)},
+            data={"from": "running", "to": "completed", "frontier_id": str(frontier.id), "worker_attempt": execution_worker_attempt},
         )
         await governance.audit(
             execution, audit_actor, "workflow.execution.completed", "success",
-            metadata={"frontier_id": str(frontier.id)},
+            metadata={"frontier_id": str(frontier.id), "worker_attempt": execution_worker_attempt},
         )
 
     checkpoint_service = WorkflowExecutionCheckpointService(db)
@@ -174,8 +172,8 @@ async def complete_frontier_with_checkpoint(
         checkpoint_reason=checkpoint_reason, node_id=node_id, node_attempt=node_attempt, node_status=node_status,
         input_data=input_data, output_data=output_data, worker_owner=worker_owner, error_code=error_code,
         error_message=error_message, tenant_id=frontier.tenant_id,
-        expected_worker_owner=worker_owner,
-        expected_worker_attempt=execution_worker_attempt,
+        expected_worker_owner=worker_owner if next_identity is not None else None,
+        expected_worker_attempt=execution_worker_attempt if next_identity is not None else None,
         frontier_id=frontier.id if checkpoint_reason == "frontier_completed" else None,
     )
 
