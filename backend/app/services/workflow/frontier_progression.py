@@ -123,11 +123,14 @@ async def _resolve_completed_frontier_idempotency(
     if checkpoint.state_data != checkpoint_state:
         raise FrontierProgressionContractError("重复 completion 的 Checkpoint payload 与既有 Durable fact 不一致")
 
+    # 设计意图：Replay 幂等路径也必须与正常 terminalization 使用相同的 Frontier → Execution
+    # 锁序。这里锁定 Execution 后再读取 lifecycle，避免在返回既有 Durable fact 前观察到过期的
+    # Execution 状态，从而与并发 terminalization 产生错误收敛。
     execution_result = await db.execute(
         select(WorkflowExecution).where(
             WorkflowExecution.id == current.execution_id,
             WorkflowExecution.tenant_id == current.tenant_id,
-        )
+        ).with_for_update()
     )
     execution = execution_result.scalar_one_or_none()
     if execution is None:
