@@ -20,7 +20,6 @@ class WorkflowDagNextFrontierPlan:
     """当前 Frontier 完成后下一 Frontier 的确定性规划结果。"""
 
     resume_plan: WorkflowDagResumePlan
-    runtime_plan: WorkflowDagResumeRuntimePlan | None
     identity: WorkflowFrontierIdentity | None
 
 
@@ -48,10 +47,10 @@ class WorkflowDagFrontierProgressionService:
             state_data_by_node: 当前 Execution 可用于条件求值的已完成 Node state。
 
         Returns:
-            下一 Frontier 的 Planner、Runtime Plan 与确定性 identity；没有下一 Frontier 时 identity 为 None。
+            下一 Frontier 的 Planner 结果与确定性 identity；没有下一 Frontier 时 identity 为 None。
 
         Raises:
-            ValueError: 当前 frontier 未完整包含在 completed facts、state 数据非法、或 Planner 无法生成合法下一 Frontier。
+            ValueError: 当前 frontier 未完整包含在 completed facts、state 数据非法或 Planner 无法生成合法下一 Frontier。
 
         设计意图：Checkpoint 之后必须重新运行唯一 Planner，而不能从当前 frontier 直接猜测后继 Node；这样才能让条件分支、Join 与 decision fingerprint 继续使用同一个正式规则入口。
         """
@@ -73,35 +72,21 @@ class WorkflowDagFrontierProgressionService:
             state_data_by_node=state_data_by_node,
         )
         if not resume_plan.frontier_node_ids:
-            return WorkflowDagNextFrontierPlan(
-                resume_plan=resume_plan,
-                runtime_plan=None,
-                identity=None,
-            )
+            return WorkflowDagNextFrontierPlan(resume_plan=resume_plan, identity=None)
 
-        node_by_id = {node["id"]: node for node in definition.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
-        try:
-            nodes = tuple(node_by_id[node_id] for node_id in resume_plan.frontier_node_ids)
-        except KeyError as exc:
-            raise ValueError(f"下一 Frontier 引用了未知 Node: {exc.args[0]}") from exc
-        runtime_plan = WorkflowDagResumeRuntimePlan(
-            completed_node_ids=resume_plan.completed_node_ids,
-            frontier_node_ids=resume_plan.frontier_node_ids,
-            nodes=tuple(dict(node) for node in nodes),
-            state_data=dict(state_data_by_node[next(iter(completed))]) if len(resume_plan.frontier_node_ids) == 1 else {},
-            selected_predecessor_node_ids=resume_plan.selected_predecessor_node_ids,
-            decision_fingerprint=resume_plan.decision_fingerprint,
-        )
+        node_ids = {
+            node.get("id")
+            for node in definition.get("nodes", [])
+            if isinstance(node, dict) and isinstance(node.get("id"), str)
+        }
+        unknown_frontier = set(resume_plan.frontier_node_ids) - node_ids
+        if unknown_frontier:
+            raise ValueError(f"下一 Frontier 引用了未知 Node: {sorted(unknown_frontier)[0]}")
+
         identity = WorkflowFrontierIdentity(
             execution_id=execution_id,
             workflow_version_id=workflow_version_id,
             decision_fingerprint=resume_plan.decision_fingerprint,
             node_ids=resume_plan.frontier_node_ids,
         )
-        if identity.key() == current_plan.decision_fingerprint:
-            raise ValueError("下一 Frontier identity 不得与当前 Runtime decision fingerprint 混淆")
-        return WorkflowDagNextFrontierPlan(
-            resume_plan=resume_plan,
-            runtime_plan=runtime_plan,
-            identity=identity,
-        )
+        return WorkflowDagNextFrontierPlan(resume_plan=resume_plan, identity=identity)
