@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
 from app.runtime.workflow.dag_runtime import WorkflowRuntime
+from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlan
+from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlanner
 
 
 @pytest.mark.asyncio
@@ -77,3 +79,36 @@ async def test_completed_resume_node_query_keeps_source_and_current_execution_sc
     compiled = query.compile().params
     execution_ids = next(value for key, value in compiled.items() if key.startswith("execution_id"))
     assert set(execution_ids) == {execution.id, execution.resume_of_execution_id}
+
+
+def test_runtime_planner_reuses_supplied_resume_plan_without_replanning():
+    """验证 Runtime 只能消费已经计算出的 Planner 结果，不在同一次 resolution 中二次计算 Decision。"""
+    definition = {
+        "nodes": [
+            {"id": "a", "type": "input", "config": {}},
+            {"id": "b", "type": "input", "config": {}},
+        ],
+        "edges": [{"source": "a", "target": "b"}],
+    }
+    resume_plan = WorkflowDagResumePlan(
+        completed_node_ids=("a",),
+        frontier_node_ids=("b",),
+        selected_predecessor_node_ids=(("b", ("a",)),),
+        decision_fingerprint="fingerprint-1",
+    )
+
+    with patch(
+        "app.services.workflow.checkpoint.recovery.dag_runtime.WorkflowDagResumePlanner.plan",
+        side_effect=AssertionError("Runtime planner must not recalculate the supplied Decision"),
+    ):
+        runtime_plan = WorkflowDagResumeRuntimePlanner.plan(
+            definition=definition,
+            completed_node_ids={"a"},
+            state_data={"request_id": "r-1"},
+            resume_plan=resume_plan,
+        )
+
+    assert runtime_plan.completed_node_ids == ("a",)
+    assert runtime_plan.frontier_node_ids == ("b",)
+    assert runtime_plan.selected_predecessor_node_ids == (("b", ("a",)),)
+    assert runtime_plan.decision_fingerprint == "fingerprint-1"
