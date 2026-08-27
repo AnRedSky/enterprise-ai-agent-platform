@@ -58,6 +58,16 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 completed,
                 decision_id,
             )
+            await trace_link.record_dag_decision(
+                execution,
+                trace_id,
+                actor_id or execution.created_by,
+                decision_id,
+                completed,
+                frontier,
+                selected,
+            )
+            return
 
         await self.execution_service.governance.trace(
             execution,
