@@ -39,7 +39,8 @@
 - Durable Frontier Recovery Execution Lease Guard：Frontier lease 过期但 Execution lease 有效时禁止 Recovery：✅
 - Durable Frontier Claim Head-of-Line Guard：blocked tenant 不再阻塞其他可执行 tenant：✅
 - Durable Frontier Failure Terminalization Transaction Boundary：Failure retry/failed 与 Execution failed 统一补偿事务：✅
-- **Durable Frontier Completion Source Binding：`frontier_completed` Checkpoint 现在显式绑定 source Frontier，重复 completion 不再按 Execution 下“最新 Checkpoint”猜测来源；历史未绑定事实不启发式回填：✅ 本轮**
+- Durable Frontier Completion Source Binding：`frontier_completed` Checkpoint 显式绑定 source Frontier，重复 completion 不再按 Execution 下最新 Checkpoint 猜测来源；历史未绑定事实不启发式回填：✅
+- **Durable Frontier Recovery Multi-frontier Re-entry：Recovery 同时释放同一 Execution 的多个过期 Frontier 后，首个 Claim 取得 Execution ownership，后续 Frontier 允许复用同一 Worker epoch，不再因 `pending + current owner` 被错误阻塞：✅ 本轮**
 
 ## 当前实现边界
 
@@ -62,6 +63,9 @@ complete_frontier_with_checkpoint()
 Execution-aware Worker Claim
   ↓
 Execution Ownership / Fencing
+  ├── fresh pending Execution → acquire + increment epoch
+  ├── recovered pending + current owner → reuse epoch
+  └── expired foreign owner → reacquire + increment epoch
   ↓
 Unified Runtime Entry
   ↓
@@ -89,15 +93,13 @@ Recovery / Replay
 ```text
 Recovery re-entry
         ↓
-Execution lease / Frontier lease convergence
+Concurrent multi-frontier Claim
         ↓
-Concurrent Worker Claim
+Execution epoch reuse / reacquisition
         ↓
-Duplicate completion
+Duplicate consumption guard
         ↓
-Execution terminalization
-        ↓
-Failure terminalization
+Success / Failure terminalization
         ↓
 Replay convergence
         ↓
@@ -120,16 +122,15 @@ Phase 2.7 主线完成
 - Recovery 只有在 Frontier lease 与关联 Execution ownership 同时失效后才能把 Frontier 重新放入 retry 队列；
 - Worker tenant candidate 必须与实际 Frontier Claim 使用相同的 Execution eligibility 规则；
 - Durable Frontier failure 的 Frontier retry/failed 与 Execution failed 必须共享同一补偿事务；
-- **`frontier_completed` Checkpoint 必须绑定 source Frontier，不得从同一 Execution 下其他 Frontier 的最新 completion fact 推断当前 Frontier 的幂等事实。**
+- `frontier_completed` Checkpoint 必须绑定 source Frontier，不得从同一 Execution 下其他 Frontier 的最新 completion fact 推断当前 Frontier 的幂等事实；
+- **同一 Execution Recovery 后存在多个 retry_wait Frontier 时，当前 Worker 已取得 pending Execution ownership 后，后续 Frontier 必须复用同一 worker_attempt，不得再次递增 fencing generation，也不得被 pending 状态阻塞。**
 
 ## 本轮交付
 
-- `backend/app/models/workflow_checkpoint.py`
-- `backend/app/services/workflow/checkpoint/service.py`
-- `backend/app/services/workflow/frontier_progression.py`
-- `backend/alembic/versions/0036_workflow_checkpoint_frontier_binding.py`
-- `backend/tests/unit/test_frontier_checkpoint_binding.py`
+- `backend/app/services/workflow_worker/frontier_runtime.py`
+- `backend/app/services/workflow/frontier_repository.py`
+- `backend/tests/unit/test_frontier_recovery_reentry.py`
 - `docs/PROJECT_STATUS.md`
-- `docs/04-errors/2026-08-27-frontier-completion-source-binding.md`
+- `docs/04-errors/2026-08-27-frontier-recovery-multi-frontier-reentry.md`
 
 **Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
