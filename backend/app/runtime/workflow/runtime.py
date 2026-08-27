@@ -145,14 +145,26 @@ class WorkflowRuntime:
         return normalized
 
     async def _load_completed_resume_nodes(self, execution) -> list[WorkflowNodeExecution]:
-        """读取当前 Execution 以及 Resume Source 的已完成 Node 事实。"""
+        """读取当前 Execution 及 Resume Source 的已完成 Node 事实，并严格限制在当前租户边界内。
+
+        Args:
+            execution: 当前 Workflow Execution；其 `tenant_id` 是读取 NodeExecution 的强制租户边界。
+
+        Returns:
+            当前 Execution 与其 Resume Source 中按创建顺序排列的已完成 Node Execution。
+
+        设计意图：Resume 的完成事实属于租户隔离的数据资产。即使 execution_id 来自可信内部对象，也不能让未加 tenant scope 的查询成为跨租户读取入口。
+        """
         execution_ids = [execution.id]
         source_execution_id = getattr(execution, "resume_of_execution_id", None)
         if source_execution_id is not None:
             execution_ids.insert(0, source_execution_id)
-        return list((await self.db.execute(select(WorkflowNodeExecution).where(
-            WorkflowNodeExecution.execution_id.in_(execution_ids), WorkflowNodeExecution.status == "completed"
-        ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all())
+        query = select(WorkflowNodeExecution).where(
+            WorkflowNodeExecution.execution_id.in_(execution_ids),
+            WorkflowNodeExecution.tenant_id == execution.tenant_id,
+            WorkflowNodeExecution.status == "completed",
+        ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
+        return list((await self.db.execute(query)).scalars().all())
 
     @staticmethod
     def _build_frontier_branch_states(
