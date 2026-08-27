@@ -61,3 +61,20 @@ async def test_fresh_linear_execution_keeps_all_nodes():
     resumed = await runtime._resume_version(execution, version)
 
     assert resumed is version
+
+
+@pytest.mark.asyncio
+async def test_all_completed_linear_nodes_are_terminalized_without_replay():
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), input_data={"input": "x"}, output_data=None)
+    completed = SimpleNamespace(node_id="node-1", output_data={"content": "done"})
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [completed]
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+    service = MagicMock()
+    service.transition = AsyncMock()
+    runtime = DurableResumeWorkflowRuntime(db, execution_service=service)
+    version = SimpleNamespace(definition={"nodes": [{"id": "node-1", "type": "agent", "config": {}}]})
+
+    assert await runtime._complete_if_all_nodes_resumed(execution, version, uuid4()) is True
+    service.transition.assert_awaited_once()
