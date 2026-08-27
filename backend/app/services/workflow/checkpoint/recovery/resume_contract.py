@@ -41,12 +41,16 @@ class WorkflowExecutionResumeContractService:
         self,
         execution: WorkflowExecution,
         actor_id: UUID,
+        *,
+        commit: bool = True,
     ) -> WorkflowExecutionResumeOutcome:
         """在 Source Execution 锁内判断并执行一次确定性 Resume。
 
         Args:
             execution: 当前需要恢复的源 Workflow Execution。
             actor_id: 创建 Resume 时记录的操作者身份。
+            commit: 是否在本 Contract 内提交事务。Recovery 自动恢复会传入 False，
+                使 Resume、lineage、Frontier 与 Recovery trace 在同一外层事务中提交。
 
         Returns:
             明确区分 `created` 与 `idempotency_hit` 的 Resume 结果。
@@ -55,7 +59,7 @@ class WorkflowExecutionResumeContractService:
             ValueError: 恢复候选缺少确定性幂等键，或已有 Resume 的 lineage 与当前恢复请求不一致。
 
         事务边界：Source Execution 锁定、Resume 创建、completed Node lineage 复制与首个 Durable Frontier
-        入队必须在同一调用方事务中完成；本 Contract 不独立 commit，避免产生“Resume 已创建但没有 Frontier”的孤儿 Execution。
+        入队必须在同一调用方事务中完成；commit=False 时由调用方负责最终提交。
         """
         from app.services.workflow.execution import WorkflowExecutionService
 
@@ -112,8 +116,9 @@ class WorkflowExecutionResumeContractService:
             resume_execution=resume_execution,
             actor_id=actor_id,
         )
-        await self.db.commit()
-        await self.db.refresh(resume_execution)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(resume_execution)
         return WorkflowExecutionResumeOutcome(
             execution=resume_execution,
             outcome="created",
