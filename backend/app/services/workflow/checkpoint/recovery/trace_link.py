@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.models.workflow_trace import WorkflowTraceEvent
 
 
@@ -24,6 +25,37 @@ class WorkflowRecoveryTraceLinkService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _assert_resume_checkpoint_lineage(
+        self,
+        source_execution: WorkflowExecution,
+        resume_execution: WorkflowExecution,
+    ) -> int:
+        """验证 Resume Execution 指向 Source 的同一 durable checkpoint 边界。"""
+        if resume_execution.resume_of_execution_id != source_execution.id:
+            raise ValueError("Recovery trace lineage 的 Resume Execution 必须指向 Source Execution")
+        if resume_execution.tenant_id != source_execution.tenant_id:
+            raise ValueError("Recovery trace lineage 不允许跨 tenant 建立 Source/Resume 关联")
+        if resume_execution.workflow_version_id != source_execution.workflow_version_id:
+            raise ValueError("Recovery trace lineage 不允许跨 workflow version 建立 Source/Resume 关联")
+        checkpoint_sequence = resume_execution.resume_checkpoint_sequence
+        if checkpoint_sequence is None:
+            raise ValueError("Recovery trace lineage 缺少 resume_checkpoint_sequence")
+        checkpoint = (
+            await self.db.execute(
+                select(WorkflowExecutionCheckpoint.sequence)
+                .where(
+                    WorkflowExecutionCheckpoint.execution_id == source_execution.id,
+                    WorkflowExecutionCheckpoint.sequence == checkpoint_sequence,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if checkpoint is None:
+            raise ValueError(
+                "Recovery trace lineage 的 resume_checkpoint_sequence 不存在于 Source Execution"
+            )
+        return checkpoint
 
     async def link(
         self,
@@ -37,6 +69,9 @@ class WorkflowRecoveryTraceLinkService:
         同一 Resume Execution + trace_id 幂等命中时直接返回已有事件，避免 Scheduler/Recovery
         重试造成重复 lineage 记录。事件只保存身份与关联信息，不保存 Checkpoint state_data。
         """
+        checkpoint_sequence = await self._assert_resume_checkpoint_lineage(
+            source_execution, resume_execution
+        )
         existing = (
             await self.db.execute(
                 select(WorkflowTraceEvent)
@@ -65,6 +100,7 @@ class WorkflowRecoveryTraceLinkService:
             data={
                 "source_execution_id": str(source_execution.id),
                 "resume_execution_id": str(resume_execution.id),
+                "resume_checkpoint_sequence": checkpoint_sequence,
                 "phase": "automatic_recovery",
             },
         )
@@ -81,12 +117,7 @@ class WorkflowRecoveryTraceLinkService:
         completed_node_ids: list[str],
         decision_fingerprint: str,
     ) -> None:
-        """校验同一 Recovery trace 下相同 durable completed facts 的 Decision fingerprint。
-
-        Recovery replay 允许 workflow 继续产生新的 frontier，但同一个 durable snapshot
-        不能产生两个不同的 Decision identity。该检查只读取 Trace metadata，不把 Trace
-        当作业务 state source of truth；真正的 state 仍来自 NodeExecution / Checkpoint。
-        """
+        """校验同一 Recovery trace 下相同 durable completed facts 的 Decision fingerprint。"""
         result = await self.db.execute(
             select(WorkflowTraceEvent.data)
             .where(
@@ -117,11 +148,7 @@ class WorkflowRecoveryTraceLinkService:
         frontier_node_ids: list[str],
         selected_predecessors: list[dict[str, object]],
     ) -> WorkflowTraceEvent | None:
-        """幂等持久化 DAG frontier decision，并保持 Decision Trace 不重复增长。
-
-        Decision identity 由 Planner 生成。相同 execution + tenant + trace + decision_id 只保留
-        一个事件；该事件仍然只保存审计 metadata，不保存业务 state_data。
-        """
+        """幂等持久化 DAG frontier decision，并保持 Decision Trace 不重复增长。"""
         if not trace_id:
             return None
 
@@ -167,11 +194,7 @@ class WorkflowRecoveryTraceLinkService:
         return event
 
     async def get_trace_id(self, resume_execution: WorkflowExecution) -> str | None:
-        """从持久化 Recovery lineage 恢复 Resume Execution 对应的 trace_id。
-
-        该查询只读取 trace identity，不读取或返回业务 payload，使独立 Worker 可以在
-        接管 Resume Execution 后继续原 Recovery trace。若没有 lineage，返回 None。
-        """
+        """从持久化 Recovery lineage 恢复 Resume Execution 对应的 trace_id。"""
         result = await self.db.execute(
             select(WorkflowTraceEvent.trace_id)
             .where(
