@@ -1,6 +1,6 @@
 """Workflow DAG Resume Runtime 计划模块。
 
-职责：把纯内存 DAG Resume Frontier 转换为 Runtime 可以消费的确定性多 Node 计划，并保留条件边选中的 predecessor 事实。
+职责：把纯内存 DAG Resume Frontier 转换为 Runtime 可以消费的确定性多 Node 计划，并保留条件边选中的 predecessor 与 decision fingerprint。
 边界：不读取数据库、不创建 Node Execution、不修改 Checkpoint、不获取 Worker ownership；已完成事实及状态由调用方提供。
 关键依赖：WorkflowDagResumePlanner、WorkflowDagBranchStateMergeService；真正 Node 执行仍由 WorkflowRuntime / Worker 负责。
 """
@@ -24,6 +24,7 @@ class WorkflowDagResumeRuntimePlan:
     nodes: tuple[dict, ...]
     state_data: dict
     selected_predecessor_node_ids: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    decision_fingerprint: str = ""
 
     @property
     def frontier_node_id(self) -> str:
@@ -57,10 +58,10 @@ class WorkflowDagResumeRuntimePlanner:
             state_data_by_node: 已完成 Node 的持久化输出，用于 Conditional Branching 重新计算 frontier。
 
         Returns:
-            Runtime 可消费的确定性 frontier、状态快照及有效 predecessor。
+            Runtime 可消费的确定性 frontier、状态快照、有效 predecessor 与 decision fingerprint。
 
         Raises:
-            ValueError: DAG、条件边、frontier 或状态输入不满足 Contract。
+            ValueError: DAG、条件边、frontier、状态输入或 Planner fingerprint 不满足 Contract。
         """
         if state_data is not None and not isinstance(state_data, dict):
             raise ValueError("DAG Resume Runtime state_data 必须为对象")
@@ -71,6 +72,8 @@ class WorkflowDagResumeRuntimePlanner:
             completed_node_ids=completed_node_ids,
             state_data_by_node=state_data_by_node,
         )
+        if not plan.decision_fingerprint:
+            raise ValueError("DAG Resume Planner 未生成 decision fingerprint")
         node_by_id = {node["id"]: node for node in definition["nodes"] if isinstance(node, dict) and isinstance(node.get("id"), str)}
         frontier_node_ids = plan.frontier_node_ids
         nodes = tuple(deepcopy(node_by_id[node_id]) for node_id in frontier_node_ids)
@@ -98,4 +101,5 @@ class WorkflowDagResumeRuntimePlanner:
             nodes=nodes,
             state_data=merged_state_data,
             selected_predecessor_node_ids=plan.selected_predecessor_node_ids,
+            decision_fingerprint=plan.decision_fingerprint,
         )
