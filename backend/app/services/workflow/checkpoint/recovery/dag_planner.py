@@ -127,9 +127,17 @@ class WorkflowDagResumePlanner:
             },
         }
         try:
-            canonical = json.dumps(decision_input, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+            canonical = json.dumps(
+                decision_input,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
         except (TypeError, ValueError) as exc:
-            raise ValueError(f"DAG Resume 无法生成确定性 decision fingerprint: {exc}") from exc
+            raise ValueError(
+                f"DAG Resume 无法生成确定性 decision fingerprint：condition state 必须是 JSON-safe 数据: {exc}"
+            ) from exc
         decision_fingerprint = sha256(canonical.encode("utf-8")).hexdigest()
         return WorkflowDagResumePlan(
             completed_node_ids=ordered_completed,
