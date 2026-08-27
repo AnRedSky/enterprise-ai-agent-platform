@@ -9,13 +9,14 @@ from app.services.workflow.checkpoint.recovery.observability import (
     WorkflowRecoveryEvent,
     WorkflowRecoveryTelemetry,
 )
+from app.services.workflow_worker.durable_frontier_execution import PlannerDrivenDurableFrontierWorkflowWorker
 from app.services.workflow_worker.lease_runtime import LeaseAwareWorkflowWorker
 from app.services.workflow_worker.runtime import WorkflowWorker as BaseWorkflowWorker
 
 
 @pytest.mark.asyncio
 async def test_default_worker_runtime_aborts_when_lease_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:
-    """验证默认 Worker Runtime 入口会主动取消底层 Runtime。"""
+    """验证 Lease-aware Worker Runtime 入口会主动取消底层 Runtime。"""
     cancelled = asyncio.Event()
 
     async def fake_execute(self: BaseWorkflowWorker, execution_id):
@@ -68,8 +69,8 @@ async def test_lease_loss_marks_worker_finished_as_aborted(monkeypatch: pytest.M
     assert finished[0].reason_code == "WORKER_LEASE_LOST"
 
 
-def test_package_worker_is_lease_aware() -> None:
-    """默认公开 Worker 必须是 LeaseAwareWorkflowWorker。"""
+def test_package_worker_is_durable_frontier_worker() -> None:
+    """默认公开 Worker 必须是 PlannerDriven Durable Frontier Worker。"""
     from app.services.workflow_worker import WorkflowWorker
 
-    assert WorkflowWorker is LeaseAwareWorkflowWorker
+    assert WorkflowWorker is PlannerDrivenDurableFrontierWorkflowWorker
