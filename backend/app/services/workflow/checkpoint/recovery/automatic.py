@@ -66,8 +66,15 @@ class WorkflowExecutionAutomaticRecoveryService:
         return count
 
     async def evaluate(self, execution: WorkflowExecution, *, now: datetime | None = None) -> WorkflowExecutionAutomaticRecoveryResult:
-        """评估一个 failed Execution 是否满足自动 Resume 策略；不会创建 Resume。"""
-        checkpoint = await self.checkpoint.latest(execution.id, tenant_id=execution.tenant_id)
+        """评估一个 failed Execution 是否满足自动 Resume 策略；不会创建 Resume。
+
+        使用 latest_recovery_fact() 而不是普通 latest()，确保带 Node 的最新 Checkpoint
+        在生成 Recovery Candidate 前已经与同一 Execution 的 Durable Node Fact 完整对齐。
+        """
+        checkpoint = await self.checkpoint.latest_recovery_fact(
+            execution.id,
+            tenant_id=execution.tenant_id,
+        )
         assessment = self.checkpoint_recovery.assess(execution_id=execution.id, workflow_version_id=execution.workflow_version_id, execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint=checkpoint)
         attempts = await self._count_resume_ancestors(execution)
         decision = self.policy.evaluate(execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint_eligible=assessment.eligible, resume_attempt_count=attempts, ended_at=execution.ended_at, now=now)
