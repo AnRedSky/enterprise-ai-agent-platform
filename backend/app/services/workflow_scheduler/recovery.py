@@ -1,9 +1,4 @@
-"""Workflow Execution 自动恢复扫描器。
-
-职责：Scheduler 侧按固定轮询发现 failed Execution，并把每个候选交给唯一 Recovery Domain Service。
-边界：不复制 Recovery Policy、不创建 Resume Execution、不抢 Worker lease、不启动 Runtime；只负责“什么时候检查”。
-关键依赖：SessionLocal、WorkflowExecution ORM、WorkflowExecutionAutomaticRecoveryService、Recovery Trace Service。
-"""
+"""Workflow Execution 自动恢复扫描器。"""
 
 from __future__ import annotations
 
@@ -35,6 +30,7 @@ class WorkflowRecoveryScanResult:
     failed: int = 0
     created: int = 0
     idempotency_hit: int = 0
+    reconciled: int = 0
 
 
 class WorkflowRecoveryScheduler:
@@ -89,13 +85,16 @@ class WorkflowRecoveryScheduler:
             "failed": 0,
             "created": 0,
             "idempotency_hit": 0,
+            "reconciled": 0,
         }
         for execution_id in execution_ids:
             try:
                 async with SessionLocal() as db:
                     execution = (
                         await db.execute(
-                            select(WorkflowExecution).where(WorkflowExecution.id == execution_id)
+                            select(WorkflowExecution).where(
+                                WorkflowExecution.id == execution_id
+                            )
                         )
                     ).scalar_one_or_none()
                     if execution is None:
@@ -120,6 +119,9 @@ class WorkflowRecoveryScheduler:
                     elif recovery.outcome == "idempotency_hit":
                         counters["idempotency_hit"] += 1
                         counters["contention"] += 1
+                        counters["recovered"] += 1
+                    elif recovery.outcome == "reconciled":
+                        counters["reconciled"] += 1
                         counters["recovered"] += 1
                     else:
                         counters["rejected"] += 1
