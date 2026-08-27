@@ -41,6 +41,8 @@ Execution.transition(completed)
 6. 写入同一事务的 trace / audit；
 7. 最后由调用方统一 `commit()`。
 
+同时补充并发边界：terminalization 前必须再次证明传入 `worker_owner + attempt` 仍是当前 Execution 的 ownership/fencing generation。旧 Worker 即使已经通过 Frontier 自身的 ownership 检查，也不能在 Execution ownership 已被更新后继续结束 Execution。
+
 成功路径变为：
 
 ```text
@@ -48,9 +50,11 @@ NodeExecution completed facts
         ↓
 Frontier → completed
         ↓
-frontier_completed Checkpoint
+Lock + validate Execution ownership
         ↓
 Execution → completed
+        ↓
+frontier_completed Checkpoint
         ↓
 Next Frontier（若存在）
         ↓
@@ -65,7 +69,18 @@ Next Frontier（若存在）
 
 ## 5. 测试
 
-新增 Unit Test 用于覆盖终态 progression contract；本轮没有执行 pytest，因此不记录 PASS。
+新增：
+
+```text
+backend/tests/unit/test_frontier_terminalization_atomicity.py
+```
+
+覆盖：
+
+- terminal Frontier + Execution owner mismatch 在 Checkpoint durable write 前被拒绝；
+- terminal Frontier 不允许从已 completed Execution 再次 terminalize；
+- 非终态 Frontier 仍保持 `execution_status=running`，并继续传递 Worker fencing；
+- 未执行 pytest，本轮不记录 PASS。
 
 ## 6. 后续主线
 
