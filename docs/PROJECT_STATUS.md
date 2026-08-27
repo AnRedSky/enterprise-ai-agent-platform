@@ -43,7 +43,8 @@
 - Durable Frontier Recovery Multi-frontier Re-entry：Recovery 同时释放同一 Execution 的多个过期 Frontier 后，首个 Claim 取得 Execution ownership，后续 Frontier 允许复用同一 Worker epoch，不再因 `pending + current owner` 被错误阻塞：✅
 - Durable Frontier Stale Lease Completion Guard：Frontier 最终 completion/failure transition 同时校验 owner、attempt 与未过期 Worker lease，阻断 lease 已过期但 Recovery 尚未完成清理时的旧 Worker 写入：✅
 - Durable Frontier Execution Worker Epoch Binding：Progression 在最终 durable write 前锁定关联 Execution，并使用 `Execution.worker_attempt` 作为 Worker fencing epoch；严格区分 Execution epoch 与 Frontier consumption attempt，Next Frontier 的 Checkpoint 不再错误使用 Frontier attempt 作为 Execution fencing generation：✅
-- Durable Checkpoint Worker Lease Write Guard：带 Worker fencing 参数的 Checkpoint durable write 在锁定 Execution 后再次证明 owner、worker epoch 与未过期 lease，阻断 stale Worker 在 Node-level Checkpoint 边界产生 durable fact：✅ 本轮
+- Durable Checkpoint Worker Lease Write Guard：带 Worker fencing 参数的 Checkpoint durable write 在锁定 Execution 后再次证明 owner、worker epoch 与未过期 lease，阻断 stale Worker 在 Node-level Checkpoint 边界产生 durable fact：✅
+- Durable Frontier / Execution Atomic Lease Heartbeat：Frontier heartbeat 同一短事务内同时续租关联 Execution 与 Frontier；任一层 owner、status、fencing 或 lease 失效均整体回滚，禁止形成跨层 lease 不一致窗口：✅ 本轮
 
 ## 当前实现边界
 
@@ -54,30 +55,32 @@ WorkflowFrontierIdentity
   ├── execution + version + decision fingerprint
   └── canonical Node-set identity key
   ↓
+Execution-aware Worker Claim
+  ├── fresh pending Execution → acquire + increment epoch
+  ├── recovered pending + current owner → reuse epoch
+  └── expired foreign owner → reacquire + increment epoch
+  ↓
+Atomic Worker Lease Heartbeat
+  ├── Frontier owner + attempt + active lease
+  └── Execution owner + worker epoch + active lease
+  ↓
+Unified Runtime Entry
+  ↓
+WorkflowRuntime
+  ↓
+Node / Checkpoint durable facts
+  ├── Checkpoint → Execution worker epoch + active lease
+  └── stale Worker → rejected
+  ↓
 complete_frontier_with_checkpoint()
   ├── duplicate completion → exact source Frontier durable facts
-  ├── lock Execution + validate owner / lease
+  ├── lock Execution + validate owner / lease / worker epoch
   ├── Frontier transition → owner + Frontier attempt + lease
   ├── Checkpoint → Execution worker epoch + active lease
   ├── terminal Execution → completed（终态）
   └── deterministic Next Frontier（非终态）
   ↓
 唯一 COMMIT / ROLLBACK
-  ↓
-Execution-aware Worker Claim
-  ↓
-Execution Ownership / Fencing
-  ├── fresh pending Execution → acquire + increment epoch
-  ├── recovered pending + current owner → reuse epoch
-  └── expired foreign owner → reacquire + increment epoch
-  ↓
-Unified Runtime Entry
-  ↓
-Durable Resume Runtime Adapter
-  ↓
-WorkflowRuntime
-  ↓
-Node / Checkpoint durable facts
   ↓
 Recovery / Replay
 ```
@@ -99,7 +102,7 @@ Recovery re-entry
         ↓
 Concurrent multi-frontier Claim
         ↓
-Execution epoch reuse / reacquisition
+Atomic Execution + Frontier lease heartbeat
         ↓
 Cross-layer stale Worker write guard
         ↓
@@ -132,11 +135,14 @@ Phase 2.7 主线完成
 - 同一 Execution Recovery 后存在多个 retry_wait Frontier 时，当前 Worker 已取得 pending Execution ownership 后，后续 Frontier 必须复用同一 worker_attempt，不得再次递增 fencing generation，也不得被 pending 状态阻塞；
 - Frontier terminal transition 除 owner 与 attempt 外必须证明 `worker_lease_expires_at > now`，lease 已失效的旧 Worker 不得完成或失败 Frontier；
 - Execution `worker_attempt` 是 Worker ownership epoch；Frontier `attempt` 仅是 Frontier consumption attempt，二者禁止互相替代；Progression 写入 Checkpoint 时必须使用锁定后的 Execution epoch；
-- 带 Worker fencing 参数的 Node-level Checkpoint 写入必须同时证明 Execution owner、worker epoch 与未过期 lease；stale Worker 不能仅凭 owner + epoch 写入新的 Node durable fact。
+- 带 Worker fencing 参数的 Node-level Checkpoint 写入必须同时证明 Execution owner、worker epoch 与未过期 lease；stale Worker 不能仅凭 owner + epoch 写入新的 Node durable fact；
+- Worker heartbeat 必须在同一短事务内续租 Frontier 与关联 Execution；任一层续租失败必须整体 rollback，不得形成 Frontier 有效而 Execution 失效或反向的不一致 lease pair。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/checkpoint/service.py`
+- `backend/app/services/workflow/frontier_lease_repository.py`
 - `docs/PROJECT_STATUS.md`
+- `docs/04-errors/2026-08-27-frontier-execution-frontier-atomic-lease-heartbeat.md`
+- `backend/tests/unit/test_frontier_atomic_lease_heartbeat.py`
 
 **Unit Test：本轮仅实现/保留测试代码，当前环境未执行 pytest，因此不记录 PASS。**
