@@ -32,7 +32,7 @@ class WorkflowDagBranchStateMergeService:
     """按显式冲突拒绝规则合并多个已完成分支的状态。"""
 
     @staticmethod
-    def merge(*, branches: tuple[WorkflowDagBranchState, ...]) -> WorkflowDagStateMergePlan:
+    def merge(branches: tuple[WorkflowDagBranchState, ...]) -> WorkflowDagStateMergePlan:
         """合并分支状态并拒绝无法证明安全的键冲突。
 
         Args:
@@ -50,11 +50,9 @@ class WorkflowDagBranchStateMergeService:
         """
         if not branches:
             raise ValueError("DAG Branch State Merge 至少需要一个分支")
-
         ordered = tuple(sorted(branches, key=lambda branch: branch.node_id))
         node_ids: set[str] = set()
         merged: dict[str, object] = {}
-
         for branch in ordered:
             if not isinstance(branch.node_id, str) or not branch.node_id:
                 raise ValueError("DAG Branch node_id 必须为非空字符串")
@@ -63,14 +61,12 @@ class WorkflowDagBranchStateMergeService:
             node_ids.add(branch.node_id)
             if not isinstance(branch.state_data, Mapping):
                 raise ValueError(f"DAG Branch state_data 必须为对象: {branch.node_id}")
-
             for key, value in branch.state_data.items():
                 if not isinstance(key, str) or not key:
                     raise ValueError("DAG Branch state_data key 必须为非空字符串")
                 if key in merged and merged[key] != value:
                     raise ValueError(f"DAG Branch state_data 存在冲突键: {key}")
                 merged[key] = deepcopy(value)
-
         return WorkflowDagStateMergePlan(
             branch_node_ids=tuple(branch.node_id for branch in ordered),
             state_data=deepcopy(merged),
