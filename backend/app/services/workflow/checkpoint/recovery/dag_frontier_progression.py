@@ -1,18 +1,23 @@
 """DAG Resume Frontier progression 适配模块。
 
-职责：把当前 Multi-frontier Runtime 完成后的持久化事实重新交给唯一 DAG Planner，生成下一 Frontier 的确定性身份。
-边界：不执行 Node、不写 Checkpoint、不获取 Worker ownership；持久化由现有 Frontier progression contract 负责。
-关键依赖：WorkflowDagResumePlanner、WorkflowDagResumeRuntimePlan、WorkflowFrontierIdentity。
+职责：把当前 Multi-frontier Runtime 完成后的持久化事实重新交给唯一 DAG Planner，生成下一 Frontier 的确定性身份，并在同一外层事务内交给统一 Frontier progression contract 持久化。
+边界：不执行 Node、不获取 Worker ownership；Planner 负责计算，frontier_progression 负责 Frontier → Checkpoint → Next Frontier 原子持久化。
+关键依赖：WorkflowDagResumePlanner、WorkflowDagResumeRuntimePlan、WorkflowFrontierIdentity、complete_frontier_with_checkpoint。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.workflow_execution import WorkflowFrontier
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlan, WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlan
 from app.services.workflow.frontier import WorkflowFrontierIdentity
+from app.services.workflow.frontier_progression import complete_frontier_with_checkpoint
 
 
 @dataclass(frozen=True)
@@ -23,8 +28,17 @@ class WorkflowDagNextFrontierPlan:
     identity: WorkflowFrontierIdentity | None
 
 
+@dataclass(frozen=True)
+class WorkflowDagFrontierProgressionResult:
+    """DAG Frontier 从 Planner 到 Durable Frontier 的完整事务结果。"""
+
+    plan: WorkflowDagNextFrontierPlan
+    checkpoint: object
+    next_frontier: WorkflowFrontier | None
+
+
 class WorkflowDagFrontierProgressionService:
-    """将 Durable Checkpoint 之后的完成事实收敛为下一 Frontier identity。"""
+    """将 Durable Checkpoint 之后的完成事实收敛为下一 Frontier，并复用统一原子持久化 Contract。"""
 
     @staticmethod
     def plan_next_frontier(
@@ -36,24 +50,7 @@ class WorkflowDagFrontierProgressionService:
         completed_node_ids: set[str] | frozenset[str],
         state_data_by_node: dict[str, dict],
     ) -> WorkflowDagNextFrontierPlan:
-        """根据当前 Frontier 完成后的持久化事实生成下一 Frontier。
-
-        Args:
-            definition: 固定 Workflow Version 的 DAG Definition。
-            execution_id: 当前 Workflow Execution ID。
-            workflow_version_id: 当前 Workflow Version ID。
-            current_plan: 已成功执行并完成 Checkpoint 的当前 Runtime Plan。
-            completed_node_ids: 写入当前 Branch Node Checkpoint 后的完整完成事实集合。
-            state_data_by_node: 当前 Execution 可用于条件求值的已完成 Node state。
-
-        Returns:
-            下一 Frontier 的 Planner 结果与确定性 identity；没有下一 Frontier 时 identity 为 None。
-
-        Raises:
-            ValueError: 当前 frontier 未完整包含在 completed facts、state 数据非法或 Planner 无法生成合法下一 Frontier。
-
-        设计意图：Checkpoint 之后必须重新运行唯一 Planner，而不能从当前 frontier 直接猜测后继 Node；这样才能让条件分支、Join 与 decision fingerprint 继续使用同一个正式规则入口。
-        """
+        """根据当前 Frontier 完成后的持久化事实生成下一 Frontier。"""
         if not current_plan.frontier_node_ids:
             raise ValueError("当前 Runtime Plan 必须至少包含一个 frontier")
         completed = set(completed_node_ids)
@@ -90,3 +87,63 @@ class WorkflowDagFrontierProgressionService:
             node_ids=resume_plan.frontier_node_ids,
         )
         return WorkflowDagNextFrontierPlan(resume_plan=resume_plan, identity=identity)
+
+    @classmethod
+    async def complete_frontier(
+        cls,
+        db: AsyncSession,
+        *,
+        frontier: WorkflowFrontier,
+        worker_owner: str,
+        attempt: int,
+        definition: dict,
+        current_plan: WorkflowDagResumeRuntimePlan,
+        completed_node_ids: set[str] | frozenset[str],
+        state_data_by_node: dict[str, dict],
+        checkpoint_state: dict,
+        checkpoint_reason: str,
+        now: datetime,
+        node_id: str | None = None,
+        node_attempt: int | None = None,
+        node_status: str | None = None,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> WorkflowDagFrontierProgressionResult:
+        """在统一事务中完成 DAG Frontier → Checkpoint → Next Frontier。
+
+        Planner 只负责计算下一 Frontier identity；真正持久化必须统一经过
+        ``complete_frontier_with_checkpoint``，避免 Runtime 自己 enqueue Frontier 形成旁路。
+        方法本身不 commit，事务失败由调用方 rollback。
+        """
+        next_plan = cls.plan_next_frontier(
+            definition=definition,
+            execution_id=frontier.execution_id,
+            workflow_version_id=frontier.workflow_version_id,
+            current_plan=current_plan,
+            completed_node_ids=completed_node_ids,
+            state_data_by_node=state_data_by_node,
+        )
+        checkpoint, next_frontier = await complete_frontier_with_checkpoint(
+            db,
+            frontier=frontier,
+            worker_owner=worker_owner,
+            attempt=attempt,
+            checkpoint_state=checkpoint_state,
+            checkpoint_reason=checkpoint_reason,
+            node_id=node_id,
+            node_attempt=node_attempt,
+            node_status=node_status,
+            input_data=input_data,
+            output_data=output_data,
+            error_code=error_code,
+            error_message=error_message,
+            next_identity=next_plan.identity,
+            now=now,
+        )
+        return WorkflowDagFrontierProgressionResult(
+            plan=next_plan,
+            checkpoint=checkpoint,
+            next_frontier=next_frontier,
+        )
