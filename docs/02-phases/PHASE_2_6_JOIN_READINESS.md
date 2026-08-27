@@ -39,7 +39,7 @@ WorkflowDagJoinReadinessService
         ↓
 all predecessors completed + state merge succeeds
         ↓
-WorkflowRuntime
+WorkflowRuntime DAG Join extension
         ↓
 _execute_node_with_policy()
         ↓
@@ -56,7 +56,9 @@ DAG Resume Planner
 next frontier
 ```
 
-Join Node 是纯状态汇聚节点，不调用 Model Provider；其执行输出是输入 state 的独立副本。这样 Join 不会引入第二套 Provider / Retry / Checkpoint 规则。
+Join Node 是纯状态汇聚节点，不调用 Model Provider；其执行输出是输入 state 的独立副本。Runtime 复用基础 Runtime 的 Retry / Timeout / NodeExecution / Checkpoint 路径，而不是复制一套 Join persistence。
+
+`WorkflowDagJoinExecutor` 继续作为独立 Domain Execution Contract，可供不直接运行完整 WorkflowRuntime 的调用方使用；真实 Runtime 当前直接使用同一 Readiness Contract + 既有 `_execute_node_with_policy()`，以保证 Retry / fencing / transaction 只有一个实现来源。
 
 ## State Source 安全边界
 
