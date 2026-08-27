@@ -98,9 +98,7 @@ def create_executable_fixture(client):
         "definition": {"nodes": [
             {"id": "input", "type": "input", "config": {}},
             {"id": "output", "type": "output", "config": {}},
-        ], "edges": [
-            {"source": "input", "target": "output"},
-        ]}
+        ], "edges": [{"source": "input", "target": "output"}]}
     }).json()
     request(client, "POST", f"/workflows/{workflow['id']}/versions/{version['id']}/publish")
     return workflow["id"]
@@ -160,13 +158,8 @@ def create_retry_fixture(client, agent_id, *, name, runtime_config=None, retry_c
     execution = request(client, "POST", f"/workflows/{workflow['id']}/executions", json={
         "input_data": {"source": "real_api_retry_boundary_validation"}
     }).json()
-    run_fixture_execution(
-        client,
-        execution["id"],
-        expected_status=expected_status,
-        expected_error=expected_error,
-        expected_http_status=expected_http_status,
-    )
+    run_fixture_execution(client, execution["id"], expected_status=expected_status,
+                          expected_error=expected_error, expected_http_status=expected_http_status)
     return workflow["id"], execution["id"]
 
 
@@ -182,11 +175,8 @@ def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_confi
         "prompt": "Trigger deterministic Circuit Breaker boundary validation.",
         "retry": retry_config,
         "circuit_breaker": {
-            "enabled": True,
-            "key": circuit_key,
-            "failure_threshold": 1,
-            "recovery_timeout_ms": recovery_timeout_ms,
-            "half_open_max_calls": 1,
+            "enabled": True, "key": circuit_key, "failure_threshold": 1,
+            "recovery_timeout_ms": recovery_timeout_ms, "half_open_max_calls": 1,
         },
     }
     version = request(client, "POST", f"/workflows/{workflow['id']}/versions", json={
@@ -203,13 +193,8 @@ def create_circuit_fixture(client, agent_id, *, name, circuit_key, runtime_confi
     execution = request(client, "POST", f"/workflows/{workflow['id']}/executions", json={
         "input_data": {"source": "real_api_circuit_breaker_validation"}
     }).json()
-    run_fixture_execution(
-        client,
-        execution["id"],
-        expected_status="failed",
-        expected_error=expected_error,
-        expected_http_status=expected_http_status,
-    )
+    run_fixture_execution(client, execution["id"], expected_status="failed",
+                          expected_error=expected_error, expected_http_status=expected_http_status)
     return workflow["id"], execution["id"]
 
 
@@ -221,20 +206,10 @@ def create_circuit_recovery_fixture(client, agent_id, *, name, circuit_key, reco
     node_config = {
         "agent_id": agent_id,
         "prompt": "Verify Circuit Breaker HALF_OPEN recovery success.",
-        "retry": {
-            "max_attempts": 1,
-            "backoff_ms": 0,
-            "max_backoff_ms": 0,
-            "jitter_ms": 0,
-            "retryable_error_codes": ["HTTP_503"],
-        },
-        "circuit_breaker": {
-            "enabled": True,
-            "key": circuit_key,
-            "failure_threshold": 1,
-            "recovery_timeout_ms": recovery_timeout_ms,
-            "half_open_max_calls": 1,
-        },
+        "retry": {"max_attempts": 1, "backoff_ms": 0, "max_backoff_ms": 0,
+                   "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]},
+        "circuit_breaker": {"enabled": True, "key": circuit_key, "failure_threshold": 1,
+                             "recovery_timeout_ms": recovery_timeout_ms, "half_open_max_calls": 1},
     }
     version = request(client, "POST", f"/workflows/{workflow['id']}/versions", json={
         "definition": {
@@ -256,93 +231,59 @@ def create_retry_boundary_fixtures(client, agent_id):
         runtime_config={"timeout_ms": 30_000, "retry_budget": {"max_retries": 1}},
     )
     budget_workflow_id, budget_execution_id = create_retry_fixture(
-        client, agent_id,
-        name="API Retry Budget Exhausted Validation",
+        client, agent_id, name="API Retry Budget Exhausted Validation",
         runtime_config={"timeout_ms": 30_000, "retry_budget": {"max_retries": 0}},
     )
     deadline_workflow_id, deadline_execution_id = create_retry_fixture(
-        client, agent_id,
-        name="API Retry Deadline Validation",
+        client, agent_id, name="API Retry Deadline Validation",
         runtime_config={"timeout_ms": 1000, "retry_budget": {"max_retries": 1}},
-        retry_config={
-            "max_attempts": 3,
-            "backoff_ms": 2000,
-            "max_backoff_ms": 2000,
-            "jitter_ms": 0,
-            "retryable_error_codes": ["HTTP_404"],
-        },
-        expected_error="WORKFLOW_TIMEOUT",
-        expected_http_status=504,
+        retry_config={"max_attempts": 3, "backoff_ms": 2000, "max_backoff_ms": 2000,
+                      "jitter_ms": 0, "retryable_error_codes": ["HTTP_404"]},
+        expected_error="WORKFLOW_TIMEOUT", expected_http_status=504,
     )
-    return {
-        "retry_workflow_id": retry_workflow_id,
-        "retry_execution_id": retry_execution_id,
-        "budget_workflow_id": budget_workflow_id,
-        "budget_execution_id": budget_execution_id,
-        "deadline_workflow_id": deadline_workflow_id,
-        "deadline_execution_id": deadline_execution_id,
-    }
+    return {"retry_workflow_id": retry_workflow_id, "retry_execution_id": retry_execution_id,
+            "budget_workflow_id": budget_workflow_id, "budget_execution_id": budget_execution_id,
+            "deadline_workflow_id": deadline_workflow_id, "deadline_execution_id": deadline_execution_id}
 
 
 def create_circuit_breaker_fixtures(client):
     circuit_key = f"real-api-circuit-{uuid.uuid4().hex[:8]}"
     circuit_recovery_timeout_ms = 10_000
-    failing_agent_id = create_retry_agent(
-        client, model_id="mock-http-503", name_prefix="API Circuit Failure Agent"
-    )
-    recovery_agent_id = create_retry_agent(
-        client, model_id="mock-slow-success", name_prefix="API Circuit Recovery Agent"
-    )
+    failing_agent_id = create_retry_agent(client, model_id="mock-http-503", name_prefix="API Circuit Failure Agent")
+    recovery_agent_id = create_retry_agent(client, model_id="mock-slow-success", name_prefix="API Circuit Recovery Agent")
     open_workflow_id, open_execution_id = create_circuit_fixture(
-        client,
-        failing_agent_id,
-        name="API Circuit Breaker Open Validation",
-        circuit_key=circuit_key,
+        client, failing_agent_id, name="API Circuit Breaker Open Validation", circuit_key=circuit_key,
         runtime_config={"timeout_ms": 30_000, "retry_budget": {"max_retries": 1}},
-        retry_config={
-            "max_attempts": 2,
-            "backoff_ms": 0,
-            "max_backoff_ms": 0,
-            "jitter_ms": 0,
-            "retryable_error_codes": ["HTTP_503"],
-        },
-        recovery_timeout_ms=circuit_recovery_timeout_ms,
-    )
+        retry_config={"max_attempts": 2, "backoff_ms": 0, "max_backoff_ms": 0, "jitter_ms": 0,
+                      "retryable_error_codes": ["HTTP_503"]}, recovery_timeout_ms=circuit_recovery_timeout_ms)
     recovery_workflow_id = create_circuit_recovery_fixture(
-        client,
-        recovery_agent_id,
-        name="API Circuit Breaker Recovery Validation",
-        circuit_key=circuit_key,
-        recovery_timeout_ms=circuit_recovery_timeout_ms,
-    )
-    return {
-        "circuit_open_workflow_id": open_workflow_id,
-        "circuit_open_execution_id": open_execution_id,
-        "circuit_recovery_workflow_id": recovery_workflow_id,
-    }
+        client, recovery_agent_id, name="API Circuit Breaker Recovery Validation",
+        circuit_key=circuit_key, recovery_timeout_ms=circuit_recovery_timeout_ms)
+    return {"circuit_open_workflow_id": open_workflow_id, "circuit_open_execution_id": open_execution_id,
+            "circuit_recovery_workflow_id": recovery_workflow_id}
 
 
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
-    organization = request(client, "POST", "/organizations", json={
-        "name": f"API Real Organization {uuid.uuid4().hex[:8]}",
-    }).json()
+    response = client.post("/organizations", json={"name": f"API Real Organization {uuid.uuid4().hex[:8]}"})
+    if response.status_code == 409 and response.json().get("detail") == "当前 Tenant 已存在 Organization":
+        organizations = request(client, "GET", "/organizations").json()
+        if not organizations:
+            raise RuntimeError("Tenant reports an existing Organization, but GET /organizations returned none")
+        organization = organizations[0]
+        return {"organization_id": str(organization["id"]), "membership_id": "", "member_user_id": "",
+                "member_access_token": ""}
+    if response.status_code >= 400:
+        raise RuntimeError(f"POST /organizations -> {response.status_code}: {response.text}")
+    organization = response.json()
     member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
     member_password = f"ApiRealTest!{uuid.uuid4().hex[:16]}"
-    member = request(client, "POST", "/auth/register", json={
-        "username": member_username,
-        "password": member_password,
-    }).json()
+    member = request(client, "POST", "/auth/register", json={"username": member_username, "password": member_password}).json()
     membership = request(client, "POST", f"/organizations/{organization['id']}/members", json={
-        "user_id": member["user_id"],
-        "role": "admin",
+        "user_id": member["user_id"], "role": "admin",
     }).json()
     member_token = login_token(client, member_username, member_password)
-    return {
-        "organization_id": str(organization["id"]),
-        "membership_id": str(membership["id"]),
-        "member_user_id": str(member["user_id"]),
-        "member_access_token": member_token,
-    }
+    return {"organization_id": str(organization["id"]), "membership_id": str(membership["id"]),
+            "member_user_id": str(member["user_id"]), "member_access_token": member_token}
 
 
 def main():
@@ -353,9 +294,7 @@ def main():
             request(client, "POST", "/auth/register", json={"username": username, "password": password})
         token = login_token(client, username, password)
         client.headers["Authorization"] = f"Bearer {token}"
-
         organization = create_organization_fixture(client, username, password)
-
         workflow_id = create_executable_fixture(client)
         trigger_id = create_trigger_fixture(client, workflow_id)
         execution = request(client, "POST", f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "real_api_validation"}}).json()
@@ -363,26 +302,15 @@ def main():
         boundary = create_retry_boundary_fixtures(client, retry_agent_id)
         circuit = create_circuit_breaker_fixtures(client)
 
-    context = {
-        "ACCESS_TOKEN": token,
-        "WORKFLOW_ID": str(workflow_id),
-        "WORKFLOW_EXECUTION_ID": str(execution["id"]),
-        "TRIGGER_WORKFLOW_ID": str(workflow_id),
-        "TRIGGER_ID": str(trigger_id),
-        "RETRY_WORKFLOW_ID": str(boundary["retry_workflow_id"]),
-        "RETRY_EXECUTION_ID": str(boundary["retry_execution_id"]),
-        "RETRY_BUDGET_WORKFLOW_ID": str(boundary["budget_workflow_id"]),
-        "RETRY_BUDGET_EXECUTION_ID": str(boundary["budget_execution_id"]),
-        "RETRY_DEADLINE_WORKFLOW_ID": str(boundary["deadline_workflow_id"]),
-        "RETRY_DEADLINE_EXECUTION_ID": str(boundary["deadline_execution_id"]),
-        "CIRCUIT_OPEN_WORKFLOW_ID": str(circuit["circuit_open_workflow_id"]),
-        "CIRCUIT_OPEN_EXECUTION_ID": str(circuit["circuit_open_execution_id"]),
-        "CIRCUIT_RECOVERY_WORKFLOW_ID": str(circuit["circuit_recovery_workflow_id"]),
-        "ORGANIZATION_ID": organization["organization_id"],
-        "ORGANIZATION_MEMBERSHIP_ID": organization["membership_id"],
-        "ORGANIZATION_MEMBER_USER_ID": organization["member_user_id"],
-        "ORGANIZATION_MEMBER_ACCESS_TOKEN": organization["member_access_token"],
-    }
+    context = {"ACCESS_TOKEN": token, "WORKFLOW_ID": str(workflow_id), "WORKFLOW_EXECUTION_ID": str(execution["id"]),
+               "TRIGGER_WORKFLOW_ID": str(workflow_id), "TRIGGER_ID": str(trigger_id),
+               "RETRY_WORKFLOW_ID": str(boundary["retry_workflow_id"]), "RETRY_EXECUTION_ID": str(boundary["retry_execution_id"]),
+               "RETRY_BUDGET_WORKFLOW_ID": str(boundary["budget_workflow_id"]), "RETRY_BUDGET_EXECUTION_ID": str(boundary["budget_execution_id"]),
+               "RETRY_DEADLINE_WORKFLOW_ID": str(boundary["deadline_workflow_id"]), "RETRY_DEADLINE_EXECUTION_ID": str(boundary["deadline_execution_id"]),
+               "CIRCUIT_OPEN_WORKFLOW_ID": str(circuit["circuit_open_workflow_id"]), "CIRCUIT_OPEN_EXECUTION_ID": str(circuit["circuit_open_execution_id"]),
+               "CIRCUIT_RECOVERY_WORKFLOW_ID": str(circuit["circuit_recovery_workflow_id"]),
+               "ORGANIZATION_ID": organization["organization_id"], "ORGANIZATION_MEMBERSHIP_ID": organization["membership_id"],
+               "ORGANIZATION_MEMBER_USER_ID": organization["member_user_id"], "ORGANIZATION_MEMBER_ACCESS_TOKEN": organization["member_access_token"]}
     ENV_FILE.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Real API context prepared: {ENV_FILE.stem}_{uuid.uuid4().hex[:12]}")
 
