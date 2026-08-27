@@ -1,8 +1,8 @@
 """Workflow DAG Resume Runtime 顺序规划模块。
 
-职责：把每次只有一个 frontier 的 DAG Resume 计划展开为可交给现有顺序 Runtime 的确定性 Node 序列。
-边界：只做纯内存拓扑规划，不读取数据库、不执行 Node、不修改 Checkpoint，也不合并分支状态。
-关键依赖：WorkflowDagResumeRuntimePlanner；调用方仍负责在每个 Node 成功后使用新的状态重新计算真实 Runtime 数据。
+职责：把只有单一 frontier 的 DAG Resume 计划展开为现有顺序 Runtime 可以消费的确定性 Node 序列。
+边界：只做纯内存拓扑规划，不读取数据库、不执行 Node、不修改 Checkpoint、不合并分支状态。
+关键依赖：WorkflowDagResumeRuntimePlanner；Multi-frontier 执行必须由 WorkflowDagMultiFrontierExecutor 负责，不能在这里退化为共享状态的顺序执行。
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from app.services.workflow.checkpoint.recovery.dag_runtime import (
 
 
 class WorkflowDagResumeRuntimeSequencePlanner:
-    """在没有分支 frontier 时，将 DAG Resume 展开为安全的线性 Node 计划。"""
+    """在单 frontier 场景下生成安全的线性 Node 计划。"""
 
     @staticmethod
     def plan(
@@ -25,7 +25,7 @@ class WorkflowDagResumeRuntimeSequencePlanner:
         completed_node_ids: set[str] | frozenset[str],
         state_data: dict,
     ) -> tuple[WorkflowDagResumeRuntimePlan, ...]:
-        """生成当前 DAG 可以安全交给顺序 Runtime 的 Node 计划序列。
+        """生成当前 DAG 可以安全交给顺序 Runtime 的单 frontier Node 计划序列。
 
         Args:
             definition: 固定 Workflow Version 的 DAG Definition。
@@ -36,11 +36,11 @@ class WorkflowDagResumeRuntimeSequencePlanner:
             按 DAG frontier 逐步推进得到的确定性单 Node 计划；全部 Node 已完成时返回空元组。
 
         Raises:
-            ValueError: 任一步骤出现多个 frontier，表示存在尚未冻结的分支状态合并语义。
+            ValueError: 当前 frontier 同时包含多个 Node，表示必须进入 Multi-frontier Executor；或输入状态非法。
 
-        设计边界：该规划器只模拟“完成当前 frontier”来确定拓扑顺序，不模拟 Node 输出或 state merge。
-        因此实际执行时每个 Node 都必须使用 Runtime 当前状态，不能把这里的初始 `state_data` 当作所有
-        后续 Node 的输入。frontier 校验统一委托给 Runtime Planner，避免顺序规划器复制 DAG Resume 规则。
+        设计边界：顺序规划器绝不把多个 Branch 强行压成一条线，也不把合并后的状态复制给不同 Branch。
+        这样可以避免旧 Runtime 在拓扑上“看似支持 DAG”、实际上破坏 Branch state 隔离。Multi-frontier
+        必须由专用 Executor 负责 Branch 执行、Checkpoint 与 Join readiness。
         """
         completed = set(completed_node_ids)
         node_ids = {
@@ -54,14 +54,16 @@ class WorkflowDagResumeRuntimeSequencePlanner:
                 completed_node_ids=completed,
                 state_data=state_data,
             )
-            frontier_node_id = frontier_plan.frontier_node_id
+            if len(frontier_plan.frontier_node_ids) != 1:
+                raise ValueError("DAG Resume Runtime 存在多个 frontier，必须交给 Multi-frontier Executor 执行")
+            node_id = frontier_plan.frontier_node_ids[0]
             plans.append(
                 WorkflowDagResumeRuntimePlan(
                     completed_node_ids=frontier_plan.completed_node_ids,
-                    frontier_node_id=frontier_node_id,
-                    node=deepcopy(frontier_plan.node),
+                    frontier_node_ids=(node_id,),
+                    nodes=(deepcopy(frontier_plan.nodes[0]),),
                     state_data=deepcopy(frontier_plan.state_data),
                 )
             )
-            completed.add(frontier_node_id)
+            completed.add(node_id)
         return tuple(plans)
