@@ -50,6 +50,32 @@ async def test_fresh_linear_execution_keeps_all_nodes():
 
 
 @pytest.mark.asyncio
+async def test_execute_activates_linear_resume_before_parent_runtime():
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), input_data={"input": "x"}, output_data=None)
+    version = SimpleNamespace(
+        id=uuid4(), workflow_id=uuid4(), version="1", status="published", created_by=uuid4(),
+        definition={"nodes": [{"id": "node-1", "type": "agent", "config": {}}]},
+    )
+    db = MagicMock()
+    retry_result = MagicMock()
+    retry_result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(return_value=retry_result)
+    runtime = DurableResumeWorkflowRuntime(db)
+    resumed_version = SimpleNamespace(**version.__dict__)
+    resumed_version.definition = {"nodes": [{"id": "node-1", "type": "agent", "config": {}}]}
+    parent = AsyncMock(return_value={"content": "done"})
+    with (
+        patch.object(runtime, "_complete_if_all_nodes_resumed", new=AsyncMock(return_value=False)) as complete,
+        patch.object(runtime, "_resume_version", new=AsyncMock(return_value=resumed_version)) as resume,
+        patch.object(DurableResumeWorkflowRuntime.__mro__[1], "execute", new=parent),
+    ):
+        await runtime.execute(execution, version, uuid4())
+    complete.assert_awaited_once()
+    resume.assert_awaited_once()
+    assert parent.await_args.args[1] is resumed_version
+
+
+@pytest.mark.asyncio
 async def test_all_completed_linear_nodes_are_terminalized_without_replay():
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), input_data={"input": "x"}, output_data=None)
     completed = SimpleNamespace(node_id="node-1", output_data={"content": "done"})
@@ -62,6 +88,7 @@ async def test_all_completed_linear_nodes_are_terminalized_without_replay():
     runtime = DurableResumeWorkflowRuntime(db, execution_service=service)
     version = SimpleNamespace(definition={"nodes": [{"id": "node-1", "type": "agent", "config": {}}]})
     assert await runtime._complete_if_all_nodes_resumed(execution, version, uuid4()) is True
+    assert execution.output_data == {"content": "done"}
     service.transition.assert_awaited_once()
 
 
