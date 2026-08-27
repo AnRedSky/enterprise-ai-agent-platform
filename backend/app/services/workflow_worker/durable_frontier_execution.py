@@ -96,7 +96,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         Returns:
             Multi-frontier Executor 结果。Branch NodeExecution 仍写入当前事务，
             但不提前追加 `frontier_completed` Checkpoint；外层 progression 会把 Frontier、
-            Checkpoint 与 Next Frontier 一次性提交，避免同一 frontier 产生两个完成快照。
+            Checkpoint、Execution terminalization 与 Next Frontier 一次性提交，避免同一 frontier 产生两个完成快照。
         """
         async def execute_branch(node, input_data):
             return await runtime._execute_node_with_policy(
@@ -294,13 +294,8 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     await complete_frontier_with_checkpoint(
                         db, frontier=frontier, worker_owner=self.owner, attempt=frontier.attempt,
                         checkpoint_state=checkpoint_state, checkpoint_reason="frontier_completed",
-                        next_identity=next_identity, now=now,
+                        next_identity=next_identity, now=now, actor_id=execution.created_by,
                     )
-                    if next_identity is None:
-                        await service.transition(
-                            execution, "completed", output_data=checkpoint_state,
-                            actor_id=execution.created_by,
-                        )
                     await db.commit()
                 except Exception:
                     await db.rollback()
