@@ -1,8 +1,7 @@
 """Workflow Recovery 可观测事件模型。
 
-职责：定义 Recovery Domain 与 Scheduler 共用的结构化事件字段，并提供统一日志/Trace/Metrics 出口。
+职责：定义 Recovery Domain 与 Scheduler/Worker 共用的结构化事件字段，并提供统一日志/Trace/Metrics 出口。
 边界：只负责事件建模与 telemetry dispatch，不负责数据库持久化或 provider 生命周期。
-关键依赖：Python logging、dataclasses、UUID、datetime、typing。
 """
 
 from __future__ import annotations
@@ -18,6 +17,8 @@ RECOVERY_SCAN_COMPLETED = "workflow.recovery.scan.completed"
 RECOVERY_ATTEMPT = "workflow.recovery.attempt"
 RECOVERY_TRACE_STARTED = "workflow.recovery.trace.started"
 RECOVERY_TRACE_FINISHED = "workflow.recovery.trace.finished"
+RECOVERY_WORKER_STARTED = "workflow.recovery.worker.started"
+RECOVERY_WORKER_FINISHED = "workflow.recovery.worker.finished"
 
 TraceSink = Callable[["WorkflowRecoveryEvent"], None]
 MetricsSink = Callable[["WorkflowRecoveryEvent"], None]
@@ -68,7 +69,6 @@ class WorkflowRecoveryEventLogger:
         self.logger = logger or logging.getLogger(__name__)
 
     def emit(self, event: WorkflowRecoveryEvent, *, level: int = logging.INFO) -> None:
-        """输出一个 Recovery 结构化事件。"""
         self.logger.log(level, event.event_name, extra=event.to_log_fields())
 
 
@@ -91,7 +91,6 @@ class WorkflowRecoveryTelemetry:
         self.metrics_sink = metrics_sink
 
     def emit(self, event: WorkflowRecoveryEvent, *, level: int = logging.INFO) -> None:
-        """向所有已配置的 telemetry sink 广播同一结构化事件。"""
         self.event_logger.emit(event, level=level)
         if self.trace_sink is not None:
             self.trace_sink(event)
