@@ -1,13 +1,14 @@
 """Trigger 生命周期与执行入口服务。
 
 职责：管理 manual/scheduled/webhook Trigger 的查询、创建、更新、删除和触发执行入口。
-边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；Scheduled Trigger 只创建 pending Execution，实际执行交给独立 Worker Service。
+边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；Scheduled Trigger 负责创建 pending Execution 与首个 Durable Frontier，实际执行交给独立 Worker Service。
 关键依赖：Workflow/WorkflowTrigger ORM、Workflow Execution/Governance 服务、Trigger 配置契约与 Workflow Runtime。
 """
 
 from __future__ import annotations
 
 import uuid
+from hashlib import sha256
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -20,6 +21,8 @@ from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
+from app.services.workflow.frontier import WorkflowFrontierIdentity
+from app.services.workflow.frontier_repository import enqueue_frontier
 from app.services.trigger.schedule import validate_trigger_config
 
 
@@ -148,24 +151,10 @@ class WorkflowTriggerService:
 
     async def invoke_scheduled(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
                                idempotency_key: str, recovery: bool = False, return_created: bool = False):
-        """为 Scheduled Trigger 创建待执行任务，不在 Scheduler 进程内执行 Workflow Runtime。
+        """为 Scheduled Trigger 创建 pending Execution 与首个 Durable Frontier。
 
-        Args:
-            workflow: 已发布 Workflow。
-            trigger: 已启用的 scheduled Trigger。
-            actor_id: Trigger 创建者身份。
-            input_data: Scheduler 计算出的 slot、计划时间与 recovery 元数据。
-            idempotency_key: Scheduler slot 对应的唯一 Execution 幂等键。
-            recovery: 是否为历史 misfire 恢复任务。
-            return_created: 是否同时返回本次是否新建 Execution。
-
-        Returns:
-            已存在或新创建的 pending WorkflowExecution；return_created 为真时返回 `(execution, created)`。
-
-        Raises:
-            HTTPException: Trigger、Workflow Published Version 或幂等 claim 不满足要求时抛出。
-
-        设计边界：Scheduler 只负责“调度到任务”，Worker 负责“领取并执行任务”。这样 Scheduler 重启不会直接占用 Workflow Runtime，也允许后续独立扩展 Worker 副本。
+        Scheduler 只负责把确定性 slot 投递为 Durable Work Item；Worker 负责 claim Frontier 并复用唯一 Workflow Runtime。
+        Execution 与 Frontier 在本次调用方事务中一起持久化，Scheduler 不在此处执行 Runtime。
         """
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
@@ -175,7 +164,7 @@ class WorkflowTriggerService:
         if not idempotency_key:
             raise HTTPException(422, "Scheduled Trigger 必须提供调度 Idempotency-Key")
         version = await self._get_published_version(workflow)
-        WorkflowRuntime.validate_definition(version.definition, allow_legacy_empty_nodes=True)
+        nodes = WorkflowRuntime.validate_definition(version.definition, allow_legacy_empty_nodes=True)
         execution_id = uuid.uuid4()
         execution = WorkflowExecution(id=execution_id, tenant_id=workflow.tenant_id, workflow_id=workflow.id,
                                        workflow_version_id=version.id, created_by=actor_id, idempotency_key=idempotency_key,
@@ -192,16 +181,29 @@ class WorkflowTriggerService:
                 raise HTTPException(409, "Scheduled Trigger Idempotency claim 未收敛")
             return (existing, False) if return_created else existing
         execution = (await self.db.execute(select(WorkflowExecution).where(WorkflowExecution.id == claimed_id))).scalar_one()
+        frontier_identity = WorkflowFrontierIdentity(
+            execution_id=execution.id,
+            workflow_version_id=version.id,
+            decision_fingerprint=sha256(idempotency_key.encode("utf-8")).hexdigest(),
+            node_ids=tuple(node["id"] for node in nodes),
+        )
+        await enqueue_frontier(
+            self.db,
+            tenant_id=execution.tenant_id,
+            identity=frontier_identity,
+            node_ids=frontier_identity.node_ids,
+            now=execution.created_at,
+        )
         audit_action = "workflow.trigger.scheduled_recovery" if recovery else "workflow.trigger.scheduled"
         trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
         await self.governance.audit(execution, actor_id, audit_action, "success", metadata={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type, "timezone": config["timezone"],
             "interval_seconds": config["interval_seconds"], "idempotency_key": idempotency_key, "recovery": recovery,
-            "dispatch_mode": "queued",
+            "dispatch_mode": "durable_frontier",
         })
         await self.governance.trace(execution, actor_id, trace_event, "pending", data={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type, "timezone": config["timezone"],
-            "interval_seconds": config["interval_seconds"], "recovery": recovery, "dispatch_mode": "queued",
+            "interval_seconds": config["interval_seconds"], "recovery": recovery, "dispatch_mode": "durable_frontier",
         })
         await self.db.commit()
         return (execution, True) if return_created else execution
