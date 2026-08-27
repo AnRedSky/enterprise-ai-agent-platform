@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import json
-from hashlib import sha256
 from time import monotonic
 
 from fastapi import HTTPException
@@ -28,18 +26,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
 
     @classmethod
     def validate_definition(cls, definition: dict, *, allow_legacy_empty_nodes: bool = False) -> list[dict]:
-        """校验基础 Runtime Definition，并在存在 edges 时冻结 DAG / Conditional Contract。
-
-        Args:
-            definition: Workflow Version Definition。
-            allow_legacy_empty_nodes: 是否允许历史空节点兼容模式。
-
-        Returns:
-            基础 Runtime 标准化后的 Node Definition。
-
-        Raises:
-            HTTPException: 基础 Runtime 或 DAG / Condition Contract 不满足要求时抛出。
-        """
+        """校验基础 Runtime Definition，并在存在 edges 时冻结 DAG / Conditional Contract。"""
         nodes = super().validate_definition(definition, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
         if "edges" in definition:
             try:
@@ -49,17 +36,11 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         return nodes
 
     async def _record_dag_frontier_decision(self, execution, version_definition: dict, plan, actor_id) -> None:
-        """将 Planner 的 frontier decision 持久化为可审计 Trace fact。
+        """将 Planner 的确定性 decision fingerprint 持久化为可审计 Trace fact。
 
-        Args:
-            execution: 当前 Workflow Execution。
-            version_definition: 当前冻结 Workflow Version Definition。
-            plan: `WorkflowDagResumePlan` 生成的确定性 frontier 计划。
-            actor_id: 当前 Runtime actor。
-
-        设计意图：Conditional Decision 本身不是 Recovery 的 source of truth；source of truth 仍是持久化 Node/Checkpoint facts。
-        本 Trace 只保存可重建的 decision metadata，使 Worker 重启后可以审计“当时选择了什么”，同时不会把业务 state_data 写入日志。
-        `decision_id` 对相同 Execution + completed facts + frontier + predecessor 选择保持确定性，便于消费端去重。
+        Conditional Decision 本身不是 Recovery source of truth；Node/Checkpoint facts 仍是唯一事实源。
+        fingerprint 由 Planner 同时绑定 completed facts、frontier、selected predecessor 及参与条件判断的持久化 state，
+        因此 Recovery 后若 durable input 改变，会得到新的 fingerprint，而不是错误复用旧 decision_id。
         """
         if self.execution_service is None or execution is None:
             return
@@ -69,14 +50,9 @@ class WorkflowRuntime(BaseWorkflowRuntime):
             {"node_id": node_id, "predecessor_node_ids": list(predecessors)}
             for node_id, predecessors in plan.selected_predecessor_node_ids
         ]
-        decision_payload = {
-            "execution_id": str(execution.id),
-            "workflow_version_id": str(getattr(execution, "workflow_version_id", "")),
-            "completed_node_ids": completed,
-            "frontier_node_ids": frontier,
-            "selected_predecessors": selected,
-        }
-        decision_id = sha256(json.dumps(decision_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        decision_id = plan.decision_fingerprint
+        if not decision_id:
+            raise ValueError("DAG Resume Planner 未生成 decision fingerprint")
         await self.execution_service.governance.trace(
             execution,
             actor_id or execution.created_by,
@@ -92,21 +68,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         )
 
     async def _resolve_dag_context(self, execution, definition: dict, state_data: dict):
-        """统一解析首次执行与 Resume 的 DAG frontier，并为多根首次执行初始化独立分支状态。
-
-        Args:
-            execution: 当前 Workflow Execution。
-            definition: 已冻结的 Workflow Version Definition。
-            state_data: 当前执行输入状态。
-
-        Returns:
-            `(plan, branch_state_data)`；没有 DAG edges 时返回 None。
-
-        Raises:
-            HTTPException: DAG Contract、条件状态或 Runtime Plan 不满足要求。
-
-        设计意图：首次执行与 Resume 必须使用同一个 DAG Planner；首次执行如果存在多个 root，所有 root 共享同一输入快照，但随后各自进入独立 frontier state，不能因为没有 completed Node 就退回顺序执行。
-        """
+        """统一解析首次执行与 Resume 的 DAG frontier，并为多根首次执行初始化独立分支状态。"""
         if not definition.get("edges"):
             return None
 
@@ -142,40 +104,14 @@ class WorkflowRuntime(BaseWorkflowRuntime):
 
     async def execute_node(self, node: dict, input_data: dict, actor_id, is_admin: bool,
                            session_id, tenant_id=None, execution=None) -> dict:
-        """执行 Join Node 或委托其它 Node 给基础 Runtime。
-
-        Args:
-            node: 当前 Workflow Node Definition。
-            input_data: 当前 Node 输入状态。
-            actor_id: Runtime 执行身份。
-            is_admin: 是否使用管理员权限。
-            session_id: 当前 Execution ID。
-            tenant_id: 当前租户范围。
-            execution: 当前 Workflow Execution。
-
-        Returns:
-            Node 输出状态；Join Node 原样返回输入状态。
-        """
+        """执行 Join Node 或委托其它 Node 给基础 Runtime。"""
         if node.get("type") == "join":
             return dict(input_data)
         return await super().execute_node(node, input_data, actor_id, is_admin, session_id, tenant_id, execution=execution)
 
     async def execute(self, execution, version, actor_id, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
-        """执行 Workflow，并在 Recovery Resume 场景延续持久化 trace_id。
-
-        Args:
-            execution: 当前待执行的 Workflow Execution。
-            version: 当前 Workflow Version。
-            actor_id: Runtime 执行身份。
-            is_admin: 是否使用管理员权限执行 Agent Node。
-            allow_legacy_empty_nodes: 是否允许历史空节点兼容模式。
-
-        Returns:
-            Workflow 最终执行状态。
-
-        设计边界：Trace Continuity 只负责恢复链路观测，不复制基础 Runtime 的执行、Checkpoint 或状态机逻辑。
-        """
+        """执行 Workflow，并在 Recovery Resume 场景延续持久化 trace_id。"""
         trace_link = WorkflowRecoveryTraceLinkService(self.db)
         trace_id = await trace_link.get_trace_id(execution)
         if trace_id is None:
