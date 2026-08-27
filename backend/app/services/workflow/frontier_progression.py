@@ -133,7 +133,7 @@ async def complete_frontier_with_checkpoint(
         FrontierProgressionContractError: progression contract 不满足。
         HTTPException: Execution 已经不是 running 或 Worker fencing 已失效。
 
-    事务边界：锁定并修改当前 Frontier、追加 Checkpoint、终态 Execution、幂等创建 Next Frontier，均不 commit；调用方统一提交或 rollback。
+    事务边界：锁定并修改当前 Frontier、终态 Execution、追加 Checkpoint、幂等创建 Next Frontier，均不 commit；调用方统一提交或 rollback。
     """
     execution_status = "running" if next_identity is not None else "completed"
     validate_frontier_progression_contract(
@@ -159,29 +159,9 @@ async def complete_frontier_with_checkpoint(
         now=now,
     )
 
-    # 第二阶段：同一事务中追加不可变 Checkpoint。Checkpoint Service 会锁定 Execution，
-    # 并串行分配 sequence，同时再次校验 Execution owner/generation，形成第二道 Durable 写入防线。
-    checkpoint_service = WorkflowExecutionCheckpointService(db)
-    checkpoint = await checkpoint_service.append_next_in_transaction(
-        execution_id=frontier.execution_id,
-        execution_status=execution_status,
-        state_data=checkpoint_state,
-        checkpoint_reason=checkpoint_reason,
-        node_id=node_id,
-        node_attempt=node_attempt,
-        node_status=node_status,
-        input_data=input_data,
-        output_data=output_data,
-        worker_owner=worker_owner,
-        error_code=error_code,
-        error_message=error_message,
-        tenant_id=frontier.tenant_id,
-        expected_worker_owner=worker_owner,
-        expected_worker_attempt=attempt,
-    )
-
-    # 第三阶段：终态 Frontier 必须在同一事务内同步 terminalize Execution。
-    # 不能调用带 commit 的通用 transition，否则会在 Next Frontier/Checkpoint 尚未完成时提前提交事务。
+    # 第二阶段：终态 Frontier 必须先在同一事务内把 Execution 切换为 completed，
+    # 因为 Checkpoint Durable Write 会锁定 Execution 并要求快照状态与当前状态一致。
+    # 这里绝不 commit；后续 Checkpoint / Next Frontier 任一阶段失败都会整体 rollback。
     if next_identity is None:
         execution_query = (
             select(WorkflowExecution)
@@ -224,6 +204,27 @@ async def complete_frontier_with_checkpoint(
             "success",
             metadata={"frontier_id": str(frontier.id)},
         )
+
+    # 第三阶段：同一事务中追加不可变 Checkpoint。Checkpoint Service 会锁定 Execution，
+    # 并串行分配 sequence，同时再次校验 Execution owner/generation。
+    checkpoint_service = WorkflowExecutionCheckpointService(db)
+    checkpoint = await checkpoint_service.append_next_in_transaction(
+        execution_id=frontier.execution_id,
+        execution_status=execution_status,
+        state_data=checkpoint_state,
+        checkpoint_reason=checkpoint_reason,
+        node_id=node_id,
+        node_attempt=node_attempt,
+        node_status=node_status,
+        input_data=input_data,
+        output_data=output_data,
+        worker_owner=worker_owner,
+        error_code=error_code,
+        error_message=error_message,
+        tenant_id=frontier.tenant_id,
+        expected_worker_owner=worker_owner if next_identity is not None else None,
+        expected_worker_attempt=attempt if next_identity is not None else None,
+    )
 
     # 第四阶段：后继 Frontier 使用确定性 identity 幂等创建；冲突时收敛到已有记录。
     next_frontier = None
