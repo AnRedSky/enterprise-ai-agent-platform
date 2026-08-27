@@ -57,6 +57,8 @@ Recovery Resume
 - Decision Trace 不保存业务 `state_data`，不能替代 PostgreSQL durable facts；
 - Multi-frontier Executor 只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state 并声明 `join_ready=true`；
 - 未提供 Checkpoint writer 时仍可收集 Branch execution result，但保持 `join_ready=false` 且不生成 merged state；
+- 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
+- DAG Decision Trace 在同一 execution + tenant + workflow version + trace + decision fingerprint 下幂等落库，Recovery 重试不会重复创建相同 Decision event；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行兼容语义。
 
 ## 3. 本轮 Durable Recovery Closure 推进
@@ -179,6 +181,26 @@ Recovery Decision Inconsistency
 
 Replay Guard 只读取 Trace metadata 做一致性对账，不把 Trace 当作业务状态来源；实际条件计算仍以 PostgreSQL Node / Checkpoint facts 为准。
 
+### 3.7 Decision Trace Idempotency
+
+Recovery Runtime 重试时，同一 Decision 不应因为重复调用 `_resolve_dag_context()` 而不断生成重复 Trace event。
+
+当前正式写入边界为：
+
+```text
+execution_id
++ tenant_id
++ workflow_version_id
++ trace_id
++ decision_fingerprint
+        ↓
+唯一 Decision identity
+```
+
+命中已有事件时直接复用，不创建第二条相同 Decision Trace；不同 fingerprint 仍先经过 Replay Guard，一旦与同一 durable completed facts 冲突则拒绝 Recovery。
+
+该能力只解决 Trace event 的幂等性，不改变 PostgreSQL NodeExecution / Checkpoint 作为 Recovery source of truth 的原则。
+
 ## 4. 单元测试
 
 已有：
@@ -192,19 +214,21 @@ backend/tests/unit/test_workflow_checkpoint_tenant_scope.py
 backend/tests/unit/test_workflow_dag_decision_trace.py
 backend/tests/unit/test_workflow_resume_contract_tenant_scope.py
 backend/tests/unit/test_workflow_dag_executor_checkpoint_gate.py
+backend/tests/unit/test_workflow_dag_replay_guard.py
 ```
 
 本轮新增：
 
 ```text
-backend/tests/unit/test_workflow_dag_replay_guard.py
+backend/tests/unit/test_workflow_dag_decision_trace_idempotency.py
 ```
 
 覆盖：
 
-- 相同 durable completed facts + 相同 fingerprint → 允许 replay；
-- 相同 durable completed facts + 不同 fingerprint → 抛出 Recovery Decision Inconsistency；
-- Guard 使用 tenant + workflow version + trace_id 限定对账范围。
+- 缺少 Recovery trace identity 时不写 Decision Trace；
+- 相同 execution + tenant + workflow version + trace + decision fingerprint 命中已有事件时幂等返回；
+- 新 Decision 只保存审计 metadata，不保存业务 `state_data`；
+- 新事件正确执行 flush / commit。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
@@ -222,16 +246,17 @@ Runtime inheritance cleanup     ✅
 NodeExecution tenant boundary   ✅
 Checkpoint tenant boundary      ✅
 Conditional Decision Trace      ✅
-Resume Contract tenant scope    ✅
+Resume Contract tenant scope   ✅
 Branch Checkpoint Gate          ✅
 Decision Fingerprint             ✅
 Runtime Plan fingerprint         ✅
-Recovery Frontier Replay Guard   ✅ 本轮完成
+Recovery Frontier Replay Guard   ✅
+Decision Trace Idempotency       ✅ 本轮完成
         ↓
 Durable Recovery Closure
-        ├── Checkpoint fact 完整性       ← 继续
-        ├── Conditional decision 可重建性 ← 继续
-        └── Trace lineage 连续性         ← 继续
+        ├── Checkpoint fact 完整性       ← 下一任务
+        ├── Conditional decision 可重建性 ← 继续收敛
+        └── Trace lineage 连续性         ← 继续收敛
         ↓
 Phase 2.7-A Closure
         ↓
