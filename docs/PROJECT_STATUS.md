@@ -34,7 +34,8 @@
 - **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致；stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact：✅**
 - **Durable Frontier Identity Canonicalization：并行 Frontier identity key 现在对 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier：✅**
 - **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再通过会提前 `commit()` 的普通 Execution transition 完成 terminalization；Frontier、`frontier_completed` Checkpoint、Execution `completed` 与 Next Frontier 现在由同一 progression transaction 统一提交或回滚：✅**
-- **Durable Frontier Terminalization Ownership Recheck：终态 Frontier 在 Execution terminalization 前再次锁定并校验当前 Worker owner / fencing generation，防止 Frontier 已被占有但 Execution owner 已变更时旧 Worker 结束 Execution：✅ 本轮**
+- **Durable Frontier Terminalization Ownership Recheck：终态 Frontier 在 Execution terminalization 前再次锁定并校验当前 Worker owner / fencing generation，防止 Frontier 已被占有但 Execution owner 已变更时旧 Worker 结束 Execution：✅**
+- **Durable Frontier Duplicate Completion Convergence：重复 completion 在已提交 Frontier 上先校验既有 `frontier_completed` Durable fact 与 payload/owner；一致时直接返回既有 Checkpoint 与 Next Frontier，drift 或不完整链路立即拒绝，不再重复生成 completion fact：✅ 本轮**
 
 ## 当前实现边界
 
@@ -46,6 +47,7 @@ WorkflowFrontierIdentity
   └── canonical Node-set identity key
   ↓
 complete_frontier_with_checkpoint()
+  ├── duplicate completion → existing durable facts
   ├── current Frontier → completed
   ├── terminal Execution → completed（终态）
   ├── one frontier_completed Checkpoint
@@ -89,13 +91,13 @@ Recovery / Replay
 ```text
 Next Frontier deterministic identity
         ↓
-Execution terminalization
-        ↓
-Expired Frontier Recovery
-        ↓
-Worker Claim / Fencing
+Duplicate completion
         ↓
 Recovery re-entry
+        ↓
+Concurrent Worker consumption
+        ↓
+Execution terminalization
         ↓
 Replay convergence
         ↓
@@ -112,14 +114,15 @@ Phase 2.7 主线完成
 - 同一 Execution / Version / Decision 下，等价并行 Node 集合必须收敛到同一个 Frontier identity；
 - stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact；
 - **终态 Frontier 的 Frontier、Checkpoint、Execution terminalization 必须共享同一数据库事务，不允许普通 commit 型状态入口提前提交；**
-- **终态 Frontier terminalization 前必须再次证明 Frontier owner、Execution owner 与 fencing generation 属于同一 Worker epoch。**
+- **终态 Frontier terminalization 前必须再次证明 Frontier owner、Execution owner 与 fencing generation 属于同一 Worker epoch；**
+- **已提交 Frontier 的重复 completion 必须幂等返回同一 Durable Checkpoint / Next Frontier；payload drift、缺失 Next Frontier 或缺失 completion Checkpoint 必须拒绝收敛。**
 
 ## 本轮交付
 
 - `backend/app/services/workflow/frontier_progression.py`
-- `backend/tests/unit/test_frontier_terminalization_atomicity.py`
+- `backend/tests/unit/test_frontier_duplicate_completion.py`
 - `docs/PROJECT_STATUS.md`
 - `docs/02-phases/PHASE_2_7.md`
-- `docs/04-errors/2026-08-27-frontier-terminalization-transaction-boundary.md`
+- `docs/04-errors/2026-08-27-frontier-duplicate-completion.md`
 
 **Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
