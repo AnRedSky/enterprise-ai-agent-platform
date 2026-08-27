@@ -48,7 +48,8 @@ Join merged-state recovery guard
 - `frontier_completed` 强制为 Execution-level Checkpoint，禁止携带 Node identity/status；
 - Execution `worker_owner + worker_attempt` fencing 已延伸到 Execution / Node / Checkpoint durable write；
 - Checkpoint durable write boundary 在真正落库前再次拒绝 Node/Execution-level 混合事实；
-- **本轮新增 Multi-frontier Join Recovery**：Recovery Bootstrap 在进入 Join frontier 前，从 Planner selected predecessors 的 durable Node outputs 重新计算 merged state，并与最新 `frontier_completed` Checkpoint state 做严格一致性校验；drift 或缺失 predecessor 时立即拒绝 Recovery。
+- **Multi-frontier Join Recovery**：Recovery Bootstrap 在进入 Join frontier 前，从 Planner selected predecessors 的 durable Node outputs 重新计算 merged state，并与最新 `frontier_completed` Checkpoint state 做严格一致性校验；drift 或缺失 predecessor 时立即拒绝 Recovery；
+- **Replay Decision Convergence**：Decision Trace 写入前强制复用既有 Replay Guard，对相同 durable completed facts 的历史 Decision、frontier 与 selected predecessor 做收敛校验；不同 fingerprint 或 payload drift 在任何 flush/commit 前立即拒绝。
 
 ## 3. Durable Recovery Closure
 
@@ -107,16 +108,19 @@ expected merged state
 
 相同 durable completed facts 必须得到相同 `decision_fingerprint`。不同 fingerprint 或历史 Decision payload drift 时立即拒绝 Recovery；条件求值仍只来自统一 Planner / Condition Evaluator。
 
+本轮已将该规则从“检查能力”提升为“Decision 写入前强制边界”：`record_dag_decision()` 首先执行历史 Decision convergence 校验，再执行当前 fingerprint 的幂等查询；因此不能通过更换 fingerprint 绕过 Replay Guard 并追加第二条 Decision。
+
 ### 3.5 Tenant / Lineage Closure
 
 Recovery 查询均使用当前 locked Execution 的 `tenant_id`；Resume 必须固定 Source Workflow Version，并保存且重新校验真实 Source Checkpoint sequence；Node lineage、Checkpoint、Resume、Recovery Trace 不得形成跨 tenant / cross-execution replay。
 
 ## 4. 本轮单元测试
 
-新增：
+新增 / 更新：
 
 ```text
 backend/tests/unit/test_workflow_dag_join_recovery.py
+backend/tests/unit/test_workflow_recovery_trace_link.py
 ```
 
 覆盖：
@@ -124,29 +128,36 @@ backend/tests/unit/test_workflow_dag_join_recovery.py
 - 从 durable predecessor facts 重建 Join merged state；
 - Checkpoint merged state drift 拒绝；
 - Recovery 校验不修改输入 state；
-- predecessor 未完成时拒绝 Join Recovery。
+- predecessor 未完成时拒绝 Join Recovery；
+- Decision Trace 正常写入及外层事务模式；
+- 相同 durable completed facts + 不同 fingerprint 时在写入前拒绝 Replay。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
 
-## 5. 当前下一交付
+## 5. 当前交付状态
 
 ```text
 Conditional Branching Closure                 ✅
-Durable Frontier Scheduling                   ✅ 当前实现范围
+Durable Frontier Scheduling                   ✅
 Recovery / Resume Checkpoint lineage          ✅
 Multi-frontier Checkpoint boundary            ✅
 Execution fencing generation                  ✅
 Stale Worker Checkpoint late-write guard      ✅
 Node → Checkpoint fencing propagation         ✅
-Checkpoint durable write boundary              ✅
-Multi-frontier Join Recovery                   ✅ 本轮
+Checkpoint durable write boundary             ✅
+Multi-frontier Join Recovery                  ✅
+Replay decision convergence                   ✅ 本轮
 
         ↓
 
-Recovery / Replay Closure
-  └── Replay decision convergence
-        ↓
-最终 Recovery / Replay lifecycle closure
+Recovery / Replay lifecycle closure
+  └── 最终闭环审查与本地 Unit Test 实际执行
 ```
 
 Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不阻塞主线代码推进。Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler/Worker → Runtime。
+
+## 6. Replay Decision Convergence 交付说明
+
+`WorkflowRecoveryTraceLinkService.record_dag_decision()` 现在把 `assert_dag_decision_replay_consistent()` 作为强制写入前置条件。历史同一 durable completed facts 若已经产生 Decision，则当前 fingerprint、frontier、selected predecessor 必须全部收敛；任何冲突均在 `flush()` 前抛出，保证 Replay Guard 不再只是旁路检查。
+
+该修复不新增第二套 Planner、Condition Evaluator 或 Decision 计算逻辑，Decision fingerprint 仍唯一来自 `WorkflowDagResumePlanner`。

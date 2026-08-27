@@ -157,6 +157,22 @@ class WorkflowRecoveryTraceLinkService:
         frontier_node_ids: list[str] | None = None,
         selected_predecessors: list[dict[str, object]] | None = None,
     ) -> None:
+        """校验同一 durable completed facts 已有 Decision 与当前 Planner 结果一致。
+
+        Args:
+            execution: 当前 Workflow Execution。
+            trace_id: 当前 Recovery/Runtime trace 标识。
+            completed_node_ids: 当前 durable completed Node 集合。
+            decision_fingerprint: 当前 Planner 生成的确定性 Decision fingerprint。
+            frontier_node_ids: 当前 Planner 生成的 frontier，可选。
+            selected_predecessors: 当前 Planner 生成的 predecessor 快照，可选。
+
+        Returns:
+            None：没有历史冲突或历史 Decision 与当前结果一致。
+
+        Raises:
+            ValueError: 同一 durable completed facts 曾产生不同 Decision、frontier 或 predecessor selection。
+        """
         result = await self.db.execute(
             select(WorkflowTraceEvent.data)
             .where(
@@ -193,7 +209,7 @@ class WorkflowRecoveryTraceLinkService:
         *,
         commit: bool = True,
     ) -> WorkflowTraceEvent | None:
-        """记录 DAG Decision Trace，并允许调用方控制事务提交。
+        """记录 DAG Decision Trace，并在写入前执行 Replay Convergence Guard。
 
         Args:
             execution: 当前 Workflow Execution。
@@ -208,10 +224,24 @@ class WorkflowRecoveryTraceLinkService:
         Returns:
             新建或幂等命中的 WorkflowTraceEvent；trace_id 为空时返回 None。
 
+        Raises:
+            ValueError: 同一 durable completed facts 与历史 Decision 不收敛，或已有 Decision payload 漂移。
+
         事务边界：默认兼容直接调用提交；commit=False 时只 flush，不得自行 commit，提交由外层 Execution 事务统一完成。
         """
         if not trace_id:
             return None
+
+        # 先校验历史 Decision，再执行按 decision_id 的幂等查询。
+        # 设计意图：不能因为本次 fingerprint 与历史不同而绕过幂等查询并新增第二个 Decision。
+        await self.assert_dag_decision_replay_consistent(
+            execution,
+            trace_id,
+            completed_node_ids,
+            decision_id,
+            frontier_node_ids,
+            selected_predecessors,
+        )
 
         existing = (
             await self.db.execute(

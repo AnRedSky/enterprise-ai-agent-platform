@@ -6,7 +6,7 @@
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling，并继续收敛 Recovery / Replay Closure。
 - 本轮完成：**Multi-frontier Join Recovery**；Recovery Bootstrap 在进入 Join frontier 前，使用 Planner selected predecessor 与 completed Node durable outputs 重新计算 merged state，并校验最新 `frontier_completed` Execution-level Checkpoint state，防止 Recovery 使用漂移的 merged snapshot。
-- Phase 2.7 当前已完成 Conditional Branching、Durable Frontier 持久化/Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime failure convergence、Durable Resume Bootstrap、Recovery Trace 原子事务、Join predecessor Contract、tenant boundary、Checkpoint lineage、Decision Replay Guard、Multi-frontier Checkpoint boundary、Execution fencing、stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation、Checkpoint durable write boundary 以及 Multi-frontier Join Recovery。
+- Phase 2.7 当前已完成 Conditional Branching、Durable Frontier 持久化/Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime failure convergence、Durable Resume Bootstrap、Recovery Trace 原子事务、Join predecessor Contract、tenant boundary、Checkpoint lineage、Decision Replay Guard、Multi-frontier Checkpoint boundary、Execution fencing、stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation、Checkpoint durable write boundary、Multi-frontier Join Recovery 以及 Replay Decision Convergence。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -34,7 +34,8 @@
 - `frontier_completed` 强制为 Execution-level Checkpoint，`node_id` 与 `node_status` 必须为空；
 - Execution `worker_owner + worker_attempt` fencing 已延伸到 Execution / Node / Checkpoint durable write，旧 generation 不得继续写入；
 - Checkpoint durable write boundary 在真正落库前再次拒绝 Node/Execution-level 混合事实；
-- **Multi-frontier Join Recovery 已完成**：`WorkflowDagJoinRecoveryService` 复用唯一 Join readiness / State Merge 能力，在 Resume Bootstrap 中校验 `frontier_completed.state_data` 与 Planner selected predecessor durable outputs 的重新计算结果；drift、缺失 predecessor 或非法 predecessor 立即拒绝 Recovery。
+- Multi-frontier Join Recovery 已完成：`WorkflowDagJoinRecoveryService` 复用唯一 Join readiness / State Merge 能力，在 Resume Bootstrap 中校验 `frontier_completed.state_data` 与 Planner selected predecessor durable outputs 的重新计算结果；drift、缺失 predecessor 或非法 predecessor 立即拒绝 Recovery；
+- **Replay Decision Convergence 已完成**：`WorkflowRecoveryTraceLinkService.record_dag_decision()` 在 Decision 写入前强制执行已有 Replay Guard，对相同 durable completed facts 的历史 fingerprint、frontier 与 selected predecessor 做一致性校验；冲突在 `flush/commit` 前拒绝，不能通过更换 fingerprint 追加第二条 Decision Trace。
 
 ## 当前开发策略
 
@@ -71,32 +72,29 @@ Durable Frontier Scheduling
   └── Unified success persistence path  ✅
 
 Recovery / Replay Closure
-  ├── Durable Resume Bootstrap           ✅
-  ├── Recovery Trace atomic transaction  ✅
-  ├── Join predecessor contract          ✅
-  ├── Resume tenant boundary             ✅
-  ├── Resume Checkpoint lineage           ✅
-  ├── Cross-Execution Replay Identity    ✅
-  ├── Multi-frontier Checkpoint boundary  ✅
-  ├── Execution fencing generation       ✅
-  ├── stale Worker Checkpoint late-write  ✅
+  ├── Durable Resume Bootstrap             ✅
+  ├── Recovery Trace atomic transaction    ✅
+  ├── Join predecessor contract            ✅
+  ├── Resume tenant boundary               ✅
+  ├── Resume Checkpoint lineage            ✅
+  ├── Cross-Execution Replay Identity     ✅
+  ├── Multi-frontier Checkpoint boundary   ✅
+  ├── Execution fencing generation         ✅
+  ├── stale Worker Checkpoint late-write   ✅
   ├── Node → Checkpoint fencing propagation ✅
-  ├── Checkpoint durable write boundary   ✅
-  ├── Multi-frontier Join Recovery        ✅ 本轮
-  └── Replay decision convergence         ← 下一任务
+  ├── Checkpoint durable write boundary    ✅
+  ├── Multi-frontier Join Recovery         ✅
+  └── Replay decision convergence           ✅ 本轮
           ↓
-  最终 Recovery / Replay lifecycle closure
-
-继续主线直到全部任务完成。
+  Recovery / Replay lifecycle closure       ← 当前最终收口任务
 ```
 
 ## 本轮交付与文档
 
-- `backend/app/services/workflow/checkpoint/recovery/dag_join_recovery.py`
-- `backend/app/services/workflow/checkpoint/recovery/resume_bootstrap.py`
-- `backend/app/services/workflow/checkpoint/recovery/__init__.py`
-- `backend/tests/unit/test_workflow_dag_join_recovery.py`
-- `docs/04-errors/2026-08-27-multi-frontier-join-recovery.md`
+- `backend/app/services/workflow/checkpoint/recovery/trace_link.py`
+- `backend/tests/unit/test_workflow_recovery_trace_link.py`
+- `docs/04-errors/2026-08-27-replay-decision-convergence.md`
 - `docs/02-phases/PHASE_2_7.md`
+- `docs/PROJECT_STATUS.md`
 
-**Unit Test：本轮未在本地执行，因此不记录 PASS。下一主线为 Replay decision convergence，不停留在文档总结。**
+**Unit Test：本轮未在当前环境执行，因此不记录 PASS。下一主线为 Recovery / Replay lifecycle closure，继续直接推进生产代码，不停留在文档总结。**
