@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 本轮最新代码提交：`cce25cdf22e5dda5e44caa5357e9d6d68b304fe4`。
-- 本轮已完成：**Conditional Branching Durable Recovery 的 Checkpoint 读取租户边界加固**；Checkpoint `latest()` 现在可通过 `WorkflowExecution.tenant_id` JOIN 强制限定租户，Automatic Recovery 已强制传入当前 Execution tenant_id，并补齐 Unit Test。
+- 本轮最新代码提交：`fd5f691ed53ddce66644024afff56c577158bf39`。
+- 本轮已完成：**Conditional Branching Durable Recovery 的 Conditional Decision Trace 持久化**；Runtime 现在把 Planner 的 deterministic frontier / selected predecessor metadata 作为 `workflow.dag.frontier_decided` Trace fact 持久化，但不写入业务 state_data，Recovery source of truth 仍为 PostgreSQL completed Node / Checkpoint facts。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -13,7 +13,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Multi-root / Resume Runtime / Join / Runtime inheritance cleanup，并继续进行 Durable Recovery 一致性与安全边界加固。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Multi-root / Resume Runtime / Join / Runtime inheritance cleanup / NodeExecution tenant boundary / Checkpoint tenant boundary / Conditional Decision Trace，并继续进行 Durable Recovery 一致性加固。**
 
 ## Phase 2.7-A 当前实现
 
@@ -29,7 +29,9 @@
 - `dag_runtime.py` 不复制基础 Runtime 的 DAG state / Resume 逻辑；
 - Conditional Join 只消费 Planner selected predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
-- Checkpoint latest 查询现在支持并由 Automatic Recovery 强制使用 `tenant_id` scope；
+- Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
+- Runtime 现在持久化 `workflow.dag.frontier_decided` decision metadata，包含 deterministic `decision_id`、completed Node、frontier 与 selected predecessor；
+- Decision Trace 不保存业务 state_data，不能替代 PostgreSQL durable facts；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
 
 ## 当前开发策略
@@ -53,7 +55,8 @@ Phase 2.7-A Conditional Branching
   ├── Runtime inheritance cleanup  ✅
   ├── Conditional Join             ✅
   ├── Durable tenant boundary      ✅
-  ├── Checkpoint tenant boundary   ✅ 本轮完成
+  ├── Checkpoint tenant boundary   ✅
+  ├── Conditional Decision Trace   ✅ 本轮完成
   ├── Unit Test 实际执行            ⏳
   └── Real API acceptance           ⏸ 暂停
           ↓
