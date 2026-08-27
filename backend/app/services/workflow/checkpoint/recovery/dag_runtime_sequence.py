@@ -2,13 +2,14 @@
 
 职责：把只有单一 frontier 的 DAG Resume 计划展开为现有顺序 Runtime 可以消费的确定性 Node 序列。
 边界：只做纯内存拓扑规划，不读取数据库、不执行 Node、不修改 Checkpoint、不合并分支状态。
-关键依赖：WorkflowDagResumeRuntimePlanner；Multi-frontier 执行必须由 WorkflowDagMultiFrontierExecutor 负责，不能在这里退化为共享状态的顺序执行。
+关键依赖：WorkflowDagResumePlanner、WorkflowDagResumeRuntimePlanner；Multi-frontier 执行必须由专用 Executor 负责。
 """
 
 from __future__ import annotations
 
 from copy import deepcopy
 
+from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import (
     WorkflowDagResumeRuntimePlan,
     WorkflowDagResumeRuntimePlanner,
@@ -40,10 +41,12 @@ class WorkflowDagResumeRuntimeSequencePlanner:
         Raises:
             ValueError: 当前 frontier 同时包含多个 Node，表示必须进入 Multi-frontier Executor；或输入状态非法。
 
-        设计边界：顺序规划器绝不把多个 Branch 强行压成一条线，也不把合并后的状态复制给不同 Branch。
-        这样可以避免旧 Runtime 在拓扑上“看似支持 DAG”、实际上破坏 Branch state 隔离。Multi-frontier
-        必须由专用 Executor 负责 Branch 执行、Checkpoint 与 Join readiness。
+        设计边界：先由纯 Planner 决定 frontier，再把同一个不可变 Resume Plan 交给 Runtime Planner，避免一次解析产生两次 Decision。
+        遇到条件边产生的 frontier 后立即停止线性展开，因为后续节点属于该 Branch 的下一次 Runtime 推进，不能在同一次顺序计划中预先选择。
         """
+        if not isinstance(state_data, dict):
+            raise ValueError("DAG Resume Runtime Sequence state_data 必须为对象")
+
         completed = set(completed_node_ids)
         node_ids = {
             node.get("id") for node in definition.get("nodes", [])
@@ -52,25 +55,34 @@ class WorkflowDagResumeRuntimeSequencePlanner:
         node_state = deepcopy(state_data_by_node) if state_data_by_node is not None else None
         plans: list[WorkflowDagResumeRuntimePlan] = []
         while len(completed) < len(node_ids):
-            frontier_plan = WorkflowDagResumeRuntimePlanner.plan(
+            resume_plan = WorkflowDagResumePlanner.plan(
+                definition=definition,
+                completed_node_ids=completed,
+                state_data_by_node=node_state,
+            )
+            if len(resume_plan.frontier_node_ids) != 1:
+                raise ValueError("DAG Resume Runtime 存在多个 frontier，必须交给 Multi-frontier Executor 执行")
+
+            runtime_plan = WorkflowDagResumeRuntimePlanner.plan(
                 definition=definition,
                 completed_node_ids=completed,
                 state_data=state_data,
                 state_data_by_node=node_state,
+                resume_plan=resume_plan,
             )
-            if len(frontier_plan.frontier_node_ids) != 1:
-                raise ValueError("DAG Resume Runtime 存在多个 frontier，必须交给 Multi-frontier Executor 执行")
-            node_id = frontier_plan.frontier_node_ids[0]
-            node = next(node for node in definition["nodes"] if node.get("id") == node_id)
-            plans.append(
-                WorkflowDagResumeRuntimePlan(
-                    completed_node_ids=frontier_plan.completed_node_ids,
-                    frontier_node_ids=(node_id,),
-                    nodes=(deepcopy(node),),
-                    state_data=deepcopy(state_data),
-                    selected_predecessor_node_ids=frontier_plan.selected_predecessor_node_ids,
-                    decision_fingerprint=frontier_plan.decision_fingerprint,
-                )
-            )
+            node_id = runtime_plan.frontier_node_ids[0]
+            plans.append(runtime_plan)
             completed.add(node_id)
+
+            # 条件边已经完成一次不可逆的 Branch Decision；顺序 Planner 只负责把当前
+            # Branch 的首个 frontier 交给 Runtime，不预先执行该 Branch 的后续 Node。
+            conditional_frontier = any(
+                edge.get("source") in completed
+                and (edge.get("condition") is not None or edge.get("default") is True)
+                and edge.get("target") == node_id
+                for edge in definition.get("edges", [])
+                if isinstance(edge, dict)
+            )
+            if conditional_frontier:
+                break
         return tuple(plans)
