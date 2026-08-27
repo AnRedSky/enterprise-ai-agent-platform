@@ -83,14 +83,16 @@ class WorkflowExecutionCheckpointService:
                                         node_attempt: int | None = None, node_status: str | None = None,
                                         input_data: dict | None = None, output_data: dict | None = None,
                                         worker_owner: str | None = None, error_code: str | None = None,
-                                        error_message: str | None = None) -> WorkflowExecutionCheckpoint:
+                                        error_message: str | None = None, tenant_id: UUID | None = None) -> WorkflowExecutionCheckpoint:
+        """在调用方事务中写入下一个 Checkpoint，并可强制验证 Execution tenant scope。"""
         self._validate(0, checkpoint_reason)
-        execution_result = await self.db.execute(
-            select(WorkflowExecution).where(WorkflowExecution.id == execution_id).with_for_update()
-        )
+        execution_query = select(WorkflowExecution).where(WorkflowExecution.id == execution_id).with_for_update()
+        if tenant_id is not None:
+            execution_query = execution_query.where(WorkflowExecution.tenant_id == tenant_id)
+        execution_result = await self.db.execute(execution_query)
         execution = execution_result.scalar_one_or_none()
         if execution is None:
-            raise ValueError(f"Checkpoint 对应的 Workflow Execution 不存在: {execution_id}")
+            raise ValueError(f"Checkpoint 对应的 Workflow Execution 不存在或不属于当前 tenant: {execution_id}")
         latest_sequence = await self.db.execute(
             select(func.max(WorkflowExecutionCheckpoint.sequence)).where(
                 WorkflowExecutionCheckpoint.execution_id == execution_id
@@ -123,12 +125,13 @@ class WorkflowExecutionCheckpointService:
             return None
         node_execution = None
         if checkpoint.node_id is not None:
-            result = await self.db.execute(
-                select(WorkflowNodeExecution).where(
-                    WorkflowNodeExecution.execution_id == execution_id,
-                    WorkflowNodeExecution.node_id == checkpoint.node_id,
-                )
+            node_query = select(WorkflowNodeExecution).where(
+                WorkflowNodeExecution.execution_id == execution_id,
+                WorkflowNodeExecution.node_id == checkpoint.node_id,
             )
+            if tenant_id is not None:
+                node_query = node_query.where(WorkflowNodeExecution.tenant_id == tenant_id)
+            result = await self.db.execute(node_query)
             node_execution = result.scalar_one_or_none()
         self.assert_node_fact_complete(checkpoint=checkpoint, node_execution=node_execution)
         return checkpoint
