@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow.checkpoint.recovery.service import WorkflowExecutionCheckpointRecoveryService
 from app.services.workflow.checkpoint.recovery.resume_bootstrap import WorkflowExecutionResumeBootstrapService
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
@@ -56,7 +56,8 @@ class WorkflowExecutionResumeContractService:
             明确区分 `created` 与 `idempotency_hit` 的 Resume 结果。
 
         Raises:
-            ValueError: 恢复候选缺少确定性幂等键，或已有 Resume 的 lineage 与当前恢复请求不一致。
+            ValueError: 恢复候选缺少确定性幂等键、已有 Resume 的 lineage 与当前恢复请求不一致，
+                或幂等命中的 Resume 缺少 Durable Frontier。
 
         事务边界：Source Execution 锁定、Resume 创建、completed Node lineage 复制与首个 Durable Frontier
         入队必须在同一调用方事务中完成；commit=False 时由调用方负责最终提交。
@@ -100,6 +101,22 @@ class WorkflowExecutionResumeContractService:
                 or existing.resume_checkpoint_sequence != assessment.checkpoint_sequence
             ):
                 raise ValueError("Resume 幂等键已绑定不一致的 Execution lineage")
+
+            # 设计意图：幂等命中不能只证明“Resume 记录存在”。若此前事务在 Bootstrap
+            # 完成前异常退出而遗留不完整数据，继续返回 idempotency_hit 会永久吞掉恢复任务。
+            frontier = (
+                await self.db.execute(
+                    select(WorkflowFrontier.id)
+                    .where(
+                        WorkflowFrontier.tenant_id == existing.tenant_id,
+                        WorkflowFrontier.execution_id == existing.id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if frontier is None:
+                raise ValueError("Resume 幂等命中但 Durable Frontier 不存在，拒绝继续隐藏不完整 Recovery lifecycle")
+
             return WorkflowExecutionResumeOutcome(
                 execution=existing,
                 outcome="idempotency_hit",
