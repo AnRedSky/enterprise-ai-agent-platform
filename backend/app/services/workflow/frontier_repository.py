@@ -1,4 +1,4 @@
-"""Durable Workflow Frontier repository primitives.
+"""Durable Workflow Frontier repository primitives。
 
 职责：封装 Frontier 的幂等创建、Claim、租约恢复和 Worker fencing 数据库操作。
 边界：不负责 DAG Planner、Scheduler 时间计算或 Workflow Runtime 执行；Scheduler/Worker 调用方拥有外层事务。
@@ -10,11 +10,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.workflow_execution import WorkflowFrontier
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 
 
@@ -88,7 +88,11 @@ async def claim_next_frontier(
     lease_expires_at: datetime,
     now: datetime,
 ) -> WorkflowFrontier | None:
-    """Claim one schedulable Frontier for a tenant without committing the transaction.
+    """Claim one schedulable Frontier for a tenant without committing the transaction。
+
+    Frontier 只有在其关联 Execution 当前允许被该 Worker 消费时才可进入 claim。
+    这样可以避免 failed/completed Execution 上的旧 Frontier 阻塞其他租户或后继任务，
+    同时把 Execution ownership/fencing 判断固定在 Durable Frontier claim 的事务边界内。
 
     Args:
         db: 当前数据库会话。
@@ -102,12 +106,38 @@ async def claim_next_frontier(
 
     事务边界：只锁定、修改并 flush Frontier，不执行 commit；调用方负责最终事务提交。
     """
+    execution_available = or_(
+        and_(
+            WorkflowExecution.status == "pending",
+            or_(
+                WorkflowExecution.worker_owner.is_(None),
+                WorkflowExecution.worker_lease_expires_at.is_(None),
+                WorkflowExecution.worker_lease_expires_at <= now,
+            ),
+        ),
+        and_(
+            WorkflowExecution.status == "running",
+            or_(
+                WorkflowExecution.worker_owner == worker_owner,
+                WorkflowExecution.worker_lease_expires_at.is_(None),
+                WorkflowExecution.worker_lease_expires_at <= now,
+            ),
+        ),
+    )
     stmt = (
         select(WorkflowFrontier)
+        .join(
+            WorkflowExecution,
+            and_(
+                WorkflowExecution.id == WorkflowFrontier.execution_id,
+                WorkflowExecution.tenant_id == WorkflowFrontier.tenant_id,
+            ),
+        )
         .where(
             WorkflowFrontier.tenant_id == tenant_id,
             WorkflowFrontier.status.in_(("pending", "retry_wait")),
             WorkflowFrontier.available_at <= now,
+            execution_available,
         )
         .order_by(WorkflowFrontier.available_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
         .with_for_update(skip_locked=True)
@@ -220,29 +250,3 @@ async def transition_owned_frontier(
         frontier.worker_lease_expires_at = None
     await db.flush()
     return frontier
-
-
-async def release_frontier_lease(
-    db: AsyncSession,
-    *,
-    frontier: WorkflowFrontier,
-    worker_owner: str,
-) -> None:
-    """释放仍由指定 Worker 持有的 Frontier lease，不执行 commit。
-
-    Args:
-        db: 当前数据库会话。
-        frontier: 当前 Frontier ORM 实体。
-        worker_owner: 请求释放 lease 的 Worker ownership。
-
-    Returns:
-        无返回值。
-
-    Raises:
-        ValueError: Frontier 已不属于当前 Worker。
-    """
-    if frontier.worker_owner != worker_owner:
-        raise ValueError("Frontier worker ownership mismatch")
-    frontier.worker_owner = None
-    frontier.worker_lease_expires_at = None
-    await db.flush()
