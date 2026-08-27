@@ -2,7 +2,7 @@
 
 职责：Scheduler 侧按固定轮询发现 failed Execution，并把每个候选交给唯一 Recovery Domain Service。
 边界：不复制 Recovery Policy、不创建 Resume Execution、不抢 Worker lease、不启动 Runtime；只负责“什么时候检查”。
-关键依赖：SessionLocal、WorkflowExecution ORM、WorkflowExecutionAutomaticRecoveryService、Recovery Event Logger。
+关键依赖：SessionLocal、WorkflowExecution ORM、WorkflowExecutionAutomaticRecoveryService、Recovery Trace Service。
 """
 
 from __future__ import annotations
@@ -17,12 +17,10 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution
 from app.services.workflow.checkpoint.recovery.automatic import WorkflowExecutionAutomaticRecoveryService
-from app.services.workflow.checkpoint.recovery.observability import WorkflowRecoveryEventLogger
 from app.services.workflow.checkpoint.recovery.policy import WorkflowExecutionRecoveryPolicy
 from app.services.workflow_scheduler.trace import WorkflowSchedulerTraceService
 
 logger = logging.getLogger(__name__)
-event_logger = WorkflowRecoveryEventLogger(logger)
 
 
 @dataclass(frozen=True)
