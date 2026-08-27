@@ -32,3 +32,10 @@ def test_frontier_worker_preserves_fencing_generation() -> None:
     assert "attempt=frontier.attempt" in source
     assert "transition_owned_frontier(" in source
     assert "renew_owned_frontier_lease(" in source
+
+
+def test_node_checkpoint_write_carries_execution_fencing_generation() -> None:
+    source = _read("app/services/workflow/execution.py")
+    assert "expected_worker_owner=execution.worker_owner" in source
+    assert "expected_worker_attempt=int(execution.worker_attempt or 0)" in source
+    assert "checkpoint.append_next_in_transaction(" in source
