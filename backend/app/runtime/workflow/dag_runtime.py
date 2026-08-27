@@ -35,13 +35,8 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 raise HTTPException(422, str(exc)) from exc
         return nodes
 
-    async def _record_dag_frontier_decision(self, execution, version_definition: dict, plan, actor_id) -> None:
-        """将 Planner 的确定性 decision fingerprint 持久化为可审计 Trace fact。
-
-        Conditional Decision 本身不是 Recovery source of truth；Node/Checkpoint facts 仍是唯一事实源。
-        fingerprint 由 Planner 同时绑定 completed facts、frontier、selected predecessor 及参与条件判断的持久化 state，
-        因此 Recovery 后若 durable input 改变，会得到新的 fingerprint，而不是错误复用旧 decision_id。
-        """
+    async def _record_dag_frontier_decision(self, execution, version_definition: dict, plan, actor_id, trace_link=None) -> None:
+        """将 Planner 的确定性 decision fingerprint 持久化为可审计 Trace fact，并校验 replay 一致性。"""
         if self.execution_service is None or execution is None:
             return
         completed = list(plan.completed_node_ids)
@@ -53,6 +48,17 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         decision_id = plan.decision_fingerprint
         if not decision_id:
             raise ValueError("DAG Resume Planner 未生成 decision fingerprint")
+
+        trace_link = trace_link or WorkflowRecoveryTraceLinkService(self.db)
+        trace_id = await trace_link.get_trace_id(execution)
+        if trace_id is not None:
+            await trace_link.assert_dag_decision_replay_consistent(
+                execution,
+                trace_id,
+                completed,
+                decision_id,
+            )
+
         await self.execution_service.governance.trace(
             execution,
             actor_id or execution.created_by,
@@ -97,7 +103,12 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 branch_state_data=branch_state_data if len(plan.frontier_node_ids) > 1 else None,
                 state_data_by_node=state_data_by_node,
             )
-            await self._record_dag_frontier_decision(execution, definition, plan, getattr(execution, "created_by", None))
+            await self._record_dag_frontier_decision(
+                execution,
+                definition,
+                plan,
+                getattr(execution, "created_by", None),
+            )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         return runtime_plan, branch_state_data
