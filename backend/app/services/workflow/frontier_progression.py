@@ -55,6 +55,43 @@ def validate_frontier_progression_contract(
         raise FrontierProgressionContractError("Next Frontier identity 不能与当前 Frontier 相同")
 
 
+async def _assert_next_frontier_has_no_active_node_overlap(
+    db: AsyncSession, *, frontier: WorkflowFrontier, next_identity: WorkflowFrontierIdentity,
+) -> None:
+    """证明下一 Frontier 不会与同一 Execution 的其他活动 Frontier 重复消费 Node。
+
+    Args:
+        db: 当前调用方持有的异步数据库会话。
+        frontier: 当前正在完成的 Frontier。
+        next_identity: 即将创建的下一 Frontier identity。
+
+    Raises:
+        FrontierProgressionContractError: 已存在其他可消费 Frontier 与 next Node 集合发生重叠。
+
+    设计意图：同一 Execution 允许多个并行 Frontier，但并行 Frontier 必须是互斥的 Node 集合。
+    identity 唯一约束只能阻止完全相同的 frontier_key，不能阻止 fingerprint 不同却消费同一 Node 的
+    平行 work item。因此在同一事务内锁定该 Execution 的其他活动 Frontier，并在创建 Next Frontier
+    前执行集合级 fencing，避免后续 Worker 同时消费同一个 Node。
+    """
+    result = await db.execute(
+        select(WorkflowFrontier).where(
+            WorkflowFrontier.tenant_id == frontier.tenant_id,
+            WorkflowFrontier.execution_id == frontier.execution_id,
+            WorkflowFrontier.id != frontier.id,
+            WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
+        ).with_for_update()
+    )
+    next_nodes = set(next_identity.node_ids)
+    for active in result.scalars().all():
+        active_nodes = set(active.node_ids or [])
+        overlap = next_nodes & active_nodes
+        if overlap:
+            ordered = ", ".join(sorted(overlap))
+            raise FrontierProgressionContractError(
+                f"Next Frontier 与同一 Execution 的活动 Frontier 存在 Node 重叠: {ordered}"
+            )
+
+
 async def _resolve_completed_frontier_idempotency(
     db: AsyncSession, *, frontier: WorkflowFrontier, worker_owner: str, checkpoint_state: dict,
     checkpoint_reason: str, next_identity: WorkflowFrontierIdentity | None,
@@ -179,6 +216,9 @@ async def complete_frontier_with_checkpoint(
 
     next_frontier = None
     if next_identity is not None:
+        await _assert_next_frontier_has_no_active_node_overlap(
+            db, frontier=frontier, next_identity=next_identity,
+        )
         next_frontier = await enqueue_frontier(
             db, tenant_id=frontier.tenant_id, identity=next_identity, node_ids=next_identity.node_ids, now=now,
         )

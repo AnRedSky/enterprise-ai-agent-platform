@@ -59,6 +59,7 @@ Join merged-state recovery guard
 - **Durable Frontier Identity Canonicalization：Frontier identity key 对并行 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier。**
 - **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再通过会提前 `commit()` 的普通 Execution transition 完成 terminalization；Frontier、`frontier_completed` Checkpoint、Execution `completed` 与 Next Frontier 现在由同一 progression transaction 统一提交或回滚。**
 - **Durable Frontier Terminalization Ownership Recheck：终态 Frontier 在 Execution terminalization 前再次锁定并校验当前 Worker owner / fencing generation，防止 Frontier 已被占有但 Execution owner 已变更时旧 Worker 结束 Execution。**
+- **Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前在同一事务内锁定同一 Execution 的其他活动 Frontier，并拒绝 Node 集合重叠；合法并行 Frontier 仍可存在，但同一 Node 不得被两个活动 Frontier 同时消费。**
 
 ## 3. Durable Recovery Closure
 
@@ -223,20 +224,36 @@ Worker A 继续 completion
   ✕ 不得 terminalize Execution
 ```
 
-## 4. 本轮单元测试
+### 3.11 Duplicate Consumption Closure
 
-新增 / 更新：
+同一 Execution 可以拥有多个合法并行 Frontier，但并行 Frontier 的 Node 集合必须互斥：
 
 ```text
-backend/tests/unit/test_frontier_terminalization_atomicity.py
+Execution E
+   ├── Frontier A: [node-a, node-b]
+   ├── Frontier B: [node-c, node-d]
+   │       ↓ 合法并行
+   └── Frontier C: [node-b, node-x]
+           ✕ 与 Frontier A 重叠
+```
+
+`complete_frontier_with_checkpoint()` 在创建 Next Frontier 前锁定同一 Execution 的其他活动 Frontier，并执行 Node-set overlap fencing。该规则位于 durable progression transaction 内，因此不会把重复消费判断留给 Runtime 内存状态，也不会通过 NodeExecution 唯一约束被动兜底。
+
+该 Guard 只禁止 Node 集合重叠，不限制合法的 disjoint multi-frontier 并行。Worker Claim 层仍需继续将同一 Execution 的并发 Claim ownership 与该规则收敛为统一事务边界。
+
+## 4. 本轮单元测试
+
+新增：
+
+```text
+backend/tests/unit/test_frontier_duplicate_consumption.py
 ```
 
 覆盖：
 
-- terminal Frontier 没有 Next Frontier 时必须声明 `execution_status=completed`；
-- completed Execution 不得再次通过 terminal Frontier 完成路径；
-- terminalization 时 Execution owner 与当前 Frontier Worker 不一致必须拒绝；
-- 非终态 Next Frontier 仍使用 `execution_status=running` 并继续传递 Worker fencing。
+- Next Frontier 与活动 Frontier Node 集合重叠时必须拒绝创建；
+- Node 集合互斥时允许合法并行 Frontier；
+- duplicate-consumption guard 位于 enqueue 前，不产生第二条 Frontier。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待主线完成后的本地测试执行。**
 
@@ -254,27 +271,33 @@ Checkpoint durable write boundary             ✅
 Multi-frontier Join Recovery                  ✅
 Replay decision convergence                   ✅
 Resume lifecycle idempotency closure          ✅
-Durable Resume Checkpoint continuation        ✅
-Durable Multi-frontier completion boundary    ✅
+Durable Resume Checkpoint continuation         ✅
+Durable Multi-frontier completion boundary     ✅
 Durable Completion Contract Hardening         ✅
 Terminal Execution Frontier Recovery Guard    ✅
 Checkpoint Execution Lifecycle Guard          ✅
-Durable Frontier Identity Canonicalization   ✅
+Durable Frontier Identity Canonicalization    ✅
 Terminalization Transaction Boundary          ✅
-Terminalization Ownership Recheck             ✅ 本轮
+Terminalization Ownership Recheck             ✅
+Next-frontier Duplicate Consumption Guard     ✅ 本轮
 
         ↓
 
-Next Frontier / recovery re-entry / duplicate consumption / replay convergence
-  └── 继续开发，不以测试流程阻塞主线
+Concurrent multi-frontier Claim / Claim-layer overlap fencing
+        ↓
+Success / Failure terminalization closure
+        ↓
+Replay convergence
+        ↓
+Phase 2.7 主线完成
 ```
 
 完整测试与验收在全部主线任务完成后再启动；届时需要按 `DEVELOPMENT.md` 提供并执行可重复的本地自动化脚本、数据库迁移验证、Backend Gate、Frontend Gate、Real API Gate 及需要的 Browser E2E。
 
 ## 6. 本轮交付说明
 
-本轮沿 Durable Frontier → Next Frontier → Execution terminalization 主线继续推进。在已有同一事务 terminalization 基础上进一步收紧 Worker ownership：`Frontier` 与 `Execution` 虽分别具备 fencing，仍可能在中间状态发生 ownership 变化，因此 terminalization 之前必须重新锁定 Execution 并比较 owner + fencing generation。该检查失败时，在任何 Checkpoint durable write 前拒绝本次 completion。
+本轮沿 Durable Frontier → Next Frontier → Concurrent multi-frontier 主线继续推进，补上了一个仅依赖 `frontier_key` 唯一约束无法证明的集合级并发边界：不同 identity / fingerprint 的 Frontier 仍可能携带重叠 Node 集合。现在 Next Frontier 创建前会在同一 progression transaction 内锁定同一 Execution 的其他活动 Frontier，并拒绝 Node-set overlap；合法 disjoint parallel frontier 仍然允许。
 
-本轮没有创建第二套 Planner、Runtime、Repository、Execution 状态机或 Provider；仅强化既有 Durable Frontier progression 的并发 Contract，新增对应 Unit Test，并记录到错误与 Phase 文档。
+本轮没有创建第二套 Planner、Runtime、Repository、Execution 状态机或 Provider；新增的是既有 Frontier progression 的并发 Contract 与对应 Unit Test。Worker Claim 层的同一 Execution 并发边界尚未宣称完成，下一轮继续直接收口。
 
 完整 pytest / Regression / E2E / Real API 流程继续暂停，直到全部主线任务开发完成。
