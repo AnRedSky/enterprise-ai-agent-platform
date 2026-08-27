@@ -1,13 +1,10 @@
-"""Workflow DAG Resume Frontier 规划模块。
-
-职责：根据已持久化完成 Node 集合、冻结 DAG Contract 与当前 Node state，计算下一批确定性 frontier 及有效 predecessor。
-边界：只做纯内存计算，不读取数据库、不执行 Runtime、不获取 Worker ownership；条件判断统一由 Condition Evaluator 完成。
-关键依赖：WorkflowDagContractValidator、WorkflowConditionEvaluator；完成事实及 Node 输出由调用方提供。
-"""
+"""Workflow DAG Resume Frontier 规划模块。"""
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Mapping
 
 from app.services.workflow.checkpoint.recovery.condition import WorkflowConditionEvaluator
@@ -21,6 +18,7 @@ class WorkflowDagResumePlan:
     completed_node_ids: tuple[str, ...]
     frontier_node_ids: tuple[str, ...]
     selected_predecessor_node_ids: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    decision_fingerprint: str = ""
 
 
 class WorkflowDagResumePlanner:
@@ -33,19 +31,7 @@ class WorkflowDagResumePlanner:
         completed_node_ids: set[str] | frozenset[str],
         state_data_by_node: Mapping[str, Mapping[str, object]] | None = None,
     ) -> WorkflowDagResumePlan:
-        """计算 DAG Resume frontier，并在有条件边时确定性选择后继。
-
-        Args:
-            definition: 已冻结的 Workflow Version DAG Definition。
-            completed_node_ids: 外部已经验证的持久化完成事实集合。
-            state_data_by_node: 已完成 Node 的持久化输出状态；条件边从其 source 对应状态读取。
-
-        Returns:
-            按 Definition.nodes 顺序返回 completed、frontier 及每个 target 的有效 predecessor。
-
-        Raises:
-            ValueError: 完成事实、条件边状态或 DAG Contract 不满足约束。
-        """
+        """计算 DAG Resume frontier，并在有条件边时确定性选择后继。"""
         contract = WorkflowDagContractValidator.validate(definition=definition)
         if not isinstance(completed_node_ids, (set, frozenset)):
             raise ValueError("DAG Resume completed_node_ids 必须为 set 或 frozenset")
@@ -123,8 +109,31 @@ class WorkflowDagResumePlanner:
             for node_id in contract.node_ids
             if active_predecessors[node_id]
         )
+        ordered_completed = tuple(node_id for node_id in contract.node_ids if node_id in completed_node_ids)
+        decision_input = {
+            "workflow_node_ids": list(contract.node_ids),
+            "completed_node_ids": list(ordered_completed),
+            "frontier_node_ids": list(frontier),
+            "selected_predecessors": [
+                {"node_id": node_id, "predecessor_node_ids": list(predecessors)}
+                for node_id, predecessors in selected
+            ],
+            "condition_state": {
+                node_id: state_data_by_node[node_id]
+                for node_id in sorted(state_data_by_node)
+                if node_id in completed_node_ids and any(
+                    edge.condition is not None or edge.default for edge in outgoing[node_id]
+                )
+            },
+        }
+        try:
+            canonical = json.dumps(decision_input, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"DAG Resume 无法生成确定性 decision fingerprint: {exc}") from exc
+        decision_fingerprint = sha256(canonical.encode("utf-8")).hexdigest()
         return WorkflowDagResumePlan(
-            completed_node_ids=tuple(node_id for node_id in contract.node_ids if node_id in completed_node_ids),
+            completed_node_ids=ordered_completed,
             frontier_node_ids=frontier,
             selected_predecessor_node_ids=selected,
+            decision_fingerprint=decision_fingerprint,
         )
