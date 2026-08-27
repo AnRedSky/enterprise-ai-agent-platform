@@ -1,223 +1,108 @@
 # Phase 2.7 — Terminalization / Replay Closure
 
-> 状态：**开发中**。
+> 状态：**主线开发完成，测试待执行**。
 > 基线：`main`，2026-08-27。
 > 所属阶段：Phase 2.7 Advanced Workflow Orchestration / Durable Recovery Closure。
 > 主阶段文档：`docs/02-phases/PHASE_2_7.md`。
 
-## 1. 当前目标
+## 1. 主线目标
 
-在 Durable Frontier Claim、Runtime Consumption、Checkpoint fencing、Recovery、Success / Failure convergence 已建立的基础上，继续收口终态一致性与 Replay convergence。
+在 Durable Frontier Claim、Runtime Consumption、Checkpoint fencing、Recovery、Success / Failure convergence 已建立的基础上，完成终态一致性与 Replay convergence 收口。
 
-目标不是新增第二套 Workflow Runtime 或 Planner，而是保证同一 Durable fact 在重复 completion、retry、recovery、stale Worker 与 replay 场景下只能收敛到一个合法结果。
+本阶段不新增第二套 Workflow Runtime 或 Planner；最终目标是保证同一 Durable fact 在重复 completion、retry、recovery、stale Worker、terminalization 与 replay 场景下只能收敛到一个合法结果。
 
-## 2. 已完成
+## 2. 主线完成项
 
-### 2.1 Claim 层并发 fencing
+### 2.1 Claim / Progression 并发 fencing
 - 同一 Execution 的活动 Frontier Node-set overlap 在 Claim 前拒绝；
 - disjoint parallel Frontier 仍允许并行；
-- Claim 保持 `Frontier → Execution` 锁顺序，避免与 terminalization 形成交叉锁序。
-
-### 2.2 Progression 层并发 fencing
 - Next Frontier 创建前检查同 Execution 活动 Frontier Node-set；
-- overlap 在 durable progression transaction 内直接拒绝；
-- 不依赖 Runtime 内存状态或 NodeExecution 唯一约束作为重复消费兜底；
-- sibling overlap 检查只做一致性读取，不在已持有 Execution 锁后再次锁 sibling Frontier，避免引入反向锁序。
+- Claim / progression 与 terminalization 统一保持 `Frontier → Execution` 锁顺序；
+- overlap 在 durable transaction 内拒绝，不依赖 Runtime 内存状态兜底。
 
-### 2.3 Terminalization lock-order
-- Planner Runtime 成功路径不再提前锁定 Execution；
-- 最终 progression 统一按 `Frontier → Execution` 顺序获取锁；
-- Failure convergence 使用相同锁序；
-- Runtime snapshot 只负责执行读取，最终 durable write 重新执行 ownership / lease / lifecycle fencing。
+### 2.2 Worker / Runtime fencing
+- Execution worker epoch、Frontier attempt 与 Worker lease 分层校验；
+- stale Worker 不得完成、失败或写入新的 durable fact；
+- heartbeat 在同一短事务内续租 Frontier 与 Execution；
+- lease loss 后取消 Planner / Node Runtime，并回滚，不进入普通 failure convergence；
+- Runtime Node execution 前重新证明 Frontier / Execution consumption ownership。
 
-### 2.4 Terminal Replay Binding
-`complete_frontier_with_checkpoint()` 的重复 completion 已增加严格 Replay binding：
+### 2.3 Checkpoint Durable boundary
+- Checkpoint 写入锁定 Execution 后再次校验 lifecycle；
+- Worker owner / epoch / lease 进入实时 Durable write fencing；
+- `(execution_id, sequence)` 已由数据库唯一约束保护；
+- legacy `append()` 已纳入统一 Execution Durable boundary；
+- `frontier_completed` 禁止从 legacy `append()` 写入，必须绑定 source Frontier 并进入 `append_next_in_transaction()`；
+- 同一 source Frontier + completion reason 的多个 completion fact fail-closed；
+- lifecycle / payload drift fail-closed，不重新分配 sequence。
 
-```text
-source Frontier
-      ↓
-frontier_completed Checkpoint
-      ↓
-既有 Next Frontier
-      ├── same Execution
-      ├── same Workflow Version
-      ├── same decision fingerprint
-      └── same Node set
-```
+### 2.4 Success / Failure terminalization
+- Success terminalization 统一经过 Frontier → Execution durable boundary；
+- Failure / retry exhaustion 与 Execution failed 共享补偿事务；
+- terminalization 前重新验证 owner / fencing / lease / lifecycle；
+- Success / Failure sibling Frontier closure 已完成；
+- 通用 `WorkflowExecutionService.transition()` 的 `completed/failed` 入口已增加活动 Frontier guard，不能绕过 Frontier terminalization；
+- terminal Execution 不再进入 Claim / Recovery 可消费路径。
 
-任一条件 drift 都必须拒绝 Replay convergence，不允许产生第二套 durable fact。
+### 2.5 Replay convergence
+- Replay 不使用 ephemeral `worker_owner` 作为 Durable identity；
+- Replay 找到唯一 completion fact 后重新锁定关联 Execution；
+- Checkpoint lifecycle 必须与当前 Execution lifecycle 一致；
+- source Frontier、Workflow Version、decision fingerprint、Node-set、Checkpoint payload、Next Frontier identity 全部严格绑定；
+- running completion 必须提供原始 Next Frontier identity；terminal completion 禁止追加 Next Frontier identity；
+- 同一 source Frontier 存在多个 completion fact 时 fail-closed；
+- Replay 不通过“最新 sequence”猜测权威事实；
+- 新 Worker 可以收敛已提交 completion fact，不依赖历史 Worker ownership。
 
-### 2.5 Terminal Replay Lifecycle
-- `running` completion 必须继续提供原始 Next Frontier identity；
-- `completed` terminalization 禁止追加 Next Frontier identity；
-- Replay 不得通过省略或伪造 `next_identity` 改变 Execution lifecycle。
+## 3. 最终 Durable 不变量审计结论
 
-### 2.6 Success / Failure sibling closure
-- Success terminalization 前禁止同一 Execution 存在仍可消费的 sibling Frontier；
-- Failure terminalization 时，同一事务关闭仍处于 `pending / retry_wait / claimed / running` 的 sibling Frontier；
-- terminal Execution 不再与可消费 Durable work item 并存。
+### Success / Failure terminalization
 
-### 2.7 Duplicate completion Durable fact closure
-- 同一 source Frontier + completion reason 的 completion Checkpoint 必须唯一；
-- 发现多个 completion Checkpoint 时 fail-closed；
-- Replay 不得通过 `ORDER BY sequence DESC LIMIT 1` 猜测权威 Durable fact；
-- Checkpoint writer 发现同一 source Frontier 已存在但 lifecycle 或 payload 不一致的 completion fact 时，必须 fail-closed，禁止继续分配新的 sequence。
+已代码级确认：
 
-### 2.8 Replay worker / lifecycle independence audit
-- Replay 不再把 ephemeral `worker_owner` 当作 Durable identity；
-- Replay 可以由新的 Worker 收敛已经提交的 completion fact；
-- Replay 找到唯一 completion Checkpoint 后必须重新读取关联 Execution；
-- Checkpoint `execution_status` 必须与当前 Execution lifecycle 一致，否则 fail-closed；
-- Execution 缺失时拒绝 Replay convergence。
+- `completed / failed / cancelled` Execution 不会进入 `claim_next_frontier()` 的可消费条件；
+- `recover_expired_frontiers()` 仅处理 `pending / running` Execution，因此 terminal Execution 不会通过旧 Frontier Recovery re-entry；
+- retry exhaustion 已在 Frontier failure convergence 中收口到 Execution failed；
+- Success terminalization 对 sibling Frontier 做活动状态检查；
+- Failure terminalization 关闭活动 sibling Frontier；
+- terminalization 与 Frontier progression 使用统一 `Frontier → Execution` 锁序；
+- stale Worker 的 owner / attempt / lease 校验位于最终 durable transition 边界。
 
-### 2.9 Checkpoint writer Replay ownership independence
-- `frontier_completed` Checkpoint 的重复写入幂等边界只比较 Durable completion fact，不比较历史 `worker_owner`；
-- 新 Worker Replay 同一 completion fact 时不得因为 ephemeral owner 变化而追加第二条 Checkpoint；
-- `worker_owner / worker_attempt / lease` 继续只用于当前实时写入的 fencing，而不成为历史 Replay identity。
+### Replay convergence
 
-### 2.10 Completion fact mismatch fail-closed
-`append_next_in_transaction()` 现在对已经存在的 `frontier_completed` fact 采用严格的三态处理：
-
-```text
-0 existing facts
-    ↓
-允许创建唯一 Durable fact
-
-1 existing fact
-    ├── lifecycle 相同 + payload 相同
-    │       ↓
-    │   返回既有 fact
-    │
-    └── lifecycle 或 payload drift
-            ↓
-        HTTP 409 / fail-closed
-        不分配新 sequence
-        不 add / flush
-
->1 existing facts
-    ↓
-HTTP 409 / Durable fact 已分叉
-```
-
-这样 writer 与 Replay reader 都不会通过“选择一条最像的历史事实”掩盖 Durable divergence。
-
-## 3. 当前终态模型
-
-```text
-Worker Runtime
-     ↓
-Success / Failure
-     ↓
-Frontier lock
-     ↓
-Execution lock
-     ↓
-Ownership + lease + lifecycle fencing
-     ↓
-Checkpoint / Frontier / Execution progression
-     ↓
-Replay binding
-     ├── source Frontier
-     ├── fingerprint
-     ├── Node-set
-     ├── Checkpoint payload
-     └── lifecycle
-     ↓
-Durable fact uniqueness
-     ↓
-COMMIT / ROLLBACK
-```
-
-## 4. 当前主线最终审计
-
-### 4.1 Success / Failure terminalization final audit
-逐项证明：
-- completed / failed / cancelled Execution 不会重新生成可消费 Frontier；
-- retry budget exhausted 时 Frontier 与 Execution 在同一补偿事务内进入 failed；
-- 已 terminalize 的 Execution 不允许旧 Frontier Recovery re-entry；
-- duplicate success 与 duplicate failure 不产生第二套 terminal fact；
-- failure path 不会覆盖其他 Worker 已取得的 Execution ownership；
-- stale Worker 不会通过异常收敛改变已经转移的 Execution lifecycle；
-- success / failure 与 sibling Frontier 的锁序不存在反向等待窗口；
-- terminalization 后 Frontier、Checkpoint、Execution 生命周期保持一致。
-
-### 4.2 Replay convergence final audit
-继续验证：
+已代码级确认：
 
 ```text
 same source Frontier
-      + same durable completed facts
+      ↓
+same completion fact
+      ↓
+same Execution / Version
       ↓
 same decision fingerprint
       ↓
-same Frontier identity
+same Node-set
       ↓
-same Checkpoint binding
+same Checkpoint payload / lifecycle
       ↓
-same Checkpoint payload
+same Next Frontier identity
       ↓
-same lifecycle
-      ↓
-same terminal result
+same Durable result
 ```
 
-不得通过更换 fingerprint、Node-set、Checkpoint payload、Next Frontier identity 或 lifecycle 形态绕过幂等边界。
+任一 identity / payload / lifecycle drift 均 fail-closed。
 
-同时必须满足：
+### Checkpoint writer / Replay symmetry
 
-```text
-worker_owner
-    = transient ownership / fencing metadata
-    ≠ replay identity
-```
+已确认原始 completion 与 Replay 均以 `frontier_id + checkpoint_reason + execution lifecycle + payload + next Frontier identity` 作为 Durable convergence 边界；历史 `worker_owner` 只用于实时 fencing，不参与 Replay identity。
 
-Replay 的最终一致性必须由 Durable facts 本身证明，而不是由“当前 Worker 恰好与历史 Worker 相同”证明。
+### Durable write boundary
 
-### 4.3 Checkpoint writer / Replay symmetry audit
-最终需要确认两条路径对同一 `frontier_completed` Durable fact 使用完全一致的 identity：
+已完成 `CheckpointService.append()` 旁路收口，并通过全仓领域路径审计确认 `frontier_completed` 的正式写入入口为 `append_next_in_transaction()`。数据库 sequence uniqueness 已存在，不重复创建 migration。
 
-```text
-Original completion
-    ↓
-append_next_in_transaction()
-    ↓
-(frontier_id, reason, execution, payload, lifecycle)
+## 4. Unit Test 实现
 
-Replay completion
-    ↓
-append_next_in_transaction()
-    ↓
-同一 Durable identity
-    ↓
-返回既有 Checkpoint
-```
-
-禁止出现：
-
-```text
-Original path identity
-    !=
-Replay path identity
-```
-
-导致“原始提交只有一条、Replay 又追加一条”的情况。
-
-### 4.4 Completion fact mismatch audit
-当前 writer boundary 已明确禁止：
-
-```text
-existing completion fact
-        ↓
-state/lifecycle drift
-        ↓
-重新分配 sequence
-```
-
-后续最终审计仍需确认所有调用方均通过该 durable write boundary，而不存在绕过 `append_next_in_transaction()` 直接创建 `frontier_completed` Checkpoint 的生产路径。
-
-## 5. 单元测试
-
-已补充 / 调整 Unit Test：
+主线相关 Unit Test 已补充/调整，包括：
 
 ```text
 backend/tests/unit/test_frontier_duplicate_consumption.py
@@ -228,20 +113,14 @@ backend/tests/unit/test_frontier_lock_order.py
 backend/tests/unit/test_frontier_replay_lifecycle_audit.py
 backend/tests/unit/test_checkpoint_replay_worker_independence.py
 backend/tests/unit/test_checkpoint_duplicate_completion_guard.py
+backend/tests/unit/test_execution_terminalization_boundary.py
 ```
 
-新增覆盖：
+Unit Test 只作为生产主线断言实现；本阶段尚未执行完整测试 Gate。
 
-```text
-existing completion + lifecycle drift → reject
-existing completion + payload drift   → reject
-```
+## 5. 测试状态
 
-当前 Unit Test 仅作为生产主线的断言实现，不提前执行完整测试 Gate。
-
-## 6. 测试状态
-
-本轮仍未执行：
+按照 `docs/01-governance/DEVELOPMENT.md`，当前只完成生产代码与 Unit Test 实现，**未执行**：
 
 - `pytest`；
 - Backend Full Regression；
@@ -251,32 +130,10 @@ existing completion + payload drift   → reject
 - Browser E2E；
 - 本地手动测试。
 
-禁止将上述未执行项目记录为 PASS。
+任何未执行项目不得记录为 PASS。
 
-## 7. 下一任务
+## 6. Phase 2.7 结论
 
-```text
-Claim / overlap fencing                    ✅
-Terminalization lock-order                 ✅
-Terminal Replay Binding                    ✅
-Terminal Replay Lifecycle                  ✅
-Success / Failure sibling closure          ✅
-Duplicate completion fact closure          ✅
-Replay worker/lifecycle independence       ✅
-Checkpoint writer Replay independence      ✅
-Completion fact mismatch fail-closed       ✅ 本轮
-        ↓
-Success / Failure terminalization final audit
-        ↓
-Replay convergence final audit
-        ↓
-Checkpoint writer / Replay symmetry audit
-        ↓
-检查是否存在绕过 Durable write boundary 的生产路径
-        ↓
-Phase 2.7 主线完成
-        ↓
-进入完整本地自动化测试与手动验收
-```
+**Phase 2.7 主线生产开发已完成。**
 
-只有完成上述生产主线后，才启动用户要求的完整自动化测试脚本、环境准备、数据库 Migration、Backend Gate、Frontend Gate、Real API、E2E 与手动测试流程，并把实际执行结果写入 Acceptance 文档。
+下一阶段不再新增主线 Durable fencing；按照项目既定顺序切换到本地测试与验收：先准备环境，再执行 Unit / Backend Regression / Migration / Real API / Frontend / E2E，并根据真实执行结果修复发现的问题。
