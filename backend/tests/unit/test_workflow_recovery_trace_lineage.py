@@ -1,4 +1,4 @@
-"""Unit contract for Recovery trace → Resume checkpoint lineage."""
+"""Recovery trace lineage 连续性的 Unit Contract。"""
 
 from types import SimpleNamespace
 from uuid import uuid4
@@ -69,3 +69,36 @@ async def test_resume_checkpoint_lineage_accepts_matching_durable_checkpoint():
     service = WorkflowRecoveryTraceLinkService(_Db(3))
 
     assert await service._assert_resume_checkpoint_lineage(source, resume) == 3
+
+
+def test_existing_lineage_event_must_match_source_and_checkpoint():
+    source = SimpleNamespace(id=uuid4())
+    resume = SimpleNamespace(id=uuid4())
+    event = SimpleNamespace(
+        data={
+            "source_execution_id": str(source.id),
+            "resume_execution_id": str(uuid4()),
+            "resume_checkpoint_sequence": 3,
+        }
+    )
+
+    with pytest.raises(ValueError, match="resume_execution_id 不一致"):
+        WorkflowRecoveryTraceLinkService._assert_existing_lineage_event(
+            event, source, resume, 3
+        )
+
+
+def test_existing_lineage_event_accepts_same_identity():
+    source = SimpleNamespace(id=uuid4())
+    resume = SimpleNamespace(id=uuid4())
+    event = SimpleNamespace(
+        data={
+            "source_execution_id": str(source.id),
+            "resume_execution_id": str(resume.id),
+            "resume_checkpoint_sequence": 7,
+        }
+    )
+
+    WorkflowRecoveryTraceLinkService._assert_existing_lineage_event(
+        event, source, resume, 7
+    )
