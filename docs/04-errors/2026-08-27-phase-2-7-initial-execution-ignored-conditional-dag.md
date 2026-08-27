@@ -1,43 +1,51 @@
-# Phase 2.7-A：首次执行未使用 Conditional DAG Planner
+# Phase 2.7-A：Durable Resume completed Node 查询缺少显式 tenant scope
 
 ## 1. 发现
 
-在继续 Phase 2.7-A Runtime Integration 时发现，`WorkflowRuntime.execute()` 原先只有 Durable Resume 路径使用 `WorkflowDagResumePlanner`。首次执行仍按 `definition.nodes` 数组顺序逐个执行，因此同一个带 `condition/default` 的 Workflow Version 在首次执行与 Resume 时存在两套不同的边语义。
+在继续 Phase 2.7-A Durable Recovery 一致性加固时发现，`WorkflowRuntime._load_completed_resume_nodes()` 原先只按当前 Execution 与 Resume Source 的 `execution_id` 读取 `WorkflowNodeExecution`，没有在查询层显式限制 `tenant_id`。
 
-继续修复后又发现 `app/runtime/workflow/dag_runtime.py` 对基础 Runtime 的 `_build_frontier_branch_states()` 存在重复实现且参数契约不同：基础 Runtime 新增了 `definition` 与 `selected_predecessor_node_ids`，扩展 Runtime 仍保留旧签名，导致多态调用存在运行时参数不匹配风险。
-
-此外，首次执行的 DAG 如果存在多个 root，不能因为没有 completed Node 就直接交给 Multi-frontier Runtime；每个 root 都必须先获得当前 Execution 的独立输入状态。
+虽然正常调用链已经从 tenant-scoped Execution 进入 Runtime，但 Durable Recovery 的完成事实属于租户隔离的数据资产，查询本身必须形成完整的防御式边界，不能依赖所有上游调用者永远正确。
 
 ## 2. 影响
 
-- Conditional Branching 只在 Resume 场景生效；
-- 首次执行可能执行本应未命中的分支；
-- Join state 可能把静态 predecessor 集合误认为实际选中的 predecessor；
-- DAG Runtime 扩展与基础 Runtime 的方法签名不一致，存在运行时调用失败风险；
-- 多 root 首次执行无法形成合法的 Multi-frontier branch state；
-- 与 Phase 2.7-A Contract 的“当前 Runtime state 选择后继边”语义不一致。
+- 内部错误调用可能把其他租户的 NodeExecution fact 带入 DAG frontier 重建；
+- Conditional Decision / Join state 的恢复可信边界依赖上游对象而不是查询自身；
+- 不符合项目多租户 Runtime 的防御式 tenant boundary 要求。
 
 ## 3. 根因
 
-`WorkflowRuntime.execute()` 将 DAG Runtime Integration 限定在 `resume_of_execution_id` 非空场景；普通 Execution 直接遍历 `nodes`。同时 `_build_frontier_branch_states()` 原先按 Definition 中全部 predecessor 构造 state，没有优先消费 Planner 输出的 selected predecessor facts。
+`_load_completed_resume_nodes()` 的查询条件只有：
 
-后续扩展层为了实现 Join / Recovery Trace 保留了与基础 Runtime 重复的 DAG state / Resume 实现，没有同步基础方法签名；这违反“同一能力只保留一个正式实现入口”的治理要求。
+```text
+execution_id IN (current_execution, resume_source)
+status = completed
+```
+
+缺少：
+
+```text
+tenant_id = current_execution.tenant_id
+```
 
 ## 4. 修复
 
-- 首次执行和 Resume 均通过现有 `WorkflowDagResumePlanner` / `WorkflowDagResumeRuntimePlanner`；
-- 首次执行存在多个 root 时，为每个 root 建立当前输入的独立 state 快照，再进入现有 Multi-frontier Runtime；
-- 保留无 `edges` 历史 Workflow 的顺序执行兼容语义；
-- 基础 Runtime 的 `_build_frontier_branch_states()` 统一负责 DAG predecessor state 构造，并消费 Planner selected predecessor facts；
-- `app/runtime/workflow/dag_runtime.py` 删除重复的 `_build_frontier_branch_states()`、Resume context 等实现，只保留 Join Node、DAG Contract 校验、首次多 root 初始化与 Recovery Trace 扩展；
-- 不新增第二套 DAG Planner / Runtime / State Merge。
+- 在 `WorkflowNodeExecution` 查询中增加强制 `tenant_id` predicate；
+- 保留 current Execution + Resume Source 的明确 execution scope；
+- 不改变 Planner / Runtime / State Merge 的职责边界；
+- 增加 Unit Test 验证 tenant scope 与 Execution scope。
 
 ## 5. 验证
 
-新增 `backend/tests/unit/test_workflow_dag_runtime_initialization.py`，覆盖：
+新增：
 
-- 多 root 首次 DAG frontier；
-- 每个 root 获得独立输入快照；
-- Join Node 类型扩展不复制基础 Runtime 执行能力。
+```text
+backend/tests/unit/test_workflow_dag_runtime_initialization.py
+```
+
+覆盖：
+
+- 查询包含 `tenant_id` 条件；
+- 查询只读取 current / source Execution；
+- 多 root Branch state 仍保持独立快照。
 
 当前环境未实际执行 pytest，因此测试状态只能记录为“待开发者本地执行”，不得记录 PASS。
