@@ -6,41 +6,57 @@
 
 ## 本轮完成
 
-本轮将已经持久化的 Recovery Trace Link 正式延续到 `WorkflowRuntime`，并继续把 Scheduler Scan 接入统一 trace 生命周期：
+本轮完成 Scheduler Recovery Scan → Automatic Recovery 的实际 trace lineage 传递。Scheduler 为一次 Recovery Scan 建立父级 `trace_id`，每个 Automatic Recovery 创建自己的 Recovery `trace_id`，并通过 `parent_trace_id` 保留父子关联：
 
 ```text
-Scheduler Scan
-      ↓
-Automatic Recovery / Scheduled Dispatch
-      ↓
+Scheduler Scan trace = S
+        ↓
+Automatic Recovery trace = R
+        │
+        ├── parent_trace_id = S
+        ↓
 Resume Execution
-      ↓
+        ↓
 Recovery Trace Link
-      ↓
-Worker
-      ↓
-WorkflowRuntime
+        ↓
+Worker trace = R
+        ↓
+WorkflowRuntime trace = R
 ```
 
-Runtime 不创建第二个 Recovery trace，也不从 Trace Event 读取业务 payload。Worker 创建的 Resume Execution 进入 Runtime 后，只通过 `WorkflowRecoveryTraceLinkService.get_trace_id()` 恢复已有 `trace_id`，随后通过统一 `WorkflowRecoveryTelemetry` 发出 Runtime started / finished 控制面事件。
+这样避免把一个 Scan trace 错误地复用成多个 Recovery trace，同时又可以从 Recovery 事件重建 Scheduler → Recovery 的父子关系。
 
-Scheduler Runtime 通过 package-level `ScheduledTriggerScheduler` 入口使用 `TracedScheduledTriggerScheduler`，在 `tick_once()` 外围建立 scan trace 生命周期。原有 `runtime.py` 调度领域实现保持不变，避免复制 Scheduler 状态机。
-
-## Scheduler Trace 生命周期
+## Scheduler Recovery Trace 生命周期
 
 ```text
+WorkflowRecoveryScheduler.scan_once()
+        ↓
 WorkflowSchedulerTraceService.start_scan()
         ↓
-ScheduledTriggerScheduler.tick_once()
+failed Execution candidates
         ↓
-Lease / Slot / Dispatch / Misfire
+WorkflowExecutionAutomaticRecoveryService.recover(
+    parent_trace_id=scheduler_trace_id
+)
+        ↓
+Automatic Recovery child trace
+        ↓
+Resume + durable Recovery Trace Link
         ↓
 WorkflowSchedulerTraceService.finish_scan()
 ```
 
-同一轮 Scheduler Scan 的 `started / scan.completed / finished` 事件共享同一个 `trace_id`。正常扫描以 `completed` 收口；异常扫描以 `failed` 收口，并继续向上抛出原始异常。
+Scheduler Scan 的 `started / scan.completed / finished` 事件继续共享父级 `trace_id`。每个 Automatic Recovery 使用独立 child `trace_id`，并在 `workflow.recovery.trace.*` 与 `workflow.recovery.attempt` 事件中携带 `parent_trace_id`。
 
-Scheduler Trace 只携带调度控制面字段，不写入业务 `input_data`，因此不会通过 Scheduled Trigger 的业务状态传递 trace identity，也不会扩大敏感数据边界。
+## Trace Contract
+
+`WorkflowRecoveryEvent` 新增：
+
+- `parent_trace_id`：标识当前 Recovery trace 的父级 Scheduler trace；
+- `trace_id`：当前事件所属的 Recovery / Scheduler trace；
+- `execution_id` / `resume_execution_id`：执行身份关联。
+
+该字段只用于控制面 lineage，不承载业务 state。
 
 ## Runtime 边界
 
@@ -58,82 +74,82 @@ WorkflowRuntime
 
 Join 继续复用基础 Runtime 的 Retry、Timeout、CircuitBreaker、NodeExecution 与 Checkpoint 事务边界；Join 不调用 Model Provider。
 
-## Trace 生命周期
-
-Recovery Resume Runtime 使用同一 `trace_id`：
+## 当前完整链路
 
 ```text
 Scheduler Scan
-        ↓
-RECOVERY_WORKER_STARTED
-        ↓
-workflow.recovery.runtime.started
-        ↓
-WorkflowRuntime / DAG / Join / Checkpoint
-        ↓
-workflow.recovery.runtime.finished
-        ↓
-RECOVERY_WORKER_FINISHED
+    │
+    │ trace_id = S
+    ↓
+Automatic Recovery
+    │
+    │ trace_id = R
+    │ parent_trace_id = S
+    ↓
+Resume Execution
+    │
+    ↓
+Persistent Recovery Trace Link
+    │
+    │ trace_id = R
+    ↓
+Worker
+    │
+    │ trace_id = R
+    ↓
+WorkflowRuntime
+    │
+    ↓
+DAG Branch
+    │
+    ↓
+Join
+    │
+    ↓
+Checkpoint
+    │
+    ↓
+Execution Completed
 ```
 
-Runtime 事件只记录：
-
-- `execution_id`
-- `resume_execution_id`
-- `trace_id`
-- `phase`
-- `outcome`
-- `reason_code`
-- `duration_ms`
-
-禁止记录 Checkpoint `state_data`、Prompt、Secret、Provider credential 或完整业务 payload。
+Runtime / Worker 继续使用 Resume Execution 持久化的 Recovery child `trace_id`；Scheduler parent trace 不写入业务 `input_data`。
 
 ## Unit Test
 
-新增：
+更新：
 
 ```text
-backend/tests/unit/test_workflow_scheduler_runtime_trace.py
+backend/tests/unit/test_workflow_recovery_scheduler.py
+backend/tests/unit/test_workflow_recovery_observability.py
 ```
 
 覆盖：
 
-1. package-level trace-aware Scheduler Runtime 入口；
-2. `tick_once()` 正常完成时 started / completed / finished 共享同一 `trace_id`；
-3. Scheduler Runtime 异常时仍然 finish trace 并标记 `failed`；
-4. 原始 Scheduler 异常继续向调用方传播。
-
-既有：
-
-```text
-backend/tests/unit/test_workflow_scheduler_trace.py
-backend/tests/unit/test_workflow_dag_runtime_join.py
-```
-
-继续覆盖 Scheduler Trace Contract 与 Runtime / Join Trace Continuity。
+1. Recovery Scheduler 创建 Scan Trace；
+2. 每个 Automatic Recovery 收到相同的 Scheduler `parent_trace_id`；
+3. Scheduler Scan 统计仍通过统一 Trace Service 收口；
+4. `WorkflowRecoveryEvent` 正确序列化 `parent_trace_id`；
+5. Trace lifecycle 保持 child `trace_id` 稳定；
+6. 敏感数据边界不因 lineage 字段扩大。
 
 当前仅保留 Unit Test 验证范围。Backend Full Regression、Real API、E2E、Release Gate 暂停；**未实际执行的测试不得记录 PASS**。
 
 ## 下一主线
 
 ```text
-Scheduler Scan
-      ↓
-Automatic Recovery
-      ↓
+Scheduler parent trace
+        ↓
+Automatic Recovery child trace
+        ↓
 Resume Trace Link
-      ↓
-Worker Trace
-      ↓
-Runtime Trace
-      ↓
-DAG Branch
-      ↓
-Join
-      ↓
-Checkpoint
-      ↓
-Execution Completed
+        ↓
+Worker / Runtime child trace
+        ↓
+Claim / Lease / Fencing
+        ↓
+Checkpoint durable facts
+        ↓
+Phase 2.6 Closure
 ```
 
-下一步继续完成 Scheduler → Recovery → Worker → Runtime 的同一 Trace lineage 实际传递，并随后进入 Phase 2.6 Closure；不再新增平行 Trace 抽象。
+下一步不再新增 Trace 抽象，直接完成 Worker claim / lease / fencing 与 Recovery Resume 的最终持久化闭环，并验证 stale worker / lease loss 不会错误完成 Recovery Execution。
