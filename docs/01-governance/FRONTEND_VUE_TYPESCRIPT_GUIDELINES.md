@@ -23,6 +23,7 @@
 11. **Measured Performance**：性能优化必须有问题、指标、方案和验证结果。
 12. **Testable Delivery**：测试按照 Unit / Component / Integration / E2E 的风险和边界分层。
 13. **Small and Traceable Changes**：一个提交尽量对应一个可解释的工程变化。
+14. **Stable Module Entry**：目录级 UI 模块统一以 `index.vue` 作为 UI 入口；内部组件保持语义化命名。
 
 ---
 
@@ -77,13 +78,17 @@ frontend/
 ```text
 src/
 ├── app/                   # 应用启动、插件、全局配置
+├── api/                   # 全局 API / Contract 接入能力
+├── router/                # 路由与导航
 ├── components/            # 真正跨业务复用的 UI
 ├── composables/           # 跨业务稳定组合式能力
-├── layouts/               # 页面布局
+├── layouts/               # 页面布局模块
 ├── services/              # 跨业务技术服务
 ├── stores/                # 真正全局客户端状态
 ├── types/                 # 全局技术类型
+├── utils/                 # 无业务语义的纯工具
 ├── styles/                # 全局样式 / Design Tokens
+├── views/                 # 页面模块
 └── features/              # 业务规模达到条件后按领域聚合
     └── <domain>/
 ```
@@ -128,7 +133,8 @@ src/
 
 ```text
 Module
-├── Public API
+├── UI Entry / index.vue（存在 UI 时）
+├── Programmatic Public API / index.ts（存在跨模块程序化能力时）
 ├── Types / Contract
 ├── Implementation
 ├── Tests
@@ -137,125 +143,274 @@ Module
 
 模块不要求机械创建全部文件；只创建实际需要的部分。
 
----
+### 4.1 目录即模块边界
 
-## 5. 模块分层模型
-
-通用 Vue + TypeScript 项目推荐形成以下层次：
+目录级模块采用：
 
 ```text
-┌──────────────────────────────────────────┐
-│ App / Bootstrap                          │
-│ main.ts / App.vue / plugins              │
-└────────────────────┬─────────────────────┘
-                     ↓
-┌──────────────────────────────────────────┐
-│ Router / Layout / Views                  │
-│ 页面入口与页面编排                       │
-└────────────────────┬─────────────────────┘
-                     ↓
-┌──────────────────────────────────────────┐
-│ Feature Modules                          │
-│ 业务组件 / Composable / Store / API      │
-└────────────────────┬─────────────────────┘
-                     ↓
-┌──────────────────────────────────────────┐
-│ Shared UI / Shared Composable            │
-│ 稳定公共能力                              │
-└────────────────────┬─────────────────────┘
-                     ↓
-┌──────────────────────────────────────────┐
-│ Services / API Transport                 │
-│ HTTP / Storage / WebSocket / Upload       │
-└────────────────────┬─────────────────────┘
-                     ↓
-┌──────────────────────────────────────────┐
-│ Utils / Technical Types                   │
-│ 纯技术能力                                │
-└──────────────────────────────────────────┘
+<module>/
+└── index.vue
 ```
 
-依赖原则：
+约定：
 
 ```text
-上层可以依赖下层
-下层不得反向依赖页面实现
-公共模块不得依赖具体业务 Feature
-Feature 不应通过内部路径依赖其他 Feature
+目录 = 模块边界
+index.vue = 模块 UI 入口
+index.ts = 程序化 Public API
+语义化文件名 = 内部实现
 ```
+
+`index.vue` 只作为目录级模块入口，不要求所有 `.vue` 文件统一命名为 `index.vue`。
+
+### 4.2 模块入口稳定性
+
+模块内部可以逐步增加：
+
+```text
+components/
+composables/
+stores/
+api/
+types/
+constants/
+utils/
+```
+
+但外部入口保持稳定：
+
+```text
+module/index.vue
+```
+
+这样模块可以从简单页面逐步演进为复杂业务模块，而不需要同步修改 Router 或大量调用方。
 
 ---
 
-## 6. 模块类型与职责
+## 5. Layout / View / Feature 分层模型
 
-### Application Module
-
-负责：
+通用 Vue + TypeScript 项目推荐形成：
 
 ```text
-应用启动
-插件注册
-全局初始化
-错误边界
-全局配置接入
+App / Bootstrap
+      ↓
+Router
+      ↓
+Layout / index.vue
+      ↓
+View / index.vue
+      ↓
+Feature / index.vue
+      ↓
+Feature Components / Composables / Store / API
+      ↓
+Shared / Services / Infrastructure
 ```
 
-### Presentation Module
+### Layout
 
-包括：
+Layout 是 **Application Shell / Page Frame**，负责页面空间结构：
 
 ```text
-views
-components
-layouts
+Header
+Sidebar
+Navigation
+Breadcrumb
+Tabs
+Footer
+Content Container
+Responsive Layout
+RouterView
 ```
 
-负责：
+Layout 不负责具体业务：
 
 ```text
-页面展示
-用户交互
-组件组合
-UI 状态
+❌ User 查询
+❌ Order 业务规则
+❌ Workflow 状态机
+❌ Feature API 调用
 ```
 
-### Feature Module
-
-负责完整业务能力：
+推荐：
 
 ```text
-业务页面
+layouts/
+└── app/
+    ├── index.vue
+    ├── components/
+    │   ├── AppHeader.vue
+    │   ├── AppSidebar.vue
+    │   ├── AppBreadcrumb.vue
+    │   └── AppTabs.vue
+    └── composables/
+        └── useAppLayout.ts
+```
+
+### View
+
+View 是 **Page / Screen**，负责一个具体页面的组合与页面级交互：
+
+```text
+路由参数接入
+页面级状态
+页面级交互
+Feature 组合
+页面 Loading / Empty / Error 展示
+```
+
+View 不负责：
+
+```text
+❌ 全局布局
+❌ 底层 HTTP Client
+❌ 大型业务规则
+❌ 跨页面全局状态
+```
+
+推荐：
+
+```text
+views/
+└── users/
+    ├── index.vue
+    ├── components/
+    ├── composables/
+    ├── api/
+    └── types/
+```
+
+### Feature
+
+Feature 是 **Business Capability**，负责完整业务能力：
+
+```text
+业务 UI
 业务组件
 业务状态
 业务 API
-业务 composable
+业务 Composable
 业务类型
 业务规则
 ```
 
-### Shared Module
-
-负责稳定公共能力：
+推荐：
 
 ```text
-无业务语义 UI
-跨 Feature composable
-公共类型
-技术服务
+features/
+└── user/
+    ├── index.vue
+    ├── index.ts
+    ├── components/
+    ├── composables/
+    ├── stores/
+    ├── api/
+    ├── types/
+    ├── constants/
+    └── utils/
 ```
 
-### Infrastructure / Technical Module
-
-负责：
+### 三者关系
 
 ```text
-HTTP
-Storage
-WebSocket
-File Transfer
-Browser API
-Third-party SDK
+Layout
+= 页面怎么摆
+
+View
+= 这一页是什么
+
+Feature
+= 这一页背后的业务能力
 ```
+
+简单项目不要求同时存在三层；只有当边界真正出现时才增加层次。
+
+---
+
+## 6. 模块入口统一 `index.vue`
+
+以下目录级 UI 模块统一采用 `index.vue`：
+
+```text
+layouts/
+├── app/
+│   └── index.vue
+├── auth/
+│   └── index.vue
+└── fullscreen/
+    └── index.vue
+
+views/
+├── dashboard/
+│   └── index.vue
+├── users/
+│   └── index.vue
+└── settings/
+    └── index.vue
+
+features/
+└── workflow/
+    ├── index.vue
+    ├── index.ts
+    ├── components/
+    ├── composables/
+    └── api/
+```
+
+### `index.vue` 的职责
+
+```text
+模块 UI Composition Root
+```
+
+允许：
+
+```text
+Layout / Template Composition
+Props 接入
+Route 参数接入
+Feature Component 组合
+Composable 编排
+页面级状态展示
+页面级事件处理
+```
+
+不应长期承载：
+
+```text
+底层 HTTP 实现
+大型业务规则
+复杂数据转换
+跨 Feature 全局状态
+WebSocket 生命周期
+复杂轮询机制
+大量纯函数
+```
+
+复杂逻辑应下沉到对应模块：
+
+```text
+components/
+composables/
+stores/
+api/
+services/
+utils/
+```
+
+### 内部组件命名
+
+只有目录级模块入口使用 `index.vue`；内部组件必须保持语义化命名：
+
+```text
+components/
+├── UserTable.vue
+├── UserForm.vue
+├── UserDetail.vue
+└── UserToolbar.vue
+```
+
+禁止把所有组件都命名为 `index.vue`。
 
 ---
 
@@ -271,30 +426,39 @@ src/
 └── views/
 ```
 
-当业务规模增长时，再逐步形成：
+一个简单页面：
 
 ```text
-src/
-├── app/
-├── api/
-├── router/
-├── components/
-├── composables/
-├── layouts/
-├── services/
-├── stores/
-├── types/
-├── utils/
-├── styles/
-├── views/
-└── features/
-    ├── auth/
-    ├── user/
-    ├── workflow/
-    └── <domain>/
+views/users/
+└── index.vue
 ```
 
-这里的关键是：
+复杂后逐步增加：
+
+```text
+views/users/
+├── index.vue
+├── components/
+├── composables/
+├── api/
+└── types/
+```
+
+当业务需要独立 Feature 边界时：
+
+```text
+features/users/
+├── index.vue
+├── index.ts
+├── components/
+├── composables/
+├── stores/
+├── api/
+├── types/
+└── utils/
+```
+
+关键原则：
 
 > **增加模块化能力，而不是强制重构已有目录。**
 
@@ -304,66 +468,68 @@ src/
 
 ## 8. Feature Module 推荐结构
 
-当业务达到 Feature 化条件后：
-
 ```text
 features/
 └── <domain>/
-    ├── api/
-    │   ├── <domain>.api.ts
-    │   └── types.ts
-    ├── components/
-    ├── composables/
-    ├── stores/
-    ├── types/
-    ├── views/
-    ├── constants/
-    ├── utils/
-    ├── index.ts
-    └── README.md          # 复杂 Feature 推荐
+    ├── index.vue              # UI Entry
+    ├── index.ts               # Programmatic Public API（需要时）
+    ├── api/                   # Feature API
+    ├── components/            # Feature UI
+    ├── composables/           # Feature 行为
+    ├── stores/                # Feature 共享状态
+    ├── types/                 # Feature 类型
+    ├── views/                 # Feature 页面子模块（需要时）
+    ├── constants/             # Feature 私有常量
+    └── utils/                 # Feature 私有纯函数
 ```
 
 不是每个 Feature 都必须创建所有目录。
 
-推荐职责：
+Feature 的 UI 入口统一：
 
 ```text
-api/         = Feature API
-components/  = Feature UI
-composables/ = Feature 行为
-stores/      = Feature 共享状态
-types/       = Feature 类型
-views/       = Feature 页面
-constants/   = Feature 私有常量
-utils/       = Feature 私有纯函数
-index.ts     = Feature Public API
+features/<domain>/index.vue
+```
+
+程序化 Public API：
+
+```text
+features/<domain>/index.ts
+```
+
+两者职责不同：
+
+```text
+index.vue = UI Composition Root
+index.ts   = Programmatic Public API
 ```
 
 ---
 
 ## 9. Feature Public API
 
-Feature 应通过 `index.ts` 定义公开能力：
-
-```text
-features/order/index.ts
-```
-
-外部模块推荐：
+Feature 应通过 `index.ts` 定义公开的程序化能力：
 
 ```ts
 import { OrderList } from '@/features/order'
 ```
 
-不推荐：
+而 UI 入口使用：
 
-```ts
-import { OrderList } from '@/features/order/components/internal/OrderList.vue'
+```text
+features/order/index.vue
 ```
 
-这样可以隐藏内部实现，降低未来重构成本。
+外部模块禁止：
 
-Feature Public API 应尽量只暴露：
+```text
+features/order/components/internal/*
+features/order/stores/private/*
+```
+
+优先依赖模块公开入口。
+
+Public API 应尽量只暴露：
 
 ```text
 Public Components
@@ -372,7 +538,7 @@ Public Types
 Public Commands / Actions
 ```
 
-不应暴露数据库映射、内部 API Client、私有状态结构等实现细节。
+不应暴露内部 API Client、私有状态结构等实现细节。
 
 ---
 
@@ -383,9 +549,13 @@ Public Commands / Actions
 ```text
 app
  ↓
-router / views
+router
  ↓
-feature
+layouts
+ ↓
+views
+ ↓
+features
  ↓
 shared / services
  ↓
@@ -426,7 +596,7 @@ B → A
 Feature 内部推荐：
 
 ```text
-views
+index.vue / views
  ↓
 components / composables
  ↓
@@ -437,14 +607,7 @@ shared infrastructure
 
 同一层级模块之间尽量避免直接互相依赖。
 
-例如：
-
-```text
-components/A.vue
-    ❌ 直接 import components/B-internal.vue
-```
-
-如果 A 与 B 需要共享能力，应提升为明确的公共模块。
+如果两个组件需要共享能力，应提取为明确的公共能力，而不是互相引用内部实现。
 
 ---
 
@@ -468,21 +631,12 @@ Server State / Cache
 
 ```text
 能局部解决 → 不上升
+能 Page 解决 → 不进入全局 Store
 能 Feature 解决 → 不全局化
 能服务端获取 → 不重复复制多份
 ```
 
-避免同一业务数据同时存在：
-
-```text
-View ref
-Pinia
-Composable ref
-localStorage
-Query Cache
-```
-
-而没有明确同步规则。
+避免同一业务数据同时存在多个状态源而没有明确同步规则。
 
 ---
 
@@ -562,12 +716,6 @@ Event Bus 仅适用于明确的跨模块事件场景，并必须定义 Event Con
 优先保留在 Feature 内
 ```
 
-如果两个 Feature 使用但语义仍属于其中一个：
-
-```text
-优先重新评估业务边界
-```
-
 不能因为 import 数量增加就机械升级为 Shared。
 
 ---
@@ -586,15 +734,27 @@ Event Bus 仅适用于明确的跨模块事件场景，并必须定义 Event Con
 发布 / 演进需要独立边界
 ```
 
-拆分目标不是文件数量增加，而是：
+尤其当 `index.vue` 出现：
 
 ```text
-降低耦合
-提高内聚
-明确依赖
-提高测试性
-降低修改半径
+大量模板
+多个复杂区域
+多个异步流程
+大量业务规则
+多个独立交互流程
 ```
+
+应优先拆到：
+
+```text
+components/
+composables/
+stores/
+api/
+services/
+```
+
+而不是继续无限扩大 `index.vue`。
 
 ---
 
@@ -611,11 +771,7 @@ Event Bus 仅适用于明确的跨模块事件场景，并必须定义 Event Con
 不存在独立使用场景
 ```
 
-应考虑合并，避免：
-
-```text
-过度碎片化
-```
+应考虑合并，避免过度碎片化。
 
 原则：
 
@@ -623,18 +779,20 @@ Event Bus 仅适用于明确的跨模块事件场景，并必须定义 Event Con
 
 ---
 
-## 18. API / Router / View / Feature 协作
+## 18. API / Router / Layout / View / Feature 协作
 
 推荐完整链路：
 
 ```text
 Router
  ↓
-View
+Layout/index.vue
  ↓
-Feature Component / Composable
+View/index.vue
  ↓
-Feature API
+Feature/index.vue
+ ↓
+Feature API / Composable / Store
  ↓
 Shared HTTP Client
  ↓
@@ -646,6 +804,8 @@ View 不直接实现底层 HTTP 细节。
 API 层不负责 UI 状态。
 
 Router 不负责业务流程。
+
+Layout 不负责具体业务。
 
 ---
 
@@ -679,7 +839,7 @@ api/
     └── types.ts
 ```
 
-Feature 化后则优先：
+Feature 化后优先：
 
 ```text
 features/<domain>/api/
@@ -704,17 +864,31 @@ router/
     └── workflow.routes.ts
 ```
 
-或由 Feature 提供 Route Definition，再由 Router 聚合：
+路由页面优先指向模块入口：
 
-```text
-Feature
- ↓
-route definition
- ↓
-router registry
+```ts
+{
+  path: '/users',
+  component: () => import('@/views/users/index.vue')
+}
 ```
 
-Route Guard 仍然只处理导航级职责。
+Layout：
+
+```ts
+{
+  path: '/admin',
+  component: () => import('@/layouts/app/index.vue'),
+  children: [
+    {
+      path: 'users',
+      component: () => import('@/views/users/index.vue')
+    }
+  ]
+}
+```
+
+Route Guard 只处理导航级职责。
 
 ---
 
@@ -732,8 +906,11 @@ stores/
 ```text
 stores/
 ├── auth/
+│   └── index.ts
 ├── app/
+│   └── index.ts
 └── preferences/
+    └── index.ts
 ```
 
 Feature 状态：
@@ -742,17 +919,7 @@ Feature 状态：
 features/<domain>/stores/
 ```
 
-禁止创建一个包含：
-
-```text
-User
-Order
-Workflow
-Notification
-Permission
-```
-
-等所有状态的 `appStore`。
+禁止创建一个包含所有业务状态的 `appStore`。
 
 ---
 
@@ -771,13 +938,11 @@ services/
 └── websocket/
 ```
 
-业务能力优先：
+业务能力优先进入：
 
 ```text
 features/<domain>/
 ```
-
-如果项目仍采用传统结构，也可以暂时保留业务 service，但必须按领域拆分并逐步收敛职责。
 
 ---
 
@@ -810,13 +975,7 @@ features/order/utils/
 可独立测试
 ```
 
-禁止万能：
-
-```text
-utils/index.ts
-```
-
-承载所有业务逻辑。
+禁止万能 `utils/index.ts` 承载所有业务逻辑。
 
 ---
 
@@ -829,7 +988,7 @@ Shared Component
  ↓
 Feature Component
  ↓
-Page / View
+View / Page
 ```
 
 例如：
@@ -841,12 +1000,10 @@ DataTable
  ↓
 OrderTable
  ↓
-OrderPage
+Order View/index.vue
 ```
 
 越靠下越接近业务，越靠上越通用。
-
-上层可以组合下层；下层不能依赖上层业务。
 
 ---
 
@@ -858,41 +1015,43 @@ OrderPage
 1. 阅读项目 DEVELOPMENT.md
 2. 同步最新代码
 3. 搜索已有模块
-4. 判断是否属于现有 Feature
+4. 判断是否属于现有模块 / Feature
 5. 确定模块边界
-6. 定义 Public Contract
-7. 定义 Type / DTO
-8. 实现 API / Service
-9. 实现 State / Composable
-10. 实现 Component / View
-11. 接入 Router / Permission
-12. 完善 Loading / Empty / Error
-13. Accessibility / Responsive
-14. Unit / Component Test
-15. Integration / E2E（适用时）
-16. Type Check / Lint / Build
-17. 更新文档
-18. Review / Commit
+6. 确定 UI Entry：<module>/index.vue
+7. 定义 Public Contract
+8. 定义 Type / DTO
+9. 实现 API / Service
+10. 实现 State / Composable
+11. 实现 Component / index.vue
+12. 接入 Router / Permission
+13. 完善 Loading / Empty / Error
+14. Accessibility / Responsive
+15. Unit / Component Test
+16. Integration / E2E（适用时）
+17. Type Check / Lint / Build
+18. 更新文档
+19. Review / Commit
 ```
 
 ---
 
 ## 26. 新功能目录选择决策表
 
-| 新增内容 | 小规模项目 | 中大型项目 | 核心原则 |
+| 新增内容 | 小规模项目 | 中大型项目 | UI 入口 |
 |---|---|---|---|
-| 页面 | `views/` | `features/<domain>/views/` | 页面编排 |
-| 业务组件 | 页面邻近 / Feature | Feature `components/` | 业务内聚 |
-| 公共 UI | `components/` | `components/` | 无业务语义 |
-| API | `api/` | Feature `api/` | Contract First |
-| Composable | `composables/` | Feature `composables/` | 能力内聚 |
-| Store | `stores/` | Feature `stores/` | 最小状态范围 |
-| 技术 Service | `services/` | `services/<domain>/` | 技术能力 |
-| 类型 | `types/` | Feature `types/` | 就近维护 |
-| 工具 | `utils/` | Feature `utils/` | 纯函数 |
-| 路由 | `router/` | `router/modules/` | 声明式路由 |
-| 布局 | `layouts/` | `layouts/` | 页面结构 |
-| 样式 | `styles/` | `styles/` | Design System |
+| 页面 | `views/<domain>/` | `features/<domain>/views/` | `index.vue` |
+| 业务模块 | `views/<domain>/` | `features/<domain>/` | `index.vue` |
+| Layout | `layouts/<layout>/` | `layouts/<layout>/` | `index.vue` |
+| 业务组件 | 页面邻近 / Feature | Feature `components/` | 语义化 `*.vue` |
+| 公共 UI | `components/` | `components/` | 按组件语义命名 |
+| API | `api/` | Feature `api/` | 无 |
+| Composable | `composables/` | Feature `composables/` | 无 |
+| Store | `stores/` | Feature `stores/` | 无 |
+| 技术 Service | `services/` | `services/<domain>/` | 无 |
+| 类型 | `types/` | Feature `types/` | 无 |
+| 工具 | `utils/` | Feature `utils/` | 无 |
+| 路由 | `router/` | `router/modules/` | `index.ts` |
+| 样式 | `styles/` | `styles/` | 无 |
 
 ---
 
@@ -971,6 +1130,8 @@ WebSocket / SSE 必须考虑连接生命周期、Reconnect、Backoff、Ordering�
  ↓
 建立新 Public API
  ↓
+保持 index.vue 作为 UI Entry
+ ↓
 迁移调用方
  ↓
 迁移测试
@@ -991,6 +1152,7 @@ Build
 ```text
 行为不变
 Contract 稳定
+入口稳定
 测试不下降
 旧实现最终删除
 ```
@@ -1004,7 +1166,8 @@ Contract 稳定
 ```text
 [ ] 职责单一
 [ ] 边界明确
-[ ] Public API 明确
+[ ] index.vue UI Entry 明确（存在 UI 时）
+[ ] index.ts Public API 明确（存在程序化能力时）
 [ ] 内部实现可隐藏
 [ ] 依赖方向正确
 [ ] 无循环依赖
@@ -1023,6 +1186,7 @@ Contract 稳定
 
 ```text
 [ ] Feature / Module boundary clear
+[ ] UI Entry / index.vue clear when applicable
 [ ] Contract aligned
 [ ] Type complete
 [ ] Permission considered
@@ -1045,10 +1209,12 @@ Contract 稳定
 
 ```text
 ❌ 为了规范强制迁移全部旧目录
+❌ 所有 Vue Component 都命名为 index.vue
 ❌ 一个万能 Store
 ❌ 一个万能 utils.ts
 ❌ 一个万能 service.ts
-❌ View 内堆积业务逻辑
+❌ View/index.vue 内堆积全部业务逻辑
+❌ Layout/index.vue 内堆积具体业务逻辑
 ❌ 页面各自创建 HTTP Client
 ❌ Feature 深度依赖其他 Feature internal 文件
 ❌ Shared 模块依赖具体业务
@@ -1084,7 +1250,7 @@ Acceptance
 
 本文件解决：
 
-> **Vue + TypeScript 项目应该如何进行工程化和模块化设计。**
+> **Vue + TypeScript 项目应该如何进行工程化、模块化和模块入口设计。**
 
 项目级文档负责补充具体 UI 框架、实际目录、命令、部署、CI 和测试环境。
 
@@ -1094,6 +1260,7 @@ Acceptance
 清晰边界
 → 明确职责
 → 稳定 Contract
+→ 稳定 Module Entry
 → 单向依赖
 → 最小共享
 → 独立测试
