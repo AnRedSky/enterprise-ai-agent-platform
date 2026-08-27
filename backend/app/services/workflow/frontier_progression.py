@@ -100,7 +100,7 @@ async def complete_frontier_with_checkpoint(
     )
 
     # 第二阶段：同一事务中追加不可变 Checkpoint。Checkpoint Service 会锁定 Execution，
-    # 并串行分配 sequence，保证同一 Execution 的 checkpoint lineage 连续。
+    # 并串行分配 sequence，同时再次校验 Execution owner/generation，形成第二道 Durable 写入防线。
     checkpoint_service = WorkflowExecutionCheckpointService(db)
     checkpoint = await checkpoint_service.append_next_in_transaction(
         execution_id=frontier.execution_id,
@@ -116,6 +116,8 @@ async def complete_frontier_with_checkpoint(
         error_code=error_code,
         error_message=error_message,
         tenant_id=frontier.tenant_id,
+        expected_worker_owner=worker_owner,
+        expected_worker_attempt=attempt,
     )
 
     # 第三阶段：后继 Frontier 使用确定性 identity 幂等创建；冲突时收敛到已有记录。

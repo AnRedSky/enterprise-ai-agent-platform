@@ -2,12 +2,14 @@
 
 负责 Workflow Execution Checkpoint 的持久化边界，并保证同一 Execution 的序号分配在并发 Worker 下保持串行一致。
 本模块不负责恢复调度、状态机推进或 Worker ownership 校验。
+关键依赖：Workflow Execution / Node Execution ORM 与 SQLAlchemy AsyncSession。
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +52,27 @@ class WorkflowExecutionCheckpointService:
         if checkpoint.output_data != node_execution.output_data:
             raise ValueError(f"Checkpoint output_data 与 NodeExecution 不一致: {checkpoint.node_id}")
 
+    @staticmethod
+    def _validate_worker_fencing(
+        *,
+        expected_worker_owner: str | None,
+        expected_worker_attempt: int | None,
+        execution: WorkflowExecution,
+    ) -> None:
+        """校验 Checkpoint 写入时的 Execution owner/generation，阻断 stale Worker。
+
+        Checkpoint 是不可变 Durable Fact；如果调用方来自 Worker，必须在目标 Execution 行锁定后
+        再确认 owner 与 generation 仍然一致。这样即使旧 Worker 持有已经过期的上下文，也不能在
+        Frontier fencing 之外单独追加 Checkpoint。
+        """
+        if expected_worker_owner is None and expected_worker_attempt is None:
+            return
+        if expected_worker_owner is None or expected_worker_attempt is None:
+            raise HTTPException(409, "Checkpoint Worker fencing 参数不完整")
+        locked_attempt = int(execution.worker_attempt or 0)
+        if execution.worker_owner != expected_worker_owner or locked_attempt != expected_worker_attempt:
+            raise HTTPException(409, "Checkpoint Worker ownership 或 fencing generation 已失效")
+
     def _build(self, *, execution_id: UUID, sequence: int, execution_status: str, state_data: dict,
                checkpoint_reason: str, node_id: str | None = None, node_attempt: int | None = None,
                node_status: str | None = None, input_data: dict | None = None, output_data: dict | None = None,
@@ -83,8 +106,34 @@ class WorkflowExecutionCheckpointService:
                                         node_attempt: int | None = None, node_status: str | None = None,
                                         input_data: dict | None = None, output_data: dict | None = None,
                                         worker_owner: str | None = None, error_code: str | None = None,
-                                        error_message: str | None = None, tenant_id: UUID | None = None) -> WorkflowExecutionCheckpoint:
-        """在调用方事务中写入下一个 Checkpoint，并可强制验证 Execution tenant scope。"""
+                                        error_message: str | None = None, tenant_id: UUID | None = None,
+                                        expected_worker_owner: str | None = None,
+                                        expected_worker_attempt: int | None = None) -> WorkflowExecutionCheckpoint:
+        """在调用方事务中写入下一个 Checkpoint，并校验 tenant 与 Worker fencing generation。
+
+        Args:
+            execution_id: 目标 Workflow Execution。
+            execution_status: Checkpoint 对应的 Execution 状态。
+            state_data: Checkpoint 的持久化状态快照。
+            checkpoint_reason: 生成 Checkpoint 的业务原因。
+            node_id: Node-level Checkpoint 对应的节点标识。
+            node_attempt: Node Execution attempt。
+            node_status: Node Execution 状态。
+            input_data: Node 输入快照。
+            output_data: Node 输出快照。
+            worker_owner: 写入事实中记录的 Worker owner。
+            error_code: 可选错误码。
+            error_message: 可选错误信息。
+            tenant_id: 可选 tenant scope。
+            expected_worker_owner: Worker 写入上下文中的 owner；提供后强制执行 fencing。
+            expected_worker_attempt: Worker 写入上下文中的 generation；提供后强制执行 fencing。
+
+        Returns:
+            新创建且尚未提交的 WorkflowExecutionCheckpoint。
+
+        Raises:
+            HTTPException: Execution 不存在、tenant 不匹配或 Worker fencing 已失效。
+        """
         self._validate(0, checkpoint_reason)
         execution_query = select(WorkflowExecution).where(WorkflowExecution.id == execution_id).with_for_update()
         if tenant_id is not None:
@@ -92,7 +141,12 @@ class WorkflowExecutionCheckpointService:
         execution_result = await self.db.execute(execution_query)
         execution = execution_result.scalar_one_or_none()
         if execution is None:
-            raise ValueError(f"Checkpoint 对应的 Workflow Execution 不存在或不属于当前 tenant: {execution_id}")
+            raise HTTPException(409, f"Checkpoint 对应的 Workflow Execution 不存在或不属于当前 tenant: {execution_id}")
+        self._validate_worker_fencing(
+            expected_worker_owner=expected_worker_owner,
+            expected_worker_attempt=expected_worker_attempt,
+            execution=execution,
+        )
         latest_sequence = await self.db.execute(
             select(func.max(WorkflowExecutionCheckpoint.sequence)).where(
                 WorkflowExecutionCheckpoint.execution_id == execution_id
