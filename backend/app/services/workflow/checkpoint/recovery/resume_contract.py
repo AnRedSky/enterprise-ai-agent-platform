@@ -43,7 +43,7 @@ class WorkflowExecutionResumeContractService:
         """在 Source Execution 锁内判断并执行一次确定性 Resume。
 
         这里不复制 WorkflowExecutionService 的创建逻辑；创建、审计、Trace、唯一约束兜底
-        仍统一委托给既有 Resume Domain。Source row lock 只用于保证本次 outcome 判断与
+        仍统一委托既有 Resume Domain。Source row lock 只用于保证本次 outcome 判断与
         Resume 创建处于同一个并发串行边界。
         """
         from app.services.workflow.execution import WorkflowExecutionService
@@ -70,10 +70,13 @@ class WorkflowExecutionResumeContractService:
         ))).scalar_one_or_none()
         if existing is not None:
             if (
-                existing.resume_of_execution_id != locked_execution.id
+                existing.tenant_id != locked_execution.tenant_id
+                or existing.workflow_id != locked_execution.workflow_id
+                or existing.workflow_version_id != locked_execution.workflow_version_id
+                or existing.resume_of_execution_id != locked_execution.id
                 or existing.resume_checkpoint_sequence != assessment.checkpoint_sequence
             ):
-                raise ValueError("Resume 幂等键已绑定其他 Execution")
+                raise ValueError("Resume 幂等键已绑定不一致的 Execution lineage")
             return WorkflowExecutionResumeOutcome(
                 execution=existing,
                 outcome="idempotency_hit",
