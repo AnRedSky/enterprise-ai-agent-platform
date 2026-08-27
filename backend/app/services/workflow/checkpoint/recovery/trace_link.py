@@ -190,7 +190,26 @@ class WorkflowRecoveryTraceLinkService:
         completed_node_ids: list[str],
         frontier_node_ids: list[str],
         selected_predecessors: list[dict[str, object]],
+        *,
+        commit: bool = True,
     ) -> WorkflowTraceEvent | None:
+        """记录 DAG Decision Trace，并允许调用方控制事务提交。
+
+        Args:
+            execution: 当前 Workflow Execution。
+            trace_id: 当前 Recovery/Runtime trace 标识；为空时不写入 Trace。
+            actor_id: 触发该 Decision 的操作者身份。
+            decision_id: Planner 生成的确定性 Decision fingerprint。
+            completed_node_ids: 当前 durable completed Node 集合。
+            frontier_node_ids: Planner 计算出的当前 frontier。
+            selected_predecessors: Planner 选定的 predecessor 快照。
+            commit: 是否在本方法内提交事务；嵌入 Runtime/Recovery 原子事务时必须传入 False。
+
+        Returns:
+            新建或幂等命中的 WorkflowTraceEvent；trace_id 为空时返回 None。
+
+        事务边界：默认兼容直接调用提交；commit=False 时只 flush，不得自行 commit，提交由外层 Execution 事务统一完成。
+        """
         if not trace_id:
             return None
 
@@ -238,8 +257,9 @@ class WorkflowRecoveryTraceLinkService:
         )
         self.db.add(event)
         await self.db.flush()
-        await self.db.commit()
-        await self.db.refresh(event)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(event)
         return event
 
     async def get_trace_id(self, resume_execution: WorkflowExecution) -> str | None:
