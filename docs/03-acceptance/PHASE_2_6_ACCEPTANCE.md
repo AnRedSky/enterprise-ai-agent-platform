@@ -41,7 +41,8 @@ Lease Loss Active Abort targeted tests：
 cd backend
 uv run pytest -q `
   tests/unit/test_workflow_worker_lease_guard.py `
-  tests/unit/test_workflow_worker_lease_runtime.py
+  tests/unit/test_workflow_worker_lease_runtime.py `
+  tests/unit/test_workflow_execution_terminal_ownership.py
 ```
 
 本环境无法直接访问项目本地 `backend/.venv`，因此未执行上述命令，不记录 PASS。开发者本地执行后，应把真实 pytest 输出与结果补入本文件。
@@ -73,7 +74,8 @@ uv run pytest -q `
 - reclaim 先回到 `pending`，再写入新 owner / lease，并递增 `worker_attempt`；
 - 旧 Worker 后续状态推进必须通过 ownership fencing；
 - terminal Execution 不残留 worker owner / lease；
-- 旧 Worker 在 heartbeat 明确返回 ownership 丢失后，主动取消正在运行的 Runtime。
+- 旧 Worker 在 heartbeat 明确返回 ownership 丢失后，主动取消正在运行的 Runtime；
+- terminal status 与 worker ownership / lease 在同一事务中原子清理，不依赖 Worker finally 的后置清理。
 
 ### 3.4 Lease Loss Active Abort
 
@@ -127,10 +129,12 @@ Telemetry 必须满足：
 
 ## 6. Closure 状态
 
-**代码实现：完成。**
+**代码实现：已完成。**
 
-**Unit Test：已补齐主动中止 telemetry 覆盖，但本环境未实际执行。**
+**本轮新增：terminal Execution 与 Worker ownership 原子边界修复及三种终态 Unit Test 覆盖。**
 
-**Phase 2.6 Closure：待开发者本地 Unit Test 实际结果后最终关闭。**
+**Unit Test：本环境未实际执行；不得记录 PASS。**
+
+**Phase 2.6 Closure：等待开发者本地 Unit Test 实际结果后关闭。**
 
 完成 Closure 后，下一阶段进入企业级执行能力扩展；在 Closure 前不继续创建平行 Durable Execution 抽象。
