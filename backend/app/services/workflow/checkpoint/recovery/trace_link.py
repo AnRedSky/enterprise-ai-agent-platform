@@ -116,8 +116,14 @@ class WorkflowRecoveryTraceLinkService:
         trace_id: str,
         completed_node_ids: list[str],
         decision_fingerprint: str,
+        frontier_node_ids: list[str] | None = None,
+        selected_predecessors: list[dict[str, object]] | None = None,
     ) -> None:
-        """校验同一 Recovery trace 下相同 durable completed facts 的 Decision fingerprint。"""
+        """校验同一 Recovery trace 下完整 DAG Decision 是否可确定性重建。
+
+        Fingerprint 是最终身份校验；frontier 与 selected predecessors 同时校验可观测
+        决策结果，避免历史 Trace 被错误 fingerprint 或旧字段污染后仍被静默接受。
+        """
         result = await self.db.execute(
             select(WorkflowTraceEvent.data)
             .where(
@@ -133,9 +139,19 @@ class WorkflowRecoveryTraceLinkService:
                 continue
             previous_completed = data.get("completed_node_ids")
             previous_fingerprint = data.get("decision_id")
-            if previous_completed == completed_node_ids and previous_fingerprint and previous_fingerprint != decision_fingerprint:
+            if previous_completed != completed_node_ids:
+                continue
+            if previous_fingerprint and previous_fingerprint != decision_fingerprint:
                 raise ValueError(
                     "DAG Recovery Decision fingerprint 不一致：同一 durable completed facts 产生了不同 Decision"
+                )
+            if frontier_node_ids is not None and data.get("frontier_node_ids") != frontier_node_ids:
+                raise ValueError(
+                    "DAG Recovery Decision frontier 不一致：同一 durable completed facts 产生了不同 frontier"
+                )
+            if selected_predecessors is not None and data.get("selected_predecessors") != selected_predecessors:
+                raise ValueError(
+                    "DAG Recovery Decision predecessor 不一致：同一 durable completed facts 产生了不同 predecessor selection"
                 )
 
     async def record_dag_decision(
