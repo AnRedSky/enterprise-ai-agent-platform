@@ -54,6 +54,8 @@ Join merged-state recovery guard
 - **Durable Resume Checkpoint continuation：线性 Resume 已在 Runtime 主入口过滤 completed Node，并在全部 Node 已完成时直接 terminalize Execution。**
 - **Durable Frontier Multi-frontier checkpoint boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`。**
 - **Durable Frontier Completion Contract Hardening：统一 progression primitive 现在在任何持久化动作前拒绝 `frontier_completed` 携带 Node identity/status/input/output，正式阻断 Node-level 与 Execution-level durable fact 混写。**
+- **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活。**
+- **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致，stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact。**
 
 ## 3. Durable Recovery Closure
 
@@ -155,6 +157,26 @@ complete_frontier_with_checkpoint()
 
 共享 `WorkflowRuntime` 可以继续保留普通 Runtime 所需的 Checkpoint 行为，但 Durable Frontier Adapter 必须使用不提前追加 completion Checkpoint 的 Multi-frontier 执行入口，让最终 completion fact 只由 Frontier progression 产生。
 
+### 3.8 Execution Lifecycle / Checkpoint Closure
+
+Checkpoint 写入不能只证明 Worker ownership/fencing 正确，还必须证明写入快照仍对应锁定后的 Execution 生命周期：
+
+```text
+Lock Execution
+    ↓
+Tenant / Worker fencing
+    ↓
+Existing idempotent boundary?
+    ├── yes → return existing fact
+    └── no
+         ↓
+current execution.status == requested execution_status
+    ├── no  → reject 409
+    └── yes → allocate sequence → flush
+```
+
+该边界与 terminal Frontier Recovery Guard 配合，阻断 stale Worker 在 Execution terminalization 后写入旧 `running/pending` durable fact。
+
 ## 4. 本轮单元测试
 
 新增 / 更新：
@@ -164,6 +186,7 @@ backend/tests/unit/test_durable_frontier_execution.py
 backend/tests/unit/test_durable_resume_runtime.py
 backend/tests/unit/test_frontier_progression.py
 backend/tests/unit/test_frontier_recovery_contract.py
+backend/tests/unit/test_workflow_checkpoint_lifecycle.py
 ```
 
 覆盖：
@@ -174,7 +197,8 @@ backend/tests/unit/test_frontier_recovery_contract.py
 - `frontier_completed` 误传 Node identity/status/input/output 时在任何数据库写入前拒绝；
 - Node-level Checkpoint 仍允许正常携带 Node identity、attempt、status 与 I/O；
 - completed Node Resume、Node Retry budget 与 Workflow Retry budget 恢复边界；
-- Expired Frontier Recovery 只有在关联 Execution 为 `pending/running` 时才能进入 `retry_wait`，terminal Execution 不得被旧 Frontier 重新激活。
+- Expired Frontier Recovery 只有在关联 Execution 为 `pending/running` 时才能进入 `retry_wait`，terminal Execution 不得被旧 Frontier 重新激活；
+- Checkpoint durable write 在锁定 Execution 后拒绝与当前 Execution status 不一致的旧快照。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
 
@@ -195,18 +219,19 @@ Resume lifecycle idempotency closure         ✅
 Durable Resume Checkpoint continuation        ✅
 Durable Multi-frontier completion boundary    ✅
 Durable Completion Contract Hardening         ✅
-Terminal Execution Frontier Recovery Guard    ✅ 本轮
+Terminal Execution Frontier Recovery Guard    ✅
+Checkpoint Execution Lifecycle Guard           ✅ 本轮
 
         ↓
 
-Recovery / Replay lifecycle closure           ✅ 生产代码闭环
-  └── 本地 Unit Test 实际执行                  ← 待开发者环境执行
+Next Frontier / terminalization / recovery convergence
+  └── 继续开发，不以测试流程阻塞主线
 ```
 
 Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不阻塞主线代码推进。Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler/Worker → Runtime。
 
 ## 6. 本轮交付说明
 
-本轮继续沿 Durable Frontier → Checkpoint → Next Frontier 闭环推进。此前共享 Runtime 重复追加 `frontier_completed` 的风险已经通过 Durable Adapter 和统一 progression Contract 收口；本轮进一步处理 Recovery 与 Execution terminalization 的交叉窗口：过期 Frontier 只有在关联 Execution 仍处于 `pending/running` 时才允许回收，terminal Execution 的旧 Frontier 不能重新进入 retry queue。
+本轮继续沿 Durable Frontier → Checkpoint → Next Frontier → Execution terminalization 闭环推进。在已有 terminal Frontier Recovery Guard 之后，将 Execution lifecycle 校验进一步下沉到统一 Checkpoint durable write boundary：锁定 Execution 后，除 tenant 与 Worker fencing 外，必须再次证明 `execution_status` 与当前持久化 Execution status 一致。这样 stale Worker 即使绕过 Frontier Recovery，也不能在 terminalization 后追加旧生命周期事实。
 
-本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。Recovery guard 复用既有 Frontier / Execution durable model 与事务锁，仅增加 Execution terminal state 的恢复边界；普通 Frontier Retry / Lease Recovery 行为保持不变。
+本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。仅强化既有 Checkpoint Service 的事务内 Contract，并新增对应 Unit Test；完整 pytest / Regression / E2E / Real API 流程继续暂停。
