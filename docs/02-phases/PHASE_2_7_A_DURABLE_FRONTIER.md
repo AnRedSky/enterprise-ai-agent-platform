@@ -49,28 +49,55 @@ RUNNING
 - 并发唯一键冲突后读取既有 Frontier，不产生第二个 work item；
 - `claim_next_frontier()` 使用 tenant scope + `FOR UPDATE SKIP LOCKED`；
 - `recover_expired_frontiers()` 回收过期 `claimed/running` Frontier 到 `retry_wait`；
-- `transition_owned_frontier()` 同时校验 `worker_owner + attempt` fencing generation，阻止 stale Worker 覆盖新 Worker。
+- `transition_owned_frontier()` 同时校验 `worker_owner + attempt` fencing generation，阻止 stale Worker 覆盖新 Worker；
+- `renew_owned_frontier_lease()` 使用同一 `worker_owner + attempt` fencing 条件刷新 Frontier lease，不执行 commit。
 
-## 6. 本轮交付边界
+## 6. Scheduler → Worker 实际接入
 
-本轮新增 `enqueue_frontier()` 与 Unit Test Contract，使 Durable Frontier 具备正式幂等入队入口；当前尚未把现有 Scheduled Trigger Runtime 改造成“Frontier-only dispatch”，因为现有 Worker 仍以 `WorkflowExecution` 为正式消费单元。直接切换会产生未消费 Frontier 或重复执行风险。
-
-因此下一交付单元必须先完成：
+本轮已经完成真实生产桥接，不再停留在 Contract：
 
 ```text
-Scheduler
+Scheduled Trigger
    ↓
-Durable Frontier enqueue
+WorkflowExecution(pending)
+   +
+WorkflowFrontier(pending)
    ↓
-Worker Frontier Claim
+DurableFrontierWorkflowWorker
    ↓
-Execution ownership / fencing
+Frontier claim + Execution ownership（同一事务）
    ↓
-唯一 Workflow Runtime
+LeaseAwareWorkflowWorker
+   ↓
+唯一 WorkflowExecutionService / WorkflowRuntime
+   ↓
+Execution terminal
+   ↓
+Frontier terminal
 ```
 
-接入时必须复用现有 `WorkflowExecutionService`、Worker ownership 与 Runtime，不得创建第二套执行路径。
+Scheduled Trigger 使用 slot idempotency key 创建 Execution 后，在同一调用方事务内创建首个 Frontier。默认 `WorkflowWorker` 已切换为 `DurableFrontierWorkflowWorker`；它不会复制 Runtime，而是复用已有 `LeaseAwareWorkflowWorker` / `WorkflowExecutionService`。
 
-## 7. 测试边界
+Worker 同时维护 Frontier lease heartbeat 与 Execution lease heartbeat。Frontier terminal transition 必须再次通过 `worker_owner + attempt` fencing；如果旧 Worker 已失去 ownership，则不伪造 Frontier terminal state，等待 lease recovery。
+
+Manual / Webhook Trigger 暂不强制迁移到 Frontier，避免在本阶段改变其公开触发语义；后续统一纳入 Durable Work Item Contract。
+
+## 7. 下一交付单元
+
+当前剩余主线：
+
+```text
+Durable Frontier Scheduling
+   ├── Scheduler → Frontier enqueue       ✅
+   ├── Frontier → Worker claim             ✅
+   ├── Worker → Runtime bridge             ✅
+   ├── Frontier lease heartbeat             ✅
+   ├── Retry scheduling                     ⏭
+   └── Frontier → Checkpoint progression    ⏭
+```
+
+下一步直接实现 Frontier Retry Scheduling：把可重试 Runtime failure 映射到 `retry_wait + available_at`，并保证 retry 与 fencing generation、Execution terminal state 不发生重复执行。
+
+## 8. 测试边界
 
 当前只保留 Unit Test Contract；本环境未实际执行 pytest，因此不得记录 Unit Test PASS。Real API 后续必须实际验证 PostgreSQL 持久化以及 Scheduler → Frontier → Worker → Runtime 生命周期。
