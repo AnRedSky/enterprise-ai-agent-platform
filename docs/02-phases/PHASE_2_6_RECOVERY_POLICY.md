@@ -18,6 +18,7 @@
 WorkflowExecutionRecoveryPolicy
 WorkflowExecutionRecoveryPolicyEvaluator
 WorkflowExecutionAutomaticRecoveryService
+WorkflowExecutionResumeContractService
 ```
 
 默认策略：
@@ -45,28 +46,45 @@ Scheduler 只负责：
         ↓
 Recovery Domain
         ↓
+Resume Outcome Contract
+   ┌────┴────────────┐
+   ↓                 ↓
+created       idempotency_hit
+   └────┬────────────┘
+        ↓
 pending Resume Execution
         ↓
 标准 Worker claim
 ```
 
-每个候选使用独立 DB Session；多 Scheduler 并发最终依赖 Source row lock、deterministic idempotency key 与数据库唯一约束收敛。
+每个候选使用独立 DB Session。Resume Contract 首先锁定 Source Execution 并检查确定性幂等键，然后委托既有 `WorkflowExecutionService.resume_from_latest_checkpoint()` 执行真正创建；数据库唯一约束继续作为最终安全兜底。
 
 ## 4. Recovery Outcome Contract
 
-自动恢复 Domain Result 现在显式携带：
+正式入口：
 
 ```text
-outcome = rejected | recovered
+WorkflowExecutionResumeOutcome
+WorkflowExecutionResumeContractService
+```
+
+正式 outcome：
+
+```text
+rejected
+created
+idempotency_hit
 ```
 
 规则：
 
-- `rejected`：Policy 不允许自动恢复，不创建 Resume；`reason_code` 给出拒绝原因；
-- `recovered`：Resume Contract 返回新建或幂等命中的 Resume Execution，并提供 `resume_execution_id`；
-- 当前不在 Domain 外部猜测 `created` 与 `idempotency_hit`；这一区分必须由 Resume Domain 正式返回。
+- `rejected`：Recovery Policy 不允许自动恢复，不创建 Resume；`reason_code` 给出拒绝原因；
+- `created`：本次 Resume Contract 创建新的 Resume Execution；
+- `idempotency_hit`：本次 Resume Contract 命中已经存在且与 Source / Checkpoint 完全匹配的 Resume Execution；
+- Source row lock 保证同一 Recovery Source 的 outcome 判断与创建处于同一并发串行边界；
+- DB unique constraint 是最终安全兜底，不依赖应用层时间戳或对象状态猜测 outcome。
 
-这样 Scheduler 可以消费稳定 outcome，而不需要根据对象时间、状态或异常类型旁路推断幂等竞争。
+`WorkflowExecutionService.resume_from_latest_checkpoint()` 仍是唯一 Resume 持久化创建实现；Outcome Contract 不复制创建、审计、Trace 逻辑。
 
 ## 5. Recovery Observability Contract
 
@@ -84,18 +102,19 @@ workflow.recovery.attempt
 workflow.recovery.scan.completed
 ```
 
-自动恢复每次 attempt 都输出：
+单次 Recovery Attempt：
 
 ```text
 execution_id
 resume_execution_id
+outcome
 reason_code
 attempt_count
 max_attempts
 occurred_at
 ```
 
-Scheduler 每轮 Scan 输出：
+Scheduler Scan Aggregate：
 
 ```text
 candidates
@@ -105,13 +124,16 @@ rejected
 contention
 failed
 scan_limit
+occurred_at
 ```
+
+`contention` 当前严格由 `idempotency_hit` 驱动；禁止 Scheduler 根据异常类型猜测 row-lock / database contention。
 
 事件模型只允许记录恢复控制面信息；Checkpoint `state_data`、Secret、Provider credential、完整业务 payload 等敏感内容禁止进入事件。
 
-后续 Metrics / Trace 接入必须复用该事件 Contract，不建立平行 Recovery 日志字段体系。
+Recovery Attempt 只由 Recovery Domain 统一发射一次，Scheduler 不重复发射同一 Attempt Event。
 
-当前 `contention` 仍是聚合维度；在 Domain 能够可靠区分 row-lock / idempotency contention 前，禁止 Scheduler 根据异常类型猜测并计数。
+后续 Metrics / Trace 接入必须复用该事件 Contract，不建立平行 Recovery 日志字段体系。
 
 ## 6. Scheduler 生命周期
 
@@ -131,17 +153,19 @@ WorkflowRecoveryScheduler
 ```text
 backend/tests/unit/test_workflow_recovery_policy.py
 backend/tests/unit/test_workflow_automatic_recovery_service.py
+backend/tests/unit/test_workflow_resume_contract.py
 backend/tests/unit/test_workflow_recovery_scheduler.py
 backend/tests/unit/test_workflow_recovery_observability.py
 ```
 
 本轮新增覆盖：
 
-- `rejected` outcome；
-- `recovered` outcome；
-- `workflow.recovery.attempt` 事件；
-- reason_code / attempt_count / max_attempts；
-- Resume execution lineage 字段。
+- `created` outcome；
+- `idempotency_hit` outcome；
+- Source / Checkpoint 匹配校验；
+- Recovery Attempt outcome 传播；
+- Scheduler `created / idempotency_hit / contention` 聚合；
+- Scheduler 不重复发射 Attempt Event。
 
 当前环境未实际执行新增测试，因此不得记录为“已通过”。
 
@@ -156,6 +180,8 @@ PostgreSQL failed Execution + Checkpoint
    ↓
 Recovery Scheduler / Domain
    ↓
+Resume Outcome Contract
+   ↓
 Resume pending Execution
    ↓
 独立 Worker claim / lease
@@ -169,10 +195,8 @@ Real API 测试当前不作为主线阻塞条件。
 
 ## 9. 下一任务
 
-1. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，则先保持领域事件出口，不新增平行 exporter；
-2. 修改 Resume Domain，使其显式返回 `created` / `idempotency_hit` outcome；
-3. 基于正式 outcome 精确收敛 recovery contention / idempotency convergence；
-4. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口；
-5. 冻结 DAG Branch State Merge Contract；
-6. 实现多 frontier Resume；
-7. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
+1. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，则保持领域事件出口，不新增平行 exporter；
+2. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
+3. 冻结 DAG Branch State Merge Contract；
+4. 实现多 frontier Resume；
+5. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
