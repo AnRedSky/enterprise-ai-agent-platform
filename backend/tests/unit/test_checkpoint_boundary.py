@@ -16,6 +16,7 @@ def test_frontier_completed_checkpoint_rejects_node_fact() -> None:
     with pytest.raises(ValueError, match="Execution-level boundary"):
         _service()._build(
             execution_id=uuid4(),
+            frontier_id=uuid4(),
             sequence=1,
             execution_status="running",
             state_data={"merged": True},
@@ -29,6 +30,7 @@ def test_frontier_completed_checkpoint_rejects_node_fact() -> None:
 def test_frontier_completed_checkpoint_accepts_execution_boundary() -> None:
     checkpoint = _service()._build(
         execution_id=uuid4(),
+        frontier_id=uuid4(),
         sequence=1,
         execution_status="running",
         state_data={"merged": True},
@@ -44,6 +46,7 @@ def test_node_completed_checkpoint_requires_node_id() -> None:
     with pytest.raises(ValueError, match="必须携带 node_id"):
         _service()._build(
             execution_id=uuid4(),
+            frontier_id=None,
             sequence=1,
             execution_status="running",
             state_data={"content": "done"},
