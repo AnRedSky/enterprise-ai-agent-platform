@@ -23,7 +23,8 @@
 
 - Next Frontier 创建前检查同 Execution 活动 Frontier Node-set；
 - overlap 在 durable progression transaction 内直接拒绝；
-- 不依赖 Runtime 内存状态或 NodeExecution 唯一约束作为重复消费兜底。
+- 不依赖 Runtime 内存状态或 NodeExecution 唯一约束作为重复消费兜底；
+- sibling overlap 检查只做一致性读取，不在已持有 Execution 锁后再次锁 sibling Frontier，避免引入反向锁序。
 
 ### 2.3 Terminalization lock-order
 
@@ -50,6 +51,24 @@ frontier_completed Checkpoint
 
 任一条件 drift 都必须拒绝 Replay convergence，不允许产生第二套 durable fact。
 
+### 2.5 Terminal Replay Lifecycle
+
+- `running` completion 必须继续提供原始 Next Frontier identity；
+- `completed` terminalization 禁止追加 Next Frontier identity；
+- Replay 不得通过省略或伪造 `next_identity` 改变 Execution lifecycle。
+
+### 2.6 Success / Failure sibling closure
+
+- Success terminalization 前禁止同一 Execution 存在仍可消费的 sibling Frontier；
+- Failure terminalization 时，同一事务关闭仍处于 `pending / retry_wait / claimed / running` 的 sibling Frontier；
+- terminal Execution 不再与可消费 Durable work item 并存。
+
+### 2.7 Duplicate completion Durable fact closure
+
+- 同一 source Frontier + completion reason 的 completion Checkpoint 必须唯一；
+- 发现多个 completion Checkpoint 时 fail-closed；
+- Replay 不得通过 `ORDER BY sequence DESC LIMIT 1` 猜测权威 Durable fact。
+
 ## 3. 当前终态模型
 
 ```text
@@ -68,25 +87,30 @@ Checkpoint / Frontier / Execution progression
 Replay binding
      ├── source Frontier
      ├── fingerprint
-     └── Node-set
+     ├── Node-set
+     └── lifecycle
+     ↓
+Durable fact uniqueness
      ↓
 COMMIT / ROLLBACK
 ```
 
-## 4. 仍待完成主线
+## 4. 当前主线最终审计
 
-### 4.1 Success / Failure terminalization closure
+### 4.1 Success / Failure terminalization final audit
 
-继续逐项证明：
+逐项证明：
 
 - completed / failed / cancelled Execution 不会重新生成可消费 Frontier；
 - retry budget exhausted 时 Frontier 与 Execution 在同一补偿事务内进入 failed；
 - 已 terminalize 的 Execution 不允许旧 Frontier Recovery re-entry；
 - duplicate success 与 duplicate failure 不产生第二套 terminal fact；
 - failure path 不会覆盖其他 Worker 已取得的 Execution ownership；
-- stale Worker 不会通过异常收敛改变已经转移的 Execution lifecycle。
+- stale Worker 不会通过异常收敛改变已经转移的 Execution lifecycle；
+- success / failure 与 sibling Frontier 的锁序不存在反向等待窗口；
+- terminalization 后 Frontier、Checkpoint、Execution 生命周期保持一致。
 
-### 4.2 Replay convergence
+### 4.2 Replay convergence final audit
 
 继续验证：
 
@@ -100,31 +124,30 @@ same Frontier identity
       ↓
 same Checkpoint binding
       ↓
+same lifecycle
+      ↓
 same terminal result
 ```
 
-不得通过更换 fingerprint、Node-set、Checkpoint payload 或 Next Frontier identity 绕过幂等边界。
+不得通过更换 fingerprint、Node-set、Checkpoint payload、Next Frontier identity 或 lifecycle 形态绕过幂等边界。
 
 ## 5. 单元测试
 
-已补充 Unit Test：
+已补充 / 调整 Unit Test：
 
 ```text
 backend/tests/unit/test_frontier_duplicate_consumption.py
+backend/tests/unit/test_frontier_terminal_replay_lifecycle.py
+backend/tests/unit/test_frontier_terminalization_sibling_guard.py
+backend/tests/unit/test_frontier_failure_terminalization.py
+backend/tests/unit/test_frontier_lock_order.py
 ```
 
-覆盖：
-
-- Next Frontier Node-set overlap；
-- disjoint parallel Frontier；
-- duplicate completion fingerprint drift；
-- duplicate completion Node-set drift。
-
-本阶段当前只实现 Unit Test，不执行完整测试 Gate。
+当前 Unit Test 仅作为生产主线的断言实现，不提前执行完整测试 Gate。
 
 ## 6. 测试状态
 
-本轮未执行：
+本轮仍未执行：
 
 - `pytest`；
 - Backend Full Regression；
@@ -139,9 +162,14 @@ backend/tests/unit/test_frontier_duplicate_consumption.py
 ## 7. 下一任务
 
 ```text
-Terminal Replay Binding Closure       ✅
+Claim / overlap fencing                    ✅
+Terminalization lock-order                 ✅
+Terminal Replay Binding                    ✅
+Terminal Replay Lifecycle                  ✅
+Success / Failure sibling closure          ✅
+Duplicate completion fact closure          ✅
         ↓
-Success / Failure terminalization closure
+Success / Failure terminalization final audit
         ↓
 Replay convergence final audit
         ↓
