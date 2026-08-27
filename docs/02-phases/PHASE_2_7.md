@@ -163,6 +163,7 @@ complete_frontier_with_checkpoint()
 backend/tests/unit/test_durable_frontier_execution.py
 backend/tests/unit/test_durable_resume_runtime.py
 backend/tests/unit/test_frontier_progression.py
+backend/tests/unit/test_frontier_recovery_contract.py
 ```
 
 覆盖：
@@ -172,7 +173,8 @@ backend/tests/unit/test_frontier_progression.py
 - Frontier progression 的 Execution-level Checkpoint 不携带 Node identity/status；
 - `frontier_completed` 误传 Node identity/status/input/output 时在任何数据库写入前拒绝；
 - Node-level Checkpoint 仍允许正常携带 Node identity、attempt、status 与 I/O；
-- completed Node Resume、Node Retry budget 与 Workflow Retry budget 恢复边界。
+- completed Node Resume、Node Retry budget 与 Workflow Retry budget 恢复边界；
+- Expired Frontier Recovery 只有在关联 Execution 为 `pending/running` 时才能进入 `retry_wait`，terminal Execution 不得被旧 Frontier 重新激活。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
 
@@ -192,7 +194,8 @@ Replay decision convergence                   ✅
 Resume lifecycle idempotency closure         ✅
 Durable Resume Checkpoint continuation        ✅
 Durable Multi-frontier completion boundary    ✅
-Durable Completion Contract Hardening        ✅ 本轮
+Durable Completion Contract Hardening         ✅
+Terminal Execution Frontier Recovery Guard    ✅ 本轮
 
         ↓
 
@@ -204,6 +207,6 @@ Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不�
 
 ## 6. 本轮交付说明
 
-本轮继续沿 Durable Frontier → Checkpoint → Next Frontier 闭环推进。除此前共享 Runtime 重复追加 `frontier_completed` 的风险已经通过 Durable Adapter 收口外，本轮进一步把层级约束下沉到统一 `complete_frontier_with_checkpoint()` progression Contract：调用方即使误传 Node identity、status 或 I/O，也必须在 Frontier 状态、Checkpoint 或 Next Frontier 任一持久化动作发生前失败。
+本轮继续沿 Durable Frontier → Checkpoint → Next Frontier 闭环推进。此前共享 Runtime 重复追加 `frontier_completed` 的风险已经通过 Durable Adapter 和统一 progression Contract 收口；本轮进一步处理 Recovery 与 Execution terminalization 的交叉窗口：过期 Frontier 只有在关联 Execution 仍处于 `pending/running` 时才允许回收，terminal Execution 的旧 Frontier 不能重新进入 retry queue。
 
-本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。新增约束复用既有 progression primitive，仅明确 `frontier_completed` 的 Execution-level schema boundary；Node-level Checkpoint 的既有能力保持不变。
+本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。Recovery guard 复用既有 Frontier / Execution durable model 与事务锁，仅增加 Execution terminal state 的恢复边界；普通 Frontier Retry / Lease Recovery 行为保持不变。
