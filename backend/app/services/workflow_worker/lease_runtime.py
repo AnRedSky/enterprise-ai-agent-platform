@@ -42,7 +42,7 @@ class _LeaseAwareTelemetry:
 
 
 class LeaseAwareWorkflowWorker(BaseWorkflowWorker):
-    """带主动 Lease Loss Abort 能力的默认 Worker Runtime。"""
+    """带主动 Lease Loss Abort 能力的 Worker Runtime。"""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
@@ -55,14 +55,21 @@ class LeaseAwareWorkflowWorker(BaseWorkflowWorker):
         return None
 
     async def _renew_with_abort_signal(self, execution_id: UUID) -> bool:
-        """刷新 lease，并把明确 ownership 丢失记录为 Runtime Abort 信号。"""
+        """刷新 lease，并把明确 ownership 丢失记录为 Runtime Abort 信号。
+
+        Args:
+            execution_id: 当前 Worker 执行的 Execution ID。
+
+        Returns:
+            仍持有 ownership 时返回 True，否则返回 False 并设置 lease-loss 标记。
+        """
         owned = await self._renew_lease_once(execution_id)
         if not owned:
             self._lease_lost = True
         return owned
 
     async def execute_claimed(self, execution_id: UUID) -> None:
-        """在 LeaseGuard 监督下执行原有 Worker Runtime。"""
+        """在 LeaseGuard 监督下执行原有 Worker Runtime，并确保 lease-loss 有最终 telemetry。"""
         self._lease_lost = False
         guard = WorkflowWorkerLeaseGuard(
             renew_lease=lambda: self._renew_with_abort_signal(execution_id),
@@ -73,3 +80,16 @@ class LeaseAwareWorkflowWorker(BaseWorkflowWorker):
         except WorkflowWorkerLeaseLost:
             # 旧 Worker 已失去 ownership；不得尝试继续修改 Execution。
             return
+        finally:
+            # 没有 Recovery trace 的普通 Worker 也必须在 lease-loss 场景留下终止事实，
+            # 否则调用方无法区分“正常完成”与“主动放弃”。
+            if self._lease_lost:
+                self.telemetry.emit(
+                    WorkflowRecoveryEvent(
+                        event_name=RECOVERY_WORKER_FINISHED,
+                        execution_id=execution_id,
+                        outcome="aborted",
+                        reason_code="WORKER_LEASE_LOST",
+                        phase="worker",
+                    )
+                )
