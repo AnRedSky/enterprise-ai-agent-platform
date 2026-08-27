@@ -30,7 +30,8 @@
 - **Durable Frontier Checkpoint Continuation：Resume Runtime 主入口已实际应用 completed-Node filtering；全部线性 Node 已完成时直接 terminalize Execution，避免 Recovery 后 Node replay：✅**
 - **Durable Frontier Multi-frontier Completion Boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`：✅**
 - **Durable Frontier Completion Contract Hardening：`frontier_completed` 在统一 progression primitive 内强制保持 Execution-level snapshot，禁止混入 Node identity/status/input/output：✅**
-- **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活：✅ 本轮**
+- **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活：✅**
+- **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致；stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact：✅ 本轮**
 
 ## 当前实现边界
 
@@ -64,6 +65,12 @@ Node / Checkpoint durable facts
 frontier_completed
   ↓
 Next Frontier
+  ↓
+Execution terminalization
+  ↓
+Checkpoint lifecycle guard
+  ↓
+Recovery / Replay
 ```
 
 ## 当前开发策略
@@ -76,7 +83,7 @@ Next Frontier
 
 ## 下一主线
 
-继续收口 Frontier completion / Next Frontier 后的 Recovery consistency，重点从“完成后不重复创建”推进到“terminal Execution 不得被旧 Frontier Recovery 重新打开”。下一步继续检查：
+继续收口 Next Frontier / Execution terminalization / Recovery consistency，重点检查：
 
 ```text
 Frontier completion
@@ -84,6 +91,8 @@ Frontier completion
 Next Frontier deterministic identity
   ↓
 Execution terminalization
+  ↓
+Checkpoint durable write
   ↓
 Expired Frontier Recovery
   ↓
@@ -97,15 +106,16 @@ Recovery / Replay
 - completed / failed / cancelled Execution 不得重新产生可消费 Frontier；
 - 旧 Worker lease 到期只能回收仍属于可恢复 Execution 的 Frontier；
 - Recovery 不得改变已经 terminalize 的 Execution 状态；
+- Checkpoint 的 `execution_status` 必须与锁定后的当前 Execution status 一致；
 - Next Frontier 的 deterministic identity 与 tenant / workflow version / execution lineage 必须继续保持单一事实来源；
 - stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier_repository.py`
-- `backend/tests/unit/test_frontier_recovery_contract.py`
-- `docs/04-errors/2026-08-27-terminal-execution-frontier-recovery.md`
-- `docs/02-phases/PHASE_2_7.md`
+- `backend/app/services/workflow/checkpoint/service.py`
+- `backend/tests/unit/test_workflow_checkpoint_lifecycle.py`
 - `docs/PROJECT_STATUS.md`
+- `docs/02-phases/PHASE_2_7.md`
+- `docs/04-errors/2026-08-27-checkpoint-execution-lifecycle.md`
 
-**Unit Test：本轮只实现/更新测试代码，当前环境未执行 pytest，因此不记录 PASS。**
+**Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
