@@ -56,6 +56,7 @@ Join merged-state recovery guard
 - **Durable Frontier Completion Contract Hardening：统一 progression primitive 现在在任何持久化动作前拒绝 `frontier_completed` 携带 Node identity/status/input/output，正式阻断 Node-level 与 Execution-level durable fact 混写。**
 - **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活。**
 - **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致，stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact。**
+- **Durable Frontier Identity Canonicalization：Frontier identity key 对并行 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier。**
 
 ## 3. Durable Recovery Closure
 
@@ -177,28 +178,33 @@ current execution.status == requested execution_status
 
 该边界与 terminal Frontier Recovery Guard 配合，阻断 stale Worker 在 Execution terminalization 后写入旧 `running/pending` durable fact。
 
+### 3.9 Frontier Identity Canonicalization
+
+并行 Frontier 的 `node_ids` 是逻辑 Node 集合，而不是 identity key 的遍历顺序。`WorkflowFrontierIdentity.key()` 现在在生成幂等键前对 Node ID 做规范化排序：
+
+```text
+Planner A: [node-c, node-a, node-b]
+Planner B: [node-b, node-c, node-a]
+             ↓
+        canonical key
+             ↓
+        same Frontier
+```
+
+该规则只作用于 identity key，不改变实际 `node_ids` 的执行顺序；因此不会把 identity canonicalization 误当成 Runtime execution ordering。tenant、Execution、Workflow Version、Decision fingerprint 仍全部参与 identity，避免跨 Execution / Version / Decision 错误合并。
+
 ## 4. 本轮单元测试
 
 新增 / 更新：
 
 ```text
-backend/tests/unit/test_durable_frontier_execution.py
-backend/tests/unit/test_durable_resume_runtime.py
-backend/tests/unit/test_frontier_progression.py
-backend/tests/unit/test_frontier_recovery_contract.py
-backend/tests/unit/test_workflow_checkpoint_lifecycle.py
+backend/tests/unit/test_frontier_identity.py
 ```
 
 覆盖：
 
-- Durable Multi-frontier Adapter 不重复追加 `frontier_completed` Checkpoint；
-- Durable Multi-frontier Adapter 继续复用唯一 WorkflowRuntime 的 Node Execution / Retry 逻辑；
-- Frontier progression 的 Execution-level Checkpoint 不携带 Node identity/status；
-- `frontier_completed` 误传 Node identity/status/input/output 时在任何数据库写入前拒绝；
-- Node-level Checkpoint 仍允许正常携带 Node identity、attempt、status 与 I/O；
-- completed Node Resume、Node Retry budget 与 Workflow Retry budget 恢复边界；
-- Expired Frontier Recovery 只有在关联 Execution 为 `pending/running` 时才能进入 `retry_wait`，terminal Execution 不得被旧 Frontier 重新激活；
-- Checkpoint durable write 在锁定 Execution 后拒绝与当前 Execution status 不一致的旧快照。
+- 相同 Execution / Version / Decision 下，仅并行 Node 集合顺序变化时 identity key 必须相同；
+- Execution、Workflow Version、Decision fingerprint 任一维度变化时 identity key 必须不同。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
 
@@ -220,7 +226,8 @@ Durable Resume Checkpoint continuation        ✅
 Durable Multi-frontier completion boundary    ✅
 Durable Completion Contract Hardening         ✅
 Terminal Execution Frontier Recovery Guard    ✅
-Checkpoint Execution Lifecycle Guard           ✅ 本轮
+Checkpoint Execution Lifecycle Guard          ✅
+Durable Frontier Identity Canonicalization   ✅ 本轮
 
         ↓
 
@@ -232,6 +239,6 @@ Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不�
 
 ## 6. 本轮交付说明
 
-本轮继续沿 Durable Frontier → Checkpoint → Next Frontier → Execution terminalization 闭环推进。在已有 terminal Frontier Recovery Guard 之后，将 Execution lifecycle 校验进一步下沉到统一 Checkpoint durable write boundary：锁定 Execution 后，除 tenant 与 Worker fencing 外，必须再次证明 `execution_status` 与当前持久化 Execution status 一致。这样 stale Worker 即使绕过 Frontier Recovery，也不能在 terminalization 后追加旧生命周期事实。
+本轮继续沿 Durable Frontier → Next Frontier → Execution terminalization → Recovery convergence 主线推进。发现现有 `WorkflowFrontierIdentity.key()` 虽然声称 Node 顺序不应产生第二个 Frontier，但实际直接拼接 `node_ids`，导致同一并行 Node 集合在 Planner / Resume 遍历顺序发生变化时可能产生不同 identity key。本轮将 identity key 规范化为排序后的 Node 集合，并保留原始 `node_ids` 作为 Runtime 执行顺序，避免把 identity 与 execution ordering 混为一谈。
 
-本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。仅强化既有 Checkpoint Service 的事务内 Contract，并新增对应 Unit Test；完整 pytest / Regression / E2E / Real API 流程继续暂停。
+本轮没有创建第二套 Planner、Runtime、Repository 或 Provider；仅收紧既有 Frontier identity contract，并新增对应 Unit Test。完整 pytest / Regression / E2E / Real API 流程继续暂停。

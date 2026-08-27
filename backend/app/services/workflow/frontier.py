@@ -37,16 +37,19 @@ class WorkflowFrontierIdentity:
         """生成稳定 Frontier 幂等键。
 
         Returns:
-            基于执行、版本、Decision fingerprint 与有序 Node 集合生成的 SHA-256 键。
+            基于执行、版本、Decision fingerprint 与规范化 Node 集合生成的 SHA-256 键。
 
-        设计意图：Node 顺序属于 Planner 的确定性输出，不能因为调用方传入集合顺序不同而产生第二个 Frontier。
+        设计意图：Frontier 的 Node 集合表示同一个可并行执行边界，集合顺序不应因为 Planner、
+        Resume 或并发重建时的遍历顺序变化而生成第二个 Durable Frontier；真正需要保留的执行顺序
+        仍由 `node_ids` 原值交给 Executor，而不是由 identity key 承担。
         """
+        canonical_node_ids = tuple(sorted(self.node_ids))
         payload = "|".join(
             (
                 str(self.execution_id),
                 str(self.workflow_version_id),
                 self.decision_fingerprint,
-                ",".join(self.node_ids),
+                ",".join(canonical_node_ids),
             )
         ).encode("utf-8")
         return f"frontier:{sha256(payload).hexdigest()}"

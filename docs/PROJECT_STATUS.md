@@ -31,7 +31,8 @@
 - **Durable Frontier Multi-frontier Completion Boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`：✅**
 - **Durable Frontier Completion Contract Hardening：`frontier_completed` 在统一 progression primitive 内强制保持 Execution-level snapshot，禁止混入 Node identity/status/input/output：✅**
 - **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活：✅**
-- **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致；stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact：✅ 本轮**
+- **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致；stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact：✅**
+- **Durable Frontier Identity Canonicalization：并行 Frontier identity key 现在对 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier：✅ 本轮**
 
 ## 当前实现边界
 
@@ -39,6 +40,8 @@
 DAG Planner
   ↓
 WorkflowFrontierIdentity
+  ├── execution + version + decision fingerprint
+  └── canonical Node-set identity key
   ↓
 complete_frontier_with_checkpoint()
   ↓
@@ -108,14 +111,15 @@ Recovery / Replay
 - Recovery 不得改变已经 terminalize 的 Execution 状态；
 - Checkpoint 的 `execution_status` 必须与锁定后的当前 Execution status 一致；
 - Next Frontier 的 deterministic identity 与 tenant / workflow version / execution lineage 必须继续保持单一事实来源；
+- 同一 Execution / Version / Decision 下，等价并行 Node 集合必须收敛到同一个 Frontier identity；
 - stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/checkpoint/service.py`
-- `backend/tests/unit/test_workflow_checkpoint_lifecycle.py`
+- `backend/app/services/workflow/frontier.py`
+- `backend/tests/unit/test_frontier_identity.py`
 - `docs/PROJECT_STATUS.md`
 - `docs/02-phases/PHASE_2_7.md`
-- `docs/04-errors/2026-08-27-checkpoint-execution-lifecycle.md`
+- `docs/04-errors/2026-08-27-frontier-identity-canonicalization.md`
 
 **Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
