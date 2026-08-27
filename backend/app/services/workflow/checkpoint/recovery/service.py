@@ -58,14 +58,14 @@ class WorkflowExecutionCheckpointRecoveryService:
             但本方法不会创建新 Execution、写入幂等键或获取 Worker ownership。
 
         Raises:
-            ValueError: checkpoint 存在但不属于当前 execution 时拒绝跨 Execution replay。
+            ValueError: checkpoint 存在但不属于当前 execution，或违反 checkpoint 类型边界时拒绝 Replay。
 
         重要边界：
             1. 当前只允许从 failed Execution 产生 Resume 候选；running Execution 必须先经过独立的 Worker
                lease recovery 边界，不能直接使用 Checkpoint 复活 Runtime。
             2. Worker owner 非空表示 ownership 仍有事实存在，即使调用者准备恢复也不得绕过 fencing。
             3. Checkpoint 必须属于当前 Execution，且必须是 `node.completed` 或 `frontier_completed` 边界，并且产生时 Execution 应处于 running 状态。
-               `node.completed` 必须绑定 completed Node；`frontier_completed` 可以是 Multi-frontier 的 Execution-level Checkpoint。
+               `node.completed` 必须绑定 completed Node；`frontier_completed` 必须是 Execution-level Checkpoint，不得携带 Node identity，避免把 Multi-frontier merged state 误解释为单 Node fact。
             4. Workflow Version 固定来自原 Execution；未来恢复不得隐式漂移到新的 published version。
             5. 幂等键由 `execution_id + checkpoint_sequence` 确定性生成，后续真正 Resume 时必须持久化并作为唯一约束的一部分。
         """
@@ -119,6 +119,17 @@ class WorkflowExecutionCheckpointRecoveryService:
             )
 
         if checkpoint.checkpoint_reason == "node.completed" and (checkpoint.node_status != "completed" or checkpoint.node_id is None):
+            return WorkflowExecutionResumeAssessment(
+                eligible=False,
+                reason_code="checkpoint_boundary_invalid",
+                execution_id=execution_id,
+                workflow_version_id=workflow_version_id,
+                checkpoint_id=checkpoint.id,
+                checkpoint_sequence=checkpoint.sequence,
+                node_id=checkpoint.node_id,
+            )
+
+        if checkpoint.checkpoint_reason == "frontier_completed" and (checkpoint.node_id is not None or checkpoint.node_status is not None):
             return WorkflowExecutionResumeAssessment(
                 eligible=False,
                 reason_code="checkpoint_boundary_invalid",
