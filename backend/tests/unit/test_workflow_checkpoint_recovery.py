@@ -145,6 +145,22 @@ def test_assess_rejects_missing_or_invalid_checkpoint_boundary() -> None:
     assert invalid_boundary.reason_code == "checkpoint_boundary_invalid"
 
 
+def test_assess_rejects_checkpoint_from_different_execution() -> None:
+    """Recovery candidate 不得把其他 Execution 的 Checkpoint 作为当前 Replay snapshot。"""
+    execution_id = uuid4()
+    version_id = uuid4()
+    checkpoint = _checkpoint(execution_id=uuid4())
+
+    with pytest.raises(ValueError, match="跨 Execution Replay"):
+        WorkflowExecutionCheckpointRecoveryService.assess(
+            execution_id=execution_id,
+            workflow_version_id=version_id,
+            execution_status="failed",
+            worker_owner=None,
+            checkpoint=checkpoint,
+        )
+
+
 def test_assert_node_fact_complete_accepts_matching_durable_fact() -> None:
     """Node-level Checkpoint 与 Durable Node Fact 完全一致时允许进入 Recovery。"""
     checkpoint = _checkpoint(execution_id=uuid4())
