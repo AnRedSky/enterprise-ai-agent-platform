@@ -72,3 +72,21 @@ class WorkflowRecoveryTraceLinkService:
         await self.db.commit()
         await self.db.refresh(event)
         return event
+
+    async def get_trace_id(self, resume_execution: WorkflowExecution) -> str | None:
+        """从持久化 Recovery lineage 恢复 Resume Execution 对应的 trace_id。
+
+        该查询只读取 trace identity，不读取或返回业务 payload，使独立 Worker 可以在
+        接管 Resume Execution 后继续原 Recovery trace。若没有 lineage，返回 None。
+        """
+        result = await self.db.execute(
+            select(WorkflowTraceEvent.trace_id)
+            .where(
+                WorkflowTraceEvent.execution_id == resume_execution.id,
+                WorkflowTraceEvent.tenant_id == resume_execution.tenant_id,
+                WorkflowTraceEvent.event_type == self.EVENT_TYPE,
+            )
+            .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
