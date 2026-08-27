@@ -69,6 +69,14 @@ frontier_completed Checkpoint
 - 发现多个 completion Checkpoint 时 fail-closed；
 - Replay 不得通过 `ORDER BY sequence DESC LIMIT 1` 猜测权威 Durable fact。
 
+### 2.8 Replay worker / lifecycle independence audit
+
+- Replay 不再把 ephemeral `worker_owner` 当作 Durable identity；
+- Replay 可以由新的 Worker 收敛已经提交的 completion fact；
+- Replay 找到唯一 completion Checkpoint 后必须重新读取关联 Execution；
+- Checkpoint `execution_status` 必须与当前 Execution lifecycle 一致，否则 fail-closed；
+- Execution 缺失时拒绝 Replay convergence。
+
 ## 3. 当前终态模型
 
 ```text
@@ -131,6 +139,16 @@ same terminal result
 
 不得通过更换 fingerprint、Node-set、Checkpoint payload、Next Frontier identity 或 lifecycle 形态绕过幂等边界。
 
+同时必须满足：
+
+```text
+worker_owner
+    = transient ownership / fencing metadata
+    ≠ replay identity
+```
+
+Replay 的最终一致性必须由 Durable facts 本身证明，而不是由“当前 Worker 恰好与历史 Worker 相同”证明。
+
 ## 5. 单元测试
 
 已补充 / 调整 Unit Test：
@@ -141,6 +159,7 @@ backend/tests/unit/test_frontier_terminal_replay_lifecycle.py
 backend/tests/unit/test_frontier_terminalization_sibling_guard.py
 backend/tests/unit/test_frontier_failure_terminalization.py
 backend/tests/unit/test_frontier_lock_order.py
+backend/tests/unit/test_frontier_replay_lifecycle_audit.py
 ```
 
 当前 Unit Test 仅作为生产主线的断言实现，不提前执行完整测试 Gate。
@@ -168,6 +187,7 @@ Terminal Replay Binding                    ✅
 Terminal Replay Lifecycle                  ✅
 Success / Failure sibling closure          ✅
 Duplicate completion fact closure          ✅
+Replay worker/lifecycle independence       ✅ 本轮
         ↓
 Success / Failure terminalization final audit
         ↓
