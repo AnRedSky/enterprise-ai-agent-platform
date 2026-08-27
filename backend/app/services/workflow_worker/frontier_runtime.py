@@ -11,7 +11,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
@@ -99,20 +99,52 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             return frontier
 
     async def _frontier_tenant_candidate(self, db, now: datetime) -> UUID:
-        """获取当前可调度的最早 Frontier 所属租户；claim 仍强制 tenant scope。"""
+        """获取最早且当前 Worker 真正可领取的 Frontier 所属租户。
+
+        不能只按 Frontier 时间选择租户：如果最早 Frontier 关联的 Execution 仍持有其他 Worker 的
+        有效 lease，旧实现会先选中该 tenant，再让 `claim_next_frontier()` 返回 None，导致其他 tenant
+        中可立即执行的 Frontier 被无意义地阻塞。这里复用与 claim 相同的 Execution eligibility predicate，
+        只把存在可安全 claim work item 的 tenant 作为候选。
+        """
         now_naive = now.replace(tzinfo=None)
+        execution_available = or_(
+            and_(
+                WorkflowExecution.status == "pending",
+                or_(
+                    WorkflowExecution.worker_owner.is_(None),
+                    WorkflowExecution.worker_lease_expires_at.is_(None),
+                    WorkflowExecution.worker_lease_expires_at <= now_naive,
+                ),
+            ),
+            and_(
+                WorkflowExecution.status == "running",
+                or_(
+                    WorkflowExecution.worker_owner == self.owner,
+                    WorkflowExecution.worker_lease_expires_at.is_(None),
+                    WorkflowExecution.worker_lease_expires_at <= now_naive,
+                ),
+            ),
+        )
         result = await db.execute(
             select(WorkflowFrontier.tenant_id)
+            .join(
+                WorkflowExecution,
+                and_(
+                    WorkflowExecution.id == WorkflowFrontier.execution_id,
+                    WorkflowExecution.tenant_id == WorkflowFrontier.tenant_id,
+                ),
+            )
             .where(
                 WorkflowFrontier.status.in_(("pending", "retry_wait")),
                 WorkflowFrontier.available_at <= now_naive,
+                execution_available,
             )
             .order_by(WorkflowFrontier.available_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
             .limit(1)
         )
         tenant_id = result.scalar_one_or_none()
         if tenant_id is None:
-            raise LookupError("no schedulable durable frontier")
+            raise LookupError("no safely schedulable durable frontier")
         return tenant_id
 
     async def _renew_frontier_forever(self, frontier_id: UUID, attempt: int) -> None:
