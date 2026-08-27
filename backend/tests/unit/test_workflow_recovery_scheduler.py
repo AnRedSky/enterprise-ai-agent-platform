@@ -2,7 +2,7 @@
 
 职责：验证 Scheduler 只负责发现 failed Execution、委托 Recovery Domain 并产生可观测扫描结果。
 边界：不连接 PostgreSQL、不启动 Scheduler 进程、不创建真实 Resume Execution。
-关键依赖：WorkflowRecoveryScheduler、WorkflowExecutionAutomaticRecoveryService、Recovery Event Logger。
+关键依赖：WorkflowRecoveryScheduler、WorkflowExecutionAutomaticRecoveryService、Recovery Trace Service。
 """
 
 from datetime import datetime
@@ -48,12 +48,30 @@ class _FakeSessionContext:
         return False
 
 
+class _FakeTraceService:
+    def __init__(self):
+        self.trace_id = "scheduler-trace-1"
+        self.started = []
+        self.finished = []
+
+    def start_scan(self, *, occurred_at=None):
+        context = SimpleNamespace(trace_id=self.trace_id, execution_id=None)
+        self.started.append((context, occurred_at))
+        return context
+
+    def finish_scan(self, context, **kwargs):
+        self.finished.append((context, kwargs))
+
+
 class _FakeService:
+    parent_trace_ids = []
+
     def __init__(self, db, policy):
         self.db = db
         self.policy = policy
 
-    async def recover(self, execution, now=None):
+    async def recover(self, execution, now=None, parent_trace_id=None):
+        self.parent_trace_ids.append(parent_trace_id)
         if execution.id == BLOCKED_ID:
             return SimpleNamespace(
                 decision=SimpleNamespace(eligible=False),
@@ -79,10 +97,11 @@ async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) ->
     def fake_session_local():
         return _FakeSessionContext(next(sessions))
 
+    trace_service = _FakeTraceService()
     monkeypatch.setattr(recovery_module, "SessionLocal", fake_session_local)
     monkeypatch.setattr(recovery_module, "WorkflowExecutionAutomaticRecoveryService", _FakeService)
 
-    result = await WorkflowRecoveryScheduler(scan_limit=10).scan_once(
+    result = await WorkflowRecoveryScheduler(scan_limit=10, trace_service=trace_service).scan_once(
         now=datetime(2026, 8, 26, 12, 0),
     )
 
@@ -94,6 +113,9 @@ async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) ->
     assert result.contention == 0
     assert result.rejected == 1
     assert result.failed == 0
+    assert trace_service.started[0][0].trace_id == "scheduler-trace-1"
+    assert _FakeService.parent_trace_ids == ["scheduler-trace-1", "scheduler-trace-1"]
+    assert trace_service.finished[0][1]["recovered"] == 1
 
 
 @pytest.mark.asyncio
@@ -105,7 +127,8 @@ async def test_recovery_scheduler_classifies_idempotency_hit_as_contention(monke
         return _FakeSessionContext(next(sessions))
 
     class _IdempotentService(_FakeService):
-        async def recover(self, execution, now=None):
+        async def recover(self, execution, now=None, parent_trace_id=None):
+            self.parent_trace_ids.append(parent_trace_id)
             return SimpleNamespace(
                 decision=SimpleNamespace(eligible=True),
                 resume_execution_id=uuid4(),
