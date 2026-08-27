@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from app.services.workflow.checkpoint.recovery.dag_runtime_sequence import (
@@ -86,3 +88,23 @@ def test_sequence_planner_does_not_mutate_definition_or_state() -> None:
 
     assert plans[0].node["config"]["agent_id"] == "agent-1"
     assert plans[0].state_data == {"nested": {"value": 1}}
+
+
+def test_sequence_planner_rejects_non_json_safe_condition_state() -> None:
+    definition = {
+        "nodes": [
+            {"id": "start", "type": "input", "config": {}},
+            {"id": "left", "type": "output", "config": {}},
+        ],
+        "edges": [
+            {"source": "start", "target": "left", "condition": {"eq": ["status", "ready"]}},
+        ],
+    }
+
+    with pytest.raises(ValueError, match="JSON-safe"):
+        WorkflowDagResumeRuntimeSequencePlanner.plan(
+            definition=definition,
+            completed_node_ids={"start"},
+            state_data={},
+            state_data_by_node={"start": {"score": math.nan}},
+        )
