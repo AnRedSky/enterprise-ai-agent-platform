@@ -1,6 +1,6 @@
 """Durable Frontier Runtime Entry Contract。
 
-职责：为 Durable Frontier Worker 提供唯一的 Execution Runtime 入口适配层。
+职责：为 Durable Frontier Worker 提供统一的 Execution Runtime 入口适配层。
 边界：不实现新的 Node Runtime；复用 WorkflowRuntime、WorkflowExecutionService.transition、Checkpoint
 fencing 与现有 Worker resume preparation。支持 pending 新 Execution 与 running + same owner 后继 Frontier。
 """
@@ -25,6 +25,7 @@ from app.services.workflow.checkpoint.recovery.observability import (
     WorkflowRecoveryEvent,
 )
 from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
+from app.services.workflow_worker.lease_guard import WorkflowWorkerLeaseGuard, WorkflowWorkerLeaseLost
 
 
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
@@ -75,8 +76,6 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         await worker._recover_orphaned_running_nodes(execution, service)
         execution, runtime_version = await worker._prepare_resume_runtime(db, execution, version)
 
-        # 新 Execution 执行正式 pending -> running；后继 Frontier 保持 running，
-        # 但必须已经由同一 Worker owner + fencing generation Claim。
         if execution.status == "pending":
             await service.transition(execution, "running", actor_id=execution.created_by)
         elif execution.status == "running":
@@ -85,9 +84,9 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         else:
             return
 
-        try:
+        async def _run_runtime() -> object:
             runtime = WorkflowRuntime(db, execution_service=service)
-            await asyncio.wait_for(
+            return await asyncio.wait_for(
                 runtime.execute(
                     execution,
                     runtime_version,
@@ -96,29 +95,31 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 ),
                 timeout=execution_timeout,
             )
+
+        guard = WorkflowWorkerLeaseGuard(
+            renew_lease=lambda: worker._renew_with_abort_signal(execution.id),
+            interval_seconds=max(0.1, worker.lease_seconds / 3),
+        )
+        try:
+            await guard.run(_run_runtime())
+        except WorkflowWorkerLeaseLost:
+            outcome = "aborted"
+            reason_code = "WORKER_LEASE_LOST"
+            # 失去 ownership 后不再尝试修改 Execution；新 Worker 会通过 fencing 接管。
+            return
         except CircuitOpenError:
             outcome = "failed"
             reason_code = "CIRCUIT_OPEN"
-            await service.transition(
-                execution,
-                "failed",
-                error_code=reason_code,
-                error_message="Circuit Breaker is open",
-                actor_id=execution.created_by,
-            )
+            current = await service._lock_execution(execution)
+            if current.status == "running":
+                await service.transition(current, "failed", error_code=reason_code, error_message="Circuit Breaker is open", actor_id=current.created_by)
             raise HTTPException(503, "Circuit Breaker is open")
         except asyncio.TimeoutError as exc:
             outcome = "failed"
             reason_code = "WORKER_EXECUTION_TIMEOUT"
             current = await service._lock_execution(execution)
             if current.status == "running":
-                await service.transition(
-                    current,
-                    "failed",
-                    error_code=reason_code,
-                    error_message="Worker Execution 超过受控执行时间",
-                    actor_id=current.created_by,
-                )
+                await service.transition(current, "failed", error_code=reason_code, error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
             raise RuntimeError("Worker Execution 超过受控执行时间") from exc
         except HTTPException as exc:
             outcome = "failed"
@@ -131,39 +132,21 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 } else "NODE_TIMEOUT"
             current = await service._lock_execution(execution)
             if current.status == "running":
-                await service.transition(
-                    current,
-                    "failed",
-                    error_code=reason_code,
-                    error_message=str(exc.detail),
-                    actor_id=current.created_by,
-                )
+                await service.transition(current, "failed", error_code=reason_code, error_message=str(exc.detail), actor_id=current.created_by)
             raise
         except (ConnectionError, TimeoutError) as exc:
             outcome = "failed"
             reason_code = "CONNECTION_ERROR" if isinstance(exc, ConnectionError) else "NODE_TIMEOUT"
             current = await service._lock_execution(execution)
             if current.status == "running":
-                await service.transition(
-                    current,
-                    "failed",
-                    error_code=reason_code,
-                    error_message=str(exc),
-                    actor_id=current.created_by,
-                )
+                await service.transition(current, "failed", error_code=reason_code, error_message=str(exc), actor_id=current.created_by)
             raise
         except Exception as exc:
             outcome = "failed"
             reason_code = "RUNTIME_ERROR"
             current = await service._lock_execution(execution)
             if current.status == "running":
-                await service.transition(
-                    current,
-                    "failed",
-                    error_code=reason_code,
-                    error_message=str(exc),
-                    actor_id=current.created_by,
-                )
+                await service.transition(current, "failed", error_code=reason_code, error_message=str(exc), actor_id=current.created_by)
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
         finally:
             if recovery_trace_id:
