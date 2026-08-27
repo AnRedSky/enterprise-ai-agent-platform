@@ -117,20 +117,58 @@ new fencing generation
 
 `FrontierRetryPolicy` 不把所有 Runtime `failed` 自动视为 retryable。现有 Runtime error classification 仍是上层责任；Worker integration 必须使用明确的 retryable error classification 后再调用 retry primitive，避免把业务/配置/权限等 terminal failure 无限重试。
 
-## 8. 当前剩余主线
+## 8. Frontier → Checkpoint → Next Frontier 原子推进
+
+本交付单元已经完成 Durable Progression 基础生产能力：
+
+```text
+Worker fencing valid
+        ↓
+lock current Frontier
+        ↓
+append next Execution Checkpoint
+        ↓
+allocate checkpoint sequence under Execution lock
+        ↓
+idempotent enqueue Next Frontier
+        ↓
+outer transaction COMMIT
+```
+
+实现入口：
+
+- `complete_frontier_with_checkpoint()` 固定锁顺序 `Frontier → Execution/Checkpoint → Next Frontier`；
+- 当前 Frontier 必须通过 `worker_owner + attempt` fencing 后才能写入新的 Checkpoint；
+- Checkpoint sequence 继续由 `WorkflowExecutionCheckpointService.append_next_in_transaction()` 在 Execution row lock 下分配；
+- Next Frontier 必须属于同一 Execution / Workflow Version，并通过 `WorkflowFrontierIdentity` + tenant/key unique constraint 幂等入队；
+- Terminal Frontier 可以只追加最终 Checkpoint，不创建后继 Frontier；
+- 该 Progression Service 不执行 commit，当前 Frontier、Checkpoint 与 Next Frontier 必须由同一外层事务统一提交；
+- 任一阶段失败都必须由调用方回滚，不能留下 `Checkpoint 已写入但 Frontier 未推进` 或 `Frontier 已完成但 Next Frontier 未持久化` 的半状态。
+
+### 锁顺序约束
+
+Worker Claim 已采用 `Frontier → Execution` 的锁顺序，因此 Progression 同样固定先锁当前 Frontier，再进入 Checkpoint/Execution 锁，避免形成反向锁等待链。
+
+### 当前边界
+
+该 primitive 接受 Planner 已确定的 `next_identity`，不在 Persistence 层重新执行 DAG 条件求值、State Merge 或 Planner。下一阶段必须在真实 Runtime/DAG Planner integration 中提供确定性 Next Frontier，并继续复用唯一 Planner/Runtime。
+
+## 9. 当前剩余主线
 
 ```text
 Durable Frontier Scheduling
-   ├── Scheduler → Frontier enqueue       ✅
+   ├── Scheduler → Frontier enqueue        ✅
    ├── Frontier → Worker claim             ✅
    ├── Worker → Runtime bridge             ✅
-   ├── Frontier lease heartbeat             ✅
-   ├── Retry scheduling                     ✅
-   └── Frontier → Checkpoint progression    ⏭
+   ├── Frontier lease heartbeat            ✅
+   ├── Retry scheduling                    ✅
+   ├── Frontier → Checkpoint progression  ✅
+   ├── Next Frontier idempotent enqueue    ✅
+   └── Runtime/Planner progression wiring  ⏭
 ```
 
-下一交付单元直接处理 Frontier 与 Checkpoint progression 的一致性：Runtime 产生新的 durable checkpoint / next frontier 时，必须保持 Frontier fencing、Execution ownership、Checkpoint lineage 与幂等 identity 一致。
+下一交付单元不再扩展 Frontier Persistence primitive，而是把 `complete_frontier_with_checkpoint()` 接入真实 Runtime/DAG Planner 成功路径：Planner 输出 deterministic next frontier，Runtime 在同一 Execution transaction 中固化 checkpoint 并推进后继 Frontier。
 
-## 9. 测试边界
+## 10. 测试边界
 
-当前只保留 Unit Test Contract；本环境未实际执行 pytest，因此不得记录 Unit Test PASS。Real API 后续必须实际验证 PostgreSQL 持久化以及 Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint 生命周期。
+当前只保留 Unit Test Contract；本环境未实际执行 pytest，因此不得记录 Unit Test PASS。Real API 后续必须实际验证 PostgreSQL 持久化以及 Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint → Next Frontier 生命周期。
