@@ -2,7 +2,7 @@
 
 > **定位**：本文件定义 Vue 3 + TypeScript 企业级前端项目的通用工程基线，并以当前项目已经采用的 `frontend/src/api`、`router`、`utils`、`views` 等目录作为落地参考。
 >
-> **重要原则**：本准则是通用规范，不要求所有项目立即迁移为某一种 Feature First 目录。对于已有项目，应**保留既有目录架构、职责和稳定 API**，通过新增功能逐步收敛边界；只有业务规模和依赖复杂度达到拆分条件时，才引入 `features/<domain>` 等更细粒度结构。
+> **重要原则**：本准则是通用规范，不要求所有项目立即迁移为某一种 Feature First 目录。对于已有项目，应保留既有目录架构、职责和稳定 API，通过新增功能逐步收敛边界；只有业务规模和依赖复杂度达到拆分条件时，才引入 `features/<domain>` 等更细粒度结构。
 >
 > 本文件遵循 `UNIVERSAL_DEVELOPMENT_GUIDELINES.md`。项目级 `DEVELOPMENT.md` 可以补充具体 UI 组件库、目录实例、命令、CI/CD 和部署环境，但不得无故违反本文件的核心工程原则。
 
@@ -12,16 +12,17 @@
 
 1. **Contract First**：前端 API 类型以正式 Backend Contract 为准，优先从 OpenAPI 等契约生成或同步类型。
 2. **Incremental Architecture**：基于现有目录持续演进，不因架构规范而进行无收益的大规模目录迁移。
-3. **Feature Boundary**：新增业务必须有清晰边界；规模较小时可落在现有 `api/views/utils`，规模增长后再按 Feature 聚合。
-4. **State Boundary**：区分组件状态、页面状态、业务共享状态、服务端状态和持久化状态。
-5. **UI / Business Separation**：View 和 Component 负责展示与交互编排，业务规则进入可测试的 composable / service / domain logic。
-6. **Type First**：TypeScript 使用严格类型；禁止通过 `any`、`as any` 或 `@ts-ignore` 长期绕过类型系统。
-7. **Security Boundary**：前端权限控制只负责 UX；真正授权、租户隔离和资源访问必须由后端执行。
-8. **Observable UI**：异步操作必须具备 Loading / Success / Empty / Error 等可观测状态。
-9. **Accessible by Default**：新交互默认支持键盘、焦点、语义化 HTML 和辅助技术。
-10. **Measured Performance**：性能优化必须有问题、指标、方案和验证结果。
-11. **Testable Delivery**：测试按照 Unit / Component / Integration / E2E 的风险和边界分层。
-12. **Small and Traceable Changes**：一个提交尽量对应一个可解释的工程变化。
+3. **Modular First**：代码按职责和业务边界组织，模块必须具备清晰的公开接口、内部实现和依赖方向。
+4. **Feature Boundary**：新增业务必须有清晰边界；规模较小时可落在现有 `api/views/utils`，规模增长后再按 Feature 聚合。
+5. **State Boundary**：区分组件状态、页面状态、业务共享状态、服务端状态和持久化状态。
+6. **UI / Business Separation**：View 和 Component 负责展示与交互编排，业务规则进入可测试的 composable / service / domain logic。
+7. **Type First**：TypeScript 使用严格类型；禁止通过 `any`、`as any` 或 `@ts-ignore` 长期绕过类型系统。
+8. **Security Boundary**：前端权限控制只负责 UX；真正授权、租户隔离和资源访问必须由后端执行。
+9. **Observable UI**：异步操作必须具备 Loading / Success / Empty / Error 等可观测状态。
+10. **Accessible by Default**：新交互默认支持键盘、焦点、语义化 HTML 和辅助技术。
+11. **Measured Performance**：性能优化必须有问题、指标、方案和验证结果。
+12. **Testable Delivery**：测试按照 Unit / Component / Integration / E2E 的风险和边界分层。
+13. **Small and Traceable Changes**：一个提交尽量对应一个可解释的工程变化。
 
 ---
 
@@ -40,15 +41,7 @@ ESLint
 Prettier
 ```
 
-具体项目可以替换实现，但必须提供等价能力：
-
-```text
-类型检查
-代码规范
-单元/组件测试
-关键浏览器流程测试
-生产构建验证
-```
+具体项目可以替换实现，但必须提供等价能力：类型检查、代码规范、单元/组件测试、关键浏览器流程测试、生产构建验证。
 
 依赖选型必须服从现有项目，而不是为了“标准化”强制引入新框架。
 
@@ -77,17 +70,18 @@ frontend/
 └── playwright.config.ts
 ```
 
-这是**当前项目基线**，不是要求所有项目必须完全复制的模板。
+这是当前项目基线，不是要求所有项目必须完全复制的模板。
 
 随着项目增长，可以在不破坏既有目录职责的前提下逐步增加：
 
 ```text
 src/
-├── components/            # 跨业务复用 UI
-├── composables/           # 跨业务通用能力
-├── stores/                # 真正全局客户端状态
+├── app/                   # 应用启动、插件、全局配置
+├── components/            # 真正跨业务复用的 UI
+├── composables/           # 跨业务稳定组合式能力
 ├── layouts/               # 页面布局
-├── services/              # 跨 Feature 技术服务
+├── services/              # 跨业务技术服务
+├── stores/                # 真正全局客户端状态
 ├── types/                 # 全局技术类型
 ├── styles/                # 全局样式 / Design Tokens
 └── features/              # 业务规模达到条件后按领域聚合
@@ -98,15 +92,571 @@ src/
 
 ---
 
-## 4. 目录职责边界
+## 4. 模块化设计总则
 
-### `api/`
+模块化不是简单地拆目录，而是建立：
+
+```text
+职责边界
++
+公开接口
++
+内部实现
++
+依赖方向
++
+状态所有权
++
+测试边界
+```
+
+一个模块应能够回答：
+
+```text
+我负责什么？
+我不负责什么？
+我向外暴露什么？
+我依赖谁？
+谁可以依赖我？
+我的状态由谁拥有？
+如何独立测试？
+```
+
+### 模块最小闭环
+
+推荐：
+
+```text
+Module
+├── Public API
+├── Types / Contract
+├── Implementation
+├── Tests
+└── Documentation（复杂模块需要）
+```
+
+模块不要求机械创建全部文件；只创建实际需要的部分。
+
+---
+
+## 5. 模块分层模型
+
+通用 Vue + TypeScript 项目推荐形成以下层次：
+
+```text
+┌──────────────────────────────────────────┐
+│ App / Bootstrap                          │
+│ main.ts / App.vue / plugins              │
+└────────────────────┬─────────────────────┘
+                     ↓
+┌──────────────────────────────────────────┐
+│ Router / Layout / Views                  │
+│ 页面入口与页面编排                       │
+└────────────────────┬─────────────────────┘
+                     ↓
+┌──────────────────────────────────────────┐
+│ Feature Modules                          │
+│ 业务组件 / Composable / Store / API      │
+└────────────────────┬─────────────────────┘
+                     ↓
+┌──────────────────────────────────────────┐
+│ Shared UI / Shared Composable            │
+│ 稳定公共能力                              │
+└────────────────────┬─────────────────────┘
+                     ↓
+┌──────────────────────────────────────────┐
+│ Services / API Transport                 │
+│ HTTP / Storage / WebSocket / Upload       │
+└────────────────────┬─────────────────────┘
+                     ↓
+┌──────────────────────────────────────────┐
+│ Utils / Technical Types                   │
+│ 纯技术能力                                │
+└──────────────────────────────────────────┘
+```
+
+依赖原则：
+
+```text
+上层可以依赖下层
+下层不得反向依赖页面实现
+公共模块不得依赖具体业务 Feature
+Feature 不应通过内部路径依赖其他 Feature
+```
+
+---
+
+## 6. 模块类型与职责
+
+### Application Module
 
 负责：
 
 ```text
-HTTP API Client
-Request / Response DTO
+应用启动
+插件注册
+全局初始化
+错误边界
+全局配置接入
+```
+
+### Presentation Module
+
+包括：
+
+```text
+views
+components
+layouts
+```
+
+负责：
+
+```text
+页面展示
+用户交互
+组件组合
+UI 状态
+```
+
+### Feature Module
+
+负责完整业务能力：
+
+```text
+业务页面
+业务组件
+业务状态
+业务 API
+业务 composable
+业务类型
+业务规则
+```
+
+### Shared Module
+
+负责稳定公共能力：
+
+```text
+无业务语义 UI
+跨 Feature composable
+公共类型
+技术服务
+```
+
+### Infrastructure / Technical Module
+
+负责：
+
+```text
+HTTP
+Storage
+WebSocket
+File Transfer
+Browser API
+Third-party SDK
+```
+
+---
+
+## 7. 当前目录到模块化目录的演进
+
+当前项目可以保持：
+
+```text
+src/
+├── api/
+├── router/
+├── utils/
+└── views/
+```
+
+当业务规模增长时，再逐步形成：
+
+```text
+src/
+├── app/
+├── api/
+├── router/
+├── components/
+├── composables/
+├── layouts/
+├── services/
+├── stores/
+├── types/
+├── utils/
+├── styles/
+├── views/
+└── features/
+    ├── auth/
+    ├── user/
+    ├── workflow/
+    └── <domain>/
+```
+
+这里的关键是：
+
+> **增加模块化能力，而不是强制重构已有目录。**
+
+旧结构稳定且规模可控时，可以继续使用；只有边界问题真正出现时才进行局部迁移。
+
+---
+
+## 8. Feature Module 推荐结构
+
+当业务达到 Feature 化条件后：
+
+```text
+features/
+└── <domain>/
+    ├── api/
+    │   ├── <domain>.api.ts
+    │   └── types.ts
+    ├── components/
+    ├── composables/
+    ├── stores/
+    ├── types/
+    ├── views/
+    ├── constants/
+    ├── utils/
+    ├── index.ts
+    └── README.md          # 复杂 Feature 推荐
+```
+
+不是每个 Feature 都必须创建所有目录。
+
+推荐职责：
+
+```text
+api/         = Feature API
+components/  = Feature UI
+composables/ = Feature 行为
+stores/      = Feature 共享状态
+types/       = Feature 类型
+views/       = Feature 页面
+constants/   = Feature 私有常量
+utils/       = Feature 私有纯函数
+index.ts     = Feature Public API
+```
+
+---
+
+## 9. Feature Public API
+
+Feature 应通过 `index.ts` 定义公开能力：
+
+```text
+features/order/index.ts
+```
+
+外部模块推荐：
+
+```ts
+import { OrderList } from '@/features/order'
+```
+
+不推荐：
+
+```ts
+import { OrderList } from '@/features/order/components/internal/OrderList.vue'
+```
+
+这样可以隐藏内部实现，降低未来重构成本。
+
+Feature Public API 应尽量只暴露：
+
+```text
+Public Components
+Public Composables
+Public Types
+Public Commands / Actions
+```
+
+不应暴露数据库映射、内部 API Client、私有状态结构等实现细节。
+
+---
+
+## 10. 模块依赖方向
+
+推荐：
+
+```text
+app
+ ↓
+router / views
+ ↓
+feature
+ ↓
+shared / services
+ ↓
+transport / browser / external SDK
+```
+
+禁止：
+
+```text
+utils → feature
+shared component → page
+service → view
+API client → component
+feature A internal → feature B internal
+```
+
+如果出现循环依赖：
+
+```text
+A → B
+B → A
+```
+
+优先：
+
+```text
+提取 Shared Contract
+调整模块边界
+通过 Event / Command 解耦
+```
+
+而不是增加更多全局状态掩盖依赖问题。
+
+---
+
+## 11. 模块内部依赖规则
+
+Feature 内部推荐：
+
+```text
+views
+ ↓
+components / composables
+ ↓
+api / service / store
+ ↓
+shared infrastructure
+```
+
+同一层级模块之间尽量避免直接互相依赖。
+
+例如：
+
+```text
+components/A.vue
+    ❌ 直接 import components/B-internal.vue
+```
+
+如果 A 与 B 需要共享能力，应提升为明确的公共模块。
+
+---
+
+## 12. 模块状态所有权
+
+每个状态必须有唯一合理的 Owner：
+
+```text
+Component State
+    ↓
+Page State
+    ↓
+Feature State
+    ↓
+Global State
+    ↓
+Server State / Cache
+```
+
+规则：
+
+```text
+能局部解决 → 不上升
+能 Feature 解决 → 不全局化
+能服务端获取 → 不重复复制多份
+```
+
+避免同一业务数据同时存在：
+
+```text
+View ref
+Pinia
+Composable ref
+localStorage
+Query Cache
+```
+
+而没有明确同步规则。
+
+---
+
+## 13. 模块 API 与 Contract
+
+模块之间也应该采用 Contract First：
+
+```text
+Public Types
+Public Props
+Public Emits
+Public Functions
+Public Events
+```
+
+内部结构变化不能无故影响外部调用方。
+
+公共模块升级应考虑：
+
+```text
+Backward Compatibility
+Migration Path
+Deprecation
+Breaking Change
+```
+
+---
+
+## 14. 模块间通信
+
+优先级：
+
+```text
+Props / Emits
+ ↓
+Composable
+ ↓
+Explicit Function API
+ ↓
+Feature Store
+ ↓
+Event / Message
+```
+
+禁止优先使用：
+
+```text
+window 全局变量
+DOM 查询
+$parent / $children
+任意全局事件总线
+```
+
+Event Bus 仅适用于明确的跨模块事件场景，并必须定义 Event Contract 和生命周期。
+
+---
+
+## 15. Shared 模块治理
+
+公共模块不是“所有东西的最终归宿”。
+
+代码进入 Shared 必须满足：
+
+```text
+至少存在明确的跨模块使用场景
++
+职责稳定
++
+没有具体业务归属
++
+公开 API 可维护
+```
+
+如果只有一个 Feature 使用：
+
+```text
+优先保留在 Feature 内
+```
+
+如果两个 Feature 使用但语义仍属于其中一个：
+
+```text
+优先重新评估业务边界
+```
+
+不能因为 import 数量增加就机械升级为 Shared。
+
+---
+
+## 16. 模块拆分条件
+
+满足以下任一情况，可以考虑拆分：
+
+```text
+模块超过合理复杂度
+单文件承担多个职责
+业务状态和 UI 高度耦合
+多个开发者频繁冲突
+测试难以隔离
+依赖图复杂
+发布 / 演进需要独立边界
+```
+
+拆分目标不是文件数量增加，而是：
+
+```text
+降低耦合
+提高内聚
+明确依赖
+提高测试性
+降低修改半径
+```
+
+---
+
+## 17. 模块合并条件
+
+模块化同样允许合并。
+
+当两个模块：
+
+```text
+职责高度一致
+生命周期一致
+总是一起修改
+不存在独立使用场景
+```
+
+应考虑合并，避免：
+
+```text
+过度碎片化
+```
+
+原则：
+
+> **模块数量不是架构质量指标，边界质量才是。**
+
+---
+
+## 18. API / Router / View / Feature 协作
+
+推荐完整链路：
+
+```text
+Router
+ ↓
+View
+ ↓
+Feature Component / Composable
+ ↓
+Feature API
+ ↓
+Shared HTTP Client
+ ↓
+Backend Contract
+```
+
+View 不直接实现底层 HTTP 细节。
+
+API 层不负责 UI 状态。
+
+Router 不负责业务流程。
+
+---
+
+## 19. API 层规则
+
+`api/` 负责：
+
+```text
+Endpoint
+Request DTO
+Response DTO
 Contract Adapter
 ```
 
@@ -115,1326 +665,406 @@ Contract Adapter
 ```text
 页面状态
 DOM
-完整业务流程
+复杂业务流程
 ```
 
-### `router/`
-
-负责：
+随着规模增长，可以演进为：
 
 ```text
-Route Definition
-Navigation Guard
-Route Metadata
+api/
+├── client.ts
+├── interceptors.ts
+└── <domain>/
+    ├── <domain>.api.ts
+    └── types.ts
 ```
 
-不负责完整业务流程。
-
-### `views/`
-
-负责：
+Feature 化后则优先：
 
 ```text
-页面布局
-页面级数据编排
-Feature Component 组合
-页面交互
+features/<domain>/api/
 ```
 
-复杂业务规则不得长期堆积在 View。
+---
 
-### `utils/`
+## 20. Router 模块化
 
-只允许：
+路由规模增长后不要继续维护单一巨大 `router.ts`。
+
+可以采用：
 
 ```text
-纯函数
-无业务语义
-低副作用
-可独立测试
+router/
+├── index.ts
+├── guards.ts
+├── routes.ts
+└── modules/
+    ├── auth.routes.ts
+    ├── user.routes.ts
+    └── workflow.routes.ts
 ```
 
-禁止将业务 Service、API Client、Store、权限逻辑塞进 `utils/`。
-
-### `components/`
-
-仅放真正跨业务复用的 UI 组件。
-
-业务专属组件优先放在对应 Feature 或页面邻近位置。
-
-### `composables/`
-
-放跨页面 / 跨 Feature 的稳定组合式能力。
-
-业务专属 composable 应优先就近放置在 Feature 内。
-
-### `stores/`
-
-仅放真正跨页面、跨 Feature 的客户端状态。
-
-### `services/`
-
-放跨业务的技术服务或稳定基础能力，例如：
+或由 Feature 提供 Route Definition，再由 Router 聚合：
 
 ```text
-HTTP Client
-Download Client
-Upload Client
-WebSocket Transport
-Storage Adapter
+Feature
+ ↓
+route definition
+ ↓
+router registry
 ```
 
-业务 Service 不应无边界集中在这里。
+Route Guard 仍然只处理导航级职责。
 
-### `features/`
+---
 
-不是当前项目必须立即迁移的目录，而是**业务复杂度增长后的扩展机制**。
+## 21. Store 模块化
+
+小型项目：
+
+```text
+stores/
+└── auth.ts
+```
+
+中大型项目：
+
+```text
+stores/
+├── auth/
+├── app/
+└── preferences/
+```
+
+Feature 状态：
+
+```text
+features/<domain>/stores/
+```
+
+禁止创建一个包含：
+
+```text
+User
+Order
+Workflow
+Notification
+Permission
+```
+
+等所有状态的 `appStore`。
+
+---
+
+## 22. Services 模块化
+
+`services/` 应定位为技术服务，而不是业务万能 Service。
 
 推荐：
+
+```text
+services/
+├── http/
+├── storage/
+├── upload/
+├── download/
+└── websocket/
+```
+
+业务能力优先：
 
 ```text
 features/<domain>/
-├── api/
-├── components/
-├── composables/
-├── stores/
-├── types/
-├── views/
-└── index.ts
 ```
+
+如果项目仍采用传统结构，也可以暂时保留业务 service，但必须按领域拆分并逐步收敛职责。
 
 ---
 
-## 5. 现有项目向 Feature 演进规则
+## 23. Utils 模块化
 
-不要进行一次性“大搬家”。推荐：
-
-```text
-当前：
-api/ + views/ + utils/
-        ↓
-业务数量增长
-        ↓
-按领域识别耦合边界
-        ↓
-新增业务优先就近组织
-        ↓
-必要时引入 features/<domain>
-        ↓
-逐步迁移
-```
-
-只有出现以下情况之一，才建议引入 Feature 聚合：
+全局：
 
 ```text
-同一业务散落超过多个目录
-页面 / API / Store / Component 强耦合
-多个开发者频繁修改同一业务区域
-业务测试难以定位
-Feature 需要独立演进
+utils/
+├── date.ts
+├── number.ts
+├── string.ts
+├── object.ts
+└── validation.ts
 ```
 
-迁移时必须保持：
+Feature 私有：
 
 ```text
-Route 不无故改变
-API Contract 不无故改变
-用户行为不无故改变
-测试结果不下降
-旧代码最终删除
+features/order/utils/
 ```
+
+工具函数必须：
+
+```text
+低副作用
+无 UI 依赖
+无 Store 依赖
+无业务生命周期
+可独立测试
+```
+
+禁止万能：
+
+```text
+utils/index.ts
+```
+
+承载所有业务逻辑。
 
 ---
 
-## 6. 新功能标准扩展流程
-
-任何新业务功能必须遵循：
+## 24. 组件分层
 
 ```text
-需求
+UI Primitive
  ↓
-业务边界
- ↓
-检查已有 API / View / Component / Utils
- ↓
-确认 Backend Contract
- ↓
-确定代码归属
- ↓
-Type / DTO
- ↓
-API
- ↓
-State / Composable
- ↓
-Component / View
- ↓
-Permission
- ↓
-Loading / Empty / Error
- ↓
-Accessibility / Responsive
- ↓
-Test
- ↓
-Type Check / Lint / Build
- ↓
-Documentation
-```
-
-**先复用、后扩展；先判断边界、再创建目录。**
-
----
-
-## 7. Feature 归属决策
-
-新增代码优先按照以下顺序判断：
-
-```text
-已有业务 Feature？
-    ↓ 是
-扩展已有 Feature
-
-    ↓ 否
-是否页面专属？
-    ↓ 是
-views / page-local
-
-    ↓ 否
-是否跨业务 UI？
-    ↓ 是
-components
-
-    ↓ 否
-是否跨业务组合能力？
-    ↓ 是
-composables
-
-    ↓ 否
-是否 API / Transport？
-    ↓ 是
-api / services
-
-    ↓ 否
-是否纯技术函数？
-    ↓ 是
-utils
-```
-
-不能仅因为“多个地方 import”就把代码升级为全局公共模块。
-
----
-
-## 8. Component 规则
-
-组件分为：
-
-```text
-Page / View
-    = 页面编排
-
-Feature Component
-    = 业务 UI
-
 Shared Component
-    = 无业务语义的公共 UI
-```
-
-### Props / Emits
-
-必须：
-
-```text
-明确类型
-明确默认值
-明确 nullable / optional
-明确 Emit payload
-```
-
-禁止：
-
-```text
-any
-隐式对象结构
-深层 $parent
-全局变量通信
-DOM 查询替代组件通信
-```
-
-组件同时出现大量：
-
-```text
-API
-状态机
-表单规则
-数据转换
-复杂计算
-```
-
-应拆分 composable / service / 子组件。
-
----
-
-## 9. Composable 规则
-
-Composable 必须表达明确能力：
-
-```text
-usePagination()
-usePolling()
-usePermission()
-useWorkflowExecution()
-```
-
-禁止：
-
-```text
-useCommon()
-useUtils()
-useEverything()
-```
-
-异步 composable 必须考虑：
-
-```text
-loading
-success
-error
-cancel
-stale request
-unmount cleanup
-retry
-```
-
-带副作用的 composable 必须定义创建与销毁边界。
-
----
-
-## 10. 状态管理规则
-
-状态必须先判断所有权：
-
-```text
-组件局部状态
  ↓
-页面状态
+Feature Component
  ↓
-Feature 状态
+Page / View
+```
+
+例如：
+
+```text
+Button
  ↓
-跨 Feature 客户端状态
+DataTable
  ↓
-服务端状态 / Cache
-```
-
-能在组件解决，不进入 Store；能在 Feature 解决，不进入全局 Store。
-
-### Pinia
-
-Store 不得成为：
-
-```text
-万能 API 层
-万能 Service
-页面临时状态仓库
-所有业务状态总线
-```
-
-Store Action 应有明确副作用边界。
-
-服务端状态不要在多个 Store 中无约束复制。
-
----
-
-## 11. API Contract
-
-标准链路：
-
-```text
-Backend OpenAPI / Contract
-        ↓
-Generated / Synchronized Types
-        ↓
-API Client
-        ↓
-Feature API / Service
-        ↓
-Composable / Store
-        ↓
-View
-```
-
-禁止：
-
-```text
-View → fetch/axios → 手写 URL → any
-```
-
-不得直接把后端 ORM Model 当作前端 Contract。
-
-API 类型必须集中、可追踪、可搜索。
-
----
-
-## 12. API Client 统一规范
-
-统一 HTTP 层负责：
-
-```text
-Base URL
-Authentication
-Request ID / Correlation ID
-Timeout
-Cancellation
-Serialization
-Error normalization
-```
-
-Retry 规则：
-
-```text
-幂等 / 安全请求
-    → 可按策略 retry
-
-非幂等 mutation
-    → 默认禁止自动 retry
-    → 只有具备明确幂等语义才能 retry
-```
-
-禁止每个页面创建独立 HTTP Client。
-
----
-
-## 13. 请求竞态与取消
-
-搜索、筛选、分页、详情切换、轮询必须考虑：
-
-```text
-Request A
-Request B
+OrderTable
  ↓
-B 先返回
- ↓
-A 后返回
- ↓
-A 不得覆盖 B
+OrderPage
 ```
 
-可使用：
+越靠下越接近业务，越靠上越通用。
 
-```text
-AbortController
-Request Sequence
-Latest-only
-Debounce / Throttle
-Query Cache / Deduplication
-```
-
-组件卸载后必须停止不再需要的请求、轮询和订阅。
+上层可以组合下层；下层不能依赖上层业务。
 
 ---
 
-## 14. 表单规则
+## 25. 新功能模块化扩展流程
 
-表单至少明确：
-
-```text
-Initial
-Dirty
-Validating
-Submitting
-Success
-Error
-Reset / Cancel
-```
-
-区分：
+新增功能必须执行：
 
 ```text
-UI Validation
-Business Validation
-Backend Validation
-```
-
-前端校验不能成为安全边界。
-
-重复提交必须受到控制。
-
----
-
-## 15. Router 规则
-
-Router 负责：
-
-```text
-Route Definition
-Route Metadata
-Authentication Entry
-Authorization Entry
-Navigation Prerequisite
-```
-
-禁止 Router Guard 承担完整业务流程。
-
-Route Metadata 可以描述：
-
-```text
-permission
-layout
-title
-authentication requirement
-```
-
-真实授权仍由 Backend 执行。
-
----
-
-## 16. 权限与多租户
-
-必须明确：
-
-```text
-Route Permission
-Page Permission
-Action Permission
-Resource Scope
-Tenant Scope
-```
-
-前端：
-
-```text
-显示 / 隐藏
-禁用
-导航
-用户提示
-```
-
-后端：
-
-```text
-真实授权
-资源访问
-租户隔离
-```
-
-禁止把可编辑的 `tenantId`、role、permission 等前端字段当成安全依据。
-
-缓存、本地状态和 URL 参数也必须考虑租户边界。
-
----
-
-## 17. Loading / Empty / Error 状态
-
-异步功能至少具备：
-
-```text
-idle
-loading
-success
-empty
-error
-```
-
-复杂场景可以增加：
-
-```text
-refreshing
-saving
-retrying
-stale
-partial
-conflict
-permission-denied
-```
-
-不要仅使用：
-
-```text
-loading = true / false
-```
-
-表达完整业务状态。
-
----
-
-## 18. Error Model
-
-前端应统一识别：
-
-```text
-Network
-Authentication
-Authorization
-Validation
-Conflict
-Business
-Server
-Unknown
-```
-
-用户提示和诊断信息必须分离：
-
-```text
-User Message
-≠
-Developer Diagnostic
-```
-
-生产环境禁止输出：
-
-```text
-Token
-Secret
-Password
-Internal Stack Trace
-敏感业务 Payload
+1. 阅读项目 DEVELOPMENT.md
+2. 同步最新代码
+3. 搜索已有模块
+4. 判断是否属于现有 Feature
+5. 确定模块边界
+6. 定义 Public Contract
+7. 定义 Type / DTO
+8. 实现 API / Service
+9. 实现 State / Composable
+10. 实现 Component / View
+11. 接入 Router / Permission
+12. 完善 Loading / Empty / Error
+13. Accessibility / Responsive
+14. Unit / Component Test
+15. Integration / E2E（适用时）
+16. Type Check / Lint / Build
+17. 更新文档
+18. Review / Commit
 ```
 
 ---
 
-## 19. Accessibility
+## 26. 新功能目录选择决策表
 
-新组件至少考虑：
-
-```text
-Semantic HTML
-Keyboard
-Visible Focus
-Focus Management
-Label Association
-ARIA
-Screen Reader
-Error Announcement
-```
-
-Dialog / Drawer / Menu 等组件必须定义焦点进入、焦点返回和 Escape 行为。
-
-错误不能只通过颜色表达。
+| 新增内容 | 小规模项目 | 中大型项目 | 核心原则 |
+|---|---|---|---|
+| 页面 | `views/` | `features/<domain>/views/` | 页面编排 |
+| 业务组件 | 页面邻近 / Feature | Feature `components/` | 业务内聚 |
+| 公共 UI | `components/` | `components/` | 无业务语义 |
+| API | `api/` | Feature `api/` | Contract First |
+| Composable | `composables/` | Feature `composables/` | 能力内聚 |
+| Store | `stores/` | Feature `stores/` | 最小状态范围 |
+| 技术 Service | `services/` | `services/<domain>/` | 技术能力 |
+| 类型 | `types/` | Feature `types/` | 就近维护 |
+| 工具 | `utils/` | Feature `utils/` | 纯函数 |
+| 路由 | `router/` | `router/modules/` | 声明式路由 |
+| 布局 | `layouts/` | `layouts/` | 页面结构 |
+| 样式 | `styles/` | `styles/` | Design System |
 
 ---
 
-## 20. Responsive / UI
-
-新页面必须考虑：
-
-```text
-Desktop
-Tablet / Narrow viewport
-Mobile（项目适用时）
-```
-
-复杂表格、工具栏、侧栏等应明确：
-
-```text
-折叠
-滚动
-重排
-分页
-分组
-```
-
-不要仅通过缩小字体解决窄屏问题。
-
----
-
-## 21. Design System
-
-推荐层级：
-
-```text
-Design Tokens
- ↓
-Base Components
- ↓
-Shared Components
- ↓
-Feature Components
- ↓
-Views
-```
-
-新增组件前必须检查已有能力：
-
-```text
-是否已经存在？
-是否只是 Variant？
-是否应该扩展现有组件？
-是否真的需要新组件？
-```
-
-禁止出现多个语义相同但 API 不兼容的 Button、Dialog、Table、Form 等基础组件。
-
----
-
-## 22. 国际化
-
-支持 i18n 的项目中，用户可见文本禁止硬编码。
-
-推荐：
-
-```text
-Feature Namespace
- ↓
-Locale Resource
- ↓
-Typed Translation Key（适用时）
-```
-
-同时考虑：
-
-```text
-Plural
-Date / Time
-Number
-Currency
-Long Text
-RTL（需要时）
-```
-
-业务文案不要无边界堆积到单一全局 locale 文件。
-
----
-
-## 23. 文件上传 / 下载
-
-必须考虑：
-
-```text
-Type
-Size
-Progress
-Cancel
-Retry
-Resume（需要时）
-Server Validation
-Permission
-Filename Safety
-```
-
-大文件不得无意义地转换为 Base64 存入 Store。
-
-敏感文件必须通过后端授权访问。
-
----
-
-## 24. 大数据量列表
-
-必须评估：
-
-```text
-Server Pagination
-Server Filtering
-Server Sorting
-Virtualization
-Incremental Loading
-```
-
-大量导出推荐：
-
-```text
-Create Export Task
- ↓
-Backend Processing
- ↓
-Status / Progress
- ↓
-Download
-```
-
-不要一次性将不可控规模的数据全部加载到浏览器。
-
----
-
-## 25. 实时通信
-
-WebSocket / SSE 必须明确：
-
-```text
-Connection Lifecycle
-Authentication
-Reconnect
-Backoff
-Heartbeat
-Message Schema
-Ordering
-Duplicate Handling
-Cleanup
-```
-
-推荐：
-
-```text
-Transport
- ↓
-Feature Event Handler
- ↓
-State
- ↓
-UI
-```
-
-不要在页面组件内堆积完整连接生命周期管理。
-
----
-
-## 26. 前端缓存
-
-缓存必须定义：
-
-```text
-Key
-Scope
-TTL
-Invalidation
-Version
-Tenant Boundary
-Permission Boundary
-```
-
-写操作后明确：
-
-```text
-Invalidate
-Refetch
-Patch Cache
-```
-
-禁止无期限缓存业务数据。
-
----
-
-## 27. 性能规范
-
-优化优先级：
-
-```text
-减少请求
- ↓
-减少 Payload
- ↓
-缓存 / 去重
- ↓
-Code Splitting
- ↓
-Lazy Loading
- ↓
-降低响应式成本
- ↓
-Rendering Optimization
-```
-
-大型 Feature 评估：
-
-```text
-Bundle Size
-Initial Load
-Chunk Size
-Network
-Rendering
-Memory
-Long Task
-```
-
-禁止无指标地滥用：
-
-```text
-shallowRef
-markRaw
-memo
-缓存
-```
-
----
-
-## 28. TypeScript 规范
-
-推荐：
-
-```json
-{
-  "strict": true
-}
-```
-
-默认禁止：
-
-```ts
-any
-as any
-// @ts-ignore
-```
-
-如果确有必要：
-
-```text
-局部隔离
-说明原因
-最小范围
-增加测试
-```
-
-优先使用：
-
-```text
-unknown + type guard
-Discriminated Union
-Generic
-Utility Types
-satisfies
-```
-
-业务状态机优先用联合类型表达合法状态。
-
----
-
-## 29. 安全规范
-
-禁止：
-
-```text
-Secret / API Key 写入源码
-Token 写入日志
-生产凭据提交 Git
-不可信内容直接 v-html
-敏感数据进入 URL
-前端权限代替后端权限
-```
-
-前端构建变量默认视为可能暴露给浏览器：
-
-```text
-VITE_* / PUBLIC_* 等
-```
-
-不得把 Secret 放入公开构建变量。
-
-涉及 XSS、CSRF、CSP、Token Storage、文件上传等问题时必须进行专项安全评估。
-
----
-
-## 30. 日志与可观测性
-
-日志用于诊断，不是业务数据仓库。
-
-推荐关联：
-
-```text
-request_id
-trace_id
-route
-feature
-operation
-error_code
-```
-
-禁止记录：
-
-```text
-Access Token
-Refresh Token
-Password
-Secret
-完整敏感 Payload
-```
-
-生产日志应控制噪声和采样策略。
-
----
-
-## 31. 测试分层
-
-```text
-Unit
- ↓
-Component
- ↓
-Integration
- ↓
-E2E
-```
-
-### Unit
-
-测试：
-
-```text
-Pure Function
-Business Rule
-Composable Logic
-Data Transformation
-```
+## 27. 其他通用工程规则
 
 ### Component
 
-测试：
+Props / Emits 必须明确类型；禁止深层组件通信、DOM 查询通信和隐式全局状态。
 
-```text
-Props
-Emit
-Rendering
-Interaction
-Validation
-Loading / Error
-```
+### Composable
 
-### Integration
+必须明确生命周期、响应式依赖、取消、错误和清理。
 
-测试：
+### State
 
-```text
-Feature + API Client
-Feature + Store
-Feature + Router
-Contract Boundary
-```
+不要把所有状态放入 Pinia；服务端状态与客户端状态分开管理。
 
-### E2E
+### API
 
-只覆盖关键用户旅程：
+HTTP Client 统一处理 Base URL、认证、Request ID、Timeout、Cancellation、Error Normalization 和安全 Retry。
 
-```text
-Login
-Create
-Edit
-Submit
-Critical Workflow
-Permission
-Recovery
-```
+### Retry
 
-避免所有测试都升级为 E2E。
+非幂等 Mutation 默认禁止自动重试，除非 Contract 明确支持幂等。
 
----
+### Form
 
-## 32. Mock 与 Contract
+区分 UI Validation、Business Validation、Backend Validation。
 
-Mock 用于隔离边界，不用于掩盖真实 Contract 问题。
+### Permission
 
-必须避免：
+前端只负责 UX；后端负责真正授权。
 
-```text
-Mock Response ≠ Production Contract
-```
+### Async
 
-重要 API 至少存在一层：
+必须处理 Loading、Error、Cancellation、Stale Response、Unmount Cleanup。
 
-```text
-Contract Test
-或
-Integration Test
-```
+### Realtime
 
-Mock Fixture 应尽可能复用正式类型。
+WebSocket / SSE 必须考虑连接生命周期、Reconnect、Backoff、Ordering、Duplicate 和 Cleanup。
+
+### Accessibility
+
+遵循语义化 HTML、Keyboard、Focus、ARIA 和错误反馈原则。
+
+### Performance
+
+基于真实指标进行优化，重点关注请求、Bundle、渲染、内存和大列表。
+
+### Security
+
+禁止 Secret / Token 进入源码或日志；不可信 HTML 必须经过安全处理。
+
+### i18n
+
+用户可见文本不得散落硬编码；Feature 文案优先按领域组织。
+
+### Testing
+
+按照 Unit / Component / Integration / E2E 分层，不为覆盖率机械重复测试。
 
 ---
 
-## 33. 测试环境与编排
+## 28. 模块化重构规则
 
-测试代码与环境编排分离：
+禁止一次性“大搬家”而没有收益验证。
 
-```text
-src/**/*.spec.ts
-frontend/tests/
-frontend/scripts/
-```
-
-测试脚本必须明确：
+标准流程：
 
 ```text
-准备什么环境
-启动什么服务
-使用什么地址
-如何清理
-```
-
-不得偷偷修改开发者本地环境或真实生产资源。
-
-测试结果必须记录真实执行结果，不得用静态文案代替测试证据。
-
----
-
-## 34. 依赖管理
-
-新增 npm 依赖前必须确认：
-
-```text
-现有依赖是否已有能力？
-维护状态
-安全风险
-License
-Bundle Size
-Tree Shaking
-TypeScript 支持
-```
-
-不要为了一个简单函数引入大型依赖。
-
-UI、State、HTTP 等基础框架级依赖必须评估长期影响。
-
----
-
-## 35. 环境配置
-
-明确区分：
-
-```text
-Build-time Config
-Runtime Config
-Public Config
-Secret
-```
-
-浏览器可访问的配置不属于 Secret。
-
-环境变量命名应统一，避免同一含义出现多个变量名称。
-
-生产环境配置必须由部署系统注入，禁止提交真实凭据。
-
----
-
-## 36. Refactor 规则
-
-重构采用：
-
-```text
-识别依赖
+现状分析
  ↓
-设计新边界
+依赖图
  ↓
-迁移引用
+定义目标边界
+ ↓
+建立新 Public API
+ ↓
+迁移调用方
  ↓
 迁移测试
  ↓
 删除旧实现
  ↓
-全仓搜索旧路径
+全仓搜索旧引用
  ↓
-验证 Build / Test
+Type Check
+ ↓
+Test
+ ↓
+Build
 ```
 
-禁止长期保留：
+重构必须保持：
 
 ```text
-legacy/
-old/
-compat/
-adapter-only forwarding
-```
-
-来掩盖迁移未完成。
-
-如果只是目录治理，不得因为“看起来更标准”而制造大规模无业务收益的迁移。
-
----
-
-## 37. 新 Feature 扩展准则
-
-新增业务优先遵循：
-
-```text
-检查现有实现
- ↓
-复用已有 API / Component / Composable
- ↓
-确定业务边界
- ↓
-在现有目录内最小扩展
- ↓
-复杂度达到阈值
- ↓
-引入 features/<domain>
-```
-
-Feature 内可以使用：
-
-```text
-api/
-components/
-composables/
-stores/
-types/
-views/
-```
-
-Feature 不应直接暴露内部实现。
-
-推荐：
-
-```text
-features/order/index.ts
-```
-
-作为稳定公共入口，避免其他 Feature 深度 import：
-
-```text
-❌ features/order/components/internal/xxx
-❌ features/order/stores/privateStore
+行为不变
+Contract 稳定
+测试不下降
+旧实现最终删除
 ```
 
 ---
 
-## 38. Feature 间依赖
+## 29. 模块质量检查
 
-推荐依赖方向：
-
-```text
-Feature A
-   ↓
-Feature B Public API
-```
-
-避免：
+一个模块至少检查：
 
 ```text
-Feature A ↔ Feature B
-```
-
-出现循环依赖时，应考虑：
-
-```text
-重新划分边界
-提取稳定 Contract
-共享纯类型 / UI Pattern
-事件 / Command 解耦
-```
-
-不要用全局 Store 偷渡跨 Feature 依赖。
-
----
-
-## 39. Breaking Change
-
-以下变化需要进行影响评估：
-
-```text
-Props 删除 / 重命名
-Emit Payload 改变
-Store State / Action 改变
-Composable API 改变
-Route 改变
-API Contract 改变
-Permission 改变
-Design Token 改变
-公共组件行为改变
-```
-
-公共 API 变化优先提供迁移方案。
-
----
-
-## 40. 删除 / 废弃规则
-
-删除功能必须同时检查：
-
-```text
-Route
-Menu
-View
-Component
-Composable
-Store
-API Client
-Types
-Translations
-Tests
-Documentation
-Dependencies
-```
-
-废弃能力必须记录：
-
-```text
-替代方案
-迁移范围
-删除条件
-最终删除版本 / 时间（项目适用时）
-```
-
----
-
-## 41. Code Review 检查清单
-
-Review 至少检查：
-
-```text
-[ ] 目录归属合理
-[ ] 是否重复实现已有能力
-[ ] API Contract 是否一致
-[ ] TypeScript 类型是否完整
-[ ] State 边界是否合理
-[ ] 是否出现跨层依赖
-[ ] Permission 是否正确
-[ ] Error / Loading / Empty 是否完整
-[ ] Accessibility 是否考虑
-[ ] Responsive 是否考虑
-[ ] 是否存在竞态 / 重复提交
-[ ] 是否存在安全问题
-[ ] 测试是否覆盖关键行为
-[ ] 是否产生无必要的新依赖
-[ ] 是否留下 dead code
-```
-
----
-
-## 42. Definition of Done
-
-前端功能完成必须满足适用项：
-
-```text
-[ ] 业务边界明确
-[ ] 目录归属明确
-[ ] Backend Contract 对齐
-[ ] TypeScript 类型完整
-[ ] API Client 完成
-[ ] State 边界明确
-[ ] View / Component 完成
-[ ] Loading / Empty / Error 完成
-[ ] Permission 已考虑
-[ ] Accessibility 已考虑
-[ ] Responsive 已考虑
-[ ] Error / Observability 完成
-[ ] Unit / Component Test 完成
-[ ] Integration Test（适用时）
-[ ] E2E（关键路径）
-[ ] Type Check
-[ ] Lint
-[ ] Production Build
+[ ] 职责单一
+[ ] 边界明确
+[ ] Public API 明确
+[ ] 内部实现可隐藏
+[ ] 依赖方向正确
+[ ] 无循环依赖
+[ ] 状态 Owner 明确
+[ ] Contract 明确
+[ ] 可独立测试
 [ ] 无重复实现
-[ ] 无 Secret 泄漏
-[ ] 文档更新
-[ ] Git 变更可追踪
+[ ] 无无主代码
 ```
 
 ---
 
-## 43. Git 与 Commit
+## 30. Definition of Done
 
-推荐：
-
-```text
-feat(frontend): ...
-fix(frontend): ...
-refactor(frontend): ...
-test(frontend): ...
-chore(frontend): ...
-```
-
-一个 Commit 尽量对应一个工程变化。
-
-禁止将以下无关变化混在一起：
+前端功能只有同时满足适用项才算完成：
 
 ```text
-业务功能
-大规模格式化
-依赖升级
-目录重构
+[ ] Feature / Module boundary clear
+[ ] Contract aligned
+[ ] Type complete
+[ ] Permission considered
+[ ] Loading / Empty / Error handled
+[ ] Accessibility considered
+[ ] Responsive considered
+[ ] Unit / Component tests
+[ ] Integration test when required
+[ ] E2E for critical path
+[ ] Production build
+[ ] No duplicate implementation
+[ ] No secret leakage
+[ ] Documentation updated
+[ ] Git change traceable
 ```
-
-除非这些变化确实属于同一个不可拆分的迁移。
 
 ---
 
-## 44. 通用项目与项目实现的关系
+## 31. 禁止事项
+
+```text
+❌ 为了规范强制迁移全部旧目录
+❌ 一个万能 Store
+❌ 一个万能 utils.ts
+❌ 一个万能 service.ts
+❌ View 内堆积业务逻辑
+❌ 页面各自创建 HTTP Client
+❌ Feature 深度依赖其他 Feature internal 文件
+❌ Shared 模块依赖具体业务
+❌ 前端权限代替后端权限
+❌ 非幂等 API 无脑 retry
+❌ Mock 长期脱离真实 Contract
+❌ Secret / Token 进入源码或日志
+❌ 只验证成功路径
+❌ 用兼容层长期掩盖重构未完成
+❌ 为了模块化而机械拆分文件
+❌ 只写代码不更新 Contract / 文档
+```
+
+---
+
+## 32. 与项目治理文档的关系
 
 ```text
 UNIVERSAL_DEVELOPMENT_GUIDELINES.md
@@ -1443,9 +1073,7 @@ Vue + TypeScript 通用准则
             ↓
 项目 DEVELOPMENT.md
             ↓
-当前项目目录与技术选型
-            ↓
-Feature / Architecture Design
+Architecture / Feature Design
             ↓
 Implementation
             ↓
@@ -1454,55 +1082,21 @@ Test Gate
 Acceptance
 ```
 
-通用准则解决：
+本文件解决：
+
+> **Vue + TypeScript 项目应该如何进行工程化和模块化设计。**
+
+项目级文档负责补充具体 UI 框架、实际目录、命令、部署、CI 和测试环境。
+
+最终目标不是让所有项目拥有完全相同的目录，而是让不同规模的 Vue + TypeScript 项目都能遵循：
 
 ```text
-应该如何工程化
+清晰边界
+→ 明确职责
+→ 稳定 Contract
+→ 单向依赖
+→ 最小共享
+→ 独立测试
+→ 渐进式拆分
+→ 可持续演进
 ```
-
-项目准则解决：
-
-```text
-本项目具体怎么落地
-```
-
-因此：
-
-> **通用准则不应该推翻已有项目目录，而应该规定已有目录如何稳定演进，以及新功能何时、为什么、如何扩展。**
-
----
-
-## 45. 最终架构原则
-
-当前项目以及后续 Vue + TypeScript 项目统一遵循：
-
-```text
-保留稳定架构
-      ↓
-明确目录职责
-      ↓
-新增功能最小扩展
-      ↓
-避免跨层依赖
-      ↓
-业务增长后按边界拆分
-      ↓
-必要时 Feature 化
-      ↓
-持续删除旧实现
-```
-
-最终目标不是让目录越来越多，而是让：
-
-```text
-业务边界清晰
-依赖方向清晰
-状态边界清晰
-Contract 清晰
-公共能力稳定
-Feature 可以独立演进
-测试可以定位问题
-重构可以逐步进行
-```
-
-**任何架构调整都必须以降低长期复杂度为目标，而不是为了满足某一种“标准目录”而调整目录。**
