@@ -8,7 +8,7 @@
 
 ## 1. 当前目标
 
-将 Durable Resume 从人工 HTTP Resume 推进到可观测、可策略控制、可由 Scheduler 自动触发的恢复执行链，并为后续 DAG 多 frontier Resume 保留稳定领域边界。
+将 Durable Resume 从人工 HTTP Resume 推进到可观测、可策略控制、可由 Scheduler 自动触发的恢复执行链，并安全支持 DAG 多 frontier Resume。
 
 ## 2. Recovery Policy / Domain
 
@@ -61,13 +61,6 @@ pending Resume Execution
 
 ## 4. Recovery Outcome Contract
 
-正式入口：
-
-```text
-WorkflowExecutionResumeOutcome
-WorkflowExecutionResumeContractService
-```
-
 正式 outcome：
 
 ```text
@@ -76,17 +69,72 @@ created
 idempotency_hit
 ```
 
+Scheduler 只消费 Domain 返回的正式 outcome，不根据异常类型猜测竞争类型。
+
+## 5. DAG Branch State Merge Contract
+
+正式入口：
+
+```text
+WorkflowDagBranchState
+WorkflowDagStateMergePlan
+WorkflowDagBranchStateMergeService
+```
+
 规则：
 
-- `rejected`：Recovery Policy 不允许自动恢复，不创建 Resume；`reason_code` 给出拒绝原因；
-- `created`：本次 Resume Contract 创建新的 Resume Execution；
-- `idempotency_hit`：本次 Resume Contract 命中已经存在且与 Source / Checkpoint 完全匹配的 Resume Execution；
-- Source row lock 保证同一 Recovery Source 的 outcome 判断与创建处于同一并发串行边界；
-- DB unique constraint 是最终安全兜底，不依赖应用层时间戳或对象状态猜测 outcome。
+```text
+Branch A ──┐
+Branch B ──┼──→ deterministic merge
+Branch N ──┘
 
-`WorkflowExecutionService.resume_from_latest_checkpoint()` 仍是唯一 Resume 持久化创建实现；Outcome Contract 不复制创建、审计、Trace 逻辑。
+same key + same value       → merge
+same key + different value → reject
+```
 
-## 5. Recovery Observability Contract
+禁止 `last-write-wins`。Merge 只处理顶层状态键；嵌套对象、列表追加及业务语义冲突必须由未来 Join / Conflict Contract 明确规定。
+
+## 6. Multi-frontier Runtime Plan
+
+正式入口：
+
+```text
+WorkflowDagResumeRuntimePlanner
+WorkflowDagResumeRuntimePlan
+```
+
+Runtime Planner 已从“多 frontier 直接拒绝”推进为“显式生成多 Node frontier Plan”：
+
+```text
+WorkflowDagResumePlanner
+        ↓
+frontier = [A, B, ...]
+        ↓
+branch_state_data = {
+    A: checkpoint_state_A,
+    B: checkpoint_state_B,
+}
+        ↓
+WorkflowDagBranchStateMergeService
+        ↓
+WorkflowDagResumeRuntimePlan
+    ├── frontier_node_ids
+    ├── nodes
+    └── merged state_data
+```
+
+安全约束：
+
+1. 多 frontier 必须为每个 frontier 提供已验证的分支 Checkpoint 状态；
+2. 缺失 frontier 分支状态直接拒绝；
+3. 非 frontier 分支状态直接拒绝；
+4. 冲突顶层状态键直接拒绝；
+5. Merge Result 和 Node Definition 均为深拷贝；
+6. 单 frontier 继续兼容旧 `state_data` 参数；
+7. 多 frontier 不提供 `frontier_node_id` / `node` 的隐式单 Node 选择；
+8. 当前只完成 Runtime Plan，尚未宣称并行 Node 实际执行、Join readiness、Checkpoint frontier persistence 已完成。
+
+## 7. Recovery Observability Contract
 
 正式入口：
 
@@ -95,14 +143,14 @@ WorkflowRecoveryEvent
 WorkflowRecoveryEventLogger
 ```
 
-事件名称：
+事件：
 
 ```text
 workflow.recovery.attempt
 workflow.recovery.scan.completed
 ```
 
-单次 Recovery Attempt：
+单次 Attempt 携带：
 
 ```text
 execution_id
@@ -114,39 +162,11 @@ max_attempts
 occurred_at
 ```
 
-Scheduler Scan Aggregate：
-
-```text
-candidates
-eligible
-recovered
-rejected
-contention
-failed
-scan_limit
-occurred_at
-```
-
-`contention` 当前严格由 `idempotency_hit` 驱动；禁止 Scheduler 根据异常类型猜测 row-lock / database contention。
-
-事件模型只允许记录恢复控制面信息；Checkpoint `state_data`、Secret、Provider credential、完整业务 payload 等敏感内容禁止进入事件。
-
-Recovery Attempt 只由 Recovery Domain 统一发射一次，Scheduler 不重复发射同一 Attempt Event。
+事件模型禁止写入 Checkpoint `state_data`、Secret、Provider credential 和完整业务 payload。
 
 后续 Metrics / Trace 接入必须复用该事件 Contract，不建立平行 Recovery 日志字段体系。
 
-## 6. Scheduler 生命周期
-
-`backend/app/entrypoints/scheduler.py` 当前同时运行：
-
-```text
-ScheduledTriggerScheduler
-WorkflowRecoveryScheduler
-```
-
-两条循环共享进程但不共享 DB Session；Recovery Scan 异常不会直接终止 Scheduled Trigger Dispatch。
-
-## 7. 单元测试
+## 8. 单元测试
 
 覆盖：
 
@@ -156,47 +176,27 @@ backend/tests/unit/test_workflow_automatic_recovery_service.py
 backend/tests/unit/test_workflow_resume_contract.py
 backend/tests/unit/test_workflow_recovery_scheduler.py
 backend/tests/unit/test_workflow_recovery_observability.py
+backend/tests/unit/test_workflow_dag_state_merge.py
+backend/tests/unit/test_workflow_dag_runtime.py
 ```
 
 本轮新增覆盖：
 
-- `created` outcome；
-- `idempotency_hit` outcome；
-- Source / Checkpoint 匹配校验；
-- Recovery Attempt outcome 传播；
-- Scheduler `created / idempotency_hit / contention` 聚合；
-- Scheduler 不重复发射 Attempt Event。
+- 多 frontier Runtime Plan；
+- frontier Node 确定性排序；
+- Branch State Merge 接入；
+- 缺失 / 非 frontier branch state 拒绝；
+- branch state 冲突拒绝；
+- 单 frontier API 兼容；
+- 多 frontier 禁止隐式选择单 Node。
 
 当前环境未实际执行新增测试，因此不得记录为“已通过”。
 
-## 8. API / Real Worker 主线
-
-保留并继续推进真实链路：
-
-```text
-Real HTTP
-   ↓
-PostgreSQL failed Execution + Checkpoint
-   ↓
-Recovery Scheduler / Domain
-   ↓
-Resume Outcome Contract
-   ↓
-Resume pending Execution
-   ↓
-独立 Worker claim / lease
-   ↓
-Resume Runtime
-   ↓
-新 Checkpoint / terminal state
-```
-
-Real API 测试当前不作为主线阻塞条件。
-
 ## 9. 下一任务
 
-1. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，则保持领域事件出口，不新增平行 exporter；
-2. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
-3. 冻结 DAG Branch State Merge Contract；
-4. 实现多 frontier Resume；
-5. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
+1. 将 Multi-frontier Runtime Plan 接入真实 WorkflowRuntime / Worker；
+2. 定义 branch execution 与 Join readiness；
+3. 持久化 frontier / branch execution Checkpoint 事实；
+4. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，保持领域事件出口，不新增平行 exporter；
+5. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
+6. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
