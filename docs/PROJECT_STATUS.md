@@ -29,7 +29,8 @@
 - Durable Frontier Retry Budget Resume：Node `attempt` 与 Workflow Retry budget 在 Worker Recovery 后从持久化事实恢复，避免 Runtime 重启清零本地计数并绕过 Retry 上限：✅
 - **Durable Frontier Checkpoint Continuation：Resume Runtime 主入口已实际应用 completed-Node filtering；全部线性 Node 已完成时直接 terminalize Execution，避免 Recovery 后 Node replay：✅**
 - **Durable Frontier Multi-frontier Completion Boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`：✅**
-- **Durable Frontier Completion Contract Hardening：`frontier_completed` 在统一 progression primitive 内强制保持 Execution-level snapshot，禁止混入 Node identity/status/input/output：✅ 本轮**
+- **Durable Frontier Completion Contract Hardening：`frontier_completed` 在统一 progression primitive 内强制保持 Execution-level snapshot，禁止混入 Node identity/status/input/output：✅**
+- **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活：✅ 本轮**
 
 ## 当前实现边界
 
@@ -75,29 +76,35 @@ Next Frontier
 
 ## 下一主线
 
-下一步继续收口 Frontier completion / Next Frontier 后的 Recovery consistency，重点检查 Multi-frontier Branch Node durable completion、`frontier_completed` Execution-level snapshot、Next Frontier deterministic identity 与 Worker lease/fencing 在失败、重试、Recovery 及重复消费窗口下是否保持单一事实来源。
+继续收口 Frontier completion / Next Frontier 后的 Recovery consistency，重点从“完成后不重复创建”推进到“terminal Execution 不得被旧 Frontier Recovery 重新打开”。下一步继续检查：
 
 ```text
-Multi-frontier Branch
+Frontier completion
   ↓
-NodeExecution durable completion
+Next Frontier deterministic identity
   ↓
-唯一 frontier_completed Checkpoint
+Execution terminalization
   ↓
-Next Frontier
+Expired Frontier Recovery
   ↓
 Worker Claim / Fencing
   ↓
 Recovery / Replay
 ```
 
-重点检查：同一 Frontier 不得产生两个 completion Checkpoint；Next Frontier 不得因为重复 completion 被重复执行；stale Worker 不得在 completion transaction 外写入新的 durable fact；Retry / Lease Recovery 不得重置已经持久化的 Node attempt 与 Workflow Retry budget。
+核心不变量：
+
+- completed / failed / cancelled Execution 不得重新产生可消费 Frontier；
+- 旧 Worker lease 到期只能回收仍属于可恢复 Execution 的 Frontier；
+- Recovery 不得改变已经 terminalize 的 Execution 状态；
+- Next Frontier 的 deterministic identity 与 tenant / workflow version / execution lineage 必须继续保持单一事实来源；
+- stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier_progression.py`
-- `backend/tests/unit/test_frontier_progression.py`
-- `docs/04-errors/2026-08-27-durable-frontier-checkpoint-continuation.md`
+- `backend/app/services/workflow/frontier_repository.py`
+- `backend/tests/unit/test_frontier_recovery_contract.py`
+- `docs/04-errors/2026-08-27-terminal-execution-frontier-recovery.md`
 - `docs/02-phases/PHASE_2_7.md`
 - `docs/PROJECT_STATUS.md`
 
