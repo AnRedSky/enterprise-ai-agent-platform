@@ -162,7 +162,7 @@ async def recover_expired_frontiers(
     now: datetime,
     limit: int = 100,
 ) -> list[WorkflowFrontier]:
-    """Move expired claimed/running Frontiers back to retry_wait without committing.
+    """回收仍属于可恢复 Execution 的过期 Frontier，不复活已结束 Execution 的旧 Frontier。
 
     Args:
         db: 当前数据库会话。
@@ -175,16 +175,26 @@ async def recover_expired_frontiers(
     Raises:
         ValueError: limit 非正数。
 
-    设计意图：过期租约只回收调度权，不直接递增 attempt；下一次成功 Claim 才产生新的 fencing generation。
+    设计意图：过期租约只回收调度权，不直接递增 attempt；同时必须检查关联 Execution
+    仍处于 pending/running。completed/failed/cancelled Execution 已经 terminalize 后，
+    旧 Worker 的迟到租约恢复不能重新制造 retry_wait Frontier，否则会重新打开已经结束的 Execution。
     """
     if limit <= 0:
         raise ValueError("limit must be positive")
     stmt = (
         select(WorkflowFrontier)
+        .join(
+            WorkflowExecution,
+            and_(
+                WorkflowExecution.id == WorkflowFrontier.execution_id,
+                WorkflowExecution.tenant_id == WorkflowFrontier.tenant_id,
+            ),
+        )
         .where(
             WorkflowFrontier.status.in_(("claimed", "running")),
             WorkflowFrontier.worker_lease_expires_at.is_not(None),
             WorkflowFrontier.worker_lease_expires_at <= now,
+            WorkflowExecution.status.in_(("pending", "running")),
         )
         .order_by(WorkflowFrontier.worker_lease_expires_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
         .with_for_update(skip_locked=True)
