@@ -22,6 +22,7 @@ from app.runtime.model import ModelGateway
 from app.runtime.workflow.circuit_breaker import CircuitBreakerService, CircuitOpenError
 from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.model import RuntimeModelGovernanceService
+from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
 from app.services.workflow.checkpoint.recovery.dag_executor import WorkflowDagMultiFrontierExecutor
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlanner
@@ -74,7 +75,7 @@ class WorkflowRuntime:
         for key, maximum in (("backoff_ms", 10_000), ("max_backoff_ms", 60_000), ("jitter_ms", 10_000)):
             value = policy[key]
             if isinstance(value, bool) or not isinstance(value, int) or value < 0 or value > maximum:
-                raise HTTPException(422, f"retry.{key} 必须在 0-{maximum} 范围内")
+                raise HTTPException(422, f"retry.{key} 必须在 0-{maximum} 毫秒范围内")
         if policy["max_backoff_ms"] < policy["backoff_ms"]:
             raise HTTPException(422, "retry.max_backoff_ms 不能小于 retry.backoff_ms")
         codes = policy["retryable_error_codes"]
@@ -145,16 +146,7 @@ class WorkflowRuntime:
         return normalized
 
     async def _load_completed_resume_nodes(self, execution) -> list[WorkflowNodeExecution]:
-        """读取当前 Execution 及 Resume Source 的已完成 Node 事实，并严格限制在当前租户边界内。
-
-        Args:
-            execution: 当前 Workflow Execution；其 `tenant_id` 是读取 NodeExecution 的强制租户边界。
-
-        Returns:
-            当前 Execution 与其 Resume Source 中按创建顺序排列的已完成 Node Execution。
-
-        设计意图：Resume 的完成事实属于租户隔离的数据资产。即使 execution_id 来自可信内部对象，也不能让未加 tenant scope 的查询成为跨租户读取入口。
-        """
+        """读取当前 Execution 及 Resume Source 的已完成 Node 事实，并严格限制在当前租户边界内。"""
         execution_ids = [execution.id]
         source_execution_id = getattr(execution, "resume_of_execution_id", None)
         if source_execution_id is not None:
@@ -173,22 +165,7 @@ class WorkflowRuntime:
         source_nodes: list[WorkflowNodeExecution],
         selected_predecessor_node_ids: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> dict[str, dict]:
-        """从已完成 predecessor 输出构造当前 frontier 的独立 Branch state。
-
-        Args:
-            definition: 已冻结的 Workflow Definition。
-            frontier_node_ids: 当前待执行的 frontier Node ID。
-            source_nodes: 当前 Execution 或 Resume Source 中已完成的 Node 事实。
-            selected_predecessor_node_ids: Planner 已确定的有效 predecessor；为空时回退到普通 DAG 全量 predecessor。
-
-        Returns:
-            每个 frontier Node 对应的独立状态快照。
-
-        Raises:
-            ValueError: frontier 缺少有效已完成 predecessor state。
-
-        业务边界：Conditional Branching 未命中的边不是 predecessor fact，因此必须优先使用 Planner 已选择的 predecessor，避免 Join 错把未命中分支视为完成。
-        """
+        """从已完成 predecessor 输出构造当前 frontier 的独立 Branch state。"""
         source_by_id: dict[str, dict] = {}
         for node in source_nodes:
             source_by_id[node.node_id] = dict(node.output_data or {})
@@ -217,21 +194,7 @@ class WorkflowRuntime:
         return result
 
     async def _resolve_dag_context(self, execution, definition: dict, state_data: dict):
-        """根据当前持久化 Node 完成事实计算初始执行或 Resume 的 DAG frontier。
-
-        Args:
-            execution: 当前 Workflow Execution。
-            definition: 已冻结的 Workflow Version Definition。
-            state_data: 当前执行上下文状态，用于 root 或单 frontier。
-
-        Returns:
-            `(plan, branch_state_data)`；没有 DAG edges 时返回 `None`，由旧顺序执行语义处理。
-
-        Raises:
-            HTTPException: 持久化完成事实、条件状态或 DAG Contract 不满足要求。
-
-        设计意图：Conditional Branching 必须同时作用于首次执行和 Resume；首次执行不能退回按 nodes 数组顺序执行，否则条件边只在恢复路径生效，会造成相同 Workflow Version 的两套运行语义。
-        """
+        """根据当前持久化 Node 完成事实计算初始执行或 Resume 的 DAG frontier。"""
         if not definition.get("edges"):
             return None
         source_nodes = await self._load_completed_resume_nodes(execution)
@@ -318,7 +281,7 @@ class WorkflowRuntime:
 
     async def _execute_multi_frontier(self, service, execution, plan, branch_state_data, actor_id, is_admin,
                                       workflow_timeout, max_retries, started, workflow_retry_counter):
-        """执行当前 Multi-frontier；成功 Branch 通过 transition_node 原子写入 NodeExecution 与 Checkpoint。"""
+        """执行当前 Multi-frontier，并在全部 Branch Node Fact 成功后写入 Execution-level frontier checkpoint。"""
         async def execute_branch(node, input_data):
             return await self._execute_node_with_policy(service, execution, node, input_data, actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
 
@@ -326,7 +289,26 @@ class WorkflowRuntime:
             if not isinstance(output, dict):
                 raise ValueError(f"DAG frontier Node {node_id} Checkpoint state 必须为对象")
 
-        return await WorkflowDagMultiFrontierExecutor.execute(plan, branch_state_data=branch_state_data, executor=execute_branch, checkpoint_writer=checkpoint_branch)
+        result = await WorkflowDagMultiFrontierExecutor.execute(
+            plan,
+            branch_state_data=branch_state_data,
+            executor=execute_branch,
+            checkpoint_writer=checkpoint_branch,
+        )
+        if not result.join_ready:
+            return result
+        checkpoint = WorkflowExecutionCheckpointService(self.db)
+        await checkpoint.append_next_in_transaction(
+            execution_id=execution.id,
+            execution_status=execution.status,
+            state_data=dict(result.merged_state_data or {}),
+            checkpoint_reason="frontier_completed",
+            worker_owner=execution.worker_owner,
+            expected_worker_owner=execution.worker_owner,
+            expected_worker_attempt=int(execution.worker_attempt or 0),
+            tenant_id=execution.tenant_id,
+        )
+        return result
 
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
