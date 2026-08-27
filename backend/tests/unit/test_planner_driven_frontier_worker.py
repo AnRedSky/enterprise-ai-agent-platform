@@ -4,6 +4,7 @@
 """
 
 from app.services.workflow_worker import (
+    DurableFrontierWorkflowWorker,
     PlannerDrivenDurableFrontierWorkflowWorker,
     WorkflowWorker,
 )
@@ -14,9 +15,9 @@ def test_workflow_worker_uses_planner_driven_frontier_worker():
     assert WorkflowWorker is PlannerDrivenDurableFrontierWorkflowWorker
 
 
-def test_planner_driven_worker_reuses_durable_frontier_worker():
-    """Planner-driven Worker 必须继承既有 Frontier Worker，而不是创建第二套 Worker。"""
-    assert issubclass(PlannerDrivenDurableFrontierWorkflowWorker, object)
+def test_planner_driven_worker_reuses_frontier_worker_contract():
+    """Planner-driven Worker 必须复用既有 Frontier Claim、Lease 与 Dispatch 契约。"""
+    assert issubclass(PlannerDrivenDurableFrontierWorkflowWorker, DurableFrontierWorkflowWorker)
     assert hasattr(PlannerDrivenDurableFrontierWorkflowWorker, "claim_one_frontier")
     assert hasattr(PlannerDrivenDurableFrontierWorkflowWorker, "dispatch_once")
     assert hasattr(PlannerDrivenDurableFrontierWorkflowWorker, "execute_frontier")

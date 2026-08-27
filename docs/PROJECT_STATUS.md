@@ -5,9 +5,9 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Durable Frontier → Checkpoint → Next Frontier 原子推进基础能力**；当前 Worker fencing 成功后，可在同一外层事务内完成当前 Frontier、追加 Execution Checkpoint，并基于确定性 identity 幂等创建后继 Frontier。
+- 本轮已完成：**Runtime / Planner → Durable Frontier progression wiring**；默认 Durable Frontier Worker 现在以 Planner 输出作为单次执行边界，执行当前 frontier 后重新规划后继 frontier，并在同一事务中完成当前 Frontier terminal、Next Frontier enqueue 与 Execution terminal transition。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
-- Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution `completed/failed` transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
+- Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -15,7 +15,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling 以及 Frontier → Checkpoint → Next Frontier 原子推进基础能力。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进以及 Runtime/Planner progression wiring。**
 
 ## Phase 2.7 当前实现
 
@@ -50,15 +50,16 @@
 - `transition_owned_frontier()` 强制同时校验 `worker_owner + attempt` fencing generation，stale Worker 不能覆盖新 Worker 的 Frontier；
 - `renew_owned_frontier_lease()` 提供带 fencing generation 的 Frontier lease heartbeat；
 - Scheduled Trigger 现在在同一调用方事务内为新 pending Execution 创建首个 Durable Frontier，Frontier 与 Execution 共享 tenant / workflow version / execution identity；
-- 默认 `WorkflowWorker` 已切换为 `DurableFrontierWorkflowWorker`，Claim Frontier 后在同一事务取得对应 Execution ownership，再复用既有 `LeaseAwareWorkflowWorker` / `WorkflowExecutionService` Runtime；
-- Frontier Worker 同时维护 Frontier lease heartbeat 与既有 Execution lease heartbeat，并在 Execution terminal state 后通过 `transition_owned_frontier()` 收敛 Frontier terminal state；
+- 默认 `WorkflowWorker` 已切换为 `PlannerDrivenDurableFrontierWorkflowWorker`，Claim Frontier 后在同一事务取得对应 Execution ownership，再复用既有 `WorkflowRuntime` 的 Planner、Node execution 与 Checkpoint 能力；
+- Frontier Worker 同时维护 Frontier lease heartbeat 与既有 Execution lease heartbeat，并在 Execution terminal state 后通过 fencing transition 收敛 Frontier terminal state；
 - `FrontierRetryPolicy` 提供 max attempts、bounded exponential backoff；
 - `schedule_frontier_retry()` 将当前 Worker 持有的 Frontier 转为 `retry_wait` 并设置 `available_at`，下一次 Claim 才递增 attempt；达到 max attempts 后同一 Frontier 转为 `failed`；
 - Retry scheduling 不创建新的 WorkflowExecution / Frontier，并通过既有 fencing transition 防止 stale Worker 写入；
 - `complete_frontier_with_checkpoint()` 固定 Frontier → Execution/Checkpoint → Next Frontier 的锁顺序，在同一外层事务内完成当前 Frontier terminal transition、Checkpoint sequence 分配及 Next Frontier 幂等入队；
-- Next Frontier 强制复用当前 Execution / Workflow Version，并使用 `WorkflowFrontierIdentity` 作为唯一 durable identity；
-- Terminal Frontier 可以只追加最终 Checkpoint 而不创建后继 Frontier；
-- Frontier progression 不负责 Planner 决策、Runtime 执行或 commit，调用方仍拥有完整事务边界。
+- `PlannerDrivenDurableFrontierWorkflowWorker` 复用 `WorkflowRuntime._load_completed_resume_nodes()`、`_build_frontier_branch_states()`、`_execute_node_with_policy()`、`_execute_multi_frontier()` 与 `WorkflowDagResumePlanner`，每次 dispatch 只消费当前 Planner frontier；
+- DAG 当前 frontier 成功后重新读取持久化 Node facts，重新运行唯一 Planner，并以新的 `decision_fingerprint + ordered node IDs` 生成 Next Frontier identity；
+- 无 Edge 顺序 Workflow 每次只推进一个未完成 Node，按 Definition 顺序生成下一 Frontier；
+- Frontier progression 不复制 DAG 条件求值、State Merge、Runtime 或 Retry 算法。
 
 ## 当前开发策略
 
@@ -88,10 +89,11 @@ Durable Frontier Scheduling
   ├── Worker → Runtime bridge           ✅
   ├── Frontier lease heartbeat          ✅
   ├── Retry scheduling                  ✅
-  ├── Frontier → Checkpoint progression ✅ 本轮
-  └── Next Frontier idempotent enqueue  ✅ 本轮
+  ├── Frontier → Checkpoint progression ✅
+  ├── Next Frontier idempotent enqueue  ✅
+  └── Runtime/Planner progression wiring ✅ 本轮
           ↓
 继续主线直到全部任务完成
 ```
 
-Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint 生命周期。
+Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint → Next Frontier 生命周期。

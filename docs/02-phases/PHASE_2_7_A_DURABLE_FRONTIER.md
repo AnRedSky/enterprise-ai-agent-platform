@@ -63,20 +63,22 @@ WorkflowExecution(pending)
    +
 WorkflowFrontier(pending)
    ↓
-DurableFrontierWorkflowWorker
+PlannerDrivenDurableFrontierWorkflowWorker
    ↓
-Frontier claim + Execution ownership（同一事务）
-   ↓
-LeaseAwareWorkflowWorker
+Frontier claim + Execution ownership
    ↓
 唯一 WorkflowExecutionService / WorkflowRuntime
    ↓
-Execution terminal
+当前 Planner frontier Node execution
    ↓
-Frontier terminal
+Checkpoint facts
+   ↓
+当前 Frontier terminal + Next Frontier enqueue
 ```
 
-Scheduled Trigger 使用 slot idempotency key 创建 Execution 后，在同一调用方事务内创建首个 Frontier。默认 `WorkflowWorker` 已切换为 `DurableFrontierWorkflowWorker`；它不会复制 Runtime，而是复用已有 `LeaseAwareWorkflowWorker` / `WorkflowExecutionService`。
+默认 `WorkflowWorker` 已切换为 `PlannerDrivenDurableFrontierWorkflowWorker`。该 Worker 继承既有 `DurableFrontierWorkflowWorker` 的 Claim / Lease / Dispatch 契约，并只编排一次 Planner frontier，不复制 Runtime、Planner、Checkpoint 或 Retry 算法。
+
+历史 Scheduled Trigger 首个 Frontier 可能保存完整 Node 集合作为 bootstrap work item。首次 Durable dispatch 允许从该记录中按 Planner root 实际执行；从第二个 Frontier 开始必须与 Planner 输出严格一致。该兼容逻辑仅用于历史记录收敛，不扩展为新的长期 Contract。
 
 Worker 同时维护 Frontier lease heartbeat 与 Execution lease heartbeat。Frontier terminal transition 必须再次通过 `worker_owner + attempt` fencing；如果旧 Worker 已失去 ownership，则不伪造 Frontier terminal state，等待 lease recovery。
 
@@ -84,7 +86,7 @@ Manual / Webhook Trigger 暂不强制迁移到 Frontier，避免在本阶段改�
 
 ## 7. Retry Scheduling
 
-本轮已完成 Durable Frontier Retry Scheduling 基础生产能力：
+已完成 Durable Frontier Retry Scheduling 基础生产能力：
 
 ```text
 Runtime retryable failure
@@ -119,41 +121,64 @@ new fencing generation
 
 ## 8. Frontier → Checkpoint → Next Frontier 原子推进
 
-本交付单元已经完成 Durable Progression 基础生产能力：
+基础 Progression primitive 已完成，并已进入真实 Planner-driven Worker 路径：
 
 ```text
 Worker fencing valid
         ↓
-lock current Frontier
+lock current Frontier / Execution
         ↓
-append next Execution Checkpoint
+Runtime executes current Planner frontier
         ↓
-allocate checkpoint sequence under Execution lock
+Node Execution + Checkpoint facts
+        ↓
+Planner rebuilds next frontier
+        ↓
+current Frontier COMPLETED
         ↓
 idempotent enqueue Next Frontier
         ↓
 outer transaction COMMIT
 ```
 
-实现入口：
+基础 Persistence API：
 
-- `complete_frontier_with_checkpoint()` 固定锁顺序 `Frontier → Execution/Checkpoint → Next Frontier`；
+- `complete_frontier_with_checkpoint()` 固定 Frontier → Execution/Checkpoint → Next Frontier 的锁顺序；
 - 当前 Frontier 必须通过 `worker_owner + attempt` fencing 后才能写入新的 Checkpoint；
 - Checkpoint sequence 继续由 `WorkflowExecutionCheckpointService.append_next_in_transaction()` 在 Execution row lock 下分配；
 - Next Frontier 必须属于同一 Execution / Workflow Version，并通过 `WorkflowFrontierIdentity` + tenant/key unique constraint 幂等入队；
 - Terminal Frontier 可以只追加最终 Checkpoint，不创建后继 Frontier；
-- 该 Progression Service 不执行 commit，当前 Frontier、Checkpoint 与 Next Frontier 必须由同一外层事务统一提交；
-- 任一阶段失败都必须由调用方回滚，不能留下 `Checkpoint 已写入但 Frontier 未推进` 或 `Frontier 已完成但 Next Frontier 未持久化` 的半状态。
+- Persistence primitive 不执行 commit，外层调用方负责事务提交。
+
+### Planner-driven Runtime Integration
+
+新增 `PlannerDrivenDurableFrontierWorkflowWorker` 作为默认 Worker 正式入口。它复用现有 `WorkflowRuntime._resolve_dag_context()`、`_execute_node_with_policy()`、`_execute_multi_frontier()` 与 `WorkflowDagResumePlanner`，每次 dispatch 只执行当前 Planner frontier，执行完成后重新规划并持久化后继 Frontier。
+
+对于 DAG：
+
+```text
+Planner frontier
+      ↓
+Node / Multi-frontier execution
+      ↓
+Durable Node facts / Checkpoint
+      ↓
+Planner rebuild
+      ↓
+Next frontier
+```
+
+对于无 Edge 的顺序 Workflow，Worker 每次只推进当前未完成 Node，并按 Definition 顺序生成下一 Frontier，避免一次 Claim 再次执行完整 Workflow。
 
 ### 锁顺序约束
 
-Worker Claim 已采用 `Frontier → Execution` 的锁顺序，因此 Progression 同样固定先锁当前 Frontier，再进入 Checkpoint/Execution 锁，避免形成反向锁等待链。
+Worker Claim 与 Progression 固定采用 Frontier → Execution 的锁顺序，避免形成反向锁等待链。
 
 ### 当前边界
 
-该 primitive 接受 Planner 已确定的 `next_identity`，不在 Persistence 层重新执行 DAG 条件求值、State Merge 或 Planner。下一阶段必须在真实 Runtime/DAG Planner integration 中提供确定性 Next Frontier，并继续复用唯一 Planner/Runtime。
+Persistence 层不重新执行 DAG 条件求值、State Merge 或 Planner；确定性 Next Frontier 必须由 Planner 输出。Durable Worker 是现有 Runtime 的调度适配层，不得复制第二套 Runtime。
 
-## 9. 当前剩余主线
+## 9. 当前主线
 
 ```text
 Durable Frontier Scheduling
@@ -164,10 +189,10 @@ Durable Frontier Scheduling
    ├── Retry scheduling                    ✅
    ├── Frontier → Checkpoint progression  ✅
    ├── Next Frontier idempotent enqueue    ✅
-   └── Runtime/Planner progression wiring  ⏭
+   └── Runtime/Planner progression wiring  ✅ 本轮
 ```
 
-下一交付单元不再扩展 Frontier Persistence primitive，而是把 `complete_frontier_with_checkpoint()` 接入真实 Runtime/DAG Planner 成功路径：Planner 输出 deterministic next frontier，Runtime 在同一 Execution transaction 中固化 checkpoint 并推进后继 Frontier。
+下一交付单元转入 Durable Frontier 的异常路径收敛：将 Runtime retryable failure、Frontier retry scheduling、expired lease recovery、terminal failure 统一接入同一 Worker 生命周期，并验证不会产生重复 Execution / Frontier。
 
 ## 10. 测试边界
 
