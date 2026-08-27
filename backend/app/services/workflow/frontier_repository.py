@@ -18,6 +18,26 @@ from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 
 
+def _execution_recoverable_filter(now: datetime):
+    """生成 Execution lease 可回收条件，避免 Frontier 单独过期造成双 Worker 消费。
+
+    Args:
+        now: 当前时间。
+
+    Returns:
+        SQLAlchemy 条件表达式：Execution 没有 owner、没有 lease，或 lease 已过期。
+
+    设计意图：Frontier 与 Execution 是同一个 Worker ownership 生命周期的两层 durable fact。
+    恢复 Frontier 前必须同时确认 Execution 已失去有效租约，否则旧 Worker 仍可能持有 Execution
+    并继续执行，新的 Worker 却已经获得同一个 Frontier，形成重复消费窗口。
+    """
+    return or_(
+        WorkflowExecution.worker_owner.is_(None),
+        WorkflowExecution.worker_lease_expires_at.is_(None),
+        WorkflowExecution.worker_lease_expires_at <= now,
+    )
+
+
 async def enqueue_frontier(
     db: AsyncSession,
     *,
@@ -183,11 +203,6 @@ async def recover_expired_frontiers(
     """
     if limit <= 0:
         raise ValueError("limit must be positive")
-    execution_recoverable = or_(
-        WorkflowExecution.worker_owner.is_(None),
-        WorkflowExecution.worker_lease_expires_at.is_(None),
-        WorkflowExecution.worker_lease_expires_at <= now,
-    )
     stmt = (
         select(WorkflowFrontier)
         .join(
@@ -202,7 +217,7 @@ async def recover_expired_frontiers(
             WorkflowFrontier.worker_lease_expires_at.is_not(None),
             WorkflowFrontier.worker_lease_expires_at <= now,
             WorkflowExecution.status.in_(("pending", "running")),
-            execution_recoverable,
+            _execution_recoverable_filter(now),
         )
         .order_by(WorkflowFrontier.worker_lease_expires_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
         .with_for_update(skip_locked=True)
