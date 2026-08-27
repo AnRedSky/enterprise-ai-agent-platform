@@ -86,16 +86,7 @@ async def list_workflow_executions(
     claims=Depends(current_claims),
     db: AsyncSession = Depends(get_db),
 ):
-    """查询 Workflow 下的 Execution，包括 Scheduler 创建的 Execution。
-
-    Args:
-        workflow_id: Workflow 标识。
-        claims: 当前用户身份声明。
-        db: 当前数据库会话。
-
-    Returns:
-        当前租户且用户有权访问的 Execution 列表。
-    """
+    """查询 Workflow 下的 Execution，包括 Scheduler 创建的 Execution。"""
     tenant_id = _tenant_id(claims)
     actor_id = UUID(claims["sub"])
     is_admin = "admin" in claims.get("roles", [])
@@ -165,26 +156,13 @@ async def retry_execution(execution_id: UUID, claims=Depends(require_roles("user
 @router.post("/executions/{execution_id}/resume", status_code=201)
 async def resume_execution(execution_id: UUID, claims=Depends(require_roles("user", "admin")),
                            db: AsyncSession = Depends(get_db)):
-    """通过 Durable Resume Contract 创建新的 pending Execution。
-
-    Args:
-        execution_id: 作为恢复来源的 failed Execution 标识。
-        claims: 当前用户身份声明。
-        db: 当前数据库会话。
-
-    Returns:
-        新创建或幂等命中的 Resume Execution；来源 Execution 保持原状态。
-
-    Raises:
-        HTTPException: 来源 Execution 不存在、越权或不满足 Durable Resume 安全边界。
-
-    事务边界：HTTP 层只调用正式 Resume Domain Service，不直接修改来源状态、抢占 Worker
-    ownership 或启动 Runtime；新 Execution 仍通过 pending 队列进入标准 Worker claim。
-    """
+    """通过 Durable Resume Contract 创建新的 pending Execution。"""
     service = WorkflowExecutionService(db)
     actor_id = UUID(claims["sub"])
     execution = await service.get(execution_id, _tenant_id(claims), actor_id, "admin" in claims.get("roles", []))
-    resume_execution_item = await service.resume_from_latest_checkpoint(execution, actor_id)
+    resume_execution_item = await service.resume_from_latest_checkpoint(execution, actor_id, commit=False)
+    await db.commit()
+    await db.refresh(resume_execution_item)
     return _execution_response(resume_execution_item)
 
 
