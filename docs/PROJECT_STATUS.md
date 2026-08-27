@@ -40,7 +40,8 @@
 - Durable Frontier Claim Head-of-Line Guard：blocked tenant 不再阻塞其他可执行 tenant：✅
 - Durable Frontier Failure Terminalization Transaction Boundary：Failure retry/failed 与 Execution failed 统一补偿事务：✅
 - Durable Frontier Completion Source Binding：`frontier_completed` Checkpoint 显式绑定 source Frontier，重复 completion 不再按 Execution 下最新 Checkpoint 猜测来源；历史未绑定事实不启发式回填：✅
-- **Durable Frontier Recovery Multi-frontier Re-entry：Recovery 同时释放同一 Execution 的多个过期 Frontier 后，首个 Claim 取得 Execution ownership，后续 Frontier 允许复用同一 Worker epoch，不再因 `pending + current owner` 被错误阻塞：✅ 本轮**
+- Durable Frontier Recovery Multi-frontier Re-entry：Recovery 同时释放同一 Execution 的多个过期 Frontier 后，首个 Claim 取得 Execution ownership，后续 Frontier 允许复用同一 Worker epoch，不再因 `pending + current owner` 被错误阻塞：✅
+- **Durable Frontier Stale Lease Completion Guard：Frontier 最终 completion/failure transition 现在同时校验 owner、attempt 与未过期 Worker lease，阻断 lease 已过期但 Recovery 尚未完成清理时的旧 Worker 写入：✅ 本轮**
 
 ## 当前实现边界
 
@@ -97,6 +98,8 @@ Concurrent multi-frontier Claim
         ↓
 Execution epoch reuse / reacquisition
         ↓
+Stale Worker completion / failure guard
+        ↓
 Duplicate consumption guard
         ↓
 Success / Failure terminalization
@@ -123,14 +126,14 @@ Phase 2.7 主线完成
 - Worker tenant candidate 必须与实际 Frontier Claim 使用相同的 Execution eligibility 规则；
 - Durable Frontier failure 的 Frontier retry/failed 与 Execution failed 必须共享同一补偿事务；
 - `frontier_completed` Checkpoint 必须绑定 source Frontier，不得从同一 Execution 下其他 Frontier 的最新 completion fact 推断当前 Frontier 的幂等事实；
-- **同一 Execution Recovery 后存在多个 retry_wait Frontier 时，当前 Worker 已取得 pending Execution ownership 后，后续 Frontier 必须复用同一 worker_attempt，不得再次递增 fencing generation，也不得被 pending 状态阻塞。**
+- 同一 Execution Recovery 后存在多个 retry_wait Frontier 时，当前 Worker 已取得 pending Execution ownership 后，后续 Frontier 必须复用同一 worker_attempt，不得再次递增 fencing generation，也不得被 pending 状态阻塞；
+- **Frontier terminal transition 除 owner 与 attempt 外必须证明 `worker_lease_expires_at > now`，lease 已失效的旧 Worker 不得完成或失败 Frontier。**
 
 ## 本轮交付
 
-- `backend/app/services/workflow_worker/frontier_runtime.py`
 - `backend/app/services/workflow/frontier_repository.py`
-- `backend/tests/unit/test_frontier_recovery_reentry.py`
+- `backend/tests/unit/test_frontier_stale_lease_completion.py`
 - `docs/PROJECT_STATUS.md`
-- `docs/04-errors/2026-08-27-frontier-recovery-multi-frontier-reentry.md`
+- `docs/04-errors/2026-08-27-frontier-stale-lease-completion.md`
 
 **Unit Test：本轮仅实现测试代码，当前环境未执行 pytest，因此不记录 PASS。**
