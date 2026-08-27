@@ -69,3 +69,33 @@ class WorkflowNodeExecution(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+
+
+class WorkflowFrontier(Base):
+    """Durable DAG Frontier，作为 Scheduler 与 Worker 之间的持久化 work item。"""
+
+    __tablename__ = "workflow_frontiers"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "frontier_key", name="uq_workflow_frontier_tenant_key"),
+        Index("ix_workflow_frontier_claim", "tenant_id", "status", "available_at"),
+        Index("ix_workflow_frontier_execution", "tenant_id", "execution_id", "created_at"),
+        Index("ix_workflow_frontier_worker_lease", "status", "worker_lease_expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="RESTRICT"), index=True)
+    execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflow_executions.id", ondelete="CASCADE"), index=True)
+    workflow_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflow_versions.id", ondelete="RESTRICT"), index=True)
+    decision_fingerprint: Mapped[str] = mapped_column(String(128))
+    frontier_key: Mapped[str] = mapped_column(String(128))
+    node_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    worker_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    worker_lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    available_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow_naive, index=True)
