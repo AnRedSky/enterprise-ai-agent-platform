@@ -5,7 +5,8 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Durable Recovery Resume Trace 原子事务闭环**；Automatic Recovery 现在将 Resume 创建、completed Node lineage、首个 Durable Frontier 与 `recovery.trace_linked` 在同一外层事务中提交，避免恢复审计事实与 Resume durable state 分裂。
+- 本轮已完成：**Recovery / Replay tenant boundary 收敛**；Resume Bootstrap 在复制 Source completed Node lineage 时再次强制 Source / Resume tenant 一致，并在 SQL 查询层继续携带 tenant scope，避免恢复 lineage 在领域服务内部失去租户边界。
+- Durable Recovery Resume Trace 原子事务闭环已完成；Automatic Recovery 现在将 Resume 创建、completed Node lineage、首个 Durable Frontier 与 `recovery.trace_linked` 在同一外层事务中提交，避免恢复审计事实与 Resume durable state 分裂。
 - Durable Resume 现在固定 Source Workflow Version，使用 `execution_id + checkpoint_sequence` 生成确定性 Resume idempotency key；并通过 Resume Bootstrap 计算首个 Planner frontier。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
@@ -16,7 +17,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap 以及 Recovery Trace 原子事务闭环。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环以及 Join predecessor Contract 收敛。**
 
 ## Phase 2.7 当前实现
 
@@ -28,8 +29,9 @@
 - Conditional frontier 按 Definition 顺序确定性选择并允许多个条件同时命中形成并行 frontier；
 - Planner 输出 selected predecessor facts，Join readiness 不复制条件解析；
 - 首次执行与 Resume 均通过统一 DAG Planner；
-- Conditional Join 只消费 Planner selected predecessor；
+- Conditional Join 只消费 Planner selected predecessor，并拒绝未知或重复 predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
+- Resume Bootstrap 开始时强制 Source / Resume `tenant_id` 一致，Source completed Node 与 Resume lineage 查询均通过 `WorkflowExecution` JOIN 携带 tenant scope；
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
 - Resume Contract 在 Source Execution row lock 后再次强制使用 `locked_execution.tenant_id` 查询最新 Checkpoint；
 - Resume Contract 创建 Resume 时使用 `commit=False`，随后由 `WorkflowExecutionResumeBootstrapService` 在同一事务复制 completed Node lineage 并 enqueue 首个 Frontier；

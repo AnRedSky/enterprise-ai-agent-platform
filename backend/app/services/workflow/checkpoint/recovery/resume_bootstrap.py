@@ -19,6 +19,25 @@ from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier
 
 
+def _validate_resume_tenant_scope(*, source_execution: WorkflowExecution, resume_execution: WorkflowExecution) -> None:
+    """校验 Resume Source 与目标 Execution 必须处于同一租户边界。
+
+    Args:
+        source_execution: 已通过 Recovery Contract 校验的源 Execution。
+        resume_execution: 待 Bootstrap 的 Resume Execution。
+
+    Returns:
+        None：租户边界一致时正常返回。
+
+    Raises:
+        ValueError: Source 与 Resume 的 tenant_id 不一致。
+
+    设计意图：Resume 会复制 Source 的 Durable Node Facts，若不先固定 tenant boundary，后续查询即使带租户过滤也可能形成跨租户 lineage。
+    """
+    if source_execution.tenant_id != resume_execution.tenant_id:
+        raise ValueError("Resume Execution 与 Source Execution 必须属于同一 tenant")
+
+
 class WorkflowExecutionResumeBootstrapService:
     """在 Resume Execution 创建后建立 completed Node lineage 与首个 Durable Frontier。"""
 
@@ -43,10 +62,14 @@ class WorkflowExecutionResumeBootstrapService:
             tuple[str, ...]: 首个 Resume Frontier 的有序 Node IDs。
 
         Raises:
-            ValueError: Source/Resume lineage、Workflow Version 或 completed Node facts 不一致。
+            ValueError: Source/Resume lineage、租户、Workflow Version 或 completed Node facts 不一致。
 
         事务边界：本方法不 commit；调用方必须将 Node lineage 与 Frontier enqueue 与 Resume 创建放入同一事务。
         """
+        _validate_resume_tenant_scope(
+            source_execution=source_execution,
+            resume_execution=resume_execution,
+        )
         if resume_execution.resume_of_execution_id != source_execution.id:
             raise ValueError("Resume Execution lineage 与 Source Execution 不一致")
         if resume_execution.workflow_version_id != source_execution.workflow_version_id:
@@ -64,9 +87,15 @@ class WorkflowExecutionResumeBootstrapService:
 
         source_nodes_result = await self.db.execute(
             select(WorkflowNodeExecution)
+            .join(
+                WorkflowExecution,
+                WorkflowExecution.id == WorkflowNodeExecution.execution_id,
+            )
             .where(
                 WorkflowNodeExecution.execution_id == source_execution.id,
                 WorkflowNodeExecution.status == "completed",
+                WorkflowExecution.id == source_execution.id,
+                WorkflowExecution.tenant_id == source_execution.tenant_id,
             )
             .order_by(WorkflowNodeExecution.created_at, WorkflowNodeExecution.node_id)
         )
@@ -77,9 +106,15 @@ class WorkflowExecutionResumeBootstrapService:
         for node in source_nodes:
             existing = (
                 await self.db.execute(
-                    select(WorkflowNodeExecution).where(
+                    select(WorkflowNodeExecution)
+                    .join(
+                        WorkflowExecution,
+                        WorkflowExecution.id == WorkflowNodeExecution.execution_id,
+                    )
+                    .where(
                         WorkflowNodeExecution.execution_id == resume_execution.id,
                         WorkflowNodeExecution.node_id == node.node_id,
+                        WorkflowExecution.tenant_id == resume_execution.tenant_id,
                     )
                 )
             ).scalar_one_or_none()
