@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Mapping
 
-from app.models.workflow_execution import WorkflowNodeExecution
 from app.runtime.workflow.runtime import WorkflowRuntime as BaseWorkflowRuntime
 from app.services.workflow.checkpoint.recovery.dag_join import WorkflowDagJoinReadinessService
 
@@ -34,6 +33,15 @@ class WorkflowRuntime(BaseWorkflowRuntime):
             and isinstance(edge.get("source"), str)
         ))
 
+    @staticmethod
+    def _is_join_node(definition: dict, node_id: str) -> bool:
+        return any(
+            isinstance(node, dict)
+            and node.get("id") == node_id
+            and node.get("type") == "join"
+            for node in definition.get("nodes", [])
+        )
+
     async def _resolve_resume_context(self, execution, definition: dict, state_data: dict):
         """Resume 时将 Join frontier 接入正式 Readiness Contract。"""
         context = await super()._resolve_resume_context(execution, definition, state_data)
@@ -44,7 +52,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
             return context
 
         node_id = plan.frontier_node_ids[0]
-        if node_id not in {node.get("id") for node in definition.get("nodes", []) if isinstance(node, dict)}:
+        if not self._is_join_node(definition, node_id):
             return context
         if len(self._join_predecessors(definition, node_id)) < 2:
             return context
