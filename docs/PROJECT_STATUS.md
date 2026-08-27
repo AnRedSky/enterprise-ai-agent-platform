@@ -53,7 +53,9 @@
 - Durable Frontier Claim-layer Duplicate Consumption Guard：Worker Claim 前检查同 Execution 活动 Frontier Node-set，overlap 不进入 claimed：✅
 - Durable Frontier Terminalization Lock-order Closure：Planner Runtime 成功路径不再提前锁定 Execution，成功与失败路径统一遵循 Frontier → Execution 锁序：✅
 - Durable Frontier Terminal Replay Binding Closure：重复 completion 对既有 Next Frontier 的 decision fingerprint 与 Node 集合执行严格一致性校验；同 key 但 fingerprint 或 Node-set drift 均拒绝收敛：✅
-- **Durable Frontier Terminal Replay Lifecycle Closure：重复 completion 必须复现第一次 completion 的 Execution lifecycle；running completion 必须继续提供原始 Next Frontier identity，terminal completion 禁止追加 Next Frontier identity，非法 replay lifecycle 直接拒绝：✅ 本轮**
+- Durable Frontier Terminal Replay Lifecycle Closure：重复 completion 必须复现第一次 completion 的 Execution lifecycle；running completion 必须继续提供原始 Next Frontier identity，terminal completion 禁止追加 Next Frontier identity，非法 replay lifecycle 直接拒绝：✅
+- Durable Frontier Success/Failure Terminalization Sibling Closure：Execution terminalization 时关闭仍处于活动生命周期的 sibling Frontier，避免 terminal Execution 与可消费 Durable work item 并存：✅
+- **Durable Frontier Replay Duplicate Fact Closure：同一 source Frontier 存在多个 `frontier_completed` Checkpoint 时 fail-closed，禁止通过“取最新一条”掩盖 Durable fact 分叉：✅ 本轮**
 
 ## 当前实现边界
 
@@ -105,6 +107,9 @@ Terminal Replay Lifecycle Guard
   ├── running completion ↔ Next Frontier identity required
   └── completed terminalization ↔ Next Frontier identity forbidden
   ↓
+Terminal Durable Fact Uniqueness Guard
+  └── one source Frontier + completion reason → exactly one completion Checkpoint
+  ↓
 Frontier / Checkpoint / Execution progression
   ↓
 唯一 COMMIT / ROLLBACK
@@ -125,19 +130,21 @@ Recovery / Replay
 继续收口：
 
 ```text
-Concurrent multi-frontier Claim / Claim-layer overlap fencing     ← 已完成
-Terminalization lock-order closure                                ← 已完成
-Terminal Replay Binding Closure                                   ← 已完成
-Terminal Replay Lifecycle Closure                                 ← 已完成
+Claim / overlap fencing                    ← 已完成
+Terminalization lock-order                 ← 已完成
+Terminal Replay Binding                    ← 已完成
+Terminal Replay Lifecycle                  ← 已完成
+Success / Failure sibling closure          ← 已完成
+Duplicate completion fact closure          ← 已完成
         ↓
-Success / Failure terminalization closure
+Success / Failure terminalization final audit
         ↓
-Replay convergence final closure
+Replay convergence final audit
         ↓
 Phase 2.7 主线完成
 ```
 
-下一步重点为 **Success / Failure terminalization closure**：统一检查成功与失败路径在 Frontier、Checkpoint、Execution 生命周期之间的终态一致性，并继续验证 Replay convergence 不产生第二套 Durable fact。Claim-layer 同一 Execution 并发边界、terminalization lock-order、Next Frontier replay binding 与 Replay lifecycle boundary 已完成，不再重复实现第二套 fencing 逻辑。
+下一步重点为 **Success / Failure terminalization final audit** 与 **Replay convergence final audit**：不再重复增加相同 fencing，而是系统性检查成功、失败、retry、recovery、duplicate completion、stale Worker、terminal lifecycle 是否能够共同收敛到唯一 Durable result。
 
 核心不变量：
 
@@ -152,6 +159,7 @@ Phase 2.7 主线完成
 - 终态 Frontier 的 Frontier、Checkpoint、Execution terminalization 必须共享同一数据库事务；
 - 终态 Frontier terminalization 前必须再次证明 Frontier owner、Execution owner 与 fencing generation 属于同一 Worker epoch；
 - 已提交 Frontier 的重复 completion 必须精确绑定其 source Frontier 的 Durable Checkpoint / Next Frontier；payload drift、缺失绑定 Checkpoint、fingerprint drift 或 Node-set drift 必须拒绝收敛；
+- 同一 source Frontier + completion reason 最多允许一个 completion Checkpoint；发现多个 completion facts 必须 fail-closed，不得按 sequence 猜测权威事实；
 - Recovery 只有在 Frontier lease 与关联 Execution ownership 同时失效后才能把 Frontier 重新放入 retry 队列；
 - Worker tenant candidate 必须与实际 Frontier Claim 使用相同的 Execution eligibility 规则；
 - Durable Frontier failure 的 Frontier retry/failed 与 Execution failed 必须共享同一补偿事务；
@@ -173,7 +181,8 @@ Phase 2.7 主线完成
 ## 本轮交付
 
 - `backend/app/services/workflow/frontier_progression.py`
-- `backend/tests/unit/test_frontier_terminal_replay_lifecycle.py`
+- `backend/tests/unit/test_frontier_duplicate_consumption.py`
+- `docs/04-errors/2026-08-27-durable-frontier-replay-duplicate-checkpoint.md`
 - `docs/PROJECT_STATUS.md`
 
 **测试：本轮未执行 pytest、集成测试、本地手动测试或 E2E；不得记录 PASS。**
