@@ -48,28 +48,15 @@ async def test_agent_node_uses_published_agent_version_and_governed_gateway():
     version_id = uuid4()
     profile_id = uuid4()
     agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
-    version = SimpleNamespace(
-        id=version_id,
-        agent_id=agent_id,
-        system_prompt="system",
-        model_id="legacy-model-id",
-        model_profile_id=profile_id,
-        version="1.0.0",
-    )
+    version = SimpleNamespace(id=version_id, agent_id=agent_id, system_prompt="system", model_id="legacy-model-id", model_profile_id=profile_id, version="1.0.0")
     db.execute = AsyncMock(side_effect=[
         SimpleNamespace(scalar_one_or_none=lambda: agent),
         SimpleNamespace(scalar_one_or_none=lambda: version),
         SimpleNamespace(scalar_one_or_none=lambda: organization_id),
     ])
     runtime = WorkflowRuntime(db)
-    governed_result = SimpleNamespace(content="ok", usage=None, model="governed-model")
-    runtime.governance.invoke = AsyncMock(return_value=governed_result)
-
-    result = await runtime.execute_node(
-        {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
-        {"input": "hello"}, owner_id, False, uuid4(), tenant_id,
-    )
-
+    runtime.governance.invoke = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None, model="governed-model"))
+    result = await runtime.execute_node({"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}}, {"input": "hello"}, owner_id, False, uuid4(), tenant_id)
     assert result["content"] == "ok"
     assert result["model_id"] == "governed-model"
     runtime.governance.invoke.assert_awaited_once()
@@ -88,14 +75,7 @@ async def test_agent_node_without_profile_uses_organization_default_routing():
     organization_id = uuid4()
     version_id = uuid4()
     agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
-    version = SimpleNamespace(
-        id=version_id,
-        agent_id=agent_id,
-        system_prompt="system",
-        model_id="legacy-model-id",
-        model_profile_id=None,
-        version="1.0.0",
-    )
+    version = SimpleNamespace(id=version_id, agent_id=agent_id, system_prompt="system", model_id="legacy-model-id", model_profile_id=None, version="1.0.0")
     db.execute = AsyncMock(side_effect=[
         SimpleNamespace(scalar_one_or_none=lambda: agent),
         SimpleNamespace(scalar_one_or_none=lambda: version),
@@ -103,12 +83,7 @@ async def test_agent_node_without_profile_uses_organization_default_routing():
     ])
     runtime = WorkflowRuntime(db)
     runtime.governance.invoke = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None, model="default-model"))
-
-    result = await runtime.execute_node(
-        {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
-        {"input": "hello"}, owner_id, False, uuid4(), tenant_id,
-    )
-
+    result = await runtime.execute_node({"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}}, {"input": "hello"}, owner_id, False, uuid4(), tenant_id)
     assert result["content"] == "ok"
     request = runtime.governance.invoke.call_args.args[0]
     assert request.routing_strategy == "organization_default"
@@ -125,14 +100,7 @@ async def test_agent_node_query_is_scoped_to_workflow_tenant():
     version_id = uuid4()
     profile_id = uuid4()
     agent = SimpleNamespace(id=agent_id, owner_id=owner_id, status="published", published_version_id=version_id)
-    version = SimpleNamespace(
-        id=version_id,
-        agent_id=agent_id,
-        system_prompt="system",
-        model_id="legacy-model-id",
-        model_profile_id=profile_id,
-        version="1.0.0",
-    )
+    version = SimpleNamespace(id=version_id, agent_id=agent_id, system_prompt="system", model_id="legacy-model-id", model_profile_id=profile_id, version="1.0.0")
     db.execute = AsyncMock(side_effect=[
         SimpleNamespace(scalar_one_or_none=lambda: agent),
         SimpleNamespace(scalar_one_or_none=lambda: version),
@@ -140,14 +108,51 @@ async def test_agent_node_query_is_scoped_to_workflow_tenant():
     ])
     runtime = WorkflowRuntime(db)
     runtime.governance.invoke = AsyncMock(return_value=SimpleNamespace(content="ok", usage=None, model="governed-model"))
-
-    result = await runtime.execute_node(
-        {"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}},
-        {"input": "hello"}, owner_id, True, uuid4(), tenant_id,
-    )
-
+    result = await runtime.execute_node({"id": "agent", "type": "agent", "config": {"agent_id": str(agent_id)}}, {"input": "hello"}, owner_id, True, uuid4(), tenant_id)
     assert result["content"] == "ok"
     agent_query = db.execute.call_args_list[0].args[0]
-    query_text = str(agent_query)
-    assert "users" in query_text
-    assert "tenant_id" in query_text
+    assert "users" in str(agent_query)
+    assert "tenant_id" in str(agent_query)
+
+
+def test_resume_runtime_builds_independent_branch_states_from_completed_predecessors():
+    definition = {
+        "nodes": [
+            {"id": "root", "type": "input"},
+            {"id": "left", "type": "input"},
+            {"id": "right", "type": "input"},
+            {"id": "join", "type": "output"},
+        ],
+        "edges": [
+            {"source": "root", "target": "left"},
+            {"source": "root", "target": "right"},
+            {"source": "left", "target": "join"},
+            {"source": "right", "target": "join"},
+        ],
+    }
+    root = SimpleNamespace(node_id="root", output_data={"root": 1})
+    states = WorkflowRuntime._build_frontier_branch_states(definition, ("left", "right"), [root])
+    assert states == {"left": {"root": 1}, "right": {"root": 1}}
+
+
+def test_resume_runtime_merges_join_predecessor_states_without_overwrite():
+    definition = {
+        "nodes": [
+            {"id": "root", "type": "input"},
+            {"id": "left", "type": "input"},
+            {"id": "right", "type": "input"},
+            {"id": "join", "type": "output"},
+        ],
+        "edges": [
+            {"source": "root", "target": "left"},
+            {"source": "root", "target": "right"},
+            {"source": "left", "target": "join"},
+            {"source": "right", "target": "join"},
+        ],
+    }
+    nodes = [
+        SimpleNamespace(node_id="left", output_data={"left": 1}),
+        SimpleNamespace(node_id="right", output_data={"right": 2}),
+    ]
+    states = WorkflowRuntime._build_frontier_branch_states(definition, ("join",), nodes)
+    assert states == {"join": {"left": 1, "right": 2}}
