@@ -1,7 +1,8 @@
 """Durable Frontier backed Workflow Worker。
 
-将现有唯一 WorkflowExecution Runtime 接到 Durable Frontier，而不复制 Runtime 状态机。
-Frontier 是 Worker 的 durable work item；WorkflowExecution 仍是实际 Runtime execution identity。
+职责：将现有唯一 WorkflowExecution Runtime 接到 Durable Frontier，而不复制 Runtime 状态机。
+边界：Frontier 是 Worker 的 durable work item；WorkflowExecution 仍是实际 Runtime execution identity。
+关键依赖：PostgreSQL、WorkflowFrontier repository、WorkflowExecution ownership 与 LeaseAwareWorkflowWorker。
 """
 
 from __future__ import annotations
@@ -23,9 +24,22 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
     """以 Durable Frontier 为调度入口，同时复用既有 Execution Runtime。"""
 
     async def claim_one_frontier(self, now: datetime | None = None) -> WorkflowFrontier | None:
-        """Claim 一个 Durable Frontier，并在同一事务内取得对应 Execution ownership。"""
+        """Claim 一个 Durable Frontier，并安全取得对应 Execution ownership。
+
+        Args:
+            now: 可选当前时间；用于确定性测试以及 Frontier/Execution lease 判断。
+
+        Returns:
+            成功认领的 Durable Frontier；没有可安全领取的 Frontier 时返回 None。
+
+        事务边界：Frontier claim 与 Execution ownership 在同一数据库事务中完成。
+        已由当前 Worker 持有的 running Execution 不递增 Execution fencing generation，
+        这样同一 Worker 执行下一 Frontier 时不会制造虚假的 ownership 变更；已过期且属于其他
+        Worker 的 Execution 才会重新取得 ownership 并递增 generation。
+        """
         now = now or datetime.now(UTC)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
+        now_naive = now.replace(tzinfo=None)
         async with SessionLocal() as db:
             try:
                 tenant_id = await self._frontier_tenant_candidate(db, now)
@@ -42,22 +56,46 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             if frontier is None:
                 await db.rollback()
                 return None
+
             execution = (
                 await db.execute(
-                    select(WorkflowExecution).where(
+                    select(WorkflowExecution)
+                    .where(
                         WorkflowExecution.id == frontier.execution_id,
                         WorkflowExecution.tenant_id == frontier.tenant_id,
-                        WorkflowExecution.status == "pending",
-                        (WorkflowExecution.worker_owner.is_(None) | (WorkflowExecution.worker_lease_expires_at <= now.replace(tzinfo=None))),
-                    ).with_for_update()
+                    )
+                    .with_for_update()
                 )
             ).scalar_one_or_none()
             if execution is None:
                 await db.rollback()
                 return None
-            execution.worker_owner = self.owner
-            execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
-            execution.worker_attempt = int(execution.worker_attempt or 0) + 1
+
+            execution_lease_expired = (
+                execution.worker_lease_expires_at is None
+                or execution.worker_lease_expires_at <= now_naive
+            )
+            owned_by_current_worker = execution.worker_owner == self.owner
+
+            if execution.status == "pending" and (execution.worker_owner is None or execution_lease_expired):
+                execution.worker_owner = self.owner
+                execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
+                execution.worker_attempt = int(execution.worker_attempt or 0) + 1
+            elif execution.status == "running" and owned_by_current_worker:
+                # 同一 Worker 在同一 Execution 内推进下一 Frontier 时继续复用当前 fencing generation。
+                # 只刷新 lease，不递增 worker_attempt，避免后续 Checkpoint 被旧 generation 错误拒绝。
+                execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
+            elif execution.status == "running" and execution_lease_expired:
+                # 原 Worker lease 已过期，当前 Worker 接管新的 Execution fencing generation。
+                execution.status = "pending"
+                execution.current_node_id = None
+                execution.worker_owner = self.owner
+                execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
+                execution.worker_attempt = int(execution.worker_attempt or 0) + 1
+            else:
+                await db.rollback()
+                return None
+
             frontier.status = "running"
             await db.commit()
             return frontier
