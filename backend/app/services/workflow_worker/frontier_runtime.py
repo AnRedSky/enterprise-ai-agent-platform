@@ -10,7 +10,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
@@ -27,9 +27,14 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
         now = now or datetime.now(UTC)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
         async with SessionLocal() as db:
+            try:
+                tenant_id = await self._frontier_tenant_candidate(db, now)
+            except LookupError:
+                await db.rollback()
+                return None
             frontier = await claim_next_frontier(
                 db,
-                tenant_id=await self._frontier_tenant_candidate(db),
+                tenant_id=tenant_id,
                 worker_owner=self.owner,
                 lease_expires_at=lease_expires_at,
                 now=now,
@@ -57,13 +62,14 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             await db.commit()
             return frontier
 
-    async def _frontier_tenant_candidate(self, db) -> UUID:
-        """获取当前 Worker 可见的最早租户 Frontier；实际 claim 仍由 tenant scope 限制。"""
+    async def _frontier_tenant_candidate(self, db, now: datetime) -> UUID:
+        """获取当前可调度的最早 Frontier 所属租户；claim 仍强制 tenant scope。"""
+        now_naive = now.replace(tzinfo=None)
         result = await db.execute(
             select(WorkflowFrontier.tenant_id)
             .where(
                 WorkflowFrontier.status.in_(("pending", "retry_wait")),
-                WorkflowFrontier.available_at <= datetime.now(UTC).replace(tzinfo=None),
+                WorkflowFrontier.available_at <= now_naive,
             )
             .order_by(WorkflowFrontier.available_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
             .limit(1)
@@ -133,17 +139,18 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                 except ValueError:
                     await db.rollback()
 
-    async def dispatch_frontiers_once(self) -> int:
-        """批量消费 Durable Frontier；异常由单个 frontier 隔离。"""
+    async def dispatch_once(self) -> int:
+        """批量消费 Durable Frontier；Frontier 是默认 Worker 的唯一调度入口。"""
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
-            try:
-                frontier = await self.claim_one_frontier()
-            except LookupError:
-                break
+            frontier = await self.claim_one_frontier()
             if frontier is None:
                 break
             tasks.append(asyncio.create_task(self.execute_frontier(frontier)))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         return len(tasks)
+
+    async def dispatch_frontiers_once(self) -> int:
+        """显式命名的 Frontier dispatch API，供调度器与单元测试使用。"""
+        return await self.dispatch_once()
