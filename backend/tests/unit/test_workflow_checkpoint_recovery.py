@@ -57,6 +57,30 @@ def test_assess_returns_eligible_candidate_for_failed_execution() -> None:
     assert assessment.resume_idempotency_key == f"resume:{execution_id}:checkpoint:3"
 
 
+def test_assess_accepts_execution_level_frontier_checkpoint() -> None:
+    """Multi-frontier 的 Execution-level frontier checkpoint 也必须可作为 Resume 边界。"""
+    execution_id = uuid4()
+    version_id = uuid4()
+    checkpoint = _checkpoint(
+        execution_id=execution_id,
+        checkpoint_reason="frontier_completed",
+        node_status=None,
+        node_id=None,
+    )
+
+    assessment = WorkflowExecutionCheckpointRecoveryService.assess(
+        execution_id=execution_id,
+        workflow_version_id=version_id,
+        execution_status="failed",
+        worker_owner=None,
+        checkpoint=checkpoint,
+    )
+
+    assert assessment.eligible is True
+    assert assessment.reason_code == "eligible"
+    assert assessment.node_id is None
+
+
 def test_assess_rejects_live_worker_ownership_and_running_execution() -> None:
     """恢复评估不得绕过 running Execution 或活动 Worker ownership。"""
     execution_id = uuid4()
@@ -85,7 +109,7 @@ def test_assess_rejects_live_worker_ownership_and_running_execution() -> None:
 
 
 def test_assess_rejects_missing_or_invalid_checkpoint_boundary() -> None:
-    """没有 Checkpoint 或 Checkpoint 不是 Node completed 边界时禁止产生恢复候选。"""
+    """没有 Checkpoint 或 Checkpoint 不是可恢复边界时禁止产生恢复候选。"""
     execution_id = uuid4()
     version_id = uuid4()
 
