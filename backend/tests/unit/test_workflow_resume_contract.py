@@ -29,11 +29,13 @@ class _DB:
 @pytest.mark.asyncio
 async def test_resume_contract_returns_idempotency_hit_without_creating_new_execution(monkeypatch):
     source = SimpleNamespace(
-        id=uuid4(), tenant_id=uuid4(), workflow_version_id=uuid4(), status="failed",
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="failed",
         worker_owner=None,
     )
     existing = SimpleNamespace(
-        id=uuid4(), resume_of_execution_id=source.id, resume_checkpoint_sequence=7,
+        id=uuid4(), tenant_id=source.tenant_id, workflow_id=source.workflow_id,
+        workflow_version_id=source.workflow_version_id, resume_of_execution_id=source.id,
+        resume_checkpoint_sequence=7,
     )
     db = _DB(existing=existing)
     service = WorkflowExecutionResumeContractService(db)
@@ -65,9 +67,50 @@ async def test_resume_contract_returns_idempotency_hit_without_creating_new_exec
 
 
 @pytest.mark.asyncio
+async def test_resume_contract_rejects_idempotency_hit_with_lineage_drift():
+    source = SimpleNamespace(
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="failed",
+        worker_owner=None,
+    )
+    existing = SimpleNamespace(
+        id=uuid4(), tenant_id=source.tenant_id, workflow_id=uuid4(),
+        workflow_version_id=source.workflow_version_id, resume_of_execution_id=source.id,
+        resume_checkpoint_sequence=7,
+    )
+    db = _DB(existing=existing)
+    service = WorkflowExecutionResumeContractService(db)
+
+    service.checkpoint.latest = lambda _execution_id: _fake_latest()
+    service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
+        resume_idempotency_key="resume:key",
+        checkpoint_sequence=7,
+    )
+
+    async def _lock(execution):
+        return execution
+
+    import app.services.workflow.execution as execution_module
+
+    class _ExecutionService:
+        _lock_execution = staticmethod(_lock)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
+    try:
+        with pytest.raises(ValueError, match="lineage"):
+            await service.resume_with_outcome(source, uuid4())
+    finally:
+        monkeypatch.undo()
+
+
+async def _fake_latest():
+    return SimpleNamespace(id=uuid4())
+
+
+@pytest.mark.asyncio
 async def test_resume_contract_returns_created_when_key_is_absent(monkeypatch):
     source = SimpleNamespace(
-        id=uuid4(), tenant_id=uuid4(), workflow_version_id=uuid4(), status="failed",
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="failed",
         worker_owner=None,
     )
     created = SimpleNamespace(id=uuid4())
