@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前 `main` HEAD：继续推进 Phase 2.7-A Durable Recovery Closure。
-- 本轮已完成：**Recovery Trace → Resume Checkpoint lineage 完整性校验**；Trace lineage 现在必须绑定同一 Source Execution、tenant、workflow version 以及真实存在的 `resume_checkpoint_sequence`。
+- 本轮已完成：**Conditional Decision 可重建性**；Recovery trace replay 现在同时验证 completed Node facts、decision fingerprint、frontier 与 selected predecessor，确保同一 Durable Snapshot 的 Decision 可确定性重建。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -13,7 +13,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization / Checkpoint Durable Fact completeness / Recovery Trace Checkpoint Lineage，并继续进行 Durable Recovery Closure。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization / Checkpoint Durable Fact completeness / Recovery Trace Checkpoint Lineage / Conditional Decision Rebuild，并继续进行 Trace Lineage Closure。**
 
 ## Phase 2.7-A 当前实现
 
@@ -41,7 +41,8 @@
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径；
 - Checkpoint 自动序号分配现在先锁定目标 `WorkflowExecution` 再读取最大 sequence，确保同一 Execution 的并发 Checkpoint 写入具有确定的序号分配边界；
 - Checkpoint 若绑定 Node，则 Recovery 可通过 `assert_node_fact_complete()` 校验 NodeExecution 的 node、status、attempt、output_data；execution-level checkpoint 不要求 NodeExecution；
-- Recovery Trace → Resume lineage 现在强制校验 `resume_of_execution_id`、tenant、workflow version 与真实存在的 `resume_checkpoint_sequence`，并将 checkpoint sequence 作为 lineage audit metadata。
+- Recovery Trace → Resume lineage 现在强制校验 `resume_of_execution_id`、tenant、workflow version 与真实存在的 `resume_checkpoint_sequence`，并将 checkpoint sequence 作为 lineage audit metadata；
+- Conditional Decision Replay 现在不仅比较 fingerprint，还比较历史 Decision 的 frontier 与 selected predecessor outputs，保证同一 durable completed facts 的 Decision 能完整重建。
 
 ## 当前开发策略
 
@@ -73,12 +74,12 @@ Phase 2.7-A Conditional Branching
   ├── Sequence Plan metadata            ✅
   ├── Checkpoint sequence serialization  ✅
   ├── Checkpoint fact completeness       ✅
-  ├── Recovery Trace Checkpoint Lineage  ✅ 本轮完成
+  ├── Recovery Trace Checkpoint Lineage  ✅
+  ├── Conditional Decision Rebuild       ✅ 本轮完成
   ├── Unit Test 实际执行                ⏳
   └── Real API acceptance               ⏸ 暂停
           ↓
 Phase 2.7-A Durable Recovery Closure
-  ├── Conditional decision 可重建性
   └── Trace lineage 连续性（核心 lineage contract 已进一步收紧）
           ↓
 Phase 2.7-A Closure
