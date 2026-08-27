@@ -63,15 +63,16 @@ Trace 不携带 Checkpoint `state_data`、Prompt、Secret、Provider credential 
 
 ## Unit Test
 
-新增/保留覆盖：
+覆盖：
 
 1. lease 明确失效时 Runtime 被主动取消；
 2. Runtime 正常完成优先于 lease monitor；
 3. 单次 heartbeat 异常不会误触发 Runtime 中止；
 4. 默认公开 `WorkflowWorker` 使用 `LeaseAwareWorkflowWorker`；
-5. 默认 Worker Runtime 的底层执行任务在 lease loss 后确实收到 cancellation。
+5. 默认 Worker Runtime 的底层执行任务在 lease loss 后确实收到 cancellation；
+6. lease loss 后 `workflow.recovery.worker.finished` 的 `outcome=aborted` 且 `reason_code=WORKER_LEASE_LOST`。
 
-本轮仅保留 Unit Test；未实际执行的测试不得记录为 PASS。
+当前环境无法直接执行用户本地 `backend/.venv` 的 pytest；因此本轮不将未实际执行的 Unit Test 记录为 PASS。开发者本地执行后，必须以实际输出更新 Closure Review。
 
 ## Closure Review
 
