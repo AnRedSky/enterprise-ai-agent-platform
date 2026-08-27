@@ -63,7 +63,10 @@ class WorkflowDagMultiFrontierExecutor:
 
         `executor(node, state_data)` 必须返回新的 state 对象；输入 state 会先 deep-copy，避免一个
         Branch 的 Runtime 修改污染另一个 Branch。`checkpoint_writer(node_id, state_data)` 是持久化
-        边界 callback；它必须在现有 Worker ownership / fencing / transaction 体系中实现。
+        边界；未提供 writer 时可以执行并收集 Branch 结果，但绝不能声明 Join ready，因为成功的
+        Branch Checkpoint 是 Join readiness 的必要条件。该 callback 必须在现有 Worker ownership /
+        fencing / transaction 体系中实现。
+
         本方法不捕获 Branch 或 Checkpoint 异常，因为失败必须直接阻止后续 Branch 与 Join readiness，
         并由上层 Worker / ExecutionService 负责统一失败状态转换。
         """
@@ -76,9 +79,14 @@ class WorkflowDagMultiFrontierExecutor:
             if not isinstance(output, dict):
                 raise ValueError(f"DAG frontier Node {node_id} 执行结果必须为对象")
             result = WorkflowDagBranchExecutionResult(node_id=node_id, state_data=deepcopy(output))
+            checkpointed = checkpoint_writer is not None
             if checkpoint_writer is not None:
                 await checkpoint_writer(node_id, deepcopy(output))
-            return WorkflowDagMultiFrontierExecutionResult((result,), deepcopy(output), True)
+            return WorkflowDagMultiFrontierExecutionResult(
+                (result,),
+                deepcopy(output) if checkpointed else None,
+                checkpointed,
+            )
 
         missing = [node_id for node_id in plan.frontier_node_ids if node_id not in branch_state_data]
         unknown = [node_id for node_id in branch_state_data if node_id not in plan.frontier_node_ids]
@@ -88,6 +96,7 @@ class WorkflowDagMultiFrontierExecutor:
             raise ValueError(f"DAG Multi-frontier 执行存在非 frontier Branch state: {unknown[0]}")
 
         results: list[WorkflowDagBranchExecutionResult] = []
+        checkpointed = checkpoint_writer is not None
         for index, node_id in enumerate(plan.frontier_node_ids):
             output = await executor(
                 deepcopy(plan.nodes[index]),
@@ -102,6 +111,13 @@ class WorkflowDagMultiFrontierExecutor:
             if checkpoint_writer is not None:
                 await checkpoint_writer(node_id, deepcopy(output))
             results.append(branch_result)
+
+        if not checkpointed:
+            return WorkflowDagMultiFrontierExecutionResult(
+                branch_results=tuple(results),
+                merged_state_data=None,
+                join_ready=False,
+            )
 
         merge_plan = WorkflowDagBranchStateMergeService.merge(
             branches=tuple(
