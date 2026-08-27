@@ -6,6 +6,6 @@
 """
 
 from .circuit_breaker import CircuitBreakerService, CircuitOpenError
-from .runtime import WorkflowRuntime
+from .dag_runtime import WorkflowRuntime
 
 __all__ = ["WorkflowRuntime", "CircuitBreakerService", "CircuitOpenError"]
