@@ -134,6 +134,10 @@ async def _resolve_completed_frontier_idempotency(
             raise FrontierProgressionContractError("既有 Next Frontier 不属于当前 Workflow Execution")
         if next_frontier.workflow_version_id != current.workflow_version_id:
             raise FrontierProgressionContractError("既有 Next Frontier 不属于当前 Workflow Version")
+        if next_frontier.decision_fingerprint != next_identity.decision_fingerprint:
+            raise FrontierProgressionContractError("既有 Next Frontier 的 decision fingerprint 与原 completion 不一致")
+        if set(next_frontier.node_ids or []) != set(next_identity.node_ids):
+            raise FrontierProgressionContractError("既有 Next Frontier 的 Node 集合与原 completion 不一致")
 
     return checkpoint, next_frontier
 
