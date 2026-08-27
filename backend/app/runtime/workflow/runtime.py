@@ -23,11 +23,9 @@ from app.runtime.workflow.circuit_breaker import CircuitBreakerService, CircuitO
 from app.schemas.model_provider import ModelProviderRoutingRequest
 from app.services.model import RuntimeModelGovernanceService
 from app.services.workflow.checkpoint.recovery.dag_executor import WorkflowDagMultiFrontierExecutor
+from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlanner
-from app.services.workflow.checkpoint.recovery.dag_state_merge import (
-    WorkflowDagBranchState,
-    WorkflowDagBranchStateMergeService,
-)
+from app.services.workflow.checkpoint.recovery.dag_state_merge import WorkflowDagBranchState, WorkflowDagBranchStateMergeService
 
 
 class WorkflowRuntime:
@@ -41,9 +39,7 @@ class WorkflowRuntime:
         "backoff_ms": 250,
         "max_backoff_ms": 5_000,
         "jitter_ms": 250,
-        "retryable_error_codes": [
-            "NODE_TIMEOUT", "HTTP_429", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR",
-        ],
+        "retryable_error_codes": ["NODE_TIMEOUT", "HTTP_429", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR"],
     }
     CIRCUIT_FAILURE_CODES = {"NODE_TIMEOUT", "HTTP_429", "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504", "CONNECTION_ERROR"}
 
@@ -64,13 +60,11 @@ class WorkflowRuntime:
 
     @classmethod
     def resolve_timeout_ms(cls, config: dict | None, *, field: str = "timeout_ms") -> int:
-        config = config or {}
-        return cls.validate_timeout_ms(config.get(field, cls.DEFAULT_TIMEOUT_MS), field=field)
+        return cls.validate_timeout_ms((config or {}).get(field, cls.DEFAULT_TIMEOUT_MS), field=field)
 
     @classmethod
     def resolve_retry_policy(cls, config: dict | None) -> dict:
-        config = config or {}
-        raw = config.get("retry") or {}
+        raw = (config or {}).get("retry") or {}
         if not isinstance(raw, dict):
             raise HTTPException(422, "retry config 必须为对象")
         policy = {**cls.DEFAULT_RETRY_POLICY, **raw}
@@ -86,15 +80,7 @@ class WorkflowRuntime:
         codes = policy["retryable_error_codes"]
         if not isinstance(codes, list) or any(not isinstance(code, str) or not code for code in codes):
             raise HTTPException(422, "retry.retryable_error_codes 必须为非空字符串数组")
-        if len(codes) > 20:
-            raise HTTPException(422, "retry.retryable_error_codes 最多允许 20 项")
-        return {
-            "max_attempts": max_attempts,
-            "backoff_ms": policy["backoff_ms"],
-            "max_backoff_ms": policy["max_backoff_ms"],
-            "jitter_ms": policy["jitter_ms"],
-            "retryable_error_codes": list(dict.fromkeys(codes)),
-        }
+        return {"max_attempts": max_attempts, "backoff_ms": policy["backoff_ms"], "max_backoff_ms": policy["max_backoff_ms"], "jitter_ms": policy["jitter_ms"], "retryable_error_codes": list(dict.fromkeys(codes))}
 
     @classmethod
     def resolve_circuit_breaker(cls, config: dict | None) -> dict:
@@ -128,11 +114,8 @@ class WorkflowRuntime:
         nodes = definition.get("nodes")
         if not isinstance(nodes, list):
             raise HTTPException(422, "Workflow definition 必须包含 nodes 数组")
-        if not nodes:
-            if allow_legacy_empty_nodes:
-                nodes = []
-            else:
-                raise HTTPException(422, "Workflow definition 必须包含非空 nodes")
+        if not nodes and not allow_legacy_empty_nodes:
+            raise HTTPException(422, "Workflow definition 必须包含非空 nodes")
         runtime_config = definition.get("config") or {}
         if not isinstance(runtime_config, dict):
             raise HTTPException(422, "Workflow config 必须为对象")
@@ -161,168 +144,128 @@ class WorkflowRuntime:
             normalized.append({"id": node_id, "type": node_type, "config": config})
         return normalized
 
-    async def _resolve_resume_context(self, execution, definition: dict, state_data: dict, fallback_nodes: list[dict]):
-        """解析 Durable Resume 的持久化完成事实、frontier 与 Branch 状态。
-
-        Args:
-            execution: 当前 Resume Execution 或普通 Execution。
-            definition: 固定版本的 Workflow Definition。
-            state_data: Resume Checkpoint 保存的状态快照。
-            fallback_nodes: 非 Resume Execution 使用的顺序节点列表。
-
-        Returns:
-            `(runtime_plan, branch_state_data, source_nodes)`；普通 Execution 返回 `(None, None, [])`。
-
-        Raises:
-            HTTPException: Resume 完成事实、DAG Contract 或 Branch 状态无法安全恢复。
-
-        设计意图：Branch state 必须从 Source Execution 已完成 Node 的持久化输出恢复；不能把 Resume Execution
-        的单一 Checkpoint state 隐式复制给多个 frontier。多个 predecessor 的输出必须通过正式 Merge Contract
-        收敛后才能作为 Join 前的 frontier 输入。
-        """
+    async def _load_completed_resume_nodes(self, execution) -> list[WorkflowNodeExecution]:
+        """读取 Resume Source 与当前 Resume Execution 的已完成 Node 事实。"""
+        execution_ids = [execution.id]
         source_execution_id = getattr(execution, "resume_of_execution_id", None)
-        if source_execution_id is None:
-            return None, None, []
-
-        source_nodes = list((await self.db.execute(
-            select(WorkflowNodeExecution).where(
-                WorkflowNodeExecution.execution_id == source_execution_id,
-                WorkflowNodeExecution.status == "completed",
-            ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
-        )).scalars().all())
-        completed_node_ids = {node.node_id for node in source_nodes}
-        try:
-            plan = WorkflowDagResumeRuntimePlanner.plan(
-                definition=definition,
-                completed_node_ids=completed_node_ids,
-                state_data=state_data,
-                branch_state_data=self._build_frontier_branch_states(definition, plan=None, source_nodes=source_nodes),
-            )
-        except TypeError:
-            # 首次规划需要先计算 frontier，再构造对应 Branch state；这里不允许吞掉其他类型的 Contract 错误。
-            try:
-                from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
-                frontier = WorkflowDagResumePlanner.plan(
-                    definition=definition,
-                    completed_node_ids=completed_node_ids,
-                )
-            except ValueError as exc:
-                raise HTTPException(409, str(exc)) from exc
-            branch_state_data = self._build_frontier_branch_states(definition, frontier.frontier_node_ids, source_nodes)
-            try:
-                plan = WorkflowDagResumeRuntimePlanner.plan(
-                    definition=definition,
-                    completed_node_ids=completed_node_ids,
-                    state_data=state_data,
-                    branch_state_data=branch_state_data,
-                )
-            except ValueError as exc:
-                raise HTTPException(409, str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-
-        if not plan.frontier_node_ids:
-            raise HTTPException(409, "Durable Resume 没有可继续执行的 DAG Node")
-        if len(plan.frontier_node_ids) == 1:
-            return plan, {plan.frontier_node_ids[0]: dict(state_data)}, source_nodes
-        return plan, self._build_frontier_branch_states(definition, plan.frontier_node_ids, source_nodes), source_nodes
+        if source_execution_id is not None:
+            execution_ids.insert(0, source_execution_id)
+        return list((await self.db.execute(select(WorkflowNodeExecution).where(
+            WorkflowNodeExecution.execution_id.in_(execution_ids), WorkflowNodeExecution.status == "completed"
+        ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all())
 
     @staticmethod
-    def _build_frontier_branch_states(definition: dict, plan=None, source_nodes=None) -> dict[str, dict]:
-        """从已完成 predecessor 的 Node output 构造每个 frontier 的独立恢复状态。"""
-        frontier_ids = tuple(plan or ())
-        source_by_id = {
-            node.node_id: dict(node.output_data or {})
-            for node in (source_nodes or ())
-        }
-        predecessors: dict[str, list[str]] = {
-            node["id"]: []
-            for node in definition.get("nodes", [])
-            if isinstance(node, dict) and isinstance(node.get("id"), str)
-        }
+    def _build_frontier_branch_states(definition: dict, frontier_node_ids: tuple[str, ...], source_nodes: list[WorkflowNodeExecution]) -> dict[str, dict]:
+        """从 frontier 的已完成 predecessor 输出构造独立 Branch state。"""
+        source_by_id: dict[str, dict] = {}
+        for node in source_nodes:
+            source_by_id[node.node_id] = dict(node.output_data or {})
+        predecessors = {node["id"]: [] for node in definition.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
         for edge in definition.get("edges", []) or []:
             if isinstance(edge, dict) and edge.get("target") in predecessors:
                 predecessors[edge["target"]].append(edge.get("source"))
         result: dict[str, dict] = {}
-        for node_id in frontier_ids:
-            branch_sources = [source_by_id[source_id] for source_id in predecessors.get(node_id, []) if source_id in source_by_id]
-            if not branch_sources:
+        for node_id in frontier_node_ids:
+            states = []
+            for predecessor_id in predecessors.get(node_id, []):
+                if predecessor_id not in source_by_id:
+                    raise ValueError(f"DAG Resume frontier {node_id} 缺少已完成 predecessor state")
+                states.append(source_by_id[predecessor_id])
+            if not states:
                 raise ValueError(f"DAG Resume frontier {node_id} 缺少已完成 predecessor state")
-            branches = tuple(
-                WorkflowDagBranchState(node_id=f"{node_id}:predecessor:{index}", state_data=state)
-                for index, state in enumerate(branch_sources)
-            )
-            result[node_id] = WorkflowDagBranchStateMergeService.merge(branches=branches).state_data
+            if len(states) == 1:
+                result[node_id] = states[0]
+            else:
+                result[node_id] = WorkflowDagBranchStateMergeService.merge(tuple(
+                    WorkflowDagBranchState(node_id=f"{node_id}:predecessor:{index}", state_data=state)
+                    for index, state in enumerate(states)
+                )).state_data
         return result
 
-    async def _execute_multi_frontier(self, service, execution, plan, branch_state_data, actor_id, is_admin,
-                                      workflow_timeout, max_retries, started):
-        """执行当前 Multi-frontier，并通过现有 transition_node 建立 Node Execution / Checkpoint 事实。"""
-        workflow_retries = 0
+    async def _resolve_resume_context(self, execution, definition: dict, state_data: dict):
+        """根据持久化完成事实计算当前 Resume frontier 与独立 Branch state。"""
+        if getattr(execution, "resume_of_execution_id", None) is None:
+            return None
+        source_nodes = await self._load_completed_resume_nodes(execution)
+        completed_node_ids = {node.node_id for node in source_nodes}
+        try:
+            frontier = WorkflowDagResumePlanner.plan(definition=definition, completed_node_ids=completed_node_ids)
+            branch_state_data = self._build_frontier_branch_states(definition, frontier.frontier_node_ids, source_nodes) if frontier.frontier_node_ids else {}
+            plan = WorkflowDagResumeRuntimePlanner.plan(
+                definition=definition,
+                completed_node_ids=completed_node_ids,
+                state_data=state_data,
+                branch_state_data=branch_state_data if len(frontier.frontier_node_ids) > 1 else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return plan, branch_state_data
 
+    async def _execute_node_with_policy(self, service, execution, node: dict, current_data: dict, actor_id: UUID,
+                                        is_admin: bool, workflow_timeout: int, max_retries: int, started: float,
+                                        workflow_retry_counter: list[int]) -> dict:
+        """执行单个 Node，并复用既有 Retry、ownership、NodeExecution 与 Checkpoint Contract。"""
+        policy = self.resolve_retry_policy(node["config"])
+        attempt = 0
+        while True:
+            attempt += 1
+            remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
+            if remaining <= 0:
+                await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded")
+                raise HTTPException(504, "Workflow deadline exceeded")
+            await service.transition_node(execution, node["id"], "running", input_data=current_data)
+            node_timeout = self.resolve_timeout_ms(node["config"])
+            timeout_seconds = min(node_timeout / 1000, remaining)
+            deadline_limited = remaining <= node_timeout / 1000
+            try:
+                output = await asyncio.wait_for(self.execute_node(node, current_data, actor_id, is_admin, execution.id, execution.tenant_id, execution=execution), timeout=timeout_seconds)
+                await service.transition_node(execution, node["id"], "completed", output_data=output)
+                return output
+            except asyncio.TimeoutError as exc:
+                failure: BaseException = exc
+                error_code = self.classify_error(exc, workflow_timeout=deadline_limited)
+                error_message = "Workflow deadline exceeded" if deadline_limited else "Workflow node timeout"
+            except Exception as exc:
+                failure = exc
+                error_code = self.classify_error(exc)
+                error_message = str(exc)
+            await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code=error_code, error_message=error_message)
+            retryable = error_code in policy["retryable_error_codes"] and error_code not in {"CIRCUIT_OPEN", "WORKFLOW_TIMEOUT"}
+            if not retryable or attempt >= policy["max_attempts"] or workflow_retry_counter[0] >= max_retries:
+                if error_code == "WORKFLOW_TIMEOUT":
+                    raise HTTPException(504, error_message)
+                if error_code.startswith("HTTP_"):
+                    raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
+                if error_code == "CIRCUIT_OPEN":
+                    raise CircuitOpenError(node["id"])
+                if error_code == "NODE_TIMEOUT":
+                    raise HTTPException(504, error_message)
+                if error_code == "CONNECTION_ERROR":
+                    raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
+                raise HTTPException(500, error_message)
+            delay = self.retry_delay_seconds(policy, attempt, random.random())
+            remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
+            if delay > remaining:
+                raise HTTPException(504, "Retry backoff exceeds workflow deadline")
+            workflow_retry_counter[0] += 1
+            await service.governance.audit(execution, actor_id, "workflow.node.retry", "scheduled", error_code=error_code, metadata={"node_id": node["id"], "attempt": attempt + 1, "delay_ms": int(delay * 1000)})
+            await asyncio.sleep(delay)
+
+    async def _execute_multi_frontier(self, service, execution, plan, branch_state_data, actor_id, is_admin,
+                                      workflow_timeout, max_retries, started, workflow_retry_counter):
+        """执行当前 Multi-frontier；成功 Branch 通过 transition_node 原子写入 NodeExecution 与 Checkpoint。"""
         async def execute_branch(node, input_data):
-            nonlocal workflow_retries
-            policy = self.resolve_retry_policy(node["config"])
-            attempt = 0
-            while True:
-                attempt += 1
-                remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
-                if remaining <= 0:
-                    await service.transition_node(execution, node["id"], "failed", input_data=input_data,
-                                                  error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded")
-                    raise HTTPException(504, "Workflow deadline exceeded")
-                await service.transition_node(execution, node["id"], "running", input_data=input_data)
-                node_timeout = self.resolve_timeout_ms(node["config"])
-                timeout_seconds = min(node_timeout / 1000, remaining)
-                deadline_limited = remaining <= node_timeout / 1000
-                try:
-                    return await asyncio.wait_for(
-                        self.execute_node(node, input_data, actor_id, is_admin, execution.id, execution.tenant_id, execution=execution),
-                        timeout=timeout_seconds,
-                    )
-                except asyncio.TimeoutError as exc:
-                    error_code = self.classify_error(exc, workflow_timeout=deadline_limited)
-                    error_message = "Workflow deadline exceeded" if deadline_limited else "Workflow node timeout"
-                    failure: BaseException = exc
-                except Exception as exc:
-                    failure = exc
-                    error_code = self.classify_error(exc)
-                    error_message = str(exc)
-                await service.transition_node(execution, node["id"], "failed", input_data=input_data,
-                                              error_code=error_code, error_message=error_message)
-                retryable = error_code in policy["retryable_error_codes"] and error_code not in {"CIRCUIT_OPEN", "WORKFLOW_TIMEOUT"}
-                if not retryable or attempt >= policy["max_attempts"] or workflow_retries >= max_retries:
-                    if error_code == "WORKFLOW_TIMEOUT":
-                        raise HTTPException(504, error_message)
-                    if error_code.startswith("HTTP_"):
-                        raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
-                    if error_code == "CIRCUIT_OPEN":
-                        raise CircuitOpenError(node["id"])
-                    if error_code == "NODE_TIMEOUT":
-                        raise HTTPException(504, error_message)
-                    if error_code == "CONNECTION_ERROR":
-                        raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
-                    raise HTTPException(500, error_message)
-                delay = self.retry_delay_seconds(policy, attempt, random.random())
-                remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
-                if delay > remaining:
-                    raise HTTPException(504, "Retry backoff exceeds workflow deadline")
-                workflow_retries += 1
-                await asyncio.sleep(delay)
+            return await self._execute_node_with_policy(service, execution, node, input_data, actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
 
         async def checkpoint_branch(node_id, output):
-            await service.transition_node(execution, node_id, "completed", output_data=output)
+            if not isinstance(output, dict):
+                raise ValueError(f"DAG frontier Node {node_id} Checkpoint state 必须为对象")
 
-        return await WorkflowDagMultiFrontierExecutor.execute(
-            plan,
-            branch_state_data=branch_state_data,
-            executor=execute_branch,
-            checkpoint_writer=checkpoint_branch,
-        )
+        return await WorkflowDagMultiFrontierExecutor.execute(plan, branch_state_data=branch_state_data, executor=execute_branch, checkpoint_writer=checkpoint_branch)
 
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
-        """执行 Workflow，并将 Execution 状态推进统一委托给 WorkflowExecutionService。"""
+        """执行 Workflow；Resume 会在每一轮 frontier 完成并持久化后重新计算下一 frontier。"""
         if self.execution_service is None:
             from app.services.workflow import WorkflowExecutionService
             service = WorkflowExecutionService(self.db)
@@ -337,114 +280,38 @@ class WorkflowRuntime:
         max_retries = retry_budget.get("max_retries", 0)
         if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0 or max_retries > 20:
             raise HTTPException(422, "retry_budget.max_retries 必须在 0-20 范围内")
-
         current_data = dict(execution.input_data or {})
-        resume_plan, branch_state_data, _ = await self._resolve_resume_context(
-            execution, version.definition, current_data, nodes,
-        )
         started = asyncio.get_running_loop().time()
-        if resume_plan is not None and len(resume_plan.frontier_node_ids) > 1:
-            result = await self._execute_multi_frontier(
-                service, execution, resume_plan, branch_state_data or {}, actor_id, is_admin,
-                workflow_timeout, max_retries, started,
-            )
-            if not result.join_ready:
-                raise HTTPException(409, "DAG Multi-frontier Branch 尚未全部完成，Join 不可就绪")
-            current_data = result.merged_state_data or {}
+        workflow_retry_counter = [0]
+
+        resume_context = await self._resolve_resume_context(execution, version.definition, current_data)
+        if resume_context is not None:
+            plan, branch_state_data = resume_context
+            while plan.frontier_node_ids:
+                if len(plan.frontier_node_ids) > 1:
+                    result = await self._execute_multi_frontier(service, execution, plan, branch_state_data, actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
+                    if not result.join_ready:
+                        raise HTTPException(409, "DAG Multi-frontier Branch 尚未全部完成，Join 不可就绪")
+                    current_data = result.merged_state_data or {}
+                else:
+                    node = plan.nodes[0]
+                    current_data = await self._execute_node_with_policy(service, execution, node, branch_state_data.get(plan.frontier_node_ids[0], current_data), actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
+                resume_context = await self._resolve_resume_context(execution, version.definition, current_data)
+                if resume_context is None:
+                    break
+                plan, branch_state_data = resume_context
             await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
             return current_data
 
-        if resume_plan is not None:
-            nodes = [resume_plan.node]
-            current_data = dict((branch_state_data or {}).get(resume_plan.frontier_node_id, current_data))
-
-        workflow_retries = 0
         for node in nodes:
-            policy = self.resolve_retry_policy(node["config"])
-            attempt = 0
-            while True:
-                attempt += 1
-                remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
-                if remaining <= 0:
-                    await service.transition_node(execution, node["id"], "failed", input_data=current_data,
-                                                  error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded")
-                    await service.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed",
-                                                   error_code="WORKFLOW_TIMEOUT")
-                    await service.governance.trace(execution, actor_id, "node.retry.exhausted", "failed",
-                                                   node_id=node["id"], error_code="WORKFLOW_TIMEOUT",
-                                                   data={"reason": "workflow_deadline", "attempt": attempt})
-                    raise HTTPException(504, "Workflow deadline exceeded")
-                await service.transition_node(execution, node["id"], "running", input_data=current_data)
-                node_timeout = self.resolve_timeout_ms(node["config"])
-                timeout_seconds = min(node_timeout / 1000, remaining)
-                deadline_limited = remaining <= node_timeout / 1000
-                failure: BaseException | None = None
-                try:
-                    output = await asyncio.wait_for(
-                        self.execute_node(node, current_data, actor_id, is_admin, execution.id, execution.tenant_id, execution=execution),
-                        timeout=timeout_seconds,
-                    )
-                    current_data = output
-                    await service.transition_node(execution, node["id"], "completed", output_data=output)
-                    break
-                except asyncio.TimeoutError as exc:
-                    failure = exc
-                    error_code = self.classify_error(exc, workflow_timeout=deadline_limited)
-                    error_message = "Workflow deadline exceeded" if deadline_limited else "Workflow node timeout"
-                except Exception as exc:
-                    failure = exc
-                    error_code = self.classify_error(exc)
-                    error_message = str(exc)
-                await service.transition_node(execution, node["id"], "failed", input_data=current_data,
-                                              error_code=error_code, error_message=error_message)
-                retryable = error_code in policy["retryable_error_codes"] and error_code not in {"CIRCUIT_OPEN", "WORKFLOW_TIMEOUT"}
-                if not retryable or attempt >= policy["max_attempts"]:
-                    await service.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed", error_code=error_code)
-                    await service.governance.trace(execution, actor_id, "node.retry.exhausted", "failed", node_id=node["id"], error_code=error_code,
-                                                   error_message=error_message,
-                                                   data={"reason": "retry_policy" if not retryable else "node_attempts", "attempt": attempt})
-                    if error_code == "WORKFLOW_TIMEOUT":
-                        raise HTTPException(504, error_message)
-                    if error_code.startswith("HTTP_"):
-                        raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
-                    if error_code == "CIRCUIT_OPEN":
-                        raise CircuitOpenError(node["id"])
-                    if error_code == "NODE_TIMEOUT":
-                        raise HTTPException(504, error_message)
-                    if error_code == "CONNECTION_ERROR":
-                        raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
-                    raise HTTPException(500, error_message)
-                if workflow_retries >= max_retries:
-                    await service.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed", error_code=error_code)
-                    await service.governance.trace(execution, actor_id, "node.retry.exhausted", "failed", node_id=node["id"], error_code=error_code,
-                                                   error_message=error_message, data={"reason": "retry_budget", "attempt": attempt})
-                    if error_code.startswith("HTTP_"):
-                        raise failure if isinstance(failure, HTTPException) else HTTPException(int(error_code.split("_", 1)[1]), error_message)
-                    if error_code == "NODE_TIMEOUT":
-                        raise HTTPException(504, error_message)
-                    if error_code == "CONNECTION_ERROR":
-                        raise failure if isinstance(failure, ConnectionError) else ConnectionError(error_message)
-                    raise HTTPException(500, error_message)
-                delay = self.retry_delay_seconds(policy, attempt, random.random())
-                remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
-                if delay > remaining:
-                    await service.governance.audit(execution, actor_id, "workflow.node.retry_exhausted", "failed", error_code="WORKFLOW_TIMEOUT")
-                    await service.governance.trace(execution, actor_id, "node.retry.exhausted", "failed", node_id=node["id"], error_code="WORKFLOW_TIMEOUT",
-                                                   error_message="Retry backoff exceeds workflow deadline", data={"reason": "workflow_deadline", "attempt": attempt})
-                    raise HTTPException(504, "Retry backoff exceeds workflow deadline")
-                workflow_retries += 1
-                await service.governance.audit(execution, actor_id, "workflow.node.retry", "scheduled", error_code=error_code,
-                                                metadata={"node_id": node["id"], "attempt": attempt + 1, "delay_ms": int(delay * 1000)})
-                await asyncio.sleep(delay)
+            current_data = await self._execute_node_with_policy(service, execution, node, current_data, actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
         await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
         return current_data
 
     async def _resolve_organization_id(self, tenant_id: UUID | None) -> UUID:
         if tenant_id is None:
             raise HTTPException(409, "Workflow Runtime 缺少 organization scope")
-        organization_id = (await self.db.execute(select(Organization.id).where(
-            Organization.tenant_id == tenant_id, Organization.status == "active",
-        ))).scalar_one_or_none()
+        organization_id = (await self.db.execute(select(Organization.id).where(Organization.tenant_id == tenant_id, Organization.status == "active"))).scalar_one_or_none()
         if organization_id is None:
             raise HTTPException(409, "Workflow Runtime 所属 Organization 不存在或未启用")
         return organization_id
@@ -462,34 +329,11 @@ class WorkflowRuntime:
             allowed_provider_ids = [UUID(str(item)) for item in allowed_provider_ids]
         except (ValueError, TypeError) as exc:
             raise HTTPException(422, "model_governance.allowed_provider_ids 必须为 UUID 数组") from exc
-        return ModelProviderRoutingRequest(
-            organization_id=organization_id, model_type="chat",
-            routing_strategy="explicit_profile" if model_profile_id is not None else "organization_default",
-            profile_id=model_profile_id, required_capabilities=required_capabilities,
-            allowed_provider_ids=allowed_provider_ids,
-        )
+        return ModelProviderRoutingRequest(organization_id=organization_id, model_type="chat", routing_strategy="explicit_profile" if model_profile_id is not None else "organization_default", profile_id=model_profile_id, required_capabilities=required_capabilities, allowed_provider_ids=allowed_provider_ids)
 
     async def execute_node(self, node: dict, input_data: dict, actor_id: UUID, is_admin: bool,
                            session_id: UUID, tenant_id: UUID | None = None, execution=None) -> dict:
-        """执行单个 Workflow Node。
-
-        Args:
-            node: 已完成 Definition Contract 校验的 Node。
-            input_data: 当前 Node 的独立输入状态。
-            actor_id: 发起执行的用户身份。
-            is_admin: 是否允许管理员执行其他用户 Agent。
-            session_id: 当前 Workflow Execution ID。
-            tenant_id: 当前租户范围。
-            execution: 可选的 Workflow Execution，用于统一 Trace。
-
-        Returns:
-            Node 输出状态对象。
-
-        Raises:
-            HTTPException: Agent、Provider、权限或输入配置不满足执行条件。
-
-        设计边界：该方法只负责 Node 业务执行，不修改 Workflow Execution 状态；状态与 Checkpoint 必须由 WorkflowExecutionService.transition_node 统一持久化。
-        """
+        """执行单个 Workflow Node；不直接修改 Execution 状态或 Checkpoint。"""
         node_type = node["type"]
         config = node["config"]
         if node_type in {"input", "output"}:
@@ -509,9 +353,7 @@ class WorkflowRuntime:
             raise HTTPException(403, "无权执行 Workflow Agent")
         if agent.status != "published" or not agent.published_version_id:
             raise HTTPException(409, "Workflow Agent 尚未发布可运行版本")
-        version = (await self.db.execute(select(AgentVersion).where(
-            AgentVersion.id == agent.published_version_id, AgentVersion.agent_id == agent.id
-        ))).scalar_one_or_none()
+        version = (await self.db.execute(select(AgentVersion).where(AgentVersion.id == agent.published_version_id, AgentVersion.agent_id == agent.id))).scalar_one_or_none()
         if version is None:
             raise HTTPException(409, "Workflow Agent 发布版本不存在")
         prompt = config.get("prompt")
@@ -534,19 +376,12 @@ class WorkflowRuntime:
             async def on_governed_attempt(candidate, request_id, outcome, fallback_reason, result):
                 if self.execution_service is None or execution is None:
                     return
-                data = {
-                    "organization_id": str(organization_id), "provider_id": str(candidate.provider.id),
-                    "profile_id": str(candidate.profile.id), "model_type": candidate.profile.model_type,
-                    "request_id": request_id, "trace_id": str(execution.id), "outcome": outcome,
-                }
+                data = {"organization_id": str(organization_id), "provider_id": str(candidate.provider.id), "profile_id": str(candidate.profile.id), "model_type": candidate.profile.model_type, "request_id": request_id, "trace_id": str(execution.id), "outcome": outcome}
                 if fallback_reason is not None:
                     data["fallback_reason"] = fallback_reason.value
                 if result is not None and result.usage is not None:
-                    data["usage"] = {"prompt_tokens": result.usage.prompt_tokens,
-                                     "completion_tokens": result.usage.completion_tokens,
-                                     "total_tokens": result.usage.total_tokens}
-                await self.execution_service.governance.trace(execution, actor_id, "model.invocation", outcome,
-                                                              node_id=node["id"], data=data)
+                    data["usage"] = {"prompt_tokens": result.usage.prompt_tokens, "completion_tokens": result.usage.completion_tokens, "total_tokens": result.usage.total_tokens}
+                await self.execution_service.governance.trace(execution, actor_id, "model.invocation", outcome, node_id=node["id"], data=data)
             result = await self.governance.invoke(governance_request, actor_id, messages, on_attempt=on_governed_attempt)
         except Exception as exc:
             if circuit_tenant_id is not None and self.classify_error(exc) in self.CIRCUIT_FAILURE_CODES:
@@ -557,12 +392,4 @@ class WorkflowRuntime:
         if circuit_tenant_id is not None:
             await self.circuit_breaker.record_success(circuit_tenant_id, circuit_key, config)
         usage = result.usage
-        return {
-            "content": result.content, "model_id": result.model, "agent_id": str(agent.id),
-            "agent_version": agent.published_version_id and version.version,
-            "usage": {
-                "prompt_tokens": usage.prompt_tokens if usage else None,
-                "completion_tokens": usage.completion_tokens if usage else None,
-                "total_tokens": usage.total_tokens if usage else None,
-            },
-        }
+        return {"content": result.content, "model_id": result.model, "agent_id": str(agent.id), "agent_version": agent.published_version_id and version.version, "usage": {"prompt_tokens": usage.prompt_tokens if usage else None, "completion_tokens": usage.completion_tokens if usage else None, "total_tokens": usage.total_tokens if usage else None}}
