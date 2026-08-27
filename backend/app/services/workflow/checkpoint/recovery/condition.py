@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-
 MAX_DEPTH = 8
 MAX_NODES = 64
 _MISSING = object()
@@ -83,10 +82,12 @@ class WorkflowConditionEvaluator:
                 raise ValueError("Condition comparison 必须包含非空 path")
             if any(part == "" for part in condition["path"].split(".")):
                 raise ValueError("Condition path 不能包含空路径段")
-            if op == "in" and not isinstance(condition.get("value"), list):
+            if "value" not in condition:
+                raise ValueError(f"Condition {op} 必须包含 value")
+            if op == "in" and not isinstance(condition["value"], list):
                 raise ValueError("Condition in 的 value 必须为数组")
-            if op == "contains" and not isinstance(condition.get("value"), (str, list)):
-                raise ValueError("Condition contains 的 value 必须为字符串或数组")
+            if op == "contains" and not isinstance(condition["value"], (str, int, float, bool, list, dict)) and condition["value"] is not None:
+                raise ValueError("Condition contains 的 value 必须为 JSON 值")
             if op in {"gt", "gte", "lt", "lte"} and not cls._is_number(condition.get("value")):
                 raise ValueError(f"Condition {op} 的 value 必须为 number")
             return
@@ -104,17 +105,16 @@ class WorkflowConditionEvaluator:
     @classmethod
     def _evaluate(cls, condition: Mapping[str, Any], state_data: Mapping[str, Any]) -> bool:
         op = condition["op"]
-        if op in {"and", "or"}:
-            values = condition["conditions"]
-            if op == "and":
-                return all(cls._evaluate(item, state_data) for item in values)
-            return any(cls._evaluate(item, state_data) for item in values)
+        if op == "and":
+            return all(cls._evaluate(item, state_data) for item in condition["conditions"])
+        if op == "or":
+            return any(cls._evaluate(item, state_data) for item in condition["conditions"])
         if op == "not":
             return not cls._evaluate(condition["condition"], state_data)
 
         actual = cls._read_path(state_data, condition["path"])
         if actual is _MISSING:
-            return False if op != "ne" else False
+            return False
         expected = condition.get("value")
         if op == "eq":
             return cls._strict_equal(actual, expected)
@@ -126,10 +126,12 @@ class WorkflowConditionEvaluator:
             return {"gt": actual > expected, "gte": actual >= expected, "lt": actual < expected, "lte": actual <= expected}[op]
         if op == "in":
             return any(cls._strict_equal(actual, item) for item in expected)
-        if isinstance(actual, str) and isinstance(expected, str):
+        if isinstance(actual, str):
+            if not isinstance(expected, str):
+                raise ValueError("Condition contains 字符串操作数必须均为字符串")
             return expected in actual
         if isinstance(actual, list):
-            return any(cls._strict_equal(actual_item, expected_item) for actual_item in actual for expected_item in expected) if isinstance(expected, list) else any(cls._strict_equal(actual_item, expected) for actual_item in actual)
+            return any(cls._strict_equal(actual_item, expected) for actual_item in actual)
         raise ValueError("Condition contains 仅允许字符串包含字符串，或数组包含严格相等元素")
 
     @staticmethod
@@ -147,6 +149,10 @@ class WorkflowConditionEvaluator:
 
     @classmethod
     def _strict_equal(cls, left: object, right: object) -> bool:
+        if isinstance(left, bool) or isinstance(right, bool):
+            return type(left) is type(right) and left == right
+        if cls._is_number(left) and cls._is_number(right):
+            return left == right
         if type(left) is not type(right):
             return False
         if isinstance(left, list) and isinstance(right, list):
