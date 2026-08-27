@@ -125,7 +125,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     await db.rollback()
                     return
                 policy = self._retry_policy(version)
-                await schedule_frontier_retry(
+                updated_frontier = await schedule_frontier_retry(
                     db,
                     frontier=locked_frontier,
                     worker_owner=self.owner,
@@ -135,6 +135,16 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     error_message=error_message,
                     policy=policy,
                 )
+                if updated_frontier.status == "failed":
+                    execution_service = WorkflowExecutionService(db)
+                    await execution_service.transition(
+                        execution,
+                        "failed",
+                        error_code=error_code,
+                        error_message=error_message,
+                        actor_id=execution.created_by,
+                    )
+                    return
                 execution.worker_owner = None
                 execution.worker_lease_expires_at = None
                 execution.error_code = error_code
