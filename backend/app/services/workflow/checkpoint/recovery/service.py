@@ -1,8 +1,8 @@
 """Workflow Checkpoint 恢复候选评估模块。
 
-职责：只读判断已有 Checkpoint 是否满足未来 Durable Resume 的前置条件，并生成稳定的恢复候选标识。
+职责：只读判断已有 Checkpoint 是否满足 Durable Resume 的前置条件，并生成稳定的恢复候选标识。
 边界：不修改 Execution/Node 状态、不抢占 Worker lease、不启动 Runtime、不提交数据库事务。
-关键约束：恢复必须基于失败 Execution、无活动 Worker ownership、已完成 Node Checkpoint，并固定原 Execution 的 Workflow Version。
+关键约束：恢复必须基于失败 Execution、无活动 Worker ownership、已完成 Node 或已完成 Frontier 的可恢复 Checkpoint，并固定原 Execution 的 Workflow Version。
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ class WorkflowExecutionResumeAssessment:
 class WorkflowExecutionCheckpointRecoveryService:
     """负责定义 Durable Resume 的只读前置条件，不执行实际恢复。"""
 
+    RESUMABLE_CHECKPOINT_REASONS = frozenset({"node.completed", "frontier_completed"})
+
     @staticmethod
     def assess(
         *,
@@ -42,7 +44,7 @@ class WorkflowExecutionCheckpointRecoveryService:
         worker_owner: str | None,
         checkpoint: WorkflowExecutionCheckpoint | None,
     ) -> WorkflowExecutionResumeAssessment:
-        """评估 Checkpoint 是否满足未来 Resume 的最小安全边界。
+        """评估 Checkpoint 是否满足 Durable Resume 的最小安全边界。
 
         Args:
             execution_id: 待评估的 Workflow Execution ID。
@@ -56,14 +58,14 @@ class WorkflowExecutionCheckpointRecoveryService:
             但本方法不会创建新 Execution、写入幂等键或获取 Worker ownership。
 
         Raises:
-            ValueError: execution_id 或 workflow_version_id 不符合 UUID 类型要求时不会出现，
-                调用方应直接传入 UUID；本方法不吞掉数据模型错误。
+            ValueError: 调用方传入的数据模型违反 UUID 类型约束时由上层负责处理，本方法不吞掉模型错误。
 
         重要边界：
-            1. 当前只允许从 failed Execution 产生 Resume 候选；running Execution 必须先经过
-               独立的 Worker lease recovery 边界，不能直接使用 Checkpoint 复活 Runtime。
+            1. 当前只允许从 failed Execution 产生 Resume 候选；running Execution 必须先经过独立的 Worker
+               lease recovery 边界，不能直接使用 Checkpoint 复活 Runtime。
             2. Worker owner 非空表示 ownership 仍有事实存在，即使调用者准备恢复也不得绕过 fencing。
-            3. Checkpoint 必须来自 node.completed，且快照产生时 Execution 应处于 running 状态。
+            3. Checkpoint 必须是 `node.completed` 或 `frontier_completed` 边界，并且产生时 Execution 应处于 running 状态。
+               `node.completed` 必须绑定 completed Node；`frontier_completed` 可以是 Multi-frontier 的 Execution-level Checkpoint。
             4. Workflow Version 固定来自原 Execution；未来恢复不得隐式漂移到新的 published version。
             5. 幂等键由 `execution_id + checkpoint_sequence` 确定性生成，后续真正 Resume 时必须持久化并作为唯一约束的一部分。
         """
@@ -91,7 +93,7 @@ class WorkflowExecutionCheckpointRecoveryService:
                 workflow_version_id=workflow_version_id,
             )
 
-        if checkpoint.checkpoint_reason != "node.completed":
+        if checkpoint.checkpoint_reason not in WorkflowExecutionCheckpointRecoveryService.RESUMABLE_CHECKPOINT_REASONS:
             return WorkflowExecutionResumeAssessment(
                 eligible=False,
                 reason_code="checkpoint_not_resumable",
@@ -102,7 +104,18 @@ class WorkflowExecutionCheckpointRecoveryService:
                 node_id=checkpoint.node_id,
             )
 
-        if checkpoint.execution_status != "running" or checkpoint.node_status != "completed" or checkpoint.node_id is None:
+        if checkpoint.execution_status != "running":
+            return WorkflowExecutionResumeAssessment(
+                eligible=False,
+                reason_code="checkpoint_boundary_invalid",
+                execution_id=execution_id,
+                workflow_version_id=workflow_version_id,
+                checkpoint_id=checkpoint.id,
+                checkpoint_sequence=checkpoint.sequence,
+                node_id=checkpoint.node_id,
+            )
+
+        if checkpoint.checkpoint_reason == "node.completed" and (checkpoint.node_status != "completed" or checkpoint.node_id is None):
             return WorkflowExecutionResumeAssessment(
                 eligible=False,
                 reason_code="checkpoint_boundary_invalid",
