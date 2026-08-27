@@ -1,8 +1,8 @@
 """Workflow Runtime 编排模块。
 
-模块职责：执行已发布 Workflow Definition 的顺序节点、DAG Resume frontier、超时、重试、熔断与模型治理调用。
-边界：不实现模型 Provider 或模型路由规则；模型调用统一通过 runtime.model.ModelGateway 和 services.model 治理服务；DAG Branch 状态与完成事实由 Resume Planner / Executor Contract 提供。
-关键依赖：SQLAlchemy AsyncSession、WorkflowExecutionService、CircuitBreakerService、DAG Resume Runtime 与 ModelProviderRoutingRequest。
+模块职责：执行已发布 Workflow Definition 的顺序节点、DAG Resume frontier、条件分支、超时、重试、熔断与模型治理调用。
+边界：不实现模型 Provider 或模型路由规则；模型调用统一通过 runtime.model.ModelGateway 和 services.model 治理服务；DAG Branch 状态与完成事实由 Planner / Executor Contract 提供。
+关键依赖：SQLAlchemy AsyncSession、WorkflowExecutionService、CircuitBreakerService、DAG Planner / Executor 与 ModelProviderRoutingRequest。
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from app.services.workflow.checkpoint.recovery.dag_state_merge import WorkflowDa
 
 
 class WorkflowRuntime:
-    """Workflow 执行运行时，统一编排节点、DAG Resume、重试、超时与模型治理。"""
+    """Workflow 执行运行时，统一编排节点、DAG、重试、超时与模型治理。"""
 
     NODE_TYPES = {"input", "agent", "output"}
     DEFAULT_TIMEOUT_MS = 30_000
@@ -145,7 +145,7 @@ class WorkflowRuntime:
         return normalized
 
     async def _load_completed_resume_nodes(self, execution) -> list[WorkflowNodeExecution]:
-        """读取 Resume Source 与当前 Resume Execution 的已完成 Node 事实。"""
+        """读取当前 Execution 以及 Resume Source 的已完成 Node 事实。"""
         execution_ids = [execution.id]
         source_execution_id = getattr(execution, "resume_of_execution_id", None)
         if source_execution_id is not None:
@@ -155,19 +155,41 @@ class WorkflowRuntime:
         ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all())
 
     @staticmethod
-    def _build_frontier_branch_states(definition: dict, frontier_node_ids: tuple[str, ...], source_nodes: list[WorkflowNodeExecution]) -> dict[str, dict]:
-        """从 frontier 的已完成 predecessor 输出构造独立 Branch state。"""
+    def _build_frontier_branch_states(
+        definition: dict,
+        frontier_node_ids: tuple[str, ...],
+        source_nodes: list[WorkflowNodeExecution],
+        selected_predecessor_node_ids: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    ) -> dict[str, dict]:
+        """从已完成 predecessor 输出构造当前 frontier 的独立 Branch state。
+
+        Args:
+            definition: 已冻结的 Workflow Definition。
+            frontier_node_ids: 当前待执行的 frontier Node ID。
+            source_nodes: 当前 Execution 或 Resume Source 中已完成的 Node 事实。
+            selected_predecessor_node_ids: Planner 已确定的有效 predecessor；为空时回退到普通 DAG 全量 predecessor。
+
+        Returns:
+            每个 frontier Node 对应的独立状态快照。
+
+        Raises:
+            ValueError: frontier 缺少有效已完成 predecessor state。
+
+        业务边界：Conditional Branching 未命中的边不是 predecessor fact，因此必须优先使用 Planner 已选择的 predecessor，避免 Join 错把未命中分支视为完成。
+        """
         source_by_id: dict[str, dict] = {}
         for node in source_nodes:
             source_by_id[node.node_id] = dict(node.output_data or {})
-        predecessors = {node["id"]: [] for node in definition.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
+        all_predecessors = {node["id"]: [] for node in definition.get("nodes", []) if isinstance(node, dict) and isinstance(node.get("id"), str)}
         for edge in definition.get("edges", []) or []:
-            if isinstance(edge, dict) and edge.get("target") in predecessors:
-                predecessors[edge["target"]].append(edge.get("source"))
+            if isinstance(edge, dict) and edge.get("target") in all_predecessors:
+                all_predecessors[edge["target"]].append(edge.get("source"))
+        selected_map = dict(selected_predecessor_node_ids)
         result: dict[str, dict] = {}
         for node_id in frontier_node_ids:
+            predecessor_ids = list(selected_map.get(node_id, tuple(all_predecessors.get(node_id, []))))
             states = []
-            for predecessor_id in predecessors.get(node_id, []):
+            for predecessor_id in predecessor_ids:
                 if predecessor_id not in source_by_id:
                     raise ValueError(f"DAG Resume frontier {node_id} 缺少已完成 predecessor state")
                 states.append(source_by_id[predecessor_id])
@@ -182,24 +204,55 @@ class WorkflowRuntime:
                 )).state_data
         return result
 
+    async def _resolve_dag_context(self, execution, definition: dict, state_data: dict):
+        """根据当前持久化 Node 完成事实计算初始执行或 Resume 的 DAG frontier。
+
+        Args:
+            execution: 当前 Workflow Execution。
+            definition: 已冻结的 Workflow Version Definition。
+            state_data: 当前执行上下文状态，用于 root 或单 frontier。
+
+        Returns:
+            `(plan, branch_state_data)`；没有 DAG edges 时返回 `None`，由旧顺序执行语义处理。
+
+        Raises:
+            HTTPException: 持久化完成事实、条件状态或 DAG Contract 不满足要求。
+
+        设计意图：Conditional Branching 必须同时作用于首次执行和 Resume；首次执行不能退回按 nodes 数组顺序执行，否则条件边只在恢复路径生效，会造成相同 Workflow Version 的两套运行语义。
+        """
+        if not definition.get("edges"):
+            return None
+        source_nodes = await self._load_completed_resume_nodes(execution)
+        completed_node_ids = {node.node_id for node in source_nodes}
+        state_data_by_node = {node.node_id: dict(node.output_data or {}) for node in source_nodes}
+        try:
+            plan = WorkflowDagResumePlanner.plan(
+                definition=definition,
+                completed_node_ids=completed_node_ids,
+                state_data_by_node=state_data_by_node,
+            )
+            branch_state_data = self._build_frontier_branch_states(
+                definition,
+                plan.frontier_node_ids,
+                source_nodes,
+                plan.selected_predecessor_node_ids,
+            ) if plan.frontier_node_ids and completed_node_ids else {}
+            runtime_plan = WorkflowDagResumeRuntimePlanner.plan(
+                definition=definition,
+                completed_node_ids=completed_node_ids,
+                state_data=state_data,
+                branch_state_data=branch_state_data if len(plan.frontier_node_ids) > 1 else None,
+                state_data_by_node=state_data_by_node,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return runtime_plan, branch_state_data
+
     async def _resolve_resume_context(self, execution, definition: dict, state_data: dict):
         """根据持久化完成事实计算当前 Resume frontier 与独立 Branch state。"""
         if getattr(execution, "resume_of_execution_id", None) is None:
             return None
-        source_nodes = await self._load_completed_resume_nodes(execution)
-        completed_node_ids = {node.node_id for node in source_nodes}
-        try:
-            frontier = WorkflowDagResumePlanner.plan(definition=definition, completed_node_ids=completed_node_ids)
-            branch_state_data = self._build_frontier_branch_states(definition, frontier.frontier_node_ids, source_nodes) if frontier.frontier_node_ids else {}
-            plan = WorkflowDagResumeRuntimePlanner.plan(
-                definition=definition,
-                completed_node_ids=completed_node_ids,
-                state_data=state_data,
-                branch_state_data=branch_state_data if len(frontier.frontier_node_ids) > 1 else None,
-            )
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-        return plan, branch_state_data
+        return await self._resolve_dag_context(execution, definition, state_data)
 
     async def _execute_node_with_policy(self, service, execution, node: dict, current_data: dict, actor_id: UUID,
                                         is_admin: bool, workflow_timeout: int, max_retries: int, started: float,
@@ -265,7 +318,7 @@ class WorkflowRuntime:
 
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
-        """执行 Workflow；Resume 会在每一轮 frontier 完成并持久化后重新计算下一 frontier。"""
+        """执行 Workflow；存在 DAG edges 时，首次执行与 Resume 统一按持久化 frontier 规划。"""
         if self.execution_service is None:
             from app.services.workflow import WorkflowExecutionService
             service = WorkflowExecutionService(self.db)
@@ -284,9 +337,9 @@ class WorkflowRuntime:
         started = asyncio.get_running_loop().time()
         workflow_retry_counter = [0]
 
-        resume_context = await self._resolve_resume_context(execution, version.definition, current_data)
-        if resume_context is not None:
-            plan, branch_state_data = resume_context
+        dag_context = await self._resolve_dag_context(execution, version.definition, current_data)
+        if dag_context is not None:
+            plan, branch_state_data = dag_context
             while plan.frontier_node_ids:
                 if len(plan.frontier_node_ids) > 1:
                     result = await self._execute_multi_frontier(service, execution, plan, branch_state_data, actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
@@ -296,10 +349,10 @@ class WorkflowRuntime:
                 else:
                     node = plan.nodes[0]
                     current_data = await self._execute_node_with_policy(service, execution, node, branch_state_data.get(plan.frontier_node_ids[0], current_data), actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
-                resume_context = await self._resolve_resume_context(execution, version.definition, current_data)
-                if resume_context is None:
+                dag_context = await self._resolve_dag_context(execution, version.definition, current_data)
+                if dag_context is None:
                     break
-                plan, branch_state_data = resume_context
+                plan, branch_state_data = dag_context
             await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
             return current_data
 
