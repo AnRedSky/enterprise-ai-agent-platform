@@ -1,7 +1,7 @@
 """验证 API Service 与 Scheduler Service 的进程职责边界。
 
 测试范围：API 应用不再创建 Scheduler；Scheduler Service 独立入口只负责生命周期编排，并复用正式
-`ScheduledTriggerScheduler` 实现，不复制调度业务规则。
+`ScheduledTriggerScheduler` 与 `WorkflowRecoveryScheduler` 实现，不复制调度或恢复业务规则。
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,20 +26,62 @@ def test_api_service_does_not_start_scheduler():
 
 @pytest.mark.asyncio
 async def test_scheduler_service_owns_scheduler_lifecycle():
-    """Scheduler Service 无条件创建、运行并停止正式 Scheduler 实现。"""
+    """Scheduler Dispatch 异常时，Scheduler Service 必须停止全部后台循环并传播原始异常。"""
     fake_scheduler = MagicMock()
     fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("test-stop"))
     fake_scheduler.stop = MagicMock()
 
+    fake_recovery_scheduler = MagicMock()
+    fake_recovery_scheduler.run_forever = AsyncMock()
+    fake_recovery_scheduler.stop = MagicMock()
+
     with patch.object(
         scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler
     ) as scheduler_factory:
-        with pytest.raises(RuntimeError, match="test-stop"):
-            await scheduler_entrypoint.run_scheduler_service()
+        with patch.object(
+            scheduler_entrypoint,
+            "WorkflowRecoveryScheduler",
+            return_value=fake_recovery_scheduler,
+        ) as recovery_factory:
+            with pytest.raises(RuntimeError, match="test-stop"):
+                await scheduler_entrypoint.run_scheduler_service()
 
     scheduler_factory.assert_called_once_with(settings.scheduler_poll_interval_seconds)
+    recovery_factory.assert_called_once_with(
+        poll_interval_seconds=settings.scheduler_poll_interval_seconds
+    )
     fake_scheduler.run_forever.assert_awaited_once()
     fake_scheduler.stop.assert_called_once()
+    fake_recovery_scheduler.stop.assert_called_once()
+    fake_recovery_scheduler.run_forever.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_service_recovers_from_recovery_scan_failure_by_failing_service():
+    """Recovery Scan 异常时不能留下继续运行的 Scheduled Dispatch，必须统一失败收敛。"""
+    fake_scheduler = MagicMock()
+    fake_scheduler.run_forever = AsyncMock()
+    fake_scheduler.stop = MagicMock()
+
+    fake_recovery_scheduler = MagicMock()
+    fake_recovery_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("recovery-stop"))
+    fake_recovery_scheduler.stop = MagicMock()
+
+    with patch.object(
+        scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler
+    ):
+        with patch.object(
+            scheduler_entrypoint,
+            "WorkflowRecoveryScheduler",
+            return_value=fake_recovery_scheduler,
+        ):
+            with pytest.raises(RuntimeError, match="recovery-stop"):
+                await scheduler_entrypoint.run_scheduler_service()
+
+    fake_scheduler.stop.assert_called_once()
+    fake_recovery_scheduler.stop.assert_called_once()
+    fake_scheduler.run_forever.assert_awaited_once()
+    fake_recovery_scheduler.run_forever.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -51,12 +93,20 @@ async def test_scheduler_service_identity_is_not_configuration_switch():
     fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("test-stop"))
     fake_scheduler.stop = MagicMock()
 
+    fake_recovery_scheduler = MagicMock()
+    fake_recovery_scheduler.run_forever = AsyncMock()
+    fake_recovery_scheduler.stop = MagicMock()
+
     with patch.object(
         scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler
-    ) as scheduler_factory:
-        with pytest.raises(RuntimeError, match="test-stop"):
-            await scheduler_entrypoint.run_scheduler_service()
+    ):
+        with patch.object(
+            scheduler_entrypoint,
+            "WorkflowRecoveryScheduler",
+            return_value=fake_recovery_scheduler,
+        ):
+            with pytest.raises(RuntimeError, match="test-stop"):
+                await scheduler_entrypoint.run_scheduler_service()
 
-    scheduler_factory.assert_called_once_with(settings.scheduler_poll_interval_seconds)
-    fake_scheduler.run_forever.assert_awaited_once()
     fake_scheduler.stop.assert_called_once()
+    fake_recovery_scheduler.stop.assert_called_once()

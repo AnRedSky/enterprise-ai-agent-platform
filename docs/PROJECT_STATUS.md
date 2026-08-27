@@ -4,33 +4,57 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线正在完成 Recovery / Replay Closure。
-- Phase 2.7 已完成 Conditional Branching、Durable Frontier Scheduling、Scheduler → Worker → Runtime、Retry Scheduling、Frontier → Checkpoint 原子推进、Runtime failure convergence、Durable Resume Bootstrap、Recovery Trace 原子事务、Join predecessor contract、tenant boundary、Checkpoint lineage、Decision Replay Guard、Multi-frontier Checkpoint boundary、Execution fencing、stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation、Checkpoint durable write boundary、Multi-frontier Join Recovery、Replay Decision Convergence。
-- **本轮完成 Recovery / Replay lifecycle closure：Resume 幂等命中现在必须验证对应 Resume Execution 已存在 Durable Frontier；缺失 Frontier 的不完整 Resume 不得返回 `idempotency_hit`。**
+- 当前阶段：Phase 2.4 Durable Scheduler 生产代码继续收口；Phase 2.7 Recovery / Replay lifecycle closure 已完成。
+- Phase 2.7 已完成 Conditional Branching、Durable Frontier Scheduling、Scheduler → Worker → Runtime、Retry Scheduling、Frontier → Checkpoint 原子推进、Runtime failure convergence、Durable Resume Bootstrap、Recovery Trace 原子事务、Join predecessor contract、tenant boundary、Checkpoint lineage、Decision Replay Guard、Multi-frontier Checkpoint boundary、Execution fencing、stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation、Checkpoint durable write boundary、Multi-frontier Join Recovery、Replay Decision Convergence、Resume lifecycle idempotency closure。
+- Phase 2.4 已完成 Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦；**本轮继续完成 Scheduler Dispatch + Durable Recovery Scan 双循环生命周期监督**，避免 Recovery Scan 异常后服务处于半存活状态。
 - Phase 2.2 Retrieval Production Quality：已正式关闭。
 - Phase 2.3 Model Provider Governance：已正式关闭。
-- Phase 2.4 Durable Scheduler：已完成既定实现范围，不作为当前主线阻塞条件。
 - Phase 2.5 Scheduler → Worker Execution Decoupling：已正式关闭。
 - Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；Unit Test 实际 Closure 仍按本地执行结果记录。
-- Backend 模块化整改：继续按最新治理规则推进，不作为当前主线阻塞条件。
+- Backend 模块化整改：已完成既有领域迁移，不作为当前主线阻塞条件。
 - Frontend Phase 1.3：SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。
 
-## Phase 2.7 当前实现
+## Phase 2.4 当前实现
 
-- `WorkflowConditionEvaluator` 是唯一条件求值入口；
-- `WorkflowDagResumePlanner` 是首次执行与 Resume 的统一 Planner，输出 completed / frontier / selected predecessor / deterministic decision fingerprint；
-- Runtime Plan 直接消费 immutable Planner result，不重复执行 Planner；
-- Conditional Join 与 Multi-frontier Join Recovery 只消费 Planner selected predecessor 与 durable Node facts；
-- Decision Trace 对 replay payload drift 进行一致性校验，并在写入前强制执行 Replay Guard；
-- Durable Frontier、Claim、lease fencing、expired lease recovery、retry scheduling、Scheduler → Worker → Runtime bridge 已完成；
-- `complete_frontier_with_checkpoint()` 统一 Frontier → Checkpoint → Next Frontier 原子推进；
-- Durable Resume Bootstrap 在同一事务复制 completed Node lineage、重新运行唯一 Planner、幂等入队首个 Frontier；
-- Resume Source / tenant / workflow version / checkpoint sequence lineage 均有正式 guard；
-- `frontier_completed` 为 Execution-level Checkpoint；
-- Execution / Node / Checkpoint durable write 均受 worker generation fencing 保护；
-- Multi-frontier Join Recovery 已从 durable predecessor facts 重建 merged state，并校验 `frontier_completed.state_data`；
-- Replay Decision Convergence 已将历史 Decision、frontier、selected predecessor 收敛检查提升为写入前强制边界；
-- **Resume lifecycle closure 已完成：`WorkflowExecutionResumeContractService` 对幂等命中增加 Durable Frontier 完整性证明，防止历史不完整 Resume 永久吞掉恢复请求。**
+```text
+Durable Scheduler
+├── Persistence                                ✅
+├── Lease / ownership / fencing                ✅
+├── Misfire / catch-up                         ✅
+├── Slot idempotency                           ✅
+├── WorkflowExecution binding                 ✅
+├── Scheduler Runtime                          ✅
+├── Scheduler API Contract                     ✅
+├── Tenant isolation                           ✅
+├── API / Scheduler process separation         ✅
+└── Scheduler dual-loop supervision             ✅ 本轮
+       ├── Scheduled Trigger Dispatch
+       └── Durable Recovery Scan
+              ↓
+       FIRST_EXCEPTION supervision
+              ↓
+       unified shutdown / failure convergence
+```
+
+## Recovery / Replay 当前状态
+
+```text
+Recovery / Replay Closure
+├── Durable Resume Bootstrap                   ✅
+├── Recovery Trace atomic transaction          ✅
+├── Join predecessor contract                 ✅
+├── Resume tenant boundary                    ✅
+├── Resume Checkpoint lineage                 ✅
+├── Cross-Execution Replay Identity           ✅
+├── Multi-frontier Checkpoint boundary        ✅
+├── Execution fencing generation              ✅
+├── stale Worker Checkpoint late-write guard  ✅
+├── Node → Checkpoint fencing propagation     ✅
+├── Checkpoint durable write boundary         ✅
+├── Multi-frontier Join Recovery              ✅
+├── Replay decision convergence               ✅
+└── Resume lifecycle idempotency closure      ✅
+```
 
 ## 当前开发策略
 
@@ -40,47 +64,18 @@
 
 当前环境只能通过 GitHub Repository API 直接核对和修改远端 `main`，无法在本地启动完整项目执行 pytest / npm；因此本轮继续不伪造 Unit Test 结果。
 
-## 当前主线
+## 本轮交付
 
-```text
-Phase 2.7 Conditional Branching
-  └── Conditional Branching Closure       ✅
-
-Durable Frontier Scheduling
-  ├── Durable Frontier persistence        ✅
-  ├── Claim / lease / fencing             ✅
-  ├── Retry Scheduling                    ✅
-  ├── Scheduler → Worker → Runtime       ✅
-  ├── Frontier → Checkpoint progression  ✅
-  └── Runtime failure convergence        ✅
-
-Recovery / Replay Closure
-  ├── Durable Resume Bootstrap             ✅
-  ├── Recovery Trace atomic transaction    ✅
-  ├── Join predecessor contract            ✅
-  ├── Resume tenant boundary               ✅
-  ├── Resume Checkpoint lineage            ✅
-  ├── Cross-Execution Replay Identity     ✅
-  ├── Multi-frontier Checkpoint boundary   ✅
-  ├── Execution fencing generation         ✅
-  ├── stale Worker Checkpoint late-write   ✅
-  ├── Node → Checkpoint fencing propagation ✅
-  ├── Checkpoint durable write boundary    ✅
-  ├── Multi-frontier Join Recovery         ✅
-  ├── Replay decision convergence           ✅
-  └── Resume lifecycle idempotency closure  ✅ 本轮
-
-Recovery / Replay lifecycle closure
-  └── 生产代码闭环                         ✅
-      本地 Unit Test 实际执行               ← 待开发者环境执行
-```
-
-## 本轮交付与文档
-
-- `backend/app/services/workflow/checkpoint/recovery/resume_contract.py`
-- `backend/tests/unit/test_workflow_recovery_lifecycle_closure.py`
-- `docs/04-errors/2026-08-27-recovery-replay-lifecycle-closure.md`
-- `docs/02-phases/PHASE_2_7.md`
+- `backend/app/entrypoints/scheduler.py`
+- `backend/tests/unit/test_service_entrypoints.py`
+- `docs/04-errors/2026-08-27-scheduler-service-supervision.md`
+- `docs/02-phases/PHASE_2_4.md`
 - `docs/PROJECT_STATUS.md`
 
-**Unit Test：本轮未在当前环境执行，因此不记录 PASS。Recovery / Replay lifecycle closure 的生产代码已完成；下一阶段不再新增 Recovery 平行实现，转入项目剩余主线任务。**
+本轮完成 Scheduler Service 双循环生命周期监督：Scheduled Trigger Dispatch 与 Durable Recovery Scan 任一长期循环发生未处理异常时，统一停止另一循环并传播原始异常；正常停止时统一取消并等待任务结束。该变更不新增 Scheduler / Recovery / Runtime 平行实现，不改变数据库、slot、lease、misfire 或 API Contract。
+
+**Unit Test：本轮未在当前环境执行，因此不记录 PASS。完整 Gate / Real API / E2E 按当前主线策略继续暂停。**
+
+## 下一主线
+
+Phase 2.4 Durable Scheduler 的生产代码继续按 canonical domain implementation 收口；优先补齐尚未完成的生产能力，不为测试 Gate 创建新的平行实现。所有主线生产任务完成后，再集中执行开发者本地 Unit Test / Gate / Acceptance。
