@@ -43,6 +43,7 @@ class WorkflowRecoveryEvent:
     failed: int | None = None
     scan_limit: int | None = None
     trace_id: str | None = None
+    parent_trace_id: str | None = None
     span_id: str | None = None
     parent_span_id: str | None = None
     phase: str | None = None
@@ -102,6 +103,7 @@ class WorkflowRecoveryTelemetry:
         *,
         execution_id: UUID | None = None,
         resume_execution_id: UUID | None = None,
+        parent_trace_id: str | None = None,
         phase: str = "recovery",
         occurred_at: datetime | None = None,
     ) -> str:
@@ -114,6 +116,7 @@ class WorkflowRecoveryTelemetry:
                 execution_id=execution_id,
                 resume_execution_id=resume_execution_id,
                 trace_id=trace_id,
+                parent_trace_id=parent_trace_id,
                 span_id=span_id,
                 phase=phase,
                 occurred_at=occurred_at,
@@ -127,6 +130,7 @@ class WorkflowRecoveryTelemetry:
         *,
         execution_id: UUID | None = None,
         resume_execution_id: UUID | None = None,
+        parent_trace_id: str | None = None,
         outcome: str | None = None,
         reason_code: str | None = None,
         phase: str = "recovery",
@@ -142,6 +146,7 @@ class WorkflowRecoveryTelemetry:
                 outcome=outcome,
                 reason_code=reason_code,
                 trace_id=trace_id,
+                parent_trace_id=parent_trace_id,
                 span_id=uuid4().hex[:16],
                 phase=phase,
                 duration_ms=duration_ms,
