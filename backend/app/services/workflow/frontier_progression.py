@@ -108,7 +108,11 @@ async def complete_frontier_with_checkpoint(
     error_code: str | None = None, error_message: str | None = None,
     next_identity: WorkflowFrontierIdentity | None = None, now: datetime, actor_id: UUID | None = None,
 ) -> tuple[WorkflowExecutionCheckpoint, WorkflowFrontier | None]:
-    """原子完成当前 Frontier、追加 Checkpoint、Terminalize Execution 并幂等创建 Next Frontier。"""
+    """原子完成当前 Frontier、追加 Checkpoint、Terminalize Execution 并幂等创建 Next Frontier。
+
+    `attempt` 只代表当前 Frontier consumption attempt；Execution 的 `worker_attempt` 是独立的
+    Worker ownership epoch。两者必须分别校验，禁止用 Frontier attempt 充当 Execution fencing generation。
+    """
     execution_status = "running" if next_identity is not None else "completed"
     validate_frontier_progression_contract(
         frontier=frontier, next_identity=next_identity, execution_status=execution_status,
@@ -122,24 +126,31 @@ async def complete_frontier_with_checkpoint(
     if existing is not None:
         return existing
 
+    execution_result = await db.execute(
+        select(WorkflowExecution).where(
+            WorkflowExecution.id == frontier.execution_id,
+            WorkflowExecution.tenant_id == frontier.tenant_id,
+        ).with_for_update()
+    )
+    execution = execution_result.scalar_one_or_none()
+    if execution is None:
+        raise FrontierProgressionContractError("Frontier 对应的 Workflow Execution 不存在")
+    execution_worker_attempt = int(execution.worker_attempt or 0)
+    if execution.worker_owner != worker_owner:
+        raise FrontierProgressionContractError("Execution Worker ownership 已失效")
+    if execution.worker_lease_expires_at is None or execution.worker_lease_expires_at <= now:
+        raise FrontierProgressionContractError("Execution Worker lease 已失效")
+
     await transition_owned_frontier(
         db, frontier_id=frontier.id, worker_owner=worker_owner, attempt=attempt,
         target_status="completed", now=now,
     )
 
     if next_identity is None:
-        execution_result = await db.execute(
-            select(WorkflowExecution).where(
-                WorkflowExecution.id == frontier.execution_id, WorkflowExecution.tenant_id == frontier.tenant_id,
-            ).with_for_update()
-        )
-        execution = execution_result.scalar_one_or_none()
-        if execution is None:
-            raise FrontierProgressionContractError("Frontier 对应的 Workflow Execution 不存在")
         if execution.status != "running":
             raise FrontierProgressionContractError(f"终态 Frontier 只能从 running Execution 收敛: {execution.status}")
-        if execution.worker_owner != worker_owner or int(execution.worker_attempt or 0) != attempt:
-            raise FrontierProgressionContractError("Execution Worker ownership 或 fencing generation 已失效")
+        if execution_worker_attempt != int(execution.worker_attempt or 0):
+            raise FrontierProgressionContractError("Execution Worker fencing generation 在事务内发生变化")
         execution.status = "completed"
         execution.ended_at = now
         execution.current_node_id = None
@@ -163,8 +174,8 @@ async def complete_frontier_with_checkpoint(
         checkpoint_reason=checkpoint_reason, node_id=node_id, node_attempt=node_attempt, node_status=node_status,
         input_data=input_data, output_data=output_data, worker_owner=worker_owner, error_code=error_code,
         error_message=error_message, tenant_id=frontier.tenant_id,
-        expected_worker_owner=worker_owner if next_identity is not None else None,
-        expected_worker_attempt=attempt if next_identity is not None else None,
+        expected_worker_owner=worker_owner,
+        expected_worker_attempt=execution_worker_attempt,
         frontier_id=frontier.id if checkpoint_reason == "frontier_completed" else None,
     )
 
