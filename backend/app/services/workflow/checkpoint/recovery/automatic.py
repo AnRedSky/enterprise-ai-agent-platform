@@ -30,6 +30,7 @@ from app.services.workflow.checkpoint.recovery.policy import (
 )
 from app.services.workflow.checkpoint.recovery.resume_contract import WorkflowExecutionResumeContractService
 from app.services.workflow.checkpoint.recovery.service import WorkflowExecutionCheckpointRecoveryService
+from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
 
@@ -57,6 +58,7 @@ class WorkflowExecutionAutomaticRecoveryService:
         self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
         self.checkpoint = WorkflowExecutionCheckpointService(db)
         self.resume_contract = WorkflowExecutionResumeContractService(db)
+        self.trace_link = WorkflowRecoveryTraceLinkService(db)
         # 保留 event_logger 兼容现有调用方，同时把新 telemetry 作为统一出口。
         self.event_logger = event_logger or WorkflowRecoveryEventLogger(logging.getLogger(__name__))
         self.telemetry = telemetry or WorkflowRecoveryTelemetry(event_logger=self.event_logger)
@@ -170,6 +172,12 @@ class WorkflowExecutionAutomaticRecoveryService:
             decision=result.decision,
             resume_execution_id=resume_result.execution.id,
             outcome=resume_result.outcome,
+        )
+        await self.trace_link.link(
+            execution,
+            resume_result.execution,
+            trace_id,
+            actor_id or execution.created_by,
         )
         duration_ms = (monotonic() - started) * 1000
         self._emit_attempt(execution, recovered, trace_id=trace_id, duration_ms=duration_ms)
