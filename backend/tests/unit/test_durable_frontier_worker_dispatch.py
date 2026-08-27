@@ -15,9 +15,9 @@ def test_scheduled_trigger_enqueues_durable_frontier() -> None:
     assert '"dispatch_mode": "durable_frontier"' in source
 
 
-def test_default_worker_uses_durable_frontier_dispatch() -> None:
+def test_default_worker_uses_planner_driven_durable_frontier_dispatch() -> None:
     source = _read("app/services/workflow_worker/__init__.py")
-    assert "WorkflowWorker = DurableFrontierWorkflowWorker" in source
+    assert "WorkflowWorker = PlannerDrivenDurableFrontierWorkflowWorker" in source
 
 
 def test_frontier_worker_claims_execution_in_same_transaction() -> None:
@@ -32,6 +32,19 @@ def test_frontier_worker_preserves_fencing_generation() -> None:
     assert "attempt=frontier.attempt" in source
     assert "transition_owned_frontier(" in source
     assert "renew_owned_frontier_lease(" in source
+
+
+def test_frontier_worker_reuses_owned_running_execution() -> None:
+    source = _read("app/services/workflow_worker/frontier_runtime.py")
+    assert 'execution.status == "running" and owned_by_current_worker' in source
+    assert "execution.worker_attempt = int(execution.worker_attempt or 0) + 1" in source
+    assert "execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)" in source
+
+
+def test_expired_foreign_execution_gets_new_fencing_generation() -> None:
+    source = _read("app/services/workflow_worker/frontier_runtime.py")
+    assert 'execution.status == "running" and execution_lease_expired' in source
+    assert 'execution.status = "pending"' in source
 
 
 def test_node_checkpoint_write_carries_execution_fencing_generation() -> None:
