@@ -1,7 +1,7 @@
 # Phase 2.4 — Durable Scheduler
 
-> 状态：**生产实现继续收口中；Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦、Scheduler Service 双循环生命周期监督均已实现。完整 Gate / Acceptance 按当前开发策略暂不作为主线阻塞条件。**
-> 评估日期：2026-08-27
+> 状态：**Backend Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦与真实服务重启 Acceptance 的实现已完成；Frontend / Browser E2E 已完成本轮实际验证；普通 Tenant Safe Real API Gate 已通过；当前等待开发者在最新 main 上重新执行完整 Gate 后完成最终 Acceptance 汇总。**
+> 评估日期：2026-08-25
 > 优先级：**P1**
 
 ## 1. 方案决策
@@ -30,7 +30,7 @@ backend/app/services/workflow_scheduler/
 backend/app/entrypoints/
 └── scheduler.py     # Scheduler Service 进程生命周期编排
 
-backend/run.py          # API Service
+backend/run.py       # API Service
 backend/run_scheduler.py # Scheduler Service
 ```
 
@@ -48,8 +48,7 @@ backend/run_scheduler.py # Scheduler Service
 6. lease owner / expiry 成对约束；
 7. `skip / fire_once / catch_up` misfire；
 8. Scheduled Trigger 配置可持久化 `misfire_policy / catch_up_limit`；
-9. API Service / Scheduler Service 独立进程生命周期；
-10. Scheduler Dispatch / Durable Recovery Scan 双循环统一生命周期监督。
+9. API Service / Scheduler Service 独立进程生命周期。
 
 ## 4. Persistence 第一版
 
@@ -121,7 +120,7 @@ misfire 计算统一位于 `workflow_scheduler/misfire.py`，Runtime 不复制�
 
 ## 8. API / Scheduler 服务化拆分
 
-API Service 与 Scheduler Service 已完成物理解耦：
+此前 API `lifespan` 会同时创建 Scheduler 后台任务。本轮完成物理解耦：
 
 ```text
 API Service
@@ -130,69 +129,103 @@ API Service
 
 Scheduler Service
     run_scheduler.py → app.entrypoints.scheduler
-    ├── Scheduled Trigger Dispatch
-    └── Durable Recovery Scan
+    └── 只负责 ScheduledTriggerScheduler 生命周期
 ```
 
 API Service 不再导入或创建 `ScheduledTriggerScheduler`，因此 API 横向扩容不会同步创建新的后台 Scheduler。Scheduler 仍可通过 PostgreSQL lease + slot Contract 做多实例 ownership；服务化拆分不改变既有调度规则、数据库模型或 API Contract。
 
+完整设计见：`docs/00-architecture/SERVICE_RUNTIME_ARCHITECTURE.md`。
+
 Worker Service 暂不实现。后续只有在 Task Contract、Queue/Broker、retry、lease、DLQ、cancellation 与 tenant boundary 明确后才建立正式 Worker 领域模块，禁止提前创建空壳或第二套 Runtime。
 
-## 9. Scheduler Service 双循环生命周期监督
+## 9. Backend Gate / 最新实际结果
 
-Scheduler Service 现在将 Scheduled Trigger Dispatch 与 Durable Recovery Scan 视为同一完整服务职责的两个长期循环，并由进程入口统一监督：
+开发者上一轮反馈：
 
 ```text
-Scheduler Service
-   ├── Scheduled Trigger Dispatch
-   └── Durable Recovery Scan
-            ↓
-      FIRST_EXCEPTION
-            ↓
-任一循环异常 → 停止另一循环 → 传播原始异常 → 进程失败收敛
+Backend default regression：397 passed，3 skipped，36 deselected
+Tenant Safe Real API Gate：35 passed
+Frontend Regression：79 passed + production build
+Workflow Trigger Browser E2E：1 passed
 ```
 
-该边界解决了 Recovery Scan 后台任务静默异常而 Scheduled Trigger Dispatch 继续运行的半存活状态。入口只负责生命周期监督，不复制 slot、lease、misfire、Recovery Policy 或 Runtime 规则。
+以上是上一轮实际结果。本轮服务化拆分后必须重新执行相关 Backend Gate；本文件不预填本轮通过结果。
 
-正常停止时两个任务统一取消并等待完成；异常停止时不留下后台孤儿任务。
+## 10. 真实服务重启 Acceptance
 
-## 10. 当前测试策略
+真实服务重启 Gate 由独立入口执行：
 
-按当前项目主线策略，暂停完整测试流程，不以 Backend Full Regression、Real API、Frontend Gate 或 Browser E2E 阻塞生产代码推进。新增或修改的单元测试保持在 `backend/tests/unit/`，实际 PASS 只能由开发者本地执行结果确认。
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
+```
 
-本轮新增/更新：
+当前脚本已取消对 `127.0.0.1:8000` 的固定占用要求：启动前自动申请本机空闲端口作为 tenant-safe fixture bootstrap API。bootstrap 完成后临时进程退出；`tests/api_real/test_scheduler_restart_api.py` 再自行申请新的空闲端口完成真实 Uvicorn 停止/重启验收。
+
+服务化后 Acceptance 应明确启动 `run_scheduler.py` 对应 Scheduler Service；API Service 的重启不应隐式创建 Scheduler。真实 PostgreSQL、`next_run_at` 回拨、历史 slot recovery、统一 idempotency key、WorkflowExecution 以及 Audit/Trace tenant/workflow/execution 关联仍由原 Acceptance 测试真实验证。
+
+## 11. Frontend Scheduler 状态可观测性
+
+Backend Scheduler API Contract 已向 Frontend 暴露正式只读入口，Frontend 不实现第二套 Scheduler 计算逻辑：
+
+- `frontend/src/api/workflows.ts` 定义 `SchedulerStatus`，统一调用 `/workflows/{workflow_id}/triggers/{trigger_id}/schedule`；
+- Workflow Trigger 页面为 Scheduled Trigger 增加“调度状态”入口；
+- 页面展示 status、timezone、misfire、catch-up、next/last run、lease 与最近 Execution；
+- Trigger 禁用、删除或 Workflow 切换导致目标失效时，页面清理已选 Scheduler 状态，避免展示过期持久化数据；
+- Scheduler Runtime 在 Trigger 创建后存在异步初始化窗口时，Frontend 仅对“Scheduler 状态尚未初始化”执行有限重试，不复制 Scheduler 调度规则；
+- Vitest 已补充该初始化窗口的重试断言；
+- Workflow Trigger Browser E2E 已实际验证真实 Trigger 创建、Scheduler API 状态、Scheduler UI 状态以及 PostgreSQL 持久化 Config。
+
+## 12. Browser E2E 场景隔离
+
+当前 Organization 领域保持“一 Tenant 一 Organization”。为了让 Browser E2E 在本地可重复执行，不改变生产领域约束：
+
+- `backend/scripts/test/e2e/00_reset_browser_e2e_database.py` 仅清理本地 E2E 数据库的 Organization 根聚合及其级联数据；
+- `frontend/scripts/test/e2e/00_run_isolated_test.ps1` 在每个 Browser 场景前执行数据库隔离，再运行真实 Browser -> Vue -> Backend HTTP；
+- `01_run_workflow_trigger_e2e.ps1` 只执行 Scheduler Workflow Trigger 场景；
+- `02_run_organization_e2e.ps1` 逐个执行 Organization 场景；
+- `03_run_model_provider_e2e.ps1` 逐个执行 Model Provider/Profile 场景。
+
+该清理工具仅用于本地 Browser E2E，不得用于生产数据库，不替代 Alembic migration。
+
+## 13. 下一执行顺序
 
 ```text
+API / Scheduler 服务化代码与单元边界测试                    ✓ 已实现
+Backend default regression                                 ↓ 需重新执行
+Tenant Safe Real API Gate                                  ↓ 需重新执行
+Scheduler Restart Acceptance                               ↓ 需重新执行
+Frontend Regression Gate                                   ↓ 服务化后按范围重新执行
+Workflow Trigger Browser E2E                               ↓ 服务化后按范围重新执行
+Scheduler 多实例 lease / misfire / Execution / Audit Trace Acceptance
+                                                            ↓
+Phase 2.4 Passed 评估
+```
+
+普通 Tenant Safe Real API Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
+```
+
+Scheduler Restart Acceptance：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\02_run_scheduler_restart_acceptance.ps1
+```
+
+两者仍然是独立 Gate。当前不记录 Phase 2.4 Passed，直到服务化后的 Gate 实际完成并完成 Acceptance 汇总。
+
+## 14. 本轮生产代码增量
+
+Scheduler Service 进程入口新增双循环生命周期监督：Scheduled Trigger Dispatch 与 Durable Recovery Scan 由同一 Supervisor 统一管理。任一循环发生未处理异常时，立即停止另一循环并传播原始异常，避免 Scheduler Service 处于“Dispatch 仍运行但 Recovery 已失效”的半存活状态；正常停止时两个循环统一取消并等待结束。
+
+对应实现与单元测试：
+
+```text
+backend/app/entrypoints/scheduler.py
 backend/tests/unit/test_service_entrypoints.py
 ```
 
-覆盖：
-
-- API Service 不创建 Scheduler；
-- Scheduler Dispatch 异常时统一停止 Recovery Scan；
-- Recovery Scan 异常时统一停止 Scheduled Dispatch；
-- Scheduler Service 身份不依赖配置开关。
-
-## 11. 当前交付状态
-
-```text
-Scheduler Persistence                         ✅
-Scheduler Runtime                             ✅
-Scheduler API Contract                        ✅
-Tenant isolation / misfire                    ✅
-API / Scheduler process separation            ✅
-Scheduler dual-loop lifecycle supervision     ✅ 本轮
-
-Phase 2.4 生产代码范围                        ✅
-完整 Gate / Acceptance                        ← 按当前策略暂缓
-```
-
-## 12. 下一执行顺序
-
-```text
-1. 保持 Scheduler canonical implementation，不新增第二实现
-2. 继续推进 Phase 2.4 尚未完成的生产代码缺口
-3. 每个生产代码变更同步 targeted Unit Test
-4. 暂停 Full Regression / Real API / E2E，不阻塞主线
-5. 所有主线生产任务完成后，再集中执行开发者本地 Gate / Acceptance
-```
