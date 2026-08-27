@@ -53,18 +53,18 @@ class _FakeService:
         self.db = db
         self.policy = policy
 
-    async def evaluate(self, execution, now=None):
-        return SimpleNamespace(
-            decision=SimpleNamespace(
-                eligible=execution.id != BLOCKED_ID,
-                reason_code="eligible" if execution.id != BLOCKED_ID else "checkpoint_not_eligible",
-                attempt_count=0,
-                max_attempts=3,
-            )
-        )
-
     async def recover(self, execution, now=None):
-        return SimpleNamespace(resume_execution_id=None if execution.id == BLOCKED_ID else uuid4())
+        if execution.id == BLOCKED_ID:
+            return SimpleNamespace(
+                decision=SimpleNamespace(eligible=False),
+                resume_execution_id=None,
+                outcome="rejected",
+            )
+        return SimpleNamespace(
+            decision=SimpleNamespace(eligible=True),
+            resume_execution_id=uuid4(),
+            outcome="created",
+        )
 
 
 BLOCKED_ID = uuid4()
@@ -89,8 +89,41 @@ async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) ->
     assert result.candidates == 2
     assert result.eligible == 1
     assert result.recovered == 1
+    assert result.created == 1
+    assert result.idempotency_hit == 0
+    assert result.contention == 0
     assert result.rejected == 1
     assert result.failed == 0
+
+
+@pytest.mark.asyncio
+async def test_recovery_scheduler_classifies_idempotency_hit_as_contention(monkeypatch) -> None:
+    execution = SimpleNamespace(id=uuid4())
+    sessions = iter([_FakeDb([execution]), _FakeDb([execution])])
+
+    def fake_session_local():
+        return _FakeSessionContext(next(sessions))
+
+    class _IdempotentService(_FakeService):
+        async def recover(self, execution, now=None):
+            return SimpleNamespace(
+                decision=SimpleNamespace(eligible=True),
+                resume_execution_id=uuid4(),
+                outcome="idempotency_hit",
+            )
+
+    monkeypatch.setattr(recovery_module, "SessionLocal", fake_session_local)
+    monkeypatch.setattr(recovery_module, "WorkflowExecutionAutomaticRecoveryService", _IdempotentService)
+
+    result = await WorkflowRecoveryScheduler(scan_limit=10).scan_once(
+        now=datetime(2026, 8, 26, 12, 0),
+    )
+
+    assert result.eligible == 1
+    assert result.recovered == 1
+    assert result.created == 0
+    assert result.idempotency_hit == 1
+    assert result.contention == 1
 
 
 @pytest.mark.asyncio
