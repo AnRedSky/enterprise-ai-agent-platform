@@ -60,6 +60,8 @@ async def schedule_frontier_retry(
     """
     if not error_code:
         raise ValueError("error_code must not be empty")
+    frontier.error_code = error_code
+    frontier.error_message = error_message
     if not policy.can_retry(attempt):
         return await transition_owned_frontier(
             db,
@@ -71,8 +73,6 @@ async def schedule_frontier_retry(
         )
 
     delay = policy.delay_seconds(attempt)
-    frontier.error_code = error_code
-    frontier.error_message = error_message
     frontier.available_at = now + timedelta(seconds=delay)
     frontier.completed_at = None
     await transition_owned_frontier(
