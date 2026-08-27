@@ -155,7 +155,10 @@ async def test_recover_emits_idempotency_hit_attempt_event(monkeypatch) -> None:
         execution_status="running", node_status="completed", state_data={}, input_data={}, output_data={},
     )
 
-    monkeypatch.setattr(service.checkpoint, "latest", lambda _execution_id: checkpoint)
+    async def fake_latest(_execution_id):
+        return checkpoint
+
+    monkeypatch.setattr(service.checkpoint, "latest", fake_latest)
     monkeypatch.setattr(service, "_count_resume_ancestors", lambda _execution: 0)
 
     existing_resume = SimpleNamespace(id=uuid4())
