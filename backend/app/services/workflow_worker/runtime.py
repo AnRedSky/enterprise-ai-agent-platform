@@ -64,7 +64,18 @@ class WorkflowWorker:
         self.telemetry = telemetry or WorkflowRecoveryTelemetry(event_logger=self.event_logger)
 
     async def claim_one(self, now: datetime | None = None) -> WorkflowExecution | None:
-        """原子认领一个 pending Execution。"""
+        """原子认领一个可消费 Execution。
+
+        Args:
+            now: 可选的当前时间；主要用于确定性测试和租约计算。
+
+        Returns:
+            成功认领的 WorkflowExecution；没有可消费任务时返回 None。
+
+        事务边界：在 PostgreSQL 行锁事务中认领 pending Execution，或回收已经过期的 running Execution。
+        回收 running Execution 时先将其重新置为 pending，再写入新的 Worker owner，使旧 Worker 后续的
+        状态转换通过 ownership fencing 失败。租约到期是恢复条件，不代表旧 Worker 仍有权继续提交状态。
+        """
         now = now or datetime.now(UTC)
         now_naive = now.replace(tzinfo=None)
         lease_expires_at = now_naive + timedelta(seconds=self.lease_seconds)
@@ -72,9 +83,18 @@ class WorkflowWorker:
             result = await db.execute(
                 select(WorkflowExecution)
                 .where(
-                    WorkflowExecution.status == "pending",
-                    (WorkflowExecution.worker_owner.is_(None))
-                    | (WorkflowExecution.worker_lease_expires_at <= now_naive),
+                    (
+                        (WorkflowExecution.status == "pending")
+                        & (
+                            (WorkflowExecution.worker_owner.is_(None))
+                            | (WorkflowExecution.worker_lease_expires_at <= now_naive)
+                        )
+                    )
+                    | (
+                        (WorkflowExecution.status == "running")
+                        & WorkflowExecution.worker_owner.is_not(None)
+                        & (WorkflowExecution.worker_lease_expires_at <= now_naive)
+                    )
                 )
                 .order_by(WorkflowExecution.created_at.asc(), WorkflowExecution.id.asc())
                 .with_for_update(skip_locked=True)
@@ -84,14 +104,38 @@ class WorkflowWorker:
             if execution is None:
                 await db.rollback()
                 return None
+            reclaimed_running = execution.status == "running"
+            if reclaimed_running:
+                execution.status = "pending"
+                execution.current_node_id = None
             execution.worker_owner = self.owner
             execution.worker_lease_expires_at = lease_expires_at
             execution.worker_attempt = int(execution.worker_attempt or 0) + 1
             await db.commit()
+            if reclaimed_running:
+                logger.warning(
+                    "Workflow Worker reclaimed expired Execution lease",
+                    extra={
+                        "execution_id": str(execution.id),
+                        "worker_owner": self.owner,
+                        "worker_attempt": execution.worker_attempt,
+                    },
+                )
             return execution
 
     async def _renew_lease_once(self, execution_id: UUID) -> bool:
-        """原子刷新当前 Worker 的 Execution 租约。"""
+        """原子刷新当前 Worker 的 Execution 租约。
+
+        Args:
+            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
+
+        Returns:
+            成功刷新并仍持有 ownership 时返回 True；Execution 已进入终态、ownership 已丢失或租约已失效时返回 False。
+
+        事务边界：使用带 ownership/status fencing 的单条 UPDATE。不能先 SELECT ORM 对象再赋值提交，
+        因为 Runtime 可能在 SELECT 与 COMMIT 之间把 Execution 推进到 completed/failed/cancelled 并释放
+        worker ownership；旧 Worker 随后只更新 `worker_lease_expires_at` 会违反 worker lease pair constraint。
+        """
         now = datetime.now(UTC).replace(tzinfo=None)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
         async with SessionLocal() as db:
@@ -112,7 +156,16 @@ class WorkflowWorker:
             return True
 
     async def _renew_lease_forever(self, execution_id: UUID) -> None:
-        """持续刷新当前 Worker 的 Execution 租约。"""
+        """持续刷新当前 Worker 的 Execution 租约。
+
+        Args:
+            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
+
+        Returns:
+            无；Execution 不再属于当前 Worker 或租约已失效后自动退出。
+
+        事务边界：每次刷新使用独立短事务；数据库瞬时失败只记录日志并继续下一轮。heartbeat 首轮立即执行一次 ownership 检查，租约失效后立即退出，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
+        """
         interval = max(0.1, self.lease_seconds / 3)
         while True:
             try:
