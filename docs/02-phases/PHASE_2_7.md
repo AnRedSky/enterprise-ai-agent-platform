@@ -57,7 +57,8 @@ Join merged-state recovery guard
 - **Durable Frontier Terminal Execution Recovery Guard：过期 Frontier 回收现在只允许关联 Execution 仍为 `pending/running` 时进入 `retry_wait`，completed/failed/cancelled Execution 的旧 Frontier 不再被 Recovery 重新激活。**
 - **Durable Checkpoint Execution Lifecycle Guard：Checkpoint durable write 在锁定 Execution 后再次校验当前 Execution status 与快照声明一致，stale Worker 不得在 terminalization 后追加旧的 `running/pending` durable fact。**
 - **Durable Frontier Identity Canonicalization：Frontier identity key 对并行 Node 集合进行规范化排序，同一 Execution / Version / Decision 下仅因 Planner 遍历顺序不同不会生成第二个逻辑 Frontier。**
-- **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再通过会提前 `commit()` 的普通 Execution transition 完成 terminalization；Frontier、`frontier_completed` Checkpoint、Execution `completed` 与 Next Frontier 现在由统一 progression transaction 提交或回滚。**
+- **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再通过会提前 `commit()` 的普通 Execution transition 完成 terminalization；Frontier、`frontier_completed` Checkpoint、Execution `completed` 与 Next Frontier 现在由同一 progression transaction 统一提交或回滚。**
+- **Durable Frontier Terminalization Ownership Recheck：终态 Frontier 在 Execution terminalization 前再次锁定并校验当前 Worker owner / fencing generation，防止 Frontier 已被占有但 Execution owner 已变更时旧 Worker 结束 Execution。**
 
 ## 3. Durable Recovery Closure
 
@@ -151,8 +152,8 @@ NodeExecution completed facts
         ↓
 complete_frontier_with_checkpoint()
    ├── current Frontier → completed
-   ├── one frontier_completed Checkpoint
-   ├── terminal Execution → completed（无 Next Frontier）
+   ├── frontier_completed Checkpoint
+   ├── terminal Execution → completed（终态 Frontier）
    └── deterministic Next Frontier（存在后继时）
         ↓
        COMMIT
@@ -197,21 +198,47 @@ Planner B: [node-b, node-c, node-a]
 
 该规则只作用于 identity key，不改变实际 `node_ids` 的执行顺序；因此不会把 identity canonicalization 误当成 Runtime execution ordering。tenant、Execution、Workflow Version、Decision fingerprint 仍全部参与 identity，避免跨 Execution / Version / Decision 错误合并。
 
+### 3.10 Terminalization Ownership Recheck
+
+终态 Frontier 在 `complete_frontier_with_checkpoint()` 内必须同时锁定当前 `WorkflowExecution`，并重新证明：
+
+```text
+Frontier owner / attempt
+          ==
+Execution owner / attempt
+          ==
+current Worker epoch
+```
+
+只有上述三个维度同时成立时，才允许把 Execution 从 `running` 变为 `completed` 并清除 Execution lease。这样可以阻止如下交叉窗口：
+
+```text
+Worker A
+  ↓
+Frontier claim 成功
+  ↓
+Execution ownership 发生变化
+  ↓
+Worker A 继续 completion
+  ✕ 不得 terminalize Execution
+```
+
 ## 4. 本轮单元测试
 
 新增 / 更新：
 
 ```text
-backend/tests/unit/test_frontier_terminalization_contract.py
+backend/tests/unit/test_frontier_terminalization_atomicity.py
 ```
 
 覆盖：
 
-- 终态 Frontier 没有 Next Frontier 时必须声明 `execution_status=completed`；
-- completed Execution 可以合法结束且不产生 Next Frontier；
-- 非终态 Next Frontier 必须属于同一个 Execution / Version。
+- terminal Frontier 没有 Next Frontier 时必须声明 `execution_status=completed`；
+- completed Execution 不得再次通过 terminal Frontier 完成路径；
+- terminalization 时 Execution owner 与当前 Frontier Worker 不一致必须拒绝；
+- 非终态 Next Frontier 仍使用 `execution_status=running` 并继续传递 Worker fencing。
 
-**当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
+**当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待主线完成后的本地测试执行。**
 
 ## 5. 当前交付状态
 
@@ -226,14 +253,15 @@ Node → Checkpoint fencing propagation         ✅
 Checkpoint durable write boundary             ✅
 Multi-frontier Join Recovery                  ✅
 Replay decision convergence                   ✅
-Resume lifecycle idempotency closure         ✅
+Resume lifecycle idempotency closure          ✅
 Durable Resume Checkpoint continuation        ✅
 Durable Multi-frontier completion boundary    ✅
 Durable Completion Contract Hardening         ✅
 Terminal Execution Frontier Recovery Guard    ✅
 Checkpoint Execution Lifecycle Guard          ✅
 Durable Frontier Identity Canonicalization   ✅
-Terminalization Transaction Boundary          ✅ 本轮
+Terminalization Transaction Boundary          ✅
+Terminalization Ownership Recheck             ✅ 本轮
 
         ↓
 
@@ -241,12 +269,12 @@ Next Frontier / recovery re-entry / duplicate consumption / replay convergence
   └── 继续开发，不以测试流程阻塞主线
 ```
 
-Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不阻塞主线代码推进。Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler/Worker → Runtime。
+完整测试与验收在全部主线任务完成后再启动；届时需要按 `DEVELOPMENT.md` 提供并执行可重复的本地自动化脚本、数据库迁移验证、Backend Gate、Frontend Gate、Real API Gate 及需要的 Browser E2E。
 
 ## 6. 本轮交付说明
 
-本轮沿 Durable Frontier → Next Frontier → Execution terminalization 主线继续推进。检查现有成功路径后发现：终态 Frontier 原本在 `complete_frontier_with_checkpoint()` 返回后通过普通 `WorkflowExecutionService.transition()` 进行 Execution terminalization，而该通用入口会自行 `commit()`。这会破坏 Frontier、Checkpoint、Execution terminalization 与外层事务的一致性。
+本轮沿 Durable Frontier → Next Frontier → Execution terminalization 主线继续推进。在已有同一事务 terminalization 基础上进一步收紧 Worker ownership：`Frontier` 与 `Execution` 虽分别具备 fencing，仍可能在中间状态发生 ownership 变化，因此 terminalization 之前必须重新锁定 Execution 并比较 owner + fencing generation。该检查失败时，在任何 Checkpoint durable write 前拒绝本次 completion。
 
-本轮将 terminalization 收回 Durable Frontier progression primitive：终态 Frontier 在同一事务内锁定 Execution、再次校验 Worker fencing、写入 completed 状态与审计事实，最终由 Durable Frontier Worker 的唯一外层 `commit()` 提交。非终态 Frontier 仍只创建确定性 Next Frontier，不改变现有 Runtime / Planner / Repository 正式入口。
+本轮没有创建第二套 Planner、Runtime、Repository、Execution 状态机或 Provider；仅强化既有 Durable Frontier progression 的并发 Contract，新增对应 Unit Test，并记录到错误与 Phase 文档。
 
 完整 pytest / Regression / E2E / Real API 流程继续暂停，直到全部主线任务开发完成。
