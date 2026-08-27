@@ -30,6 +30,7 @@ def test_recovery_event_serializes_stable_fields() -> None:
         attempt_count=1,
         max_attempts=3,
         trace_id="trace-1",
+        parent_trace_id="scheduler-trace-1",
         span_id="span-1",
         parent_span_id="parent-1",
         phase="resume",
@@ -47,6 +48,7 @@ def test_recovery_event_serializes_stable_fields() -> None:
         "attempt_count": 1,
         "max_attempts": 3,
         "trace_id": "trace-1",
+        "parent_trace_id": "scheduler-trace-1",
         "span_id": "span-1",
         "parent_span_id": "parent-1",
         "phase": "resume",
@@ -91,16 +93,20 @@ def test_recovery_telemetry_fans_out_same_event_to_trace_and_metrics() -> None:
     assert metrics_events == [event]
 
 
-def test_recovery_telemetry_trace_lifecycle_preserves_trace_id() -> None:
+def test_recovery_telemetry_trace_lifecycle_preserves_trace_id_and_parent() -> None:
     events: list[WorkflowRecoveryEvent] = []
     telemetry = WorkflowRecoveryTelemetry(trace_sink=events.append)
 
-    trace_id = telemetry.start_trace(phase="automatic_recovery")
+    trace_id = telemetry.start_trace(
+        phase="automatic_recovery",
+        parent_trace_id="scheduler-trace-1",
+    )
     telemetry.finish_trace(
         trace_id,
         outcome="recovered",
         reason_code="checkpoint_available",
         phase="automatic_recovery",
+        parent_trace_id="scheduler-trace-1",
         duration_ms=4.2,
     )
 
@@ -109,5 +115,7 @@ def test_recovery_telemetry_trace_lifecycle_preserves_trace_id() -> None:
     assert events[1].event_name == RECOVERY_TRACE_FINISHED
     assert events[0].trace_id == trace_id
     assert events[1].trace_id == trace_id
+    assert events[0].parent_trace_id == "scheduler-trace-1"
+    assert events[1].parent_trace_id == "scheduler-trace-1"
     assert events[1].outcome == "recovered"
     assert events[1].duration_ms == 4.2
