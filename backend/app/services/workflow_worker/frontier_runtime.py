@@ -25,19 +25,7 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
     """以 Durable Frontier 为调度入口，同时复用既有 Execution Runtime。"""
 
     async def claim_one_frontier(self, now: datetime | None = None) -> WorkflowFrontier | None:
-        """Claim 一个 Durable Frontier，并安全取得对应 Execution ownership。
-
-        Args:
-            now: 可选当前时间；用于确定性测试以及 Frontier/Execution lease 判断。
-
-        Returns:
-            成功认领的 Durable Frontier；没有可安全领取的 Frontier 时返回 None。
-
-        事务边界：Frontier claim 与 Execution ownership 在同一数据库事务中完成。
-        已由当前 Worker 持有的 running/pending Execution 不递增 Execution fencing generation，
-        这样同一 Worker 执行下一 Frontier 时不会制造虚假的 ownership 变更；已过期且属于其他
-        Worker 的 Execution 才会重新取得 ownership 并递增 generation。
-        """
+        """Claim 一个 Durable Frontier，并安全取得对应 Execution ownership。"""
         now = now or datetime.now(UTC)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
         now_naive = now.replace(tzinfo=None)
@@ -57,7 +45,6 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             if frontier is None:
                 await db.rollback()
                 return None
-
             execution = (
                 await db.execute(
                     select(WorkflowExecution)
@@ -71,21 +58,16 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             if execution is None:
                 await db.rollback()
                 return None
-
             execution_lease_expired = (
                 execution.worker_lease_expires_at is None
                 or execution.worker_lease_expires_at <= now_naive
             )
             owned_by_current_worker = execution.worker_owner == self.owner
-
             if execution.status == "pending" and (execution.worker_owner is None or execution_lease_expired):
                 execution.worker_owner = self.owner
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
                 execution.worker_attempt = int(execution.worker_attempt or 0) + 1
             elif execution.status == "pending" and owned_by_current_worker:
-                # Recovery 后一个 Execution 可能有多个 retry_wait Frontier；首个 Frontier
-                # 已重新取得 Execution ownership，后续 Frontier 必须复用同一 Worker epoch，
-                # 而不能因为 Execution 仍处于 pending 就被错误地视为不可消费。
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
             elif execution.status == "running" and owned_by_current_worker:
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
@@ -98,19 +80,12 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             else:
                 await db.rollback()
                 return None
-
             frontier.status = "running"
             await db.commit()
             return frontier
 
     async def _frontier_tenant_candidate(self, db, now: datetime) -> UUID:
-        """获取最早且当前 Worker 真正可领取的 Frontier 所属租户。
-
-        不能只按 Frontier 时间选择租户：如果最早 Frontier 关联的 Execution 仍持有其他 Worker 的
-        有效 lease，旧实现会先选中该 tenant，再让 `claim_next_frontier()` 返回 None，导致其他 tenant
-        中可立即执行的 Frontier 被无意义地阻塞。这里复用与 claim 相同的 Execution eligibility predicate，
-        只把存在可安全 claim work item 的 tenant 作为候选。
-        """
+        """获取最早且当前 Worker 真正可领取的 Frontier 所属租户。"""
         now_naive = now.replace(tzinfo=None)
         execution_available = or_(
             and_(
@@ -153,8 +128,13 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             raise LookupError("no safely schedulable durable frontier")
         return tenant_id
 
-    async def _renew_frontier_forever(self, frontier_id: UUID, attempt: int) -> None:
-        """持续刷新 Frontier lease；fencing 失效后停止。"""
+    async def _renew_frontier_forever(
+        self,
+        frontier_id: UUID,
+        attempt: int,
+        runtime_task: asyncio.Task[object] | None = None,
+    ) -> None:
+        """持续刷新 Frontier/Execution lease；明确失去 ownership 时主动取消 Runtime。"""
         interval = max(0.1, self.lease_seconds / 3)
         while True:
             now = datetime.now(UTC).replace(tzinfo=None)
@@ -169,13 +149,18 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                 )
                 if not owned:
                     await db.rollback()
+                    if runtime_task is not None and not runtime_task.done():
+                        runtime_task.cancel()
                     return
                 await db.commit()
             await asyncio.sleep(interval)
 
     async def execute_frontier(self, frontier: WorkflowFrontier) -> None:
         """执行 Frontier 对应 Execution，并将 Frontier 终态与 Execution 结果收敛。"""
-        heartbeat = asyncio.create_task(self._renew_frontier_forever(frontier.id, frontier.attempt))
+        runtime_task = asyncio.current_task()
+        heartbeat = asyncio.create_task(
+            self._renew_frontier_forever(frontier.id, frontier.attempt, runtime_task)
+        )
         try:
             await execute_claimed_execution(self, frontier.execution_id)
         finally:
