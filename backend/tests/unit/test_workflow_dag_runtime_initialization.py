@@ -17,10 +17,7 @@ async def test_initial_multi_root_dag_creates_independent_branch_states_from_inp
         scalars=lambda: SimpleNamespace(all=lambda: [])
     )
     runtime = WorkflowRuntime(db)
-    execution = SimpleNamespace(
-        id=uuid4(),
-        resume_of_execution_id=None,
-    )
+    execution = SimpleNamespace(id=uuid4(), resume_of_execution_id=None)
     definition = {
         "nodes": [
             {"id": "left", "type": "input", "config": {}},
@@ -34,17 +31,11 @@ async def test_initial_multi_root_dag_creates_independent_branch_states_from_inp
     }
     input_data = {"request_id": "r-1", "content": "hello"}
 
-    plan, branch_state_data = await runtime._resolve_dag_context(
-        execution,
-        definition,
-        input_data,
-    )
+    plan, branch_state_data = await runtime._resolve_dag_context(execution, definition, input_data)
 
     assert plan.frontier_node_ids == ("left", "right")
-    assert branch_state_data == {
-        "left": input_data,
-        "right": input_data,
-    }
+    assert branch_state_data == {"left": input_data, "right": input_data}
+    assert branch_state_data["left"] is not branch_state_data["right"]
     assert plan.selected_predecessor_node_ids == ()
 
 
@@ -53,3 +44,36 @@ def test_dag_runtime_join_node_is_registered_without_reimplementing_base_runtime
     assert "join" in WorkflowRuntime.NODE_TYPES
     assert "agent" in WorkflowRuntime.NODE_TYPES
     assert WorkflowRuntime.execute_node.__qualname__.startswith("WorkflowRuntime.execute_node")
+
+
+@pytest.mark.asyncio
+async def test_completed_resume_node_query_is_tenant_scoped():
+    """验证 Durable Resume 读取 Node 完成事实时强制使用当前租户边界。"""
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+    runtime = WorkflowRuntime(db)
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), resume_of_execution_id=uuid4())
+
+    await runtime._load_completed_resume_nodes(execution)
+
+    query = db.execute.call_args.args[0]
+    sql = str(query)
+    assert "workflow_node_executions.tenant_id" in sql
+    assert "workflow_node_executions.execution_id IN" in sql
+    assert "workflow_node_executions.status" in sql
+
+
+@pytest.mark.asyncio
+async def test_completed_resume_node_query_keeps_source_and_current_execution_scope():
+    """验证 Resume 查询同时限定 Source/Current Execution，不扩大读取范围。"""
+    db = AsyncMock()
+    db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+    runtime = WorkflowRuntime(db)
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), resume_of_execution_id=uuid4())
+
+    await runtime._load_completed_resume_nodes(execution)
+
+    query = db.execute.call_args.args[0]
+    compiled = query.compile().params
+    execution_ids = next(value for key, value in compiled.items() if key.startswith("execution_id"))
+    assert set(execution_ids) == {execution.id, execution.resume_of_execution_id}
