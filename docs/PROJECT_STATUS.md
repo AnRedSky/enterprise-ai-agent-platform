@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 本轮最新代码提交：`4e8cd16cee0470c00fb4675cffcf6bad488a6e23`。
-- 本轮已完成：**DAG Multi-frontier Join readiness 的 Checkpoint Gate 收敛**；Branch 执行结果只有在所有 frontier Branch Checkpoint callback 成功完成后才能形成 merged state 并声明 `join_ready=true`，避免未持久化结果被错误视为可 Join。
+- 本轮最新代码提交：`ad46a5a8dc628442d915c8c85ec3ceb508f99653`。
+- 本轮已完成：**DAG Durable Frontier Decision Fingerprint**；Planner 现在将持久化完成事实、条件源 state、frontier 和 selected predecessor 规范化后生成确定性 fingerprint，并由 Runtime 直接写入 `workflow.dag.frontier_decided`，用于 Recovery 后 decision replay 对账。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -13,7 +13,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Multi-root / Resume Runtime / Join / Runtime inheritance cleanup / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope，并继续进行 Durable Recovery 一致性加固。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate，并继续进行 Durable Recovery 一致性加固。**
 
 ## Phase 2.7-A 当前实现
 
@@ -25,15 +25,14 @@
 - Conditional frontier 按 Definition 顺序确定性选择并允许多个条件同时命中形成并行 frontier；
 - Planner 输出 selected predecessor facts，Join readiness 不复制条件解析；
 - 首次执行与 Resume 均通过统一 DAG Planner；
-- 多 root 首次执行为每个 root 建立独立输入 state；
-- `dag_runtime.py` 不复制基础 Runtime 的 DAG state / Resume 逻辑；
 - Conditional Join 只消费 Planner selected predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
 - Resume Contract 在 Source Execution row lock 后再次强制使用 `locked_execution.tenant_id` 查询最新 Checkpoint；
-- Runtime 持久化 `workflow.dag.frontier_decided` decision metadata，包含 deterministic `decision_id`、completed Node、frontier 与 selected predecessor；
-- Decision Trace 不保存业务 state_data，不能替代 PostgreSQL durable facts；
-- Multi-frontier Executor 现在只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state / `join_ready=true`；
+- Runtime 持久化 `workflow.dag.frontier_decided` decision metadata；
+- Planner 新增 deterministic `decision_fingerprint`，同时绑定 completed Node facts、条件 source state、frontier 与 selected predecessor；同一 durable snapshot 得到相同 fingerprint，条件 state 改变则 fingerprint 改变；
+- Decision Trace 不保存业务 state_data，只保存 fingerprint 和可审计的节点选择 metadata，不能替代 PostgreSQL durable facts；
+- Multi-frontier Executor 只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state / `join_ready=true`；
 - 未提供 Checkpoint writer 时仍可收集 Branch execution result，但明确保持 `join_ready=false` 且不生成 merged state；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
 
@@ -53,15 +52,14 @@ Phase 2.7-A Conditional Branching
   ├── DAG Contract                 ✅
   ├── Conditional Planner          ✅
   ├── Initial Execution Runtime    ✅
-  ├── Multi-root Initialization    ✅
   ├── Resume Runtime Integration   ✅
-  ├── Runtime inheritance cleanup  ✅
   ├── Conditional Join             ✅
   ├── Durable tenant boundary      ✅
   ├── Checkpoint tenant boundary   ✅
   ├── Conditional Decision Trace   ✅
   ├── Resume Contract tenant scope ✅
-  ├── Branch Checkpoint Gate       ✅ 本轮完成
+  ├── Branch Checkpoint Gate       ✅
+  ├── Decision Fingerprint         ✅ 本轮完成
   ├── Unit Test 实际执行            ⏳
   └── Real API acceptance           ⏸ 暂停
           ↓
