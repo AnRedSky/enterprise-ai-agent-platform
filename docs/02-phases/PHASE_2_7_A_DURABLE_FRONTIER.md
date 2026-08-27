@@ -187,13 +187,42 @@ Next frontier
 
 单 Node Frontier 成功后，Worker 从同一事务中的 `WorkflowNodeExecution` 读取最近 attempt/status/output，并将其绑定到 Node-level Checkpoint。Multi-frontier 则使用 merged state 创建 Execution-level Checkpoint，避免错误地把多个 Branch 合并成单个 Node fact。
 
-### 锁顺序约束
+### 8.3 Durable Resume Bootstrap
 
-Worker Claim 与 Progression 固定采用 Frontier → Execution 的锁顺序，避免形成反向锁等待链。
+当前 Resume 路径已经闭合为：
 
-### 当前边界
+```text
+failed Source Execution
+        ↓
+latest resumable Checkpoint
+        ↓
+确定性 Resume idempotency key
+        ↓
+创建 pending Resume Execution
+        ↓
+复制 Source completed Node facts
+        ↓
+WorkflowDagResumePlanner
+        ↓
+首个 Resume Frontier
+        ↓
+同一事务 COMMIT
+```
 
-Persistence 层不重新执行 DAG 条件求值、State Merge 或 Planner；确定性 Next Frontier 必须由 Planner 输出。Durable Worker 是现有 Runtime 的调度适配层，不得复制第二套 Runtime。
+关键 Contract：
+
+- `WorkflowExecutionResumeContractService` 锁定 Source Execution 后再次使用 source tenant scope；
+- Resume 创建调用 `resume_from_latest_checkpoint(..., commit=False)`，禁止先提交孤儿 Resume Execution；
+- `WorkflowExecutionResumeBootstrapService` 复制 Source `completed` Node facts 到 Resume Execution，使 Planner 不会从 root 重复执行；
+- DAG Resume 使用唯一 `WorkflowDagResumePlanner` 重新计算首个 frontier，并复用其 deterministic decision fingerprint；
+- 无 Edge Workflow 按 Definition 顺序选择第一个未完成 Node；
+- Resume Frontier 使用新 Resume Execution identity，不复用 Source Frontier key；
+- Node lineage 与 Frontier enqueue 与 Resume Execution 创建属于同一事务；
+- 已存在相同 Resume idempotency key 时仍返回既有 Resume，不重复 Bootstrap。
+
+### 锁顺序与事务边界
+
+Worker Claim 与 Progression 固定采用 Frontier → Execution 的锁顺序。Resume Bootstrap 则先锁 Source Execution，再在同一事务创建 Resume lineage 与 Frontier，不允许把 Resume 创建和 Frontier 入队拆成两个独立 commit。
 
 ## 9. 当前主线
 
@@ -208,10 +237,11 @@ Durable Frontier Scheduling
    ├── Frontier → Checkpoint progression  ✅
    ├── Next Frontier idempotent enqueue    ✅
    ├── Runtime/Planner progression wiring  ✅
-   └── Unified success persistence path    ✅ 本轮
+   ├── Unified success persistence path    ✅
+   └── Durable Resume Bootstrap            ✅ 本轮
 ```
 
-下一交付单元进入 Durable Execution 的 Recovery / Replay Closure：统一 Checkpoint resume、Frontier recovery、fencing generation 与 replay identity，并继续向 Scheduler、Worker、Runtime 的最终主线收敛。
+下一交付单元进入 Durable Execution 的 Recovery / Replay Closure：继续收敛 Resume 后的 Checkpoint lineage、Recovery fencing generation、Replay identity 与多 Frontier Join 的完整生命周期。
 
 ## 10. 测试边界
 
