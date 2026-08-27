@@ -43,11 +43,8 @@ async def test_incomplete_pending_resume_is_reconciled(monkeypatch):
         workflow_version_id=source.workflow_version_id, resume_of_execution_id=source.id,
         resume_checkpoint_sequence=7, status="pending", worker_owner=None,
     )
-    db = _DB([source, existing, None])
+    db = _DB([existing, None])
     service = WorkflowExecutionResumeContractService(db)
-
-    async def fake_lock(execution):
-        return execution
 
     async def fake_latest(_execution_id, tenant_id=None):
         return SimpleNamespace(id=uuid4())
@@ -62,7 +59,7 @@ async def test_incomplete_pending_resume_is_reconciled(monkeypatch):
 
     class _ExecutionService:
         async def _lock_execution(self, execution):
-            return await fake_lock(execution)
+            return execution
 
         async def resume_from_latest_checkpoint(self, *_args, **_kwargs):
             raise AssertionError("reconciliation must not create a second Resume")
@@ -99,7 +96,7 @@ async def test_incomplete_resume_with_worker_ownership_is_rejected(monkeypatch):
         workflow_version_id=source.workflow_version_id, resume_of_execution_id=source.id,
         resume_checkpoint_sequence=7, status="pending", worker_owner="worker:other",
     )
-    db = _DB([source, existing, None])
+    db = _DB([existing, None])
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
