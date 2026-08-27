@@ -41,30 +41,16 @@ function Invoke-KnowledgeScenarios {
 function Invoke-UnitTests {
     Push-Location $backendDir
     try {
-        if (-not (Get-Command pytest -ErrorAction SilentlyContinue)) { throw "pytest was not found. Activate backend .venv first." }
+        if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv was not found. Install uv before running backend tests." }
         $testPaths = @(
-            "tests/test_api_health_endpoint.py",
-            "tests/test_api_auth_endpoints.py",
-            "tests/test_api_agents_endpoints.py",
-            "tests/test_api_chat_endpoints.py",
-            "tests/test_api_runtime_endpoints.py",
-            "tests/test_api_tools_endpoints.py",
-            "tests/test_api_knowledge_endpoints.py",
-            "tests/test_api_knowledge_ingestion.py",
-            "tests/test_knowledge_ingestion.py",
-            "tests/test_runtime_api_contract.py",
-            "tests/test_runtime_http_rbac.py",
-            "tests/test_model_gateway.py",
-            "tests/test_tool_runtime.py",
-            "tests/test_memory_context.py",
-            "tests/test_memory_service.py",
-            "tests/test_memory_governance.py",
-            "tests/test_observability.py"
+            "tests/unit",
+            "tests/integration",
+            "tests/api_contract"
         )
         $existing = @($testPaths | Where-Object { Test-Path $_ })
-        if ($existing.Count -eq 0) { throw "No expected pytest files were found." }
-        Write-Host "[RUN ] Backend regression tests ($($existing.Count) test files)" -ForegroundColor Cyan
-        & pytest -q @existing
+        if ($existing.Count -eq 0) { throw "No expected backend test directories were found." }
+        Write-Host "[RUN ] Backend regression tests through uv ($($existing.Count) test directories)" -ForegroundColor Cyan
+        & uv run pytest -q @existing
         if ($LASTEXITCODE -ne 0) { throw "Backend regression tests failed with exit code $LASTEXITCODE." }
         Write-Host "[ OK  ] Backend regression tests" -ForegroundColor Green
     }
