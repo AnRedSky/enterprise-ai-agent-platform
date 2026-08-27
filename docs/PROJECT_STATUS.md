@@ -4,14 +4,14 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端 `main` 基线：`f18b3ec1302d5147dc154fa1f657ac15b0c36826`。
+- 当前远端 `main` 基线：`c7d7a3ccf822d6a1f745fae7f6dcc49f232fd7af`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；Frontend / Browser E2E 与历史 Real API 验收已完成，本轮不再作为主线阻塞条件。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成，DAG Resume / Branch / Join / Automatic Recovery / Recovery Trace / Worker Reclaim / Lease Fencing / Lease Loss Active Abort / Terminal Ownership Boundary 均已落地；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 首个交付单元已完成首版生产代码实现，当前等待本地 Unit Test 实际执行。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 首个交付单元已完成首版生产代码与 Unit Test 覆盖实现，当前等待开发者本地 Unit Test 实际执行。**
 
 ## Phase 2.6 当前实现
 
@@ -43,7 +43,9 @@
 - Planner 输出 selected predecessor facts；
 - Join readiness 只消费 Planner 已选 predecessor，不复制条件解析；
 - Resume 从持久化 completed Node output 重新计算 frontier；
-- Runtime 复用现有 DAG Runtime Planner / State Merge，不建立第二套 Runtime。
+- Runtime 复用现有 DAG Runtime Planner / State Merge，不建立第二套 Runtime；
+- `backend/tests/unit/test_workflow_condition_evaluator.py` 已补充 Condition Evaluator 的操作符、严格类型、短路求值、结构安全、深度/节点上限等 Unit Test 覆盖；
+- `backend/tests/unit/test_workflow_conditional_branching.py` 已覆盖 Conditional frontier、default、并行命中、Join predecessor 与 Runtime Planner Contract。
 
 ## 当前开发策略
 
@@ -51,7 +53,7 @@
 
 ## 最新本地执行限制
 
-当前运行环境无法解析 `github.com`，无法直接 clone / 执行仓库最新 `main` 的本地 pytest；因此本轮没有伪造 Unit Test 结果。远端 `main` 通过 GitHub Repository API 核对。
+当前运行环境无法解析 `github.com`，无法直接 clone / 执行仓库最新 `main` 的本地 pytest；因此本轮没有伪造 Unit Test 结果。远端 `main` 通过 GitHub Repository API 核对，并已直接基于 `main` 完成 Unit Test 覆盖补充与 Phase 文档同步。
 
 ## 下一主线
 
