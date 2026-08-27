@@ -52,13 +52,19 @@ def validate_frontier_progression_contract(
 async def _assert_next_frontier_has_no_active_node_overlap(
     db: AsyncSession, *, frontier: WorkflowFrontier, next_identity: WorkflowFrontierIdentity,
 ) -> None:
+    """检查同一 Execution 的活动 Frontier 是否与 Next Frontier 存在 Node 重叠。
+
+    设计意图：调用方已在本事务中锁定当前 Frontier 与关联 Execution；所有会改变同一 Execution
+    Frontier ownership 的路径都必须先取得 Execution 锁，因此这里不再锁 sibling Frontier，避免形成
+    Execution → sibling Frontier 与其他路径 Frontier → Execution 的反向锁序。
+    """
     result = await db.execute(
         select(WorkflowFrontier).where(
             WorkflowFrontier.tenant_id == frontier.tenant_id,
             WorkflowFrontier.execution_id == frontier.execution_id,
             WorkflowFrontier.id != frontier.id,
             WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
-        ).with_for_update()
+        )
     )
     next_nodes = set(next_identity.node_ids)
     for active in result.scalars().all():
