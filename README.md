@@ -1,6 +1,6 @@
 # Enterprise AI Agent Platform
 
-企业级 AI Agent 平台。当前统一在 `main` 分支推进。Phase 1.x、Phase 2.1 与 **Phase 2.2 Retrieval Production Quality 已正式关闭**；当前进入 **Phase 2.3 Model Provider Governance**。
+企业级 AI Agent 平台。当前统一在 `main` 分支推进。Phase 1.x、Phase 2.1、Phase 2.2、Phase 2.3、Phase 2.5 已正式关闭；当前已完成 **Phase 2.7 Advanced Workflow Orchestration 主线生产开发，进入本地测试、回归修复与验收阶段**。
 
 ## 项目文档
 
@@ -27,26 +27,26 @@
 
 ## 当前开发状态
 
-实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/01-governance/DEVELOPMENT.md`。当前阶段为 **Phase 2.3**。新阶段必须先经过产品需求与架构决策，不得凭空创建新的 Phase。
+实时任务进度、阻塞项和实际测试结果统一维护在 `docs/PROJECT_STATUS.md`；长期工程规则统一维护在 `docs/01-governance/DEVELOPMENT.md`。当前主线生产开发阶段为 **Phase 2.7 Advanced Workflow Orchestration**，目前处于本地回归修复与验收准备。
 
-### Phase 2.3 当前执行顺序
+### Phase 2.7 当前执行顺序
 
 ```text
-2.3-A Provider Governance Contract  ← 当前已完成
+2.7 主线生产实现                 ← 已完成
         ↓
-2.3-B Backend Domain + API Contract
+本地 Unit / Default Regression   ← 当前
         ↓
-2.3-C Migration + Backend Tests（若需要持久化）
+Migration / DB verification
         ↓
-2.3-D Real API / Integration
+Real HTTP API Gate
         ↓
-2.3-E / F Frontend（若范围涉及 UI）
+Frontend Gate
         ↓
-2.3-G / H Backend + Frontend Gates
+Browser / Frontend-Backend E2E（如范围涉及）
         ↓
-2.3-I Browser E2E（若涉及用户链路）
+本地手动场景
         ↓
-2.3-J Acceptance / Status / Error Records
+Acceptance / Status / Error Records
 ```
 
 ## 测试 Gate 独立性
@@ -74,31 +74,85 @@ Backend 使用 **uv** 管理依赖与虚拟环境；后端测试、脚本和服�
 
 ## 本地启动
 
-```bash
+基础设施：
+
+```powershell
 docker compose up -d postgres redis
+```
+
+Backend API Service：
+
+```powershell
 cd backend
 uv sync
 uv run alembic upgrade head
 uv run python run.py
 ```
 
+Scheduler Service 必须作为独立进程启动：
+
+```powershell
+cd backend
+uv run python run_scheduler.py
+```
+
 API 默认：`http://localhost:8000/docs`
 
 前端：
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-## Phase 2.3-A 本地验收固定入口
+## 本地回归
 
-本次新增 Contract 是纯 Backend domain logic，不涉及数据库、Frontend 或 Browser，因此先执行 targeted unit test：
+Backend 默认回归：
 
 ```powershell
 cd backend
-uv run pytest -q tests/unit/test_model_provider_governance_contract.py
+uv run pytest -q
 ```
 
-完成 2.3-B 后，再按开发准则补充对应 API Contract / Real API；未实际执行的结果不得记录为通过。
+Backend Release / Regression Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
+```
+
+Backend Manual API：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\run_manual_test_suite.ps1 -Mode api
+```
+
+Workflow Retry / Timeout / Runtime 定向回归：
+
+```powershell
+cd backend
+uv run pytest -q tests/unit/test_workflow_retry_budget.py tests/unit/test_workflow_runtime_timeout.py tests/unit/test_workflow_runtime.py
+```
+
+## 当前真实测试结果
+
+2026-08-28 开发者本地实际反馈：
+
+```text
+uv run pytest -q tests/unit
+94 failed, 622 passed, 2 warnings
+```
+
+Workflow Retry / Timeout / Runtime 定向测试：
+
+```text
+5 failed, 14 passed
+```
+
+本轮已修复的生产问题包括 Retry Budget / Workflow Deadline 的耗尽治理事实，以及 DAG 单 root 首次执行不应产生 Branch State。其余失败按当前 Durable Frontier、Checkpoint、Resume、Recovery、tenant boundary、worker fencing 与 DAG Contract 继续收敛测试 double / fixture，不放宽正式生产 Contract。
+
+具体错误记录见 `docs/04-errors/2026-08-28-phase-2-7-local-regression-retry-governance-and-dag-root-state.md`。
+
+未实际执行的 Gate 不得记录为通过。
