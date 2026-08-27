@@ -82,9 +82,42 @@ Worker 同时维护 Frontier lease heartbeat 与 Execution lease heartbeat。Fro
 
 Manual / Webhook Trigger 暂不强制迁移到 Frontier，避免在本阶段改变其公开触发语义；后续统一纳入 Durable Work Item Contract。
 
-## 7. 下一交付单元
+## 7. Retry Scheduling
 
-当前剩余主线：
+本轮已完成 Durable Frontier Retry Scheduling 基础生产能力：
+
+```text
+Runtime retryable failure
+        ↓
+FrontierRetryPolicy
+        ↓
+retry_wait
+        +
+error facts
+        +
+available_at = now + bounded exponential backoff
+        ↓
+next Claim
+        ↓
+attempt + 1
+        ↓
+new fencing generation
+```
+
+实现入口：
+
+- `FrontierRetryPolicy`：提供 `max_attempts`、指数退避和最大延迟边界；
+- `schedule_frontier_retry()`：复用当前 Frontier，不创建新的 Execution / Frontier；
+- retry transition 继续通过 `transition_owned_frontier()` 校验 `worker_owner + attempt`；
+- 当前 attempt 只有在下一次成功 Claim 时递增，retry scheduling 不提前消耗 fencing generation；
+- 达到 `max_attempts` 后同一 Frontier 进入 `failed`；
+- Retry primitive 不执行 commit，由外层事务统一提交。
+
+### 明确边界
+
+`FrontierRetryPolicy` 不把所有 Runtime `failed` 自动视为 retryable。现有 Runtime error classification 仍是上层责任；Worker integration 必须使用明确的 retryable error classification 后再调用 retry primitive，避免把业务/配置/权限等 terminal failure 无限重试。
+
+## 8. 当前剩余主线
 
 ```text
 Durable Frontier Scheduling
@@ -92,12 +125,12 @@ Durable Frontier Scheduling
    ├── Frontier → Worker claim             ✅
    ├── Worker → Runtime bridge             ✅
    ├── Frontier lease heartbeat             ✅
-   ├── Retry scheduling                     ⏭
+   ├── Retry scheduling                     ✅
    └── Frontier → Checkpoint progression    ⏭
 ```
 
-下一步直接实现 Frontier Retry Scheduling：把可重试 Runtime failure 映射到 `retry_wait + available_at`，并保证 retry 与 fencing generation、Execution terminal state 不发生重复执行。
+下一交付单元直接处理 Frontier 与 Checkpoint progression 的一致性：Runtime 产生新的 durable checkpoint / next frontier 时，必须保持 Frontier fencing、Execution ownership、Checkpoint lineage 与幂等 identity 一致。
 
-## 8. 测试边界
+## 9. 测试边界
 
-当前只保留 Unit Test Contract；本环境未实际执行 pytest，因此不得记录 Unit Test PASS。Real API 后续必须实际验证 PostgreSQL 持久化以及 Scheduler → Frontier → Worker → Runtime 生命周期。
+当前只保留 Unit Test Contract；本环境未实际执行 pytest，因此不得记录 Unit Test PASS。Real API 后续必须实际验证 PostgreSQL 持久化以及 Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint 生命周期。
