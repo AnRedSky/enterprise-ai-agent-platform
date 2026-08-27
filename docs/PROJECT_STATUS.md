@@ -8,8 +8,8 @@
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
-- Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭**。
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract、Recovery Outcome Contract、created / idempotency_hit 并发收敛、DAG Branch State Merge Contract、Multi-frontier Runtime Plan、Multi-frontier Branch Execution Coordinator、Branch Checkpoint Boundary、真实 WorkflowRuntime Multi-frontier Resume、Join readiness / execution / idempotency / checkpoint、统一 Recovery Telemetry Facade，以及 Automatic Recovery Trace 生命周期接入已完成；当前主线进入 Worker / Runtime Trace Continuity、持久化 Recovery 闭环与 Phase 2.6 Closure。**
+- Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract、Recovery Outcome Contract、created / idempotency_hit 并发收敛、DAG Branch State Merge Contract、Multi-frontier Runtime Plan、Multi-frontier Branch Execution Coordinator、Branch Checkpoint Boundary、真实 WorkflowRuntime Multi-frontier Resume、Join readiness / execution / idempotency / checkpoint、统一 Recovery Telemetry Facade、Automatic Recovery Trace 生命周期、Recovery → Resume Trace Link、Worker / Runtime Trace Continuity、Scheduler Trace Context 与 Scheduler Runtime Trace Integration 已完成；当前主线进入 Scheduler → Recovery parent/child trace lineage、Worker claim / lease / fencing 持久化闭环与 Phase 2.6 Closure。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 当前执行架构
@@ -20,14 +20,21 @@ API / Trigger
 Scheduler Service
     ├── ScheduledTriggerScheduler
     └── WorkflowRecoveryScheduler
+              │
+              │ Scheduler trace = S
               ↓
        Recovery Policy / Domain
+              │
+              │ child recovery trace = R
+              │ parent_trace_id = S
               ↓
        WorkflowRecoveryTelemetry
               ↓
        Resume Outcome Contract
           ├── created
           └── idempotency_hit
+              ↓
+       persistent Recovery Trace Link
               ↓
        pending Resume Execution
               ↓
@@ -61,7 +68,7 @@ Multi-frontier Runtime Plan
           next Branch / Join
 ```
 
-职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Resume Outcome Contract 负责 created / idempotency_hit 事实；Recovery Event / Telemetry Contract 负责统一恢复控制面事件与 Trace/Metrics 出口；DAG State Merge Contract 负责多 frontier 分支状态的安全收敛；Multi-frontier Runtime Planner 负责将 frontier + 已验证分支状态转换为确定性 Runtime Plan；Multi-frontier Branch Executor 负责在单 Worker 内以确定性顺序执行 Branch、隔离 Branch state 并判定 Join readiness；Join Executor 负责纯状态汇聚；Worker 负责 ownership / lease / fencing；WorkflowExecutionService 负责状态机与持久化事务边界；WorkflowRuntime 负责实际 Node 执行、Resume frontier 重新规划与 Retry；Checkpoint 记录执行事实。**
+职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Resume Outcome Contract 负责 created / idempotency_hit 事实；Recovery Event / Telemetry Contract 负责统一恢复控制面事件与 Trace/Metrics 出口；Scheduler Trace Contract 负责 Scan trace 生命周期并通过 `parent_trace_id` 关联 Automatic Recovery child trace；DAG State Merge Contract 负责多 frontier 分支状态的安全收敛；Multi-frontier Runtime Planner 负责将 frontier + 已验证分支状态转换为确定性 Runtime Plan；Multi-frontier Branch Executor 负责在单 Worker 内以确定性顺序执行 Branch、隔离 Branch state 并判定 Join readiness；Join Executor 负责纯状态汇聚；Worker 负责 ownership / lease / fencing；WorkflowExecutionService 负责状态机与持久化事务边界；WorkflowRuntime 负责实际 Node 执行、Resume frontier 重新规划与 Retry；Checkpoint 记录执行事实。**
 
 ## Phase 2.6 当前实现
 
@@ -113,63 +120,45 @@ Multi-frontier Runtime Plan
 - Join completed 后重新读取持久化 completed facts，再由 DAG Planner 计算 downstream frontier；
 - `WorkflowRecoveryTelemetry` 不携带 Checkpoint `state_data`、Secret、Provider credential 或完整业务 payload；
 - Automatic Recovery telemetry 使用 `phase=automatic_recovery`，并记录 attempt / trace start / trace finish 的统一关联字段；
-- 新增 `backend/tests/unit/test_workflow_automatic_recovery_telemetry.py` 覆盖 Recovery success / rejection trace 生命周期与同一 trace_id 关联；
-- 已记录 Runtime Plan Contract 漂移工程错误：`docs/04-errors/2026-08-27-phase-2-6-runtime-plan-contract-drift.md`；
+- `WorkflowRecoveryEvent` 新增 `parent_trace_id`，用于 Scheduler parent trace → Automatic Recovery child trace 的控制面 lineage；
+- `WorkflowRecoveryScheduler.scan_once()` 为每轮 Scan 创建 parent trace，并将其传递给每个 Automatic Recovery；
+- Automatic Recovery child trace 保持独立 `trace_id`，避免一个 Scheduler Scan trace 被多个 Recovery 生命周期重复 finish；
+- Worker / Runtime 继续从持久化 Recovery Trace Link 恢复 child `trace_id`；
+- 新增 / 更新 Scheduler Recovery 与 Observability Unit Test 覆盖 parent trace 传播和字段序列化；
 
-## DAG Multi-frontier Runtime Contract
+## Recovery Trace Lineage Contract
 
 ```text
-Source Execution + Resume Execution completed Node facts
-                    ↓
-          WorkflowDagResumePlanner
-                    ↓
-             frontier = [A, B]
-                    ↓
-    predecessor output_data reconstruction
-                    ↓
-        WorkflowDagStateMergeContract
-                    ↓
-       WorkflowDagResumeRuntimePlan
-                    ↓
-     WorkflowDagMultiFrontierExecutor
-              ┌─────┴─────┐
-              ↓           ↓
-           Branch A    Branch B
-              │           │
-              ↓           ↓
-       transition_node()  transition_node()
-              │           │
-              ↓           ↓
-        NodeExecution + Checkpoint
-              └─────┬─────┘
-                    ↓
-              Join readiness
-                    ↓
-              Join execution
-                    ↓
-        NodeExecution + Checkpoint
-                    ↓
-          persisted completed facts
-                    ↓
-        recompute next frontier
+WorkflowRecoveryScheduler.scan_once()
+          │
+          │ parent trace S
+          ▼
+WorkflowExecutionAutomaticRecoveryService.recover()
+          │
+          │ child trace R
+          │ parent_trace_id = S
+          ▼
+Resume Execution
+          │
+          ▼
+WorkflowRecoveryTraceLinkService
+          │
+          │ durable trace_id = R
+          ▼
+Worker claim
+          │
+          ▼
+WorkflowRuntime
 ```
 
 Contract 规则：
 
-1. frontier Node ID 唯一、确定性排序；
-2. 多 frontier 不允许缺少任一分支状态；
-3. 不允许提供非 frontier 的额外分支状态；
-4. Branch State Merge 禁止 last-write-wins；
-5. Merge Result 为独立深拷贝；
-6. 单 frontier 保持原有 `state_data` API 兼容；
-7. 多 frontier 不再在 Runtime 层伪装成单 Node；
-8. `frontier_node_id` / `node` 只为单 frontier 提供兼容访问，多 frontier 显式拒绝隐式选择；
-9. Branch Executor 当前采用**单 Worker 内确定性顺序执行**，不虚构多 Worker 并行；
-10. 任一 Branch 执行或 Checkpoint 失败，Join 不得就绪，异常向上层 Worker / ExecutionService 传播；
-11. 所有 Branch 成功且 Checkpoint 已由 `transition_node()` 持久化后才允许生成 merged state 与 `join_ready=True`；
-12. Executor 不直接修改 ORM / DB，Node 状态与 Checkpoint 必须通过 `WorkflowExecutionService.transition_node()`；
-13. Join readiness、Join execution、Join checkpoint 与 downstream frontier 必须基于持久化 completed facts 重新计算，不得依赖 Runtime 临时 state；
-14. Recovery Telemetry 只能记录控制面字段，禁止携带业务 state / Secret。
+1. Scheduler Scan 使用独立 parent `trace_id`；
+2. 每个 Automatic Recovery 使用独立 child `trace_id`；
+3. Automatic Recovery 的 trace lifecycle 不得复用 Scheduler Scan 的 finish；
+4. `parent_trace_id` 仅用于控制面 lineage，不写入业务 `input_data`；
+5. Resume Execution 的 durable Trace Link 保存 child `trace_id`，Worker / Runtime 以此恢复 Recovery trace；
+6. Trace 字段不得携带 Checkpoint `state_data`、Prompt、Secret、Provider credential 或完整业务 payload。
 
 ## 当前开发策略
 
@@ -177,8 +166,8 @@ Contract 规则：
 
 ## 下一步主线
 
-1. 将 `WorkflowRecoveryTelemetry` 接入 Worker / Recovery Scheduler / Runtime，建立同一 Recovery → Resume → Runtime trace continuity；
-2. 完成 Worker claim / lease / fencing 与 Automatic Recovery 的持久化闭环；
+1. 完成 Worker claim / lease / fencing 与 Recovery Resume 的最终持久化闭环，重点验证 stale worker、lease loss、ownership fencing 不会错误完成 Recovery Execution；
+2. 让 durable Recovery Trace Link 与 Worker lease 生命周期形成一致的控制面事实；
 3. 完成 Real API + PostgreSQL + 独立 Worker 验证入口，但不作为当前主线阻塞项；
 4. 完成 Phase 2.6 Closure；
 5. Closure 后进入下一阶段企业级执行能力。
