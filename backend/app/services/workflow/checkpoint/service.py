@@ -165,6 +165,7 @@ class WorkflowExecutionCheckpointService:
         if execution is None:
             raise HTTPException(409, f"Checkpoint 对应的 Workflow Execution 不存在或不属于当前 tenant: {execution_id}")
         self._validate_worker_fencing(expected_worker_owner=expected_worker_owner, expected_worker_attempt=expected_worker_attempt, execution=execution)
+        self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
 
         if checkpoint_reason == "frontier_completed":
             boundary_result = await self.db.execute(
@@ -185,7 +186,6 @@ class WorkflowExecutionCheckpointService:
                     raise HTTPException(409, "同一 source Frontier 的 completion Checkpoint payload 与本次写入不一致，拒绝产生第二条 Durable fact")
                 return existing_boundary
 
-        self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
         latest_sequence = await self.db.execute(
             select(func.max(WorkflowExecutionCheckpoint.sequence)).where(WorkflowExecutionCheckpoint.execution_id == execution_id)
         )
