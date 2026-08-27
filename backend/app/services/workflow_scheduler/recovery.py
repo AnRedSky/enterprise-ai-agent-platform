@@ -2,7 +2,7 @@
 
 职责：Scheduler 侧按固定轮询发现 failed Execution，并把每个候选交给唯一 Recovery Domain Service。
 边界：不复制 Recovery Policy、不创建 Resume Execution、不抢 Worker lease、不启动 Runtime；只负责“什么时候检查”。
-关键依赖：SessionLocal、WorkflowExecution ORM、WorkflowExecutionAutomaticRecoveryService。
+关键依赖：SessionLocal、WorkflowExecution ORM、WorkflowExecutionAutomaticRecoveryService、Recovery Event Logger。
 """
 
 from __future__ import annotations
@@ -17,9 +17,16 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution
 from app.services.workflow.checkpoint.recovery.automatic import WorkflowExecutionAutomaticRecoveryService
+from app.services.workflow.checkpoint.recovery.observability import (
+    RECOVERY_ATTEMPT,
+    RECOVERY_SCAN_COMPLETED,
+    WorkflowRecoveryEvent,
+    WorkflowRecoveryEventLogger,
+)
 from app.services.workflow.checkpoint.recovery.policy import WorkflowExecutionRecoveryPolicy
 
 logger = logging.getLogger(__name__)
+event_logger = WorkflowRecoveryEventLogger(logger)
 
 
 @dataclass(frozen=True)
@@ -98,6 +105,16 @@ class WorkflowRecoveryScheduler:
                         continue
                     service = WorkflowExecutionAutomaticRecoveryService(db, self.policy)
                     evaluation = await service.evaluate(execution, now=current)
+                    event_logger.emit(
+                        WorkflowRecoveryEvent(
+                            event_name=RECOVERY_ATTEMPT,
+                            execution_id=execution.id,
+                            reason_code=evaluation.decision.reason_code,
+                            attempt_count=evaluation.decision.attempt_count,
+                            max_attempts=evaluation.decision.max_attempts,
+                            occurred_at=current,
+                        )
+                    )
                     if not evaluation.decision.eligible:
                         counters["rejected"] += 1
                         continue
@@ -105,6 +122,17 @@ class WorkflowRecoveryScheduler:
                     recovered = await service.recover(execution, now=current)
                     if recovered.resume_execution_id is not None:
                         counters["recovered"] += 1
+                        event_logger.emit(
+                            WorkflowRecoveryEvent(
+                                event_name=RECOVERY_ATTEMPT,
+                                execution_id=execution.id,
+                                resume_execution_id=recovered.resume_execution_id,
+                                reason_code="recovered",
+                                attempt_count=evaluation.decision.attempt_count,
+                                max_attempts=evaluation.decision.max_attempts,
+                                occurred_at=current,
+                            )
+                        )
                     else:
                         counters["rejected"] += 1
             except Exception as exc:
@@ -115,17 +143,18 @@ class WorkflowRecoveryScheduler:
                 )
 
         result = WorkflowRecoveryScanResult(candidates=len(execution_ids), **counters)
-        logger.info(
-            "Workflow automatic recovery scan completed",
-            extra={
-                "candidates": result.candidates,
-                "eligible": result.eligible,
-                "recovered": result.recovered,
-                "rejected": result.rejected,
-                "contention": result.contention,
-                "failed": result.failed,
-                "scan_limit": self.scan_limit,
-            },
+        event_logger.emit(
+            WorkflowRecoveryEvent(
+                event_name=RECOVERY_SCAN_COMPLETED,
+                candidates=result.candidates,
+                eligible=result.eligible,
+                recovered=result.recovered,
+                rejected=result.rejected,
+                contention=result.contention,
+                failed=result.failed,
+                scan_limit=self.scan_limit,
+                occurred_at=current,
+            )
         )
         return result
 

@@ -2,7 +2,7 @@
 
 职责：验证 Scheduler 只负责发现 failed Execution、委托 Recovery Domain 并产生可观测扫描结果。
 边界：不连接 PostgreSQL、不启动 Scheduler 进程、不创建真实 Resume Execution。
-关键依赖：WorkflowRecoveryScheduler、WorkflowExecutionAutomaticRecoveryService、Python logging。
+关键依赖：WorkflowRecoveryScheduler、WorkflowExecutionAutomaticRecoveryService、Recovery Event Logger。
 """
 
 from datetime import datetime
@@ -55,7 +55,12 @@ class _FakeService:
 
     async def evaluate(self, execution, now=None):
         return SimpleNamespace(
-            decision=SimpleNamespace(eligible=execution.id != BLOCKED_ID),
+            decision=SimpleNamespace(
+                eligible=execution.id != BLOCKED_ID,
+                reason_code="eligible" if execution.id != BLOCKED_ID else "checkpoint_not_eligible",
+                attempt_count=0,
+                max_attempts=3,
+            )
         )
 
     async def recover(self, execution, now=None):
@@ -89,7 +94,7 @@ async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_recovery_scheduler_logs_scan_aggregate(monkeypatch, caplog) -> None:
+async def test_recovery_scheduler_emits_structured_scan_event(monkeypatch, caplog) -> None:
     execution_id = uuid4()
     execution = SimpleNamespace(id=execution_id)
     sessions = iter([_FakeDb([execution]), _FakeDb([execution])])
@@ -106,7 +111,7 @@ async def test_recovery_scheduler_logs_scan_aggregate(monkeypatch, caplog) -> No
     )
 
     assert result.recovered == 1
-    record = next(record for record in caplog.records if record.message == "Workflow automatic recovery scan completed")
+    record = next(record for record in caplog.records if record.message == "workflow.recovery.scan.completed")
     assert record.candidates == 1
     assert record.eligible == 1
     assert record.recovered == 1

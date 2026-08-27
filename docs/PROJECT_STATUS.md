@@ -9,39 +9,34 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Execution Contract、第一版顺序 Runtime Resume、HTTP Resume API、自动恢复 Policy / Domain Service、Recovery Scan 与 Scheduler Service 生命周期接入、Scan observability 已完成基础实现；自动恢复 Real API / Worker 验收、统一 observability / trace 接入与 DAG 分支 Resume 仍在主线推进。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、顺序 Runtime Resume、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期与 Recovery Event Contract 已完成基础实现；自动恢复 Real API / Worker、统一 observability 接入、contention 收敛及 DAG 分支 Resume 仍在主线推进。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
-## 当前产品级执行架构
+## 当前执行架构
 
 ```text
-API Service
-   ↓
-Trigger Domain
-   ↓
+API / Trigger
+    ↓
 Scheduler Service
-   ├── ScheduledTriggerScheduler
-   │      ↓
-   │  PostgreSQL pending WorkflowExecution
-   │
-   └── WorkflowRecoveryScheduler
-          ↓
+    ├── ScheduledTriggerScheduler
+    └── WorkflowRecoveryScheduler
+              ↓
        Recovery Policy / Domain
-          ↓
-       PostgreSQL pending Resume Execution
-          ↓
-Worker claim + lease + ownership fencing
-   ↓
+              ↓
+       pending Resume Execution
+              ↓
+Worker claim + lease + fencing
+              ↓
 WorkflowExecutionService
-   ↓
+              ↓
 WorkflowRuntime
-   ↓
+              ↓
 Node transition
-   ↓
-Checkpoint append / terminal lease release
+              ↓
+Checkpoint / terminal lease release
 ```
 
-核心职责：**Scheduler 负责“什么时候检查/触发”，Recovery Policy 负责“是否允许自动恢复”，Recovery Domain 负责“如何安全创建 Resume”，Worker 负责“执行什么”，WorkflowExecutionService 负责状态机与 Resume 安全边界，WorkflowRuntime 负责节点执行与 frontier，Checkpoint 负责执行事实。**
+职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Worker 负责执行；WorkflowExecutionService 负责状态机与 Resume 安全边界；WorkflowRuntime 负责节点/frontier；Checkpoint 记录执行事实。**
 
 ## Phase 2.6 当前实现
 
@@ -49,89 +44,45 @@ Checkpoint append / terminal lease release
 - `0033_workflow_execution_resume_contract`；
 - `0034_terminal_execution_releases_worker_lease`；
 - Checkpoint immutable snapshot + transaction boundary；
-- `WorkflowExecutionCheckpointRecoveryService`；
-- `WorkflowExecutionService.resume_from_latest_checkpoint()`；
-- Resume deterministic idempotency + lineage；
-- Source failed Execution 不被复活；
-- Resume Planner / DAG Contract / Frontier Planner / Runtime Sequence Planner；
-- Worker Resume 前重新校验 Source / Checkpoint / Version；
+- Resume Candidate / deterministic idempotency / lineage；
+- Resume Planner / DAG Contract / frontier planner / Runtime sequence planner；
+- Worker Resume Source / Checkpoint / Version revalidation；
 - 第一版 DAG Runtime 只允许单一 frontier；
 - HTTP Resume API：`POST /api/v1/workflows/executions/{execution_id}/resume`；
-- Execution response 增加 `resume_of_execution_id + resume_checkpoint_sequence`；
 - `WorkflowExecutionRecoveryPolicy`：默认 `max_attempts=3`、`cooldown_seconds=60`；
-- `WorkflowExecutionRecoveryPolicyEvaluator`：纯规则、无数据库副作用；
-- `WorkflowExecutionAutomaticRecoveryService`：Policy + Candidate + lineage + Resume Contract；
-- `WorkflowRecoveryScheduler.scan_once()`：Scheduler 侧 Recovery Scan；
-- `WorkflowRecoveryScheduler.run_forever()`：独立 Recovery Scan 生命周期；
-- `backend/app/entrypoints/scheduler.py`：Scheduled Trigger 与 Recovery Scan 同进程双循环、独立 Session、独立异常边界；
+- `WorkflowExecutionAutomaticRecoveryService`；
+- `WorkflowRecoveryScheduler.scan_once()` / `run_forever()`；
+- Scheduler Service 接入 Recovery Scan 独立生命周期；
 - Recovery Scan 聚合 `candidates / eligible / recovered / rejected / contention / failed`；
-- Recovery Scan 每轮输出结构化 INFO 聚合日志，字段与 Scan Result 对齐；
-- 单 Execution 异常保留 `execution_id + error_type`，不阻断后续候选；
-- `tests/unit/test_workflow_recovery_policy.py`；
-- `tests/unit/test_workflow_automatic_recovery_service.py`；
-- `tests/unit/test_workflow_recovery_scheduler.py`，增加 Scan observability 日志字段回归；
-- 原有 Durable Resume Real API / Worker / DAG / failure-boundary 验收入口继续保留，但当前不作为主线阻塞项。
+- `WorkflowRecoveryEvent` / `WorkflowRecoveryEventLogger` 正式 Recovery observability 事件出口；
+- `workflow.recovery.attempt`；
+- `workflow.recovery.scan.completed`；
+- 事件禁止写入 Checkpoint `state_data`、Secret、Provider credential 和完整业务 payload；
+- Scheduler / Domain 不创建平行 Recovery metrics / trace 规则；
+- Unit tests 覆盖 Recovery Policy、Automatic Recovery、Scheduler Scan 与 Observability Event Contract。
 
-## Durable Recovery Policy Contract
+## Recovery Observability Contract
 
 ```text
-failed Execution
-      ↓
-worker ownership? ── yes → reject
-      ↓ no
-valid Checkpoint? ── no → reject
-      ↓ yes
-max attempts? ── reached → reject
-      ↓ no
-cooldown? ── active → reject + retry_after
-      ↓ elapsed
 Recovery Domain
-      ↓
-pending Resume Execution
-      ↓
-Worker normal claim
+    ↓
+workflow.recovery.attempt
+    ↓
+Scheduler Scan aggregate
+    ↓
+workflow.recovery.scan.completed
+    ↓
+未来统一 Metrics / Trace
 ```
 
-规则：
-
-1. 仅自动恢复 `failed` Execution；不直接恢复 `running`。
-2. `worker_owner != NULL` 时拒绝自动恢复。
-3. Checkpoint 必须满足既定 `node.completed + execution.running` 恢复边界。
-4. 默认最多 3 次 Resume lineage 尝试。
-5. Source failed 后默认冷却 60 秒。
-6. `max_attempts=0` 关闭自动恢复，但不影响人工 Resume API。
-7. Resume 次数沿 `resume_of_execution_id` lineage 计算，与普通 Retry 分离。
-8. Recovery Policy 不产生数据库副作用。
-9. Recovery Domain 不直接启动 Runtime；Resume 仍进入 Worker claim。
-10. deterministic idempotency key + DB unique constraint 作为最终幂等兜底。
-
-## Scheduler Recovery Scan Contract
+统一字段：
 
 ```text
-Scheduler Service
-    ├── Scheduled Trigger loop
-    │
-    └── Recovery Scan loop
-           ↓
-        failed + worker_owner IS NULL
-           ↓
-        Recovery Domain evaluate/recover
-           ↓
-        pending Resume Execution
-           ↓
-        Worker claim
-```
-
-Scheduler 不复制 Recovery Policy、不直接修改 failed 状态、不直接抢 Worker ownership、不直接启动 Runtime。
-
-多个 Scheduler 实例可以同时扫描同一 Execution，Source row lock + deterministic idempotency + DB unique constraint 负责最终收敛。
-
-## Scheduler Observability Contract
-
-每轮 Recovery Scan 完成后输出固定结构化 INFO 日志：
-
-```text
-message = Workflow automatic recovery scan completed
+execution_id
+resume_execution_id
+reason_code
+attempt_count
+max_attempts
 candidates
 eligible
 recovered
@@ -139,44 +90,27 @@ rejected
 contention
 failed
 scan_limit
+occurred_at
 ```
 
-日志只记录聚合指标，不写入 Checkpoint `state_data`、Secret 或其他业务敏感数据。单 Execution 异常只记录 `execution_id + error_type`，并继续处理剩余候选。
-
-`contention` 当前作为预留聚合维度；在 Domain 明确区分 row-lock / idempotency contention 与普通 rejection 前，Scheduler 不根据异常猜测竞争类型。
+当前 `contention` 只是稳定聚合维度；在能够可靠识别 row-lock / idempotency contention 前，Scheduler 不根据异常类型猜测竞争类型。
 
 ## 当前开发策略
 
-按当前要求暂停完整测试流程，不把 Backend Regression、Frontend Gate、Browser E2E、Real API Acceptance 或服务重启作为当前主线开发门槛。当前开发阶段只保留新增 / 修改代码的单元测试作为验证目标，并继续推进主线实现。
+按当前要求暂停完整测试流程。当前主线只以 **Unit Test + API Test** 作为开发验证范围；Backend Full Regression、Frontend Gate、Browser E2E、完整 Release Gate 暂不作为主线阻塞条件。真实 API 测试必须使用真实 HTTP + PostgreSQL；后台服务生命周期由开发者人工控制。
 
-真实联调脚本仍保持可重复执行，但服务生命周期必须由开发者人工控制。
-
-## 本轮测试状态
-
-本轮新增 Scheduler observability 单元测试源码已经提交，但当前执行环境无法直接访问仓库运行本地 `uv run pytest`，因此**不得虚构新增测试通过结果**。上一轮开发者实际反馈的稳定基线仍为：
-
-```text
-DAG / Resume targeted unit tests
-42 passed in 1.26s
-
-uv run pytest -q
-468 passed, 3 skipped, 40 deselected in 31.23s
-
-05_run_durable_resume_real_tests.ps1
-success real_api: 1 passed in 4.19s
-full linear DAG Resume real_api: 1 passed in 4.36s
-failure-boundary real_api: 1 passed in 2.13s
-```
+测试结果只能记录实际执行结果，不得预填通过。
 
 ## 下一步主线
 
-1. 将 Recovery Scan 聚合指标接入项目统一 observability / trace 入口，复用已有基础设施，不新增平行 metrics 系统；
-2. 增加自动恢复 Real API + PostgreSQL + 独立 Worker 验收入口，但不作为当前主线阻塞项；
-3. 验证 Scheduled Trigger Dispatch 与 Recovery Scan 的并发 / Session / failure isolation；
-4. 自动恢复稳定后冻结 DAG 分支状态合并 Contract；
-5. 实现多 frontier Resume；
-6. 完成 Phase 2.6 后进入下一阶段主线能力。
+1. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口；
+2. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；
+3. 精确实现 recovery contention / idempotency convergence；
+4. 冻结 DAG Branch State Merge Contract；
+5. 实现 Multi-frontier Resume；
+6. 完成 Phase 2.6 Closure；
+7. 进入下一阶段企业级执行能力。
 
-## 服务版本验收边界
+## 服务版本边界
 
-Checkpoint Runtime、Resume Candidate、Resume Execution Contract、Recovery Policy、Automatic Recovery Domain、Recovery Scheduler、Resume Planner、Worker Resume Runtime 与 HTTP Resume API 都属于 API / Worker / Scheduler 进程内代码变更。代码更新后必须由开发者人工重启受影响服务；Real API / Backend Gate 不负责启动、停止或重启服务。
+Checkpoint、Resume、Recovery Policy、Recovery Domain、Scheduler、Worker、HTTP Resume API 的代码更新都需要开发者人工重启受影响进程后才能进行真实联调；测试脚本不得负责启动、停止或重启服务。
