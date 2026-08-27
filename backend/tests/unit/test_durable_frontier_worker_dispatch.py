@@ -68,3 +68,26 @@ def test_frontier_claim_does_not_block_on_terminal_execution() -> None:
     assert 'WorkflowExecution.status == "completed"' not in source
     assert 'WorkflowExecution.status == "failed"' not in source
     assert 'WorkflowExecution.status == "cancelled"' not in source
+
+
+def test_frontier_runtime_uses_unified_runtime_entry_contract() -> None:
+    source = _read("app/services/workflow_worker/frontier_runtime.py")
+    assert "execute_claimed_execution(self, frontier.execution_id)" in source
+    assert "runtime_entry" in source
+
+
+def test_runtime_entry_allows_pending_start_and_owned_running_continuation() -> None:
+    source = _read("app/services/workflow_worker/runtime_entry.py")
+    assert 'execution.status.in_({"pending", "running"})' in source
+    assert 'if execution.status == "pending":' in source
+    assert 'elif execution.status == "running":' in source
+    assert 'await service.transition(execution, "running"' in source
+    assert "WorkflowRuntime(db, execution_service=service)" in source
+
+
+def test_runtime_entry_preserves_execution_lease_fencing() -> None:
+    source = _read("app/services/workflow_worker/runtime_entry.py")
+    assert "WorkflowWorkerLeaseGuard" in source
+    assert "_renew_with_abort_signal" in source
+    assert "WorkflowWorkerLeaseLost" in source
+    assert 'reason_code = "WORKER_LEASE_LOST"' in source
