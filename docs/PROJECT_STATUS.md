@@ -4,7 +4,7 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端 `main` 基线：`c7d7a3ccf822d6a1f745fae7f6dcc49f232fd7af`。
+- 当前远端 `main` 基线：`680fba0138ab52ec958d2d6025c2f1127d8f16f8`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；Frontend / Browser E2E 与历史 Real API 验收已完成，本轮不再作为主线阻塞条件。**
