@@ -95,7 +95,38 @@ class WorkflowExecutionCheckpointService:
                      checkpoint_reason: str, node_id: str | None = None, node_attempt: int | None = None,
                      node_status: str | None = None, input_data: dict | None = None, output_data: dict | None = None,
                      worker_owner: str | None = None, error_code: str | None = None,
-                     error_message: str | None = None) -> WorkflowExecutionCheckpoint:
+                     error_message: str | None = None, tenant_id: UUID | None = None,
+                     expected_worker_owner: str | None = None, expected_worker_attempt: int | None = None) -> WorkflowExecutionCheckpoint:
+        """兼容旧调用方，但仍必须经过统一的 Execution Durable Write boundary。
+
+        该入口不允许写入 `frontier_completed`，因为 Frontier completion 必须携带 source Frontier identity，
+        并使用 `append_next_in_transaction()` 的调用方事务边界。普通 Checkpoint 则在此处锁定 Execution、
+        校验 lifecycle / Worker fencing，并确认调用方提供的 sequence 正好是下一个 Durable sequence，
+        防止旧入口绕过统一序号分配规则。
+        """
+        if checkpoint_reason == "frontier_completed":
+            raise HTTPException(409, "frontier_completed Checkpoint 必须使用 append_next_in_transaction() 并绑定 source Frontier")
+        self._validate(sequence, checkpoint_reason)
+        self._validate_checkpoint_boundary(checkpoint_reason=checkpoint_reason, node_id=node_id, node_attempt=node_attempt, node_status=node_status)
+
+        execution_query = select(WorkflowExecution).where(WorkflowExecution.id == execution_id).with_for_update()
+        if tenant_id is not None:
+            execution_query = execution_query.where(WorkflowExecution.tenant_id == tenant_id)
+        execution_result = await self.db.execute(execution_query)
+        execution = execution_result.scalar_one_or_none()
+        if execution is None:
+            raise HTTPException(409, f"Checkpoint 对应的 Workflow Execution 不存在或不属于当前 tenant: {execution_id}")
+        self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
+        self._validate_worker_fencing(expected_worker_owner=expected_worker_owner, expected_worker_attempt=expected_worker_attempt, execution=execution)
+
+        latest_sequence = await self.db.execute(
+            select(func.max(WorkflowExecutionCheckpoint.sequence)).where(WorkflowExecutionCheckpoint.execution_id == execution_id)
+        )
+        current_sequence = latest_sequence.scalar_one()
+        expected_sequence = 0 if current_sequence is None else current_sequence + 1
+        if sequence != expected_sequence:
+            raise HTTPException(409, f"Checkpoint sequence 非当前 Execution 的下一个序号: expected={expected_sequence}, requested={sequence}")
+
         checkpoint = self._build(execution_id=execution_id, frontier_id=None, sequence=sequence,
                                  execution_status=execution_status, state_data=state_data,
                                  checkpoint_reason=checkpoint_reason, node_id=node_id, node_attempt=node_attempt,
