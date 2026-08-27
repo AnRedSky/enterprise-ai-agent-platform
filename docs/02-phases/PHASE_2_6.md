@@ -1,7 +1,7 @@
 # Phase 2.6 — Durable Execution Checkpoint Foundation
 
-> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约、Worker → Runtime 的第一版顺序 Resume 与 HTTP Resume API 已完成；真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 与 failure-after-resume Acceptance 已由开发者本地实际执行通过；DAG 分支 Resume、自动恢复尚未实现。
-> 评估日期：2026-08-26
+> 状态：**开发中**；Checkpoint、Resume Candidate 只读评估、Resume Execution 创建契约、Worker → Runtime 的第一版顺序 Resume 与 HTTP Resume API 已完成；真实 PostgreSQL + 独立 Worker 的 Durable Resume Acceptance 与 failure-after-resume Acceptance 已由开发者本地实际执行通过；DAG 分支 Resume、自动恢复尚未全部收口。
+> 评估日期：2026-08-27
 > 优先级：**P1**
 
 ## 1. 目标
@@ -74,7 +74,10 @@ Checkpoint 是持久化事实；Resume Execution 是新的 pending 任务，不�
 - `POST /api/v1/workflows/executions/{execution_id}/resume`：通过正式 `WorkflowExecutionService.resume_from_latest_checkpoint()` 创建或幂等命中 Resume Execution；
 - HTTP Resume API 只负责 tenant / actor 权限校验、读取 Source Execution、调用 Resume Domain Service 与响应组装，不直接抢 Worker lease、不直接启动 Runtime；
 - Execution HTTP 响应补充 `resume_of_execution_id` 与 `resume_checkpoint_sequence`，让客户端可追踪恢复 lineage；
-- `tests/unit/test_workflow_resume_api_contract.py`：验证 Resume API HTTP 方法、user/admin 权限契约、Domain Service 委托以及 lineage 响应字段。
+- `tests/unit/test_workflow_resume_api_contract.py`：验证 Resume API HTTP 方法、user/admin 权限契约、Domain Service 委托以及 lineage 响应字段；
+- `WorkflowDagMultiFrontierExecutor`：确定性执行当前 Multi-frontier，要求所有 Branch Node Execution 与 Node-level Checkpoint 成功后才能 Join-ready；
+- `WorkflowRuntime._execute_multi_frontier()`：在 Join-ready 后使用统一 Checkpoint Service 追加 Execution-level `frontier_completed` Checkpoint，保存 merged state，并继续执行 Worker ownership / fencing 校验；
+- `tests/unit/test_workflow_runtime_frontier_checkpoint.py`：验证 Join-ready 的 frontier completion durable boundary 以及 Join 未就绪时不写入 Checkpoint。
 
 ## 3. Checkpoint 事务边界
 
@@ -87,21 +90,39 @@ WorkflowExecutionService.transition_node(..., completed)
       ↓
 更新 Node 状态
       ↓
-追加 sequence = max(sequence) + 1 的 Checkpoint
+追加 sequence = max(sequence) + 1 的 Node-level Checkpoint
       ↓
 flush
       ↓
 同一 db.commit()
 ```
 
+Multi-frontier 的正式边界进一步为：
+
+```text
+Branch A completed + Node Checkpoint
+Branch B completed + Node Checkpoint
+        ↓
+WorkflowDagMultiFrontierExecutor
+        ↓
+all frontier Branch success
+        ↓
+Join-ready
+        ↓
+Execution-level frontier_completed Checkpoint
+        ↓
+继续 Planner / Next Frontier
+```
+
 因此禁止出现：
 
 ```text
-Node completed 已提交
-Checkpoint 尚未提交
+Branch 全部 completed
+Join-ready
+frontier_completed Checkpoint 尚未建立
 ```
 
-Checkpoint 服务在该路径中不独立 `commit`，而是加入调用方当前事务。
+Checkpoint 服务在 Runtime 的 Multi-frontier 路径中不独立 `commit`，而是加入 Worker / Runtime 当前事务。
 
 ## 4. Resume Execution 创建事务边界
 
@@ -179,7 +200,7 @@ Scheduler / Worker 正常领取
 
 ## 6. Runtime Resume 执行边界
 
-第一版 Runtime Resume 只覆盖当前 Runtime 已明确实现的顺序执行模型：
+当前 Runtime Resume 已扩展到多-frontier 的 Durable Checkpoint 边界：
 
 ```text
 Resume Execution pending
@@ -196,37 +217,47 @@ Worker claim + ownership fencing
         ↓
 校验原 workflow_version_id 未漂移
         ↓
-Resume Planner 找到 checkpoint.node_id
+Resume Planner / DAG Contract
         ↓
-DAG Contract / Frontier Planner 校验图与完成事实
+Multi-frontier Runtime Plan
         ↓
-单一 frontier / 顺序 Runtime Sequence Planner
+Branch state isolation
         ↓
-Checkpoint.state_data 作为 current_data
+每个 Branch 执行
         ↓
-只执行剩余 nodes
+每个 Branch Node Checkpoint
         ↓
-Resume Execution 自己重新生成 Checkpoint
+全部 Branch 成功
+        ↓
+Join-ready
+        ↓
+frontier_completed Execution-level Checkpoint
+        ↓
+下一 frontier / Join planning
 ```
 
 安全边界：
 
 1. 原 Source Execution 永不恢复成 `running`。
 2. Resume Execution 仍必须从标准 Worker claim 路径进入 Runtime。
-3. Planner 不复制 DAG 算法；DAG Contract / Frontier Planner 负责图结构与完成事实，Runtime Planner 负责单一 frontier 收敛。
-4. 第一版 DAG Resume 只接受单一 root；不接受多 root、条件边或隐式状态合并。
-5. 当前不声明支持 DAG 分支恢复；多个 frontier 必须等待明确的分支状态合并 Contract。
-6. Resume 使用原 Workflow Version 的内存快照，不修改数据库中的 published Version。
-7. 每个并发 Worker Execution 使用自己的数据库 Session；不得通过 Worker 实例级属性保存“当前 Session”。
-8. Resume 前重新核对 Source / Checkpoint，而不是仅相信 Resume Execution 创建时的 metadata。
-9. `completed_node_ids` 必须形成从唯一 root 向下的 predecessor 闭包；否则拒绝恢复，避免把不可能由当前顺序 Runtime 产生的持久化事实当作合法输入。
-10. Resume Execution 的 Node Execution 集合只记录真正重新执行的剩余节点；源 Execution 的已完成节点不会复制成新的 Node Execution。
+3. Planner 不复制 DAG 算法；DAG Contract / Frontier Planner 负责图结构与完成事实，Runtime Planner 负责 frontier 收敛。
+4. Resume 使用原 Workflow Version 的内存快照，不修改数据库中的 published Version。
+5. 每个并发 Worker Execution 使用自己的数据库 Session；不得通过 Worker 实例级属性保存“当前 Session”。
+6. Resume 前重新核对 Source / Checkpoint，而不是仅相信 Resume Execution 创建时的 metadata。
+7. `completed_node_ids` 必须形成从唯一 root 向下的 predecessor 闭包；否则拒绝恢复，避免把不可能由当前顺序 Runtime 产生的持久化事实当作合法输入。
+8. Resume Execution 的 Node Execution 集合只记录真正重新执行的节点；源 Execution 的已完成节点不会复制成新的 Node Execution。
+9. Multi-frontier Branch 必须使用独立 state snapshot，禁止 Branch 之间共享可变 state。
+10. Join-ready 必须建立在所有 frontier Branch 执行成功且 Node-level Checkpoint 已完成的基础上。
+11. `frontier_completed` 是 Execution-level Checkpoint，不携带 Node Fact；其 `state_data` 是经过既有 Branch State Merge Contract 验证的 merged state。
+12. `frontier_completed` 写入继续执行 Worker owner / fencing generation 与 tenant scope 校验，并不绕过现有 Checkpoint Durable Write Contract。
 
 ## 7. Checkpoint 负责
 
 - 保存可恢复的业务状态快照；
 - 保存 Node / Execution 当前状态上下文；
 - 保存产生快照时的 Worker owner；
+- 保存 Multi-frontier 全部 Branch 完成后的 merged state；
+- 以 Execution-level `frontier_completed` 记录 frontier 的 durable completion boundary；
 - 保留历史版本，支持后续恢复与审计。
 
 ## 8. Checkpoint 不负责
@@ -237,7 +268,8 @@ Resume Execution 自己重新生成 Checkpoint
 - 不修改 Node 状态机；
 - 不决定 Retry / Circuit Breaker；
 - 不实现 Saga / compensation；
-- 不直接启动 Resume Runtime。
+- 不直接启动 Resume Runtime；
+- 不在没有全部 Branch Durable Checkpoint 的情况下声明 Join-ready。
 
 ## 9. Durable Resume 数据不变量
 
@@ -252,13 +284,15 @@ Resume Execution 自己重新生成 Checkpoint
 9. Resume 完成后的 Checkpoint sequence 在新的 Resume Execution 内重新从 `1` 开始，source lineage 由 `resume_of_execution_id + resume_checkpoint_sequence` 保留；禁止把两个 Execution 的 sequence 混写成单一序列。
 10. DAG Resume Contract 的第一版 root 必须唯一；Planner 接收到的 completed facts 必须满足所有 predecessor 已完成。
 11. HTTP Resume API 不改变上述 Domain 不变量，只提供受权限保护的调用入口。
+12. Multi-frontier Join-ready 之前必须完成全部 Branch Node-level Checkpoint；否则 Runtime 不得推进到下一 frontier。
+13. `frontier_completed` 必须为 Execution-level Checkpoint，且 state_data 必须是既有 Merge Contract 的确定性结果。
 
 ## 10. 当前明确不实现
 
-- DAG 分支自动恢复；
+- DAG 分支自动恢复的全自动 Recovery Policy 编排；
 - running Execution checkpoint recovery；
 - Saga / compensation；
-- 自动恢复失败 Execution；
+- 自动恢复失败 Execution 的更高阶 backoff / DLQ 编排；
 - HTTP API 直接启动 Runtime；
 - 绕过 Worker ownership fencing；
 - 用 Checkpoint 替代 Node 状态机；
@@ -272,8 +306,8 @@ Checkpoint / Resume / Worker Runtime 属于 API / Worker 进程内 Python 代码
 
 ## 12. 下一步
 
-1. 在本地仅执行新增 Resume API / Planner / Runtime targeted unit tests，确认当前主线代码单元测试通过；
+1. 在本地仅执行新增 Resume / DAG Runtime / frontier checkpoint targeted unit tests，确认当前主线代码单元测试通过；
 2. 暂停完整 Backend / Frontend / Browser / Real API 验收流程，不以其作为当前开发推进门槛；
-3. 继续实现 Durable Resume 后续主线：Resume Runtime 完成事实、terminal boundary 与单一 frontier 稳定后的自动恢复设计；
-4. 自动恢复首先形成明确的 Recovery Policy / ownership / lease / retry 上限 Contract，再进入实现；
-5. DAG 分支恢复仍需先冻结分支状态合并 Contract，再实现多 frontier Runtime。
+3. 继续实现 Durable Resume 后续主线：多-frontier Resume 的下一 frontier 持久化事实与 terminal boundary 收口；
+4. 自动恢复继续沿现有 Recovery Policy / ownership / lease / retry 上限 Contract 演进；
+5. DAG 分支自动恢复必须继续复用现有 Planner / Merge / Checkpoint Contract，不创建平行实现。
