@@ -40,8 +40,11 @@ from app.services.workflow.checkpoint.recovery.dag_state_merge import (
 from app.services.workflow.checkpoint.recovery.observability import (
     RECOVERY_ATTEMPT,
     RECOVERY_SCAN_COMPLETED,
+    RECOVERY_TRACE_FINISHED,
+    RECOVERY_TRACE_STARTED,
     WorkflowRecoveryEvent,
     WorkflowRecoveryEventLogger,
+    WorkflowRecoveryTelemetry,
 )
 from app.services.workflow.checkpoint.recovery.planner import (
     WorkflowExecutionResumePlanner,
@@ -83,7 +86,10 @@ __all__ = [
     "WorkflowExecutionResumePlanner",
     "WorkflowRecoveryEvent",
     "WorkflowRecoveryEventLogger",
+    "WorkflowRecoveryTelemetry",
     "WorkflowResumePlan",
     "RECOVERY_ATTEMPT",
     "RECOVERY_SCAN_COMPLETED",
+    "RECOVERY_TRACE_STARTED",
+    "RECOVERY_TRACE_FINISHED",
 ]
