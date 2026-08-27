@@ -1,9 +1,4 @@
-"""Workflow Durable Resume 自动恢复领域服务。
-
-职责：将恢复策略、Checkpoint 候选评估与现有 Resume Domain Contract 串成一次受控的自动恢复操作。
-边界：不负责 Scheduler 轮询时间、不直接抢 Worker ownership、不直接启动 Runtime；真正创建 Resume Execution 委托 Resume Contract。
-关键依赖：WorkflowExecution ORM、Checkpoint Recovery Service、Recovery Policy、WorkflowExecutionService、Resume Outcome Contract、Recovery Observability Event。
-"""
+"""Workflow Durable Resume 自动恢复领域服务。"""
 
 from __future__ import annotations
 
@@ -46,13 +41,7 @@ class WorkflowExecutionAutomaticRecoveryResult:
 class WorkflowExecutionAutomaticRecoveryService:
     """执行单个 failed Execution 的自动恢复评估与 Resume 创建。"""
 
-    def __init__(
-        self,
-        db: AsyncSession,
-        policy: WorkflowExecutionRecoveryPolicy | None = None,
-        event_logger: WorkflowRecoveryEventLogger | None = None,
-        telemetry: WorkflowRecoveryTelemetry | None = None,
-    ):
+    def __init__(self, db: AsyncSession, policy: WorkflowExecutionRecoveryPolicy | None = None, event_logger: WorkflowRecoveryEventLogger | None = None, telemetry: WorkflowRecoveryTelemetry | None = None):
         self.db = db
         self.policy = WorkflowExecutionRecoveryPolicyEvaluator(policy)
         self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
@@ -63,7 +52,6 @@ class WorkflowExecutionAutomaticRecoveryService:
         self.telemetry = telemetry or WorkflowRecoveryTelemetry(event_logger=self.event_logger)
 
     async def _count_resume_ancestors(self, execution: WorkflowExecution) -> int:
-        """沿 Resume lineage 统计该 Execution 之前已经发生的恢复链长度。"""
         count = 0
         current_id = execution.resume_of_execution_id
         visited: set[UUID] = set()
@@ -71,128 +59,37 @@ class WorkflowExecutionAutomaticRecoveryService:
             if current_id in visited:
                 break
             visited.add(current_id)
-            result = await self.db.execute(
-                select(WorkflowExecution.resume_of_execution_id).where(
-                    WorkflowExecution.id == current_id,
-                    WorkflowExecution.tenant_id == execution.tenant_id,
-                )
-            )
+            result = await self.db.execute(select(WorkflowExecution.resume_of_execution_id).where(WorkflowExecution.id == current_id, WorkflowExecution.tenant_id == execution.tenant_id))
             parent_id = result.scalar_one_or_none()
             count += 1
             current_id = parent_id
         return count
 
-    async def evaluate(
-        self,
-        execution: WorkflowExecution,
-        *,
-        now: datetime | None = None,
-    ) -> WorkflowExecutionAutomaticRecoveryResult:
+    async def evaluate(self, execution: WorkflowExecution, *, now: datetime | None = None) -> WorkflowExecutionAutomaticRecoveryResult:
         """评估一个 failed Execution 是否满足自动 Resume 策略；不会创建 Resume。"""
-        checkpoint = await self.checkpoint.latest(execution.id)
-        assessment = self.checkpoint_recovery.assess(
-            execution_id=execution.id,
-            workflow_version_id=execution.workflow_version_id,
-            execution_status=execution.status,
-            worker_owner=execution.worker_owner,
-            checkpoint=checkpoint,
-        )
+        checkpoint = await self.checkpoint.latest(execution.id, tenant_id=execution.tenant_id)
+        assessment = self.checkpoint_recovery.assess(execution_id=execution.id, workflow_version_id=execution.workflow_version_id, execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint=checkpoint)
         attempts = await self._count_resume_ancestors(execution)
-        decision = self.policy.evaluate(
-            execution_status=execution.status,
-            worker_owner=execution.worker_owner,
-            checkpoint_eligible=assessment.eligible,
-            resume_attempt_count=attempts,
-            ended_at=execution.ended_at,
-            now=now,
-        )
+        decision = self.policy.evaluate(execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint_eligible=assessment.eligible, resume_attempt_count=attempts, ended_at=execution.ended_at, now=now)
         return WorkflowExecutionAutomaticRecoveryResult(decision=decision)
 
-    def _emit_attempt(
-        self,
-        execution: WorkflowExecution,
-        result: WorkflowExecutionAutomaticRecoveryResult,
-        *,
-        trace_id: str | None = None,
-        parent_trace_id: str | None = None,
-        duration_ms: float | None = None,
-    ) -> None:
-        """输出一次 Recovery attempt 事件；事件不包含业务 payload。"""
-        self.telemetry.emit(
-            WorkflowRecoveryEvent(
-                event_name=RECOVERY_ATTEMPT,
-                execution_id=execution.id,
-                resume_execution_id=result.resume_execution_id,
-                outcome=result.outcome,
-                reason_code=result.decision.reason_code,
-                attempt_count=result.decision.attempt_count,
-                max_attempts=result.decision.max_attempts,
-                trace_id=trace_id,
-                parent_trace_id=parent_trace_id,
-                phase="automatic_recovery",
-                duration_ms=duration_ms,
-            )
-        )
+    def _emit_attempt(self, execution: WorkflowExecution, result: WorkflowExecutionAutomaticRecoveryResult, *, trace_id: str | None = None, parent_trace_id: str | None = None, duration_ms: float | None = None) -> None:
+        self.telemetry.emit(WorkflowRecoveryEvent(event_name=RECOVERY_ATTEMPT, execution_id=execution.id, resume_execution_id=result.resume_execution_id, outcome=result.outcome, reason_code=result.decision.reason_code, attempt_count=result.decision.attempt_count, max_attempts=result.decision.max_attempts, trace_id=trace_id, parent_trace_id=parent_trace_id, phase="automatic_recovery", duration_ms=duration_ms))
 
-    async def recover(
-        self,
-        execution: WorkflowExecution,
-        *,
-        actor_id: UUID | None = None,
-        now: datetime | None = None,
-        parent_trace_id: str | None = None,
-    ) -> WorkflowExecutionAutomaticRecoveryResult:
-        """执行一次受策略约束的自动 Resume，并返回可区分的恢复结果。"""
+    async def recover(self, execution: WorkflowExecution, *, actor_id: UUID | None = None, now: datetime | None = None, parent_trace_id: str | None = None) -> WorkflowExecutionAutomaticRecoveryResult:
         started = monotonic()
-        trace_id = self.telemetry.start_trace(
-            execution_id=execution.id,
-            phase="automatic_recovery",
-            parent_trace_id=parent_trace_id,
-        )
+        trace_id = self.telemetry.start_trace(execution_id=execution.id, phase="automatic_recovery", parent_trace_id=parent_trace_id)
         result = await self.evaluate(execution, now=now)
         if not result.decision.eligible:
-            rejected = WorkflowExecutionAutomaticRecoveryResult(
-                decision=result.decision,
-                outcome="rejected",
-            )
+            rejected = WorkflowExecutionAutomaticRecoveryResult(decision=result.decision, outcome="rejected")
             duration_ms = (monotonic() - started) * 1000
             self._emit_attempt(execution, rejected, trace_id=trace_id, parent_trace_id=parent_trace_id, duration_ms=duration_ms)
-            self.telemetry.finish_trace(
-                trace_id,
-                execution_id=execution.id,
-                outcome=rejected.outcome,
-                reason_code=rejected.decision.reason_code,
-                phase="automatic_recovery",
-                parent_trace_id=parent_trace_id,
-                duration_ms=duration_ms,
-            )
+            self.telemetry.finish_trace(trace_id, execution_id=execution.id, outcome=rejected.outcome, reason_code=rejected.decision.reason_code, phase="automatic_recovery", parent_trace_id=parent_trace_id, duration_ms=duration_ms)
             return rejected
-
-        resume_result = await self.resume_contract.resume_with_outcome(
-            execution,
-            actor_id or execution.created_by,
-        )
-        recovered = WorkflowExecutionAutomaticRecoveryResult(
-            decision=result.decision,
-            resume_execution_id=resume_result.execution.id,
-            outcome=resume_result.outcome,
-        )
-        await self.trace_link.link(
-            execution,
-            resume_result.execution,
-            trace_id,
-            actor_id or execution.created_by,
-        )
+        resume_result = await self.resume_contract.resume_with_outcome(execution, actor_id or execution.created_by)
+        recovered = WorkflowExecutionAutomaticRecoveryResult(decision=result.decision, resume_execution_id=resume_result.execution.id, outcome=resume_result.outcome)
+        await self.trace_link.link(execution, resume_result.execution, trace_id, actor_id or execution.created_by)
         duration_ms = (monotonic() - started) * 1000
         self._emit_attempt(execution, recovered, trace_id=trace_id, parent_trace_id=parent_trace_id, duration_ms=duration_ms)
-        self.telemetry.finish_trace(
-            trace_id,
-            execution_id=execution.id,
-            resume_execution_id=recovered.resume_execution_id,
-            outcome=recovered.outcome,
-            reason_code=recovered.decision.reason_code,
-            phase="automatic_recovery",
-            parent_trace_id=parent_trace_id,
-            duration_ms=duration_ms,
-        )
+        self.telemetry.finish_trace(trace_id, execution_id=execution.id, resume_execution_id=recovered.resume_execution_id, outcome=recovered.outcome, reason_code=recovered.decision.reason_code, phase="automatic_recovery", parent_trace_id=parent_trace_id, duration_ms=duration_ms)
         return recovered
