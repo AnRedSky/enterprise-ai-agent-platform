@@ -32,6 +32,21 @@ class WorkflowExecutionCheckpointService:
             raise ValueError("Checkpoint reason 不能为空")
 
     @staticmethod
+    def _validate_checkpoint_boundary(
+        *,
+        checkpoint_reason: str,
+        node_id: str | None,
+        node_attempt: int | None,
+        node_status: str | None,
+    ) -> None:
+        """在 Durable Write 边界强制区分 Node-level 与 Execution-level Checkpoint。"""
+        if checkpoint_reason == "frontier_completed":
+            if node_id is not None or node_attempt is not None or node_status is not None:
+                raise ValueError("frontier_completed Checkpoint 必须为 Execution-level boundary，不得携带 Node Fact")
+        if checkpoint_reason == "node.completed" and node_id is None:
+            raise ValueError("node.completed Checkpoint 必须携带 node_id")
+
+    @staticmethod
     def assert_node_fact_complete(*, checkpoint, node_execution) -> None:
         """验证带 Node 的 Checkpoint 与对应 NodeExecution 属于同一 Durable Fact。
 
@@ -79,6 +94,12 @@ class WorkflowExecutionCheckpointService:
                worker_owner: str | None = None, error_code: str | None = None,
                error_message: str | None = None) -> WorkflowExecutionCheckpoint:
         self._validate(sequence, checkpoint_reason)
+        self._validate_checkpoint_boundary(
+            checkpoint_reason=checkpoint_reason,
+            node_id=node_id,
+            node_attempt=node_attempt,
+            node_status=node_status,
+        )
         return WorkflowExecutionCheckpoint(
             execution_id=execution_id, sequence=sequence, node_id=node_id, node_attempt=node_attempt,
             execution_status=execution_status, node_status=node_status, state_data=state_data,
@@ -135,6 +156,12 @@ class WorkflowExecutionCheckpointService:
             HTTPException: Execution 不存在、tenant 不匹配或 Worker fencing 已失效。
         """
         self._validate(0, checkpoint_reason)
+        self._validate_checkpoint_boundary(
+            checkpoint_reason=checkpoint_reason,
+            node_id=node_id,
+            node_attempt=node_attempt,
+            node_status=node_status,
+        )
         execution_query = select(WorkflowExecution).where(WorkflowExecution.id == execution_id).with_for_update()
         if tenant_id is not None:
             execution_query = execution_query.where(WorkflowExecution.tenant_id == tenant_id)
