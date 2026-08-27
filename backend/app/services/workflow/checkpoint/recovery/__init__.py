@@ -17,6 +17,8 @@ from app.services.workflow.checkpoint.recovery.dag_state_merge import WorkflowDa
 from app.services.workflow.checkpoint.recovery.observability import RECOVERY_ATTEMPT, RECOVERY_SCAN_COMPLETED, RECOVERY_TRACE_FINISHED, RECOVERY_TRACE_STARTED, WorkflowRecoveryEvent, WorkflowRecoveryEventLogger, WorkflowRecoveryTelemetry
 from app.services.workflow.checkpoint.recovery.planner import WorkflowExecutionResumePlanner, WorkflowResumePlan
 from app.services.workflow.checkpoint.recovery.policy import WorkflowExecutionRecoveryDecision, WorkflowExecutionRecoveryPolicy, WorkflowExecutionRecoveryPolicyEvaluator
+from app.services.workflow.checkpoint.recovery.resume_bootstrap import WorkflowExecutionResumeBootstrapService
+from app.services.workflow.checkpoint.recovery.resume_contract import WorkflowExecutionResumeContractService, WorkflowExecutionResumeOutcome
 from app.services.workflow.checkpoint.recovery.service import WorkflowExecutionCheckpointRecoveryService, WorkflowExecutionResumeAssessment
 from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
 
@@ -25,7 +27,7 @@ __all__ = [
     "WorkflowDagBranchState", "WorkflowDagBranchStateMergeService", "WorkflowDagContract", "WorkflowDagContractValidator", "WorkflowDagEdge",
     "WorkflowDagJoinExecutionResult", "WorkflowDagJoinExecutor", "WorkflowDagJoinReadiness", "WorkflowDagJoinReadinessService",
     "WorkflowDagResumePlan", "WorkflowDagResumePlanner", "WorkflowDagResumeRuntimePlan", "WorkflowDagResumeRuntimePlanner", "WorkflowDagResumeRuntimeSequencePlanner", "WorkflowDagStateMergePlan",
-    "WorkflowExecutionAutomaticRecoveryResult", "WorkflowExecutionAutomaticRecoveryService", "WorkflowExecutionCheckpointRecoveryService", "WorkflowExecutionRecoveryDecision", "WorkflowExecutionRecoveryPolicy", "WorkflowExecutionRecoveryPolicyEvaluator", "WorkflowExecutionResumeAssessment", "WorkflowExecutionResumePlanner",
+    "WorkflowExecutionAutomaticRecoveryResult", "WorkflowExecutionAutomaticRecoveryService", "WorkflowExecutionCheckpointRecoveryService", "WorkflowExecutionRecoveryDecision", "WorkflowExecutionRecoveryPolicy", "WorkflowExecutionRecoveryPolicyEvaluator", "WorkflowExecutionResumeAssessment", "WorkflowExecutionResumeBootstrapService", "WorkflowExecutionResumeContractService", "WorkflowExecutionResumeOutcome", "WorkflowExecutionResumePlanner",
     "WorkflowRecoveryEvent", "WorkflowRecoveryEventLogger", "WorkflowRecoveryTelemetry", "WorkflowRecoveryTraceLinkService", "WorkflowResumePlan",
     "RECOVERY_ATTEMPT", "RECOVERY_SCAN_COMPLETED", "RECOVERY_TRACE_STARTED", "RECOVERY_TRACE_FINISHED",
 ]
