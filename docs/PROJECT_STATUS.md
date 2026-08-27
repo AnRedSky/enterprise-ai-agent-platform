@@ -22,7 +22,8 @@
 - `frontier_completed` checkpoint idempotency：✅
 - DAG Frontier → Durable Frontier atomic progression bridge：✅
 - Durable Frontier → same-Execution Worker ownership reuse：✅
-- **Durable Frontier expired-lease recovery 已接入统一 Recovery Scheduler：过期 `claimed` / `running` Frontier 会被原子回收为 `retry_wait`，清除旧 Worker ownership，并重新进入 Durable Claim 队列；Recovery Scheduler 同一轮继续处理 failed Execution。**
+- Durable Frontier expired-lease recovery 已接入统一 Recovery Scheduler：过期 `claimed` / `running` Frontier 会被原子回收为 `retry_wait`，清除旧 Worker ownership，并重新进入 Durable Claim 队列；Recovery Scheduler 同一轮继续处理 failed Execution：✅
+- **Durable Frontier Execution-aware Claim：Claim 在同一数据库事务内校验关联 Execution ownership / fencing eligibility，排除 completed / failed / cancelled Execution，避免不可消费 Frontier 形成调度头阻塞：✅ 本轮**
 
 ## 当前实现边界
 
@@ -35,7 +36,9 @@ complete_frontier_with_checkpoint()
   ↓
 Durable Frontier
   ↓
-Worker Claim / Fencing
+Execution-aware Worker Claim
+  ↓
+Execution Ownership / Fencing
   ↓
 Workflow Runtime
   ↓
@@ -45,7 +48,7 @@ frontier_completed
   ↓
 Next Frontier
   ↓
-Worker Claim / Fencing
+Execution-aware Worker Claim
   ↓
 ...
 
@@ -62,11 +65,12 @@ Runtime Resume
 
 关键不变量：
 
-1. Frontier lease 过期只回收调度权，不直接递增 `attempt`；下一次成功 Claim 才产生新的 fencing generation。
-2. Recovery Scheduler 不创建新的 Execution / Frontier，不复制 Retry / Planner / Runtime 算法。
-3. 同一 Worker 在同一 Execution 内继续消费后继 Frontier 时复用 Execution fencing generation。
-4. 外部 Worker lease 过期后才允许新的 Worker 接管 Execution 并递增 generation。
+1. Frontier Claim 必须同时满足 tenant scope 与关联 Execution 的可消费状态。
+2. Frontier lease 过期只回收调度权，不直接递增 `attempt`；下一次成功 Claim 才产生新的 fencing generation。
+3. Recovery Scheduler 不创建新的 Execution / Frontier，不复制 Retry / Planner / Runtime 算法。
+4. 同一 Worker 在同一 Execution 内继续消费后继 Frontier 时复用 Execution fencing generation；只有 lease 失效后才产生新的 generation。
 5. Frontier → Checkpoint → Next Frontier 继续由统一 `complete_frontier_with_checkpoint()` 原子提交。
+6. `completed` / `failed` / `cancelled` Execution 不允许再次成为 Durable Frontier Runtime 的消费入口。
 
 ## 当前开发策略
 
@@ -81,24 +85,28 @@ Runtime Resume
 下一步继续收口：
 
 ```text
-expired Frontier recovery
+Execution-aware Frontier Claim
   ↓
-new Worker Claim / fencing generation
+Worker fencing generation
   ↓
-Runtime resume from durable Node / Checkpoint facts
+Runtime Entry / Resume
+  ↓
+已有 Node / Checkpoint durable facts
+  ↓
+跳过已完成 Node
   ↓
 frontier completion
   ↓
 Next Frontier
 ```
 
-重点验证 Retry / lease-expiry 后的 Resume 是否始终消费正确的 durable completed-node facts，并确保旧 Worker 无法通过旧 generation 写入 Checkpoint 或 Frontier 终态。
+重点解决 Durable Frontier Worker 当前仍依赖 `WorkflowWorker.execute_claimed()` 的 `pending → running` Runtime 入口：需要形成统一的 `pending` 新 Execution 与 `running + same owner` 后继 Frontier 两类 Runtime Entry Contract，同时保持 Execution / Node / Checkpoint fencing，不创建第二套 Runtime 状态机。
 
 ## 本轮交付
 
-- `backend/app/services/workflow_scheduler/recovery.py`
-- `backend/tests/unit/test_workflow_recovery_scheduler.py`
-- `docs/04-errors/2026-08-27-expired-frontier-recovery-scheduler.md`
+- `backend/app/services/workflow/frontier_repository.py`
+- `backend/tests/unit/test_durable_frontier_worker_dispatch.py`
+- `docs/04-errors/2026-08-27-durable-frontier-execution-aware-claim.md`
 - `docs/PROJECT_STATUS.md`
 
 **Unit Test：本轮只实现/更新测试代码，当前环境未执行 pytest，因此不记录 PASS。**
