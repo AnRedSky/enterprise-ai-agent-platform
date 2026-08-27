@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 
 from app.services.workflow.frontier_progression import (
     FrontierProgressionContractError,
     complete_frontier_with_checkpoint,
 )
+from app.services.workflow_worker.durable_frontier_execution import PlannerDrivenDurableFrontierWorkflowWorker
 
 
 def _frontier() -> MagicMock:
@@ -136,3 +136,73 @@ async def test_non_terminal_frontier_keeps_execution_running_and_uses_worker_fen
     assert append.await_args.kwargs["expected_worker_attempt"] == 3
     enqueue.assert_awaited_once()
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failure_convergence_rejects_stale_execution_owner_before_frontier_transition() -> None:
+    worker = object.__new__(PlannerDrivenDurableFrontierWorkflowWorker)
+    worker.owner = "worker-a"
+    frontier = _frontier()
+    execution = MagicMock()
+    execution.status = "running"
+    execution.worker_owner = "worker-b"
+    execution.worker_lease_expires_at = datetime(2026, 8, 27, 9, 0)
+
+    db = AsyncMock()
+    frontier_result = MagicMock()
+    frontier_result.scalar_one_or_none.return_value = frontier
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    db.execute.side_effect = [frontier_result, execution_result]
+
+    with patch(
+        "app.services.workflow_worker.durable_frontier_execution.SessionLocal"
+    ) as session_local, patch(
+        "app.services.workflow_worker.durable_frontier_execution.transition_owned_frontier",
+        new_callable=AsyncMock,
+    ) as transition:
+        context = AsyncMock()
+        context.__aenter__.return_value = db
+        session_local.return_value = context
+        await worker._converge_failure(frontier, ValueError("boom"))
+
+    transition.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failure_convergence_rejects_expired_execution_lease_before_retry_or_failure() -> None:
+    worker = object.__new__(PlannerDrivenDurableFrontierWorkflowWorker)
+    worker.owner = "worker-a"
+    frontier = _frontier()
+    execution = MagicMock()
+    execution.status = "running"
+    execution.worker_owner = "worker-a"
+    execution.worker_lease_expires_at = datetime(2026, 8, 27, 7, 0)
+
+    db = AsyncMock()
+    frontier_result = MagicMock()
+    frontier_result.scalar_one_or_none.return_value = frontier
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    db.execute.side_effect = [frontier_result, execution_result]
+
+    with patch(
+        "app.services.workflow_worker.durable_frontier_execution.SessionLocal"
+    ) as session_local, patch(
+        "app.services.workflow_worker.durable_frontier_execution.schedule_frontier_retry",
+        new_callable=AsyncMock,
+    ) as retry, patch(
+        "app.services.workflow_worker.durable_frontier_execution.transition_owned_frontier",
+        new_callable=AsyncMock,
+    ) as transition:
+        context = AsyncMock()
+        context.__aenter__.return_value = db
+        session_local.return_value = context
+        await worker._converge_failure(frontier, TimeoutError("timeout"))
+
+    retry.assert_not_awaited()
+    transition.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()

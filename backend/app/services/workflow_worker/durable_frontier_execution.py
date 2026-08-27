@@ -172,6 +172,15 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             if locked_frontier is None or execution is None:
                 await db.rollback()
                 return
+            # Failure convergence 与成功 terminalization 必须使用同一跨层 ownership 证明。
+            # 旧 Worker 即使仍持有未完成 Frontier，也不得在 Execution ownership 已转移后把 Execution 标记为 failed。
+            if (
+                execution.worker_owner != self.owner
+                or execution.worker_lease_expires_at is None
+                or execution.worker_lease_expires_at <= now
+            ):
+                await db.rollback()
+                return
             if retryable:
                 version = (
                     await db.execute(
@@ -308,7 +317,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                             )
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}
-                        next_ids = tuple(node_id for node in ordered if node_id not in after_ids)[:1]
+                        next_ids = tuple(node_id for node_id in ordered if node_id not in after_ids)[:1]
                         fingerprint = self._bootstrap_fingerprint(execution.id, version.id, ordered)
 
                     next_identity = None
