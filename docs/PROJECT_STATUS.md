@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Runtime / Planner → Durable Frontier progression wiring**；默认 Durable Frontier Worker 现在以 Planner 输出作为单次执行边界，执行当前 frontier 后重新规划后继 frontier，并在同一事务中完成当前 Frontier terminal、Next Frontier enqueue 与 Execution terminal transition。
+- 本轮已完成：**Durable Frontier Runtime 异常路径收敛**；默认 Planner-driven Worker 现在会在 Runtime 原事务回滚后，将明确的临时故障收敛到 Frontier `retry_wait`，将终态故障收敛到 Frontier / Execution `failed`，并释放 Execution ownership。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
@@ -15,7 +15,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进以及 Runtime/Planner progression wiring。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring 以及 Runtime 异常路径收敛。**
 
 ## Phase 2.7 当前实现
 
@@ -55,11 +55,14 @@
 - `FrontierRetryPolicy` 提供 max attempts、bounded exponential backoff；
 - `schedule_frontier_retry()` 将当前 Worker 持有的 Frontier 转为 `retry_wait` 并设置 `available_at`，下一次 Claim 才递增 attempt；达到 max attempts 后同一 Frontier 转为 `failed`；
 - Retry scheduling 不创建新的 WorkflowExecution / Frontier，并通过既有 fencing transition 防止 stale Worker 写入；
-- `complete_frontier_with_checkpoint()` 固定 Frontier → Execution/Checkpoint → Next Frontier 的锁顺序，在同一外层事务内完成当前 Frontier terminal transition、Checkpoint sequence 分配及 Next Frontier 幂等入队；
+- `complete_frontier_with_checkpoint()` 固定 Frontier → Execution/Checkpoint → Next Frontier 的锁顺序，在同一外层事务内完成当前 Frontier terminal、Checkpoint sequence 分配及 Next Frontier 幂等入队基础能力；
 - `PlannerDrivenDurableFrontierWorkflowWorker` 复用 `WorkflowRuntime._load_completed_resume_nodes()`、`_build_frontier_branch_states()`、`_execute_node_with_policy()`、`_execute_multi_frontier()` 与 `WorkflowDagResumePlanner`，每次 dispatch 只消费当前 Planner frontier；
 - DAG 当前 frontier 成功后重新读取持久化 Node facts，重新运行唯一 Planner，并以新的 `decision_fingerprint + ordered node IDs` 生成 Next Frontier identity；
 - 无 Edge 顺序 Workflow 每次只推进一个未完成 Node，按 Definition 顺序生成下一 Frontier；
-- Frontier progression 不复制 DAG 条件求值、State Merge、Runtime 或 Retry 算法。
+- Frontier progression 不复制 DAG 条件求值、State Merge、Runtime 或 Retry 算法；
+- Runtime 异常统一由 Planner-driven Worker 分类：HTTP 408 / 429 / 5xx、TimeoutError、ConnectionError、CircuitOpenError 进入 Frontier Retry；Planner/Contract/其他业务异常进入 Frontier Failed；
+- Runtime 异常首先 rollback 当前事务，再在新事务中重新锁定 Frontier 与 Execution，Retry/Failed 与 Execution ownership 释放一起提交；retry exhausted 时同一 Frontier 与 Execution 同时进入 `failed`；
+- Frontier Runtime failure convergence 不依赖 lease 过期作为正常 Retry 机制，expired lease recovery 仅负责 Worker 丢失 ownership 的异常恢复。
 
 ## 当前开发策略
 
@@ -86,12 +89,13 @@ Durable Frontier Scheduling
   ├── Expired lease recovery            ✅
   ├── Scheduler → Frontier enqueue      ✅
   ├── Frontier → Worker claim           ✅
-  ├── Worker → Runtime bridge           ✅
-  ├── Frontier lease heartbeat          ✅
-  ├── Retry scheduling                  ✅
+  ├── Worker → Runtime bridge            ✅
+  ├── Frontier lease heartbeat           ✅
+  ├── Retry scheduling                   ✅
   ├── Frontier → Checkpoint progression ✅
-  ├── Next Frontier idempotent enqueue  ✅
-  └── Runtime/Planner progression wiring ✅ 本轮
+  ├── Next Frontier idempotent enqueue   ✅
+  ├── Runtime/Planner progression wiring ✅
+  └── Runtime failure convergence       ✅ 本轮
           ↓
 继续主线直到全部任务完成
 ```

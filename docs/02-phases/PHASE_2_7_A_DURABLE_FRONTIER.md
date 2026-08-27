@@ -54,7 +54,7 @@ RUNNING
 
 ## 6. Scheduler → Worker 实际接入
 
-本轮已经完成真实生产桥接，不再停留在 Contract：
+本阶段已经完成真实生产桥接，不再停留在 Contract：
 
 ```text
 Scheduled Trigger
@@ -115,9 +115,26 @@ new fencing generation
 - 达到 `max_attempts` 后同一 Frontier 进入 `failed`；
 - Retry primitive 不执行 commit，由外层事务统一提交。
 
-### 明确边界
+### 7.1 Runtime 异常路径收敛
 
-`FrontierRetryPolicy` 不把所有 Runtime `failed` 自动视为 retryable。现有 Runtime error classification 仍是上层责任；Worker integration 必须使用明确的 retryable error classification 后再调用 retry primitive，避免把业务/配置/权限等 terminal failure 无限重试。
+Planner-driven Worker 已将 Runtime 异常正式接入 Frontier Retry / Failed 生命周期：
+
+```text
+Runtime dispatch
+      ↓ exception
+rollback Runtime transaction
+      ↓
+failure classification
+   ├── transient → retry_wait + available_at + error facts
+   │                 ↓
+   │             release Execution ownership
+   │
+   └── terminal → Frontier failed + Execution failed
+```
+
+明确临时故障包括 HTTP 408 / 429 / 5xx、TimeoutError、ConnectionError 与 CircuitOpenError；Planner/Contract/其他业务异常默认进入终态失败。Retry policy 读取 Workflow `config.retry_budget`，retry exhausted 时同一 Frontier 与 Execution 一起进入 `failed`。
+
+异常收敛使用独立补偿事务：Runtime 原事务先 rollback，避免半完成 Node facts 与 Retry 状态拆分提交；补偿事务重新锁定同一 tenant scope 下的 Frontier / Execution 后完成状态收敛和 Worker ownership 释放。expired lease recovery 仅作为 Worker 丢失 ownership 的恢复机制，不再承担正常 Runtime Retry 职责。
 
 ## 8. Frontier → Checkpoint → Next Frontier 原子推进
 
@@ -152,7 +169,7 @@ outer transaction COMMIT
 
 ### Planner-driven Runtime Integration
 
-新增 `PlannerDrivenDurableFrontierWorkflowWorker` 作为默认 Worker 正式入口。它复用现有 `WorkflowRuntime._resolve_dag_context()`、`_execute_node_with_policy()`、`_execute_multi_frontier()` 与 `WorkflowDagResumePlanner`，每次 dispatch 只执行当前 Planner frontier，执行完成后重新规划并持久化后继 Frontier。
+`PlannerDrivenDurableFrontierWorkflowWorker` 是默认 Worker 正式入口。它复用现有 `WorkflowRuntime`、`WorkflowDagResumePlanner`、Node execution 与 Checkpoint 能力，每次 dispatch 只执行当前 Planner frontier，执行完成后重新规划并持久化后继 Frontier。
 
 对于 DAG：
 
@@ -187,12 +204,13 @@ Durable Frontier Scheduling
    ├── Worker → Runtime bridge             ✅
    ├── Frontier lease heartbeat            ✅
    ├── Retry scheduling                    ✅
+   ├── Runtime failure convergence         ✅
    ├── Frontier → Checkpoint progression  ✅
    ├── Next Frontier idempotent enqueue    ✅
-   └── Runtime/Planner progression wiring  ✅ 本轮
+   └── Runtime/Planner progression wiring  ✅
 ```
 
-下一交付单元转入 Durable Frontier 的异常路径收敛：将 Runtime retryable failure、Frontier retry scheduling、expired lease recovery、terminal failure 统一接入同一 Worker 生命周期，并验证不会产生重复 Execution / Frontier。
+下一交付单元进入 Durable Execution 的更高层可靠性闭环：统一 Retry / Recovery / Checkpoint / Execution terminal semantics，并继续向 Scheduler、Worker、Runtime 的最终主线收敛。
 
 ## 10. 测试边界
 
