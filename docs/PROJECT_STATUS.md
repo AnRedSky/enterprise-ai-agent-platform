@@ -6,6 +6,7 @@
 - Branch: `main`
 - 当前 `main` HEAD：继续推进 Phase 2.7-A Durable Recovery Closure。
 - 本轮已完成：**Recovery Commit Ownership Boundary**；Resume Domain Service 支持显式 `commit=False`，HTTP Recovery endpoint 负责调用方事务的唯一 commit。
+- Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution `completed/failed` transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
