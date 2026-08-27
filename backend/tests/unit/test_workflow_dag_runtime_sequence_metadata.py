@@ -38,7 +38,7 @@ def test_sequence_plan_carries_conditional_selected_predecessors() -> None:
             {
                 "source": "start",
                 "target": "yes",
-                "condition": {"op": "eq", "left": {"var": "approved"}, "right": True},
+                "condition": {"op": "eq", "path": "approved", "value": True},
             },
             {"source": "start", "target": "no", "default": True},
         ],

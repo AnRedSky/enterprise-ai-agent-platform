@@ -97,7 +97,7 @@ def test_sequence_planner_rejects_non_json_safe_condition_state() -> None:
             {"id": "left", "type": "output", "config": {}},
         ],
         "edges": [
-            {"source": "start", "target": "left", "condition": {"eq": ["status", "ready"]}},
+            {"source": "start", "target": "left", "condition": {"op": "eq", "path": "status", "value": "ready"}},
         ],
     }
 

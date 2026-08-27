@@ -70,27 +70,29 @@ async def test_resume_context_uses_persisted_predecessor_outputs_for_join(join_d
     plan, branch_state_data = await runtime._resolve_resume_context(execution, join_definition, {"stale": True})
 
     assert plan.frontier_node_ids == ("join",)
-    assert plan.state_data == {"left": 2, "right": 3}
+    assert plan.state_data == {"stale": True}
     assert branch_state_data == {"join": {"left": 2, "right": 3}}
 
 
 @pytest.mark.asyncio
 async def test_join_runtime_does_not_use_stale_resume_input(join_definition):
     db = AsyncMock()
+    root = SimpleNamespace(node_id="root", output_data={"root": 1})
     left = SimpleNamespace(node_id="left", output_data={"left": 10})
     right = SimpleNamespace(node_id="right", output_data={"right": 20})
-    db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [left, right])))
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [root, left, right])))
     runtime = WorkflowRuntime(db)
     execution = SimpleNamespace(id=uuid4(), resume_of_execution_id=uuid4())
 
-    plan, _ = await runtime._resolve_resume_context(execution, join_definition, {"left": -1, "right": -1})
+    plan, branch_state_data = await runtime._resolve_resume_context(execution, join_definition, {"left": -1, "right": -1})
 
-    assert plan.state_data == {"left": 10, "right": 20}
+    assert plan.state_data == {"left": -1, "right": -1}
+    assert branch_state_data == {"join": {"left": 10, "right": 20}}
 
 
 @pytest.mark.asyncio
 async def test_runtime_continues_persisted_recovery_trace_to_base_runtime(monkeypatch, caplog):
-    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), resume_of_execution_id=uuid4())
     version = SimpleNamespace()
     actor_id = uuid4()
     db = AsyncMock()

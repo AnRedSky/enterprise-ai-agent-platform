@@ -25,11 +25,14 @@ async def test_dag_frontier_decision_is_persisted_without_business_state():
     )
     definition = {
         "nodes": [
+            {"id": "root", "type": "input", "config": {}},
             {"id": "left", "type": "input", "config": {}},
             {"id": "right", "type": "input", "config": {}},
             {"id": "join", "type": "join", "config": {}},
         ],
         "edges": [
+            {"source": "root", "target": "left"},
+            {"source": "root", "target": "right"},
             {"source": "left", "target": "join"},
             {"source": "right", "target": "join"},
         ],
@@ -42,7 +45,7 @@ async def test_dag_frontier_decision_is_persisted_without_business_state():
     assert call.args[2] == "workflow.dag.frontier_decided"
     data = call.kwargs["data"]
     assert data["completed_node_ids"] == []
-    assert data["frontier_node_ids"] == ["left", "right"]
+    assert data["frontier_node_ids"] == ["root"]
     assert data["selected_predecessors"] == []
     assert "input" not in data
     assert len(data["decision_id"]) == 64
