@@ -58,13 +58,13 @@ class WorkflowExecutionCheckpointRecoveryService:
             但本方法不会创建新 Execution、写入幂等键或获取 Worker ownership。
 
         Raises:
-            ValueError: 调用方传入的数据模型违反 UUID 类型约束时由上层负责处理，本方法不吞掉模型错误。
+            ValueError: checkpoint 存在但不属于当前 execution 时拒绝跨 Execution replay。
 
         重要边界：
             1. 当前只允许从 failed Execution 产生 Resume 候选；running Execution 必须先经过独立的 Worker
                lease recovery 边界，不能直接使用 Checkpoint 复活 Runtime。
             2. Worker owner 非空表示 ownership 仍有事实存在，即使调用者准备恢复也不得绕过 fencing。
-            3. Checkpoint 必须是 `node.completed` 或 `frontier_completed` 边界，并且产生时 Execution 应处于 running 状态。
+            3. Checkpoint 必须属于当前 Execution，且必须是 `node.completed` 或 `frontier_completed` 边界，并且产生时 Execution 应处于 running 状态。
                `node.completed` 必须绑定 completed Node；`frontier_completed` 可以是 Multi-frontier 的 Execution-level Checkpoint。
             4. Workflow Version 固定来自原 Execution；未来恢复不得隐式漂移到新的 published version。
             5. 幂等键由 `execution_id + checkpoint_sequence` 确定性生成，后续真正 Resume 时必须持久化并作为唯一约束的一部分。
@@ -92,6 +92,9 @@ class WorkflowExecutionCheckpointRecoveryService:
                 execution_id=execution_id,
                 workflow_version_id=workflow_version_id,
             )
+
+        if checkpoint.execution_id != execution_id:
+            raise ValueError("Checkpoint 不属于当前 Workflow Execution，禁止跨 Execution Replay")
 
         if checkpoint.checkpoint_reason not in WorkflowExecutionCheckpointRecoveryService.RESUMABLE_CHECKPOINT_REASONS:
             return WorkflowExecutionResumeAssessment(
