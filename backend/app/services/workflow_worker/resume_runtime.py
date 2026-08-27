@@ -129,6 +129,9 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
             status=version.status,
             created_by=version.created_by,
         )
+        if await self._complete_if_all_nodes_resumed(execution, resumed_version, actor_id):
+            return dict(getattr(execution, "output_data", None) or {})
+        resumed_version = await self._resume_version(execution, resumed_version)
         return await super().execute(
             execution,
             resumed_version,
@@ -190,6 +193,7 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
         completed = list(result.scalars().all())
         if {node.node_id for node in completed} >= {node["id"] for node in nodes if isinstance(node, dict) and isinstance(node.get("id"), str)}:
             final_data = dict(completed[0].output_data or {}) if completed else dict(execution.input_data or {})
+            execution.output_data = final_data
             await self.execution_service.transition(execution, "completed", output_data=final_data, actor_id=actor_id)
             return True
         return False
