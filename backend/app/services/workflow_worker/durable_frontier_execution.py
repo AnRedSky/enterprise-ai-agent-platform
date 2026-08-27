@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import WorkflowVersion
-from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier, WorkflowNodeExecution
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
@@ -70,28 +70,23 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         async with SessionLocal() as db:
             locked_frontier = (
                 await db.execute(
-                    select(WorkflowFrontier)
-                    .where(
+                    select(WorkflowFrontier).where(
                         WorkflowFrontier.id == frontier.id,
                         WorkflowFrontier.tenant_id == frontier.tenant_id,
-                    )
-                    .with_for_update()
+                    ).with_for_update()
                 )
             ).scalar_one_or_none()
             execution = (
                 await db.execute(
-                    select(WorkflowExecution)
-                    .where(
+                    select(WorkflowExecution).where(
                         WorkflowExecution.id == frontier.execution_id,
                         WorkflowExecution.tenant_id == frontier.tenant_id,
-                    )
-                    .with_for_update()
+                    ).with_for_update()
                 )
             ).scalar_one_or_none()
             if locked_frontier is None or execution is None:
                 await db.rollback()
                 return
-
             if retryable:
                 version = (
                     await db.execute(
@@ -102,48 +97,29 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     await db.rollback()
                     return
                 updated_frontier = await schedule_frontier_retry(
-                    db,
-                    frontier=locked_frontier,
-                    worker_owner=self.owner,
-                    attempt=frontier.attempt,
-                    now=now,
-                    error_code=error_code,
-                    error_message=error_message,
+                    db, frontier=locked_frontier, worker_owner=self.owner, attempt=frontier.attempt,
+                    now=now, error_code=error_code, error_message=error_message,
                     policy=self._retry_policy(version),
                 )
                 if updated_frontier.status == "failed":
-                    execution_service = WorkflowExecutionService(db)
-                    await execution_service.transition(
-                        execution,
-                        "failed",
-                        error_code=error_code,
-                        error_message=error_message,
-                        actor_id=execution.created_by,
+                    await WorkflowExecutionService(db).transition(
+                        execution, "failed", error_code=error_code,
+                        error_message=error_message, actor_id=execution.created_by,
                     )
-                    await db.commit()
-                    return
-                execution.worker_owner = None
-                execution.worker_lease_expires_at = None
-                execution.error_code = error_code
-                execution.error_message = error_message
+                else:
+                    execution.worker_owner = None
+                    execution.worker_lease_expires_at = None
+                    execution.error_code = error_code
+                    execution.error_message = error_message
                 await db.commit()
                 return
-
             await transition_owned_frontier(
-                db,
-                frontier_id=locked_frontier.id,
-                worker_owner=self.owner,
-                attempt=frontier.attempt,
-                target_status="failed",
-                now=now,
+                db, frontier_id=locked_frontier.id, worker_owner=self.owner,
+                attempt=frontier.attempt, target_status="failed", now=now,
             )
-            execution_service = WorkflowExecutionService(db)
-            await execution_service.transition(
-                execution,
-                "failed",
-                error_code=error_code,
-                error_message=error_message,
-                actor_id=execution.created_by,
+            await WorkflowExecutionService(db).transition(
+                execution, "failed", error_code=error_code,
+                error_message=error_message, actor_id=execution.created_by,
             )
             await db.commit()
 
@@ -172,7 +148,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     if version is None:
                         await db.rollback()
                         return
-
                     runtime = WorkflowRuntime(db)
                     service = WorkflowExecutionService(db)
                     nodes = runtime.validate_definition(version.definition)
@@ -202,9 +177,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         if completed_ids and tuple(frontier.node_ids) != plan.frontier_node_ids:
                             raise HTTPException(409, "Durable Frontier 与当前 Planner frontier 不一致")
                         branch_state = runtime._build_frontier_branch_states(
-                            version.definition,
-                            plan.frontier_node_ids,
-                            completed_nodes,
+                            version.definition, plan.frontier_node_ids, completed_nodes,
                             plan.selected_predecessor_node_ids,
                         ) if completed_ids else {}
                         if len(plan.frontier_node_ids) > 1:
@@ -218,16 +191,10 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         elif plan.frontier_node_ids:
                             checkpoint_node_id = plan.frontier_node_ids[0]
                             checkpoint_state = await runtime._execute_node_with_policy(
-                                service,
-                                execution,
-                                node_by_id[checkpoint_node_id],
+                                service, execution, node_by_id[checkpoint_node_id],
                                 branch_state.get(checkpoint_node_id, dict(execution.input_data or {})),
-                                execution.created_by,
-                                False,
-                                timeout,
-                                max_retries,
-                                started,
-                                retry_counter,
+                                execution.created_by, False, timeout, max_retries,
+                                started, retry_counter,
                             )
                             node_execution = (
                                 await db.execute(
@@ -243,7 +210,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                                 checkpoint_output = dict(node_execution.output_data or {})
                         else:
                             checkpoint_state = dict(execution.output_data or execution.input_data or {})
-
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}
                         after_state = {node.node_id: dict(node.output_data or {}) for node in completed_after}
@@ -291,31 +257,19 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     next_identity = None
                     if next_ids:
                         next_identity = WorkflowFrontierIdentity(
-                            execution_id=execution.id,
-                            workflow_version_id=version.id,
-                            decision_fingerprint=fingerprint,
-                            node_ids=tuple(next_ids),
+                            execution_id=execution.id, workflow_version_id=version.id,
+                            decision_fingerprint=fingerprint, node_ids=tuple(next_ids),
                         )
-
                     await complete_frontier_with_checkpoint(
-                        db,
-                        frontier=frontier,
-                        worker_owner=self.owner,
-                        attempt=frontier.attempt,
-                        checkpoint_state=checkpoint_state,
-                        checkpoint_reason="frontier_completed",
-                        node_id=checkpoint_node_id,
-                        node_attempt=checkpoint_node_attempt,
-                        node_status=checkpoint_node_status,
-                        output_data=checkpoint_output,
-                        next_identity=next_identity,
-                        now=now,
+                        db, frontier=frontier, worker_owner=self.owner, attempt=frontier.attempt,
+                        checkpoint_state=checkpoint_state, checkpoint_reason="frontier_completed",
+                        node_id=checkpoint_node_id, node_attempt=checkpoint_node_attempt,
+                        node_status=checkpoint_node_status, output_data=checkpoint_output,
+                        next_identity=next_identity, now=now,
                     )
                     if next_identity is None:
                         await service.transition(
-                            execution,
-                            "completed",
-                            output_data=checkpoint_state,
+                            execution, "completed", output_data=checkpoint_state,
                             actor_id=execution.created_by,
                         )
                     await db.commit()
