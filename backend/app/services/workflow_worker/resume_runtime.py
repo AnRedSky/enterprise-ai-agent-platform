@@ -53,8 +53,33 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
             created_by=version.created_by,
         )
 
+    async def _complete_if_all_nodes_resumed(self, execution, version, actor_id):
+        definition = version.definition if isinstance(version.definition, dict) else {}
+        nodes = definition.get("nodes") or []
+        if not nodes or definition.get("edges"):
+            return False
+        result = await self.db.execute(
+            select(WorkflowNodeExecution)
+            .where(
+                WorkflowNodeExecution.execution_id == execution.id,
+                WorkflowNodeExecution.tenant_id == execution.tenant_id,
+                WorkflowNodeExecution.status == "completed",
+            )
+            .order_by(WorkflowNodeExecution.created_at.desc(), WorkflowNodeExecution.id.desc())
+        )
+        completed = list(result.scalars().all())
+        if {node.node_id for node in completed} >= {node["id"] for node in nodes if isinstance(node, dict) and isinstance(node.get("id"), str)}:
+            final_data = dict(completed[0].output_data or {}) if completed else dict(execution.input_data or {})
+            await self.execution_service.transition(execution, "completed", output_data=final_data, actor_id=actor_id)
+            return True
+        return False
+
     async def execute(self, execution, version, actor_id, is_admin=False, allow_legacy_empty_nodes=False):
+        if await self._complete_if_all_nodes_resumed(execution, version, actor_id):
+            return dict(execution.output_data or execution.input_data or {})
         resumed_version = await self._resume_version(execution, version)
+        if isinstance(resumed_version.definition, dict) and not (resumed_version.definition.get("nodes") or []):
+            return dict(execution.output_data or execution.input_data or {})
         return await super().execute(
             execution,
             resumed_version,
