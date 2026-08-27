@@ -5,7 +5,8 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Durable Frontier 成功路径统一收敛**；默认 Planner-driven Worker 现在通过 `complete_frontier_with_checkpoint()` 在同一外层事务内完成当前 Frontier fencing terminal、Checkpoint append 与 Next Frontier 幂等入队，避免 Worker 分别写入三个持久化事实。
+- 本轮已完成：**Durable Resume Bootstrap 原子闭环**；Source Execution 的 completed Node facts 现在复制到 Resume Execution，并与首个 Durable Frontier 在同一事务中完成持久化，避免 Resume Execution 创建后没有 Frontier 或从 root 重复执行。
+- Durable Resume 现在固定 Source Workflow Version，使用 `execution_id + checkpoint_sequence` 生成确定性 Resume idempotency key；并通过 Resume Bootstrap 计算首个 Planner frontier。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
@@ -15,7 +16,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛以及成功路径统一持久化接入。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化以及 Durable Resume Bootstrap。**
 
 ## Phase 2.7 当前实现
 
@@ -31,6 +32,8 @@
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
 - Resume Contract 在 Source Execution row lock 后再次强制使用 `locked_execution.tenant_id` 查询最新 Checkpoint；
+- Resume Contract 创建 Resume 时使用 `commit=False`，随后由 `WorkflowExecutionResumeBootstrapService` 在同一事务复制 completed Node lineage 并 enqueue 首个 Frontier；
+- Resume Bootstrap 固定 Source Workflow Version，不复制新的 Runtime/Planner；DAG 使用 `WorkflowDagResumePlanner` 计算首个 frontier，无 Edge 顺序 Workflow 按 Definition 顺序选择下一个未完成 Node；
 - Runtime 持久化 `workflow.dag.frontier_decided` decision metadata；
 - Planner 生成 deterministic `decision_fingerprint`，同时绑定 completed Node facts、条件 source state、frontier 与 selected predecessor；
 - Runtime Plan 显式携带 Planner fingerprint，Runtime 不再复制 Decision identity 计算逻辑；
@@ -92,14 +95,15 @@ Durable Frontier Scheduling
   ├── Expired lease recovery            ✅
   ├── Scheduler → Frontier enqueue      ✅
   ├── Frontier → Worker claim           ✅
-  ├── Worker → Runtime bridge            ✅
-  ├── Frontier lease heartbeat           ✅
-  ├── Retry scheduling                   ✅
+  ├── Worker → Runtime bridge           ✅
+  ├── Frontier lease heartbeat          ✅
+  ├── Retry scheduling                  ✅
   ├── Frontier → Checkpoint progression ✅
-  ├── Next Frontier idempotent enqueue   ✅
+  ├── Next Frontier idempotent enqueue  ✅
   ├── Runtime/Planner progression wiring ✅
   ├── Runtime failure convergence       ✅
-  └── Unified success persistence path  ✅ 本轮
+  ├── Unified success persistence path  ✅
+  └── Durable Resume Bootstrap          ✅ 本轮
           ↓
 继续主线直到全部任务完成
 ```
