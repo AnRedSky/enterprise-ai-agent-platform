@@ -4,8 +4,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前 `main` HEAD：继续推进 Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Scheduler → Durable Frontier → Worker 实际桥接**；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
+- 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
+- 本轮已完成：**Durable Frontier Retry Scheduling 基础生产能力**；可重试失败通过同一 Frontier 的 `retry_wait + available_at` 持久化调度，不创建新的 WorkflowExecution / Frontier，并继续使用 `worker_owner + attempt` fencing。
+- Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution `completed/failed` transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
@@ -14,7 +15,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery，并已接入 Scheduled Trigger 与默认 Worker。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入以及 Retry Scheduling 基础能力。**
 
 ## Phase 2.7 当前实现
 
@@ -51,7 +52,10 @@
 - Scheduled Trigger 现在在同一调用方事务内为新 pending Execution 创建首个 Durable Frontier，Frontier 与 Execution 共享 tenant / workflow version / execution identity；
 - 默认 `WorkflowWorker` 已切换为 `DurableFrontierWorkflowWorker`，Claim Frontier 后在同一事务取得对应 Execution ownership，再复用既有 `LeaseAwareWorkflowWorker` / `WorkflowExecutionService` Runtime；
 - Frontier Worker 同时维护 Frontier lease heartbeat 与既有 Execution lease heartbeat，并在 Execution terminal state 后通过 `transition_owned_frontier()` 收敛 Frontier terminal state；
-- Frontier lease recovery / fencing repository 不负责 commit，由 Scheduler/Worker caller 统一提交。
+- `FrontierRetryPolicy` 提供 max attempts、bounded exponential backoff；
+- `schedule_frontier_retry()` 将当前 Worker 持有的 Frontier 转为 `retry_wait` 并设置 `available_at`，下一次 Claim 才递增 attempt；达到 max attempts 后同一 Frontier 转为 `failed`；
+- Retry scheduling 不创建新的 WorkflowExecution / Frontier，并通过既有 fencing transition 防止 stale Worker 写入；
+- Retry policy 当前不自动把所有 Runtime failure 视为 retryable；明确的 Runtime error classification 仍由上层 Worker/Runtime integration 提供。
 
 ## 当前开发策略
 
@@ -65,35 +69,6 @@
 
 ```text
 Phase 2.7 Conditional Branching
-  ├── Evaluator                         ✅
-  ├── DAG Contract                     ✅
-  ├── Conditional Planner              ✅
-  ├── Initial Execution Runtime        ✅
-  ├── Resume Runtime Integration       ✅
-  ├── Conditional Join                 ✅
-  ├── Durable tenant boundary          ✅
-  ├── Checkpoint tenant boundary       ✅
-  ├── Conditional Decision Trace       ✅
-  ├── Resume Contract tenant scope     ✅
-  ├── Branch Checkpoint Gate            ✅
-  ├── Decision Fingerprint              ✅
-  ├── Runtime Plan fingerprint          ✅
-  ├── Recovery Frontier Replay Guard    ✅
-  ├── Decision Trace Idempotency        ✅
-  ├── Checkpoint sequence serialization ✅
-  ├── Checkpoint fact completeness      ✅
-  ├── Recovery Trace Checkpoint Lineage ✅
-  ├── Conditional Decision Rebuild      ✅
-  ├── Trace Lineage 连续性              ✅
-  ├── Decision Trace payload drift guard ✅
-  ├── Deterministic fingerprint JSON boundary ✅
-  ├── Single DAG Decision Planning Boundary ✅
-  ├── Checkpoint Durable Write Tenant Boundary ✅
-  ├── Resume Idempotency Lineage Drift Guard ✅
-  ├── Resume Idempotency Key Determinism Guard ✅
-  ├── Resume Transaction Savepoint Boundary ✅
-  ├── Recovery Commit Ownership Boundary ✅
-  ├── Runtime Durable Commit Ownership  ✅
   └── Conditional Branching Closure     ✅ 当前实现范围
           ↓
 Durable Frontier Scheduling
@@ -105,14 +80,14 @@ Durable Frontier Scheduling
   ├── Claim repository                  ✅
   ├── Worker lease fencing              ✅
   ├── Expired lease recovery            ✅
-  ├── Scheduler → Frontier enqueue     ✅ 本轮
-  ├── Frontier → Worker claim           ✅ 本轮
-  ├── Worker → Runtime bridge           ✅ 本轮
-  ├── Frontier lease heartbeat           ✅ 本轮
-  ├── Retry scheduling                  ⏭
+  ├── Scheduler → Frontier enqueue     ✅
+  ├── Frontier → Worker claim           ✅
+  ├── Worker → Runtime bridge           ✅
+  ├── Frontier lease heartbeat          ✅
+  ├── Retry scheduling                  ✅ 本轮
   └── Frontier → Checkpoint progression ⏭
           ↓
 继续主线直到全部任务完成
 ```
 
-Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler → Frontier → Worker → Runtime。
+Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint 生命周期。
