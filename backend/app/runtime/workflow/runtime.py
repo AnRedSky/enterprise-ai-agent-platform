@@ -276,15 +276,15 @@ class WorkflowRuntime:
             attempt += 1
             remaining = workflow_timeout / 1000 - (asyncio.get_running_loop().time() - started)
             if remaining <= 0:
-                await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded")
+                await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code="WORKFLOW_TIMEOUT", error_message="Workflow deadline exceeded", commit=False)
                 raise HTTPException(504, "Workflow deadline exceeded")
-            await service.transition_node(execution, node["id"], "running", input_data=current_data)
+            await service.transition_node(execution, node["id"], "running", input_data=current_data, commit=False)
             node_timeout = self.resolve_timeout_ms(node["config"])
             timeout_seconds = min(node_timeout / 1000, remaining)
             deadline_limited = remaining <= node_timeout / 1000
             try:
                 output = await asyncio.wait_for(self.execute_node(node, current_data, actor_id, is_admin, execution.id, execution.tenant_id, execution=execution), timeout=timeout_seconds)
-                await service.transition_node(execution, node["id"], "completed", output_data=output)
+                await service.transition_node(execution, node["id"], "completed", output_data=output, commit=False)
                 return output
             except asyncio.TimeoutError as exc:
                 failure: BaseException = exc
@@ -294,7 +294,7 @@ class WorkflowRuntime:
                 failure = exc
                 error_code = self.classify_error(exc)
                 error_message = str(exc)
-            await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code=error_code, error_message=error_message)
+            await service.transition_node(execution, node["id"], "failed", input_data=current_data, error_code=error_code, error_message=error_message, commit=False)
             retryable = error_code in policy["retryable_error_codes"] and error_code not in {"CIRCUIT_OPEN", "WORKFLOW_TIMEOUT"}
             if not retryable or attempt >= policy["max_attempts"] or workflow_retry_counter[0] >= max_retries:
                 if error_code == "WORKFLOW_TIMEOUT":

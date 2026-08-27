@@ -303,7 +303,8 @@ class WorkflowExecutionService:
 
     async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,
                               input_data: dict | None = None, output_data: dict | None = None,
-                              error_code: str | None = None, error_message: str | None = None) -> WorkflowNodeExecution:
+                              error_code: str | None = None, error_message: str | None = None,
+                              *, commit: bool = True) -> WorkflowNodeExecution:
         """推进 Node Execution 状态，并在 Worker 场景执行 ownership fencing。"""
         if target_status not in self.NODE_STATES:
             raise HTTPException(400, "不支持的 Node Execution 状态")
@@ -364,8 +365,9 @@ class WorkflowExecutionService:
                 output_data=node.output_data,
                 worker_owner=execution.worker_owner,
             )
-        await self.db.commit()
-        await self.db.refresh(node)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(node)
         return node
 
     async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID, admin: bool = False,
