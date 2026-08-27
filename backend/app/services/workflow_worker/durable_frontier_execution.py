@@ -172,8 +172,6 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             if locked_frontier is None or execution is None:
                 await db.rollback()
                 return
-            # Failure convergence 与成功 terminalization 必须使用同一跨层 ownership 证明。
-            # 旧 Worker 即使仍持有未完成 Frontier，也不得在 Execution ownership 已转移后把 Execution 标记为 failed。
             if (
                 execution.worker_owner != self.owner
                 or execution.worker_lease_expires_at is None
@@ -215,8 +213,57 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             )
             await db.commit()
 
+    async def _verify_frontier_consumption_ownership(self, frontier: WorkflowFrontier) -> bool:
+        """在真正进入 Runtime 前重新证明 Frontier 与 Execution 仍属于当前 Worker。
+
+        Args:
+            frontier: Claim 阶段取得的 Durable Frontier 快照。
+
+        Returns:
+            ownership、attempt、状态与两层 lease 均有效时返回 True，否则返回 False。
+
+        设计意图：Claim 提交与 Runtime 启动之间存在调度间隙；旧 Worker 可能在此期间失去 ownership。
+        Runtime 必须在执行任何 Node 前再次锁定两层 durable fact，避免 stale task 继续消费已经回收或
+        转移给其他 Worker 的 Frontier。该检查只负责消费资格，不执行状态推进。
+        """
+        now = datetime.now(UTC).replace(tzinfo=None)
+        async with SessionLocal() as db:
+            frontier_result = await db.execute(
+                select(WorkflowFrontier).where(
+                    WorkflowFrontier.id == frontier.id,
+                    WorkflowFrontier.tenant_id == frontier.tenant_id,
+                    WorkflowFrontier.worker_owner == self.owner,
+                    WorkflowFrontier.attempt == frontier.attempt,
+                    WorkflowFrontier.status == "running",
+                    WorkflowFrontier.worker_lease_expires_at.is_not(None),
+                    WorkflowFrontier.worker_lease_expires_at > now,
+                ).with_for_update()
+            )
+            locked_frontier = frontier_result.scalar_one_or_none()
+            if locked_frontier is None:
+                await db.rollback()
+                return False
+            execution_result = await db.execute(
+                select(WorkflowExecution).where(
+                    WorkflowExecution.id == locked_frontier.execution_id,
+                    WorkflowExecution.tenant_id == locked_frontier.tenant_id,
+                    WorkflowExecution.worker_owner == self.owner,
+                    WorkflowExecution.status.in_(("pending", "running")),
+                    WorkflowExecution.worker_lease_expires_at.is_not(None),
+                    WorkflowExecution.worker_lease_expires_at > now,
+                ).with_for_update()
+            )
+            execution = execution_result.scalar_one_or_none()
+            if execution is None:
+                await db.rollback()
+                return False
+            await db.rollback()
+            return True
+
     async def execute_frontier(self, frontier: WorkflowFrontier) -> None:
         """执行一个 Durable Frontier，并通过统一 Progression primitive 完成成功提交。"""
+        if not await self._verify_frontier_consumption_ownership(frontier):
+            return
         runtime_task = asyncio.current_task()
         heartbeat = asyncio.create_task(
             self._renew_frontier_forever(frontier.id, frontier.attempt, runtime_task)

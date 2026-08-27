@@ -1,6 +1,6 @@
-"""Durable Frontier 终态原子推进的单元测试。
+"""Durable Frontier 终态与消费边界的单元测试。
 
-验证终态 Frontier、Execution 与 Checkpoint 必须共享同一事务，并且 terminalization 不能绕过 Worker ownership/fencing。
+验证 Frontier、Execution 与 Checkpoint 的原子推进，以及 Runtime 启动前的消费 ownership/fencing。
 """
 
 from __future__ import annotations
@@ -205,4 +205,45 @@ async def test_failure_convergence_rejects_expired_execution_lease_before_retry_
     retry.assert_not_awaited()
     transition.assert_not_awaited()
     db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_entry_rejects_stale_frontier_before_node_execution() -> None:
+    worker = object.__new__(PlannerDrivenDurableFrontierWorkflowWorker)
+    worker.owner = "worker-a"
+    frontier = _frontier()
+
+    with patch.object(worker, "_verify_frontier_consumption_ownership", new_callable=AsyncMock) as verify:
+        verify.return_value = False
+        with patch.object(worker, "_converge_failure", new_callable=AsyncMock) as converge:
+            with patch.object(worker, "_renew_frontier_forever", new_callable=AsyncMock) as heartbeat:
+                await worker.execute_frontier(frontier)
+
+    verify.assert_awaited_once_with(frontier)
+    converge.assert_not_awaited()
+    heartbeat.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_entry_ownership_guard_requires_frontier_and_execution_active_lease() -> None:
+    worker = object.__new__(PlannerDrivenDurableFrontierWorkflowWorker)
+    worker.owner = "worker-a"
+    frontier = _frontier()
+
+    db = AsyncMock()
+    frontier_result = MagicMock()
+    frontier_result.scalar_one_or_none.return_value = frontier
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = None
+    db.execute.side_effect = [frontier_result, execution_result]
+
+    with patch(
+        "app.services.workflow_worker.durable_frontier_execution.SessionLocal"
+    ) as session_local:
+        context = AsyncMock()
+        context.__aenter__.return_value = db
+        session_local.return_value = context
+        assert await worker._verify_frontier_consumption_ownership(frontier) is False
+
     db.rollback.assert_awaited_once()

@@ -47,7 +47,8 @@
 - Durable Frontier / Execution Atomic Lease Heartbeat：Frontier heartbeat 同一短事务内同时续租关联 Execution 与 Frontier；任一层 owner、status、fencing 或 lease 失效均整体回滚，禁止形成跨层 lease 不一致窗口：✅
 - Durable Frontier Base Runtime Lease-Lost Abort：基础 Durable Frontier Worker 在 atomic heartbeat 发现 ownership 失效时取消当前 Runtime task，避免旧 Worker 继续执行：✅
 - Durable Frontier Planner Runtime Lease-Lost Abort：Planner/DAG Worker 显式将当前 `execute_frontier()` task 传递给 heartbeat；lease loss 后取消 Planner Runtime，`CancelledError` 不进入普通 failure convergence，当前事务 rollback 后交由 Recovery 接管：✅
-- Durable Frontier Failure Convergence Ownership Guard：failure retry / failed convergence 在任何 Frontier transition、retry scheduling 或 Execution terminalization 前重新证明 Execution owner 与有效 lease；stale Worker 不得跨层终止其他 Worker 持有的 Execution：✅ 本轮
+- Durable Frontier Failure Convergence Ownership Guard：failure retry / failed convergence 在任何 Frontier transition、retry scheduling 或 Execution terminalization 前重新证明 Execution owner 与有效 lease；stale Worker 不得跨层终止其他 Worker 持有的 Execution：✅
+- Durable Frontier Runtime Consumption Guard：Runtime 真正执行 Node 前重新锁定 Frontier 与 Execution，证明当前 Worker owner、Frontier attempt、两层 active lease 与可执行状态；Claim 后发生 ownership 转移、回收或 terminalization 的 stale task 不得继续消费：✅ 本轮
 
 ## 当前实现边界
 
@@ -62,6 +63,10 @@ Execution-aware Worker Claim
   ├── fresh pending Execution → acquire + increment epoch
   ├── recovered pending + current owner → reuse epoch
   └── expired foreign owner → reacquire + increment epoch
+  ↓
+Runtime Consumption Guard
+  ├── Frontier owner + attempt + active lease
+  └── Execution owner + active lease + pending/running
   ↓
 Atomic Worker Lease Heartbeat
   ├── Frontier owner + attempt + active lease
@@ -112,6 +117,8 @@ Replay convergence
 Phase 2.7 主线完成
 ```
 
+其中 Runtime Consumption Guard 已完成，下一步重点转向 **Concurrent multi-frontier Claim 的同一 Execution 并发边界** 与最终 Replay convergence。
+
 核心不变量：
 
 - completed / failed / cancelled Execution 不得重新产生可消费 Frontier；
@@ -135,7 +142,8 @@ Phase 2.7 主线完成
 - 带 Worker fencing 参数的 Node-level Checkpoint 写入必须同时证明 Execution owner、worker epoch 与未过期 lease；stale Worker 不能仅凭 owner + epoch 写入新的 Node durable fact；
 - Worker heartbeat 必须在同一短事务内续租 Frontier 与关联 Execution；任一层续租失败必须整体 rollback，不得形成 Frontier 有效而 Execution 失效或反向的不一致 lease pair；
 - Frontier / Execution heartbeat 丢失 ownership 后必须取消当前 Planner / Node Runtime；lease loss 不得作为普通业务 failure 进入 retry / failed convergence；
-- Failure convergence 在进入 retry / failed 前必须重新证明 Execution owner 与有效 lease；stale Worker 不得通过 failure path 改变其他 Worker 的 Execution 生命周期。
+- Failure convergence 在进入 retry / failed 前必须重新证明 Execution owner 与有效 lease；stale Worker 不得通过 failure path 改变其他 Worker 的 Execution 生命周期；
+- Runtime Node execution 前必须重新证明 Frontier 与 Execution consumption ownership；stale task 不得仅凭 Claim 阶段的内存快照继续执行。
 
 ## 本轮交付
 
