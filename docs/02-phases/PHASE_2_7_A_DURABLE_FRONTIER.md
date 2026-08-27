@@ -54,8 +54,6 @@ RUNNING
 
 ## 6. Scheduler → Worker 实际接入
 
-本阶段已经完成真实生产桥接，不再停留在 Contract：
-
 ```text
 Scheduled Trigger
    ↓
@@ -138,24 +136,20 @@ failure classification
 
 ## 8. Frontier → Checkpoint → Next Frontier 原子推进
 
-基础 Progression primitive 已完成，并已进入真实 Planner-driven Worker 路径：
+已进入真实 Planner-driven Worker 路径，并进一步收敛为统一 Progression primitive：
 
 ```text
 Worker fencing valid
         ↓
-lock current Frontier / Execution
-        ↓
 Runtime executes current Planner frontier
         ↓
-Node Execution + Checkpoint facts
+Runtime Node facts
         ↓
-Planner rebuilds next frontier
-        ↓
-current Frontier COMPLETED
-        ↓
-idempotent enqueue Next Frontier
-        ↓
-outer transaction COMMIT
+complete_frontier_with_checkpoint()
+        ├── fencing transition current Frontier
+        ├── append Checkpoint in same transaction
+        ├── idempotent enqueue Next Frontier
+        └── caller COMMIT
 ```
 
 基础 Persistence API：
@@ -167,9 +161,9 @@ outer transaction COMMIT
 - Terminal Frontier 可以只追加最终 Checkpoint，不创建后继 Frontier；
 - Persistence primitive 不执行 commit，外层调用方负责事务提交。
 
-### Planner-driven Runtime Integration
+### 8.1 Planner-driven Runtime Integration
 
-`PlannerDrivenDurableFrontierWorkflowWorker` 是默认 Worker 正式入口。它复用现有 `WorkflowRuntime`、`WorkflowDagResumePlanner`、Node execution 与 Checkpoint 能力，每次 dispatch 只执行当前 Planner frontier，执行完成后重新规划并持久化后继 Frontier。
+`PlannerDrivenDurableFrontierWorkflowWorker` 是默认 Worker 正式入口。Worker 已实际调用 `complete_frontier_with_checkpoint()`，因此 Frontier terminal、Checkpoint、Next Frontier 不再由 Worker 分别写入。
 
 对于 DAG：
 
@@ -178,7 +172,9 @@ Planner frontier
       ↓
 Node / Multi-frontier execution
       ↓
-Durable Node facts / Checkpoint
+Durable Node facts
+      ↓
+Checkpoint progression primitive
       ↓
 Planner rebuild
       ↓
@@ -186,6 +182,10 @@ Next frontier
 ```
 
 对于无 Edge 的顺序 Workflow，Worker 每次只推进当前未完成 Node，并按 Definition 顺序生成下一 Frontier，避免一次 Claim 再次执行完整 Workflow。
+
+### 8.2 Checkpoint Fact Binding
+
+单 Node Frontier 成功后，Worker 从同一事务中的 `WorkflowNodeExecution` 读取最近 attempt/status/output，并将其绑定到 Node-level Checkpoint。Multi-frontier 则使用 merged state 创建 Execution-level Checkpoint，避免错误地把多个 Branch 合并成单个 Node fact。
 
 ### 锁顺序约束
 
@@ -207,10 +207,11 @@ Durable Frontier Scheduling
    ├── Runtime failure convergence         ✅
    ├── Frontier → Checkpoint progression  ✅
    ├── Next Frontier idempotent enqueue    ✅
-   └── Runtime/Planner progression wiring  ✅
+   ├── Runtime/Planner progression wiring  ✅
+   └── Unified success persistence path    ✅ 本轮
 ```
 
-下一交付单元进入 Durable Execution 的更高层可靠性闭环：统一 Retry / Recovery / Checkpoint / Execution terminal semantics，并继续向 Scheduler、Worker、Runtime 的最终主线收敛。
+下一交付单元进入 Durable Execution 的 Recovery / Replay Closure：统一 Checkpoint resume、Frontier recovery、fencing generation 与 replay identity，并继续向 Scheduler、Worker、Runtime 的最终主线收敛。
 
 ## 10. 测试边界
 
