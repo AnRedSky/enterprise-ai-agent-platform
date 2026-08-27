@@ -27,16 +27,42 @@ def validate_frontier_progression_contract(
     frontier: WorkflowFrontier,
     next_identity: WorkflowFrontierIdentity | None,
     execution_status: str,
+    checkpoint_reason: str = "frontier_completed",
+    node_id: str | None = None,
+    node_attempt: int | None = None,
+    node_status: str | None = None,
+    input_data: dict | None = None,
+    output_data: dict | None = None,
 ) -> None:
     """在任何持久化动作前校验 Frontier progression 的最终一致性边界。
 
     成功的非终态 Frontier 必须产生同一 Execution/Version 的 Next Frontier；终态 Frontier
-    必须同时把 Execution 视为 completed。禁止把当前 Frontier 自己作为 Next Frontier，避免
-    唯一键幂等机制把已完成 work item 重新排回队列。
+    必须同时把 Execution 视为 completed。`frontier_completed` 是 Execution-level snapshot，
+    不允许携带 Node identity、Node status 或 Node I/O，避免把两个 durable fact 层级混合到一条快照中。
+
+    Args:
+        frontier: 当前需要完成的 Durable Frontier。
+        next_identity: 下一 Frontier 的确定性 identity；终态完成时为 None。
+        execution_status: 本次 completion 对应的 Execution 状态。
+        checkpoint_reason: Checkpoint 原因；`frontier_completed` 使用 Execution-level contract。
+        node_id: 可选 Node identity，仅 Node-level Checkpoint 原因允许使用。
+        node_attempt: 可选 Node attempt，仅 Node-level Checkpoint 原因允许使用。
+        node_status: 可选 Node 状态，仅 Node-level Checkpoint 原因允许使用。
+        input_data: 可选 Node 输入，仅 Node-level Checkpoint 原因允许使用。
+        output_data: 可选 Node 输出，仅 Node-level Checkpoint 原因允许使用。
+
+    Raises:
+        FrontierProgressionContractError: Frontier、Execution 或 Checkpoint 层级不满足原子推进约束。
     """
     if execution_status not in {"running", "completed"}:
         raise FrontierProgressionContractError(
             f"成功 Frontier 只能对应 running/completed Execution: {execution_status}"
+        )
+    if checkpoint_reason == "frontier_completed" and any(
+        value is not None for value in (node_id, node_attempt, node_status, input_data, output_data)
+    ):
+        raise FrontierProgressionContractError(
+            "frontier_completed 只能生成 Execution-level Checkpoint，不得携带 Node identity/status/input/output"
         )
     if next_identity is None:
         if execution_status != "completed":
@@ -78,14 +104,42 @@ async def complete_frontier_with_checkpoint(
 ) -> tuple[WorkflowExecutionCheckpoint, WorkflowFrontier | None]:
     """原子完成当前 Frontier、追加 Checkpoint，并幂等创建 Next Frontier。
 
-    锁顺序固定为 Frontier -> Execution/Checkpoint -> Next Frontier，避免与 Worker Claim
-    的 Frontier -> Execution 锁顺序产生数据库死锁风险。任何后续步骤失败都由调用方回滚。
+    Args:
+        db: 当前事务数据库会话。
+        frontier: 当前需要完成的 Durable Frontier。
+        worker_owner: 当前 Worker ownership 标识。
+        attempt: 当前 fencing generation。
+        checkpoint_state: Execution-level completion 快照状态。
+        checkpoint_reason: Checkpoint 原因。
+        node_id: Node-level Checkpoint 的节点身份；`frontier_completed` 时必须为空。
+        node_attempt: Node-level Checkpoint 的节点 attempt；`frontier_completed` 时必须为空。
+        node_status: Node-level Checkpoint 的节点状态；`frontier_completed` 时必须为空。
+        input_data: Node-level Checkpoint 输入；`frontier_completed` 时必须为空。
+        output_data: Node-level Checkpoint 输出；`frontier_completed` 时必须为空。
+        error_code: 可选错误码。
+        error_message: 可选错误信息。
+        next_identity: 下一 Frontier 的确定性 identity。
+        now: 当前时间。
+
+    Returns:
+        `(Checkpoint, Next Frontier)`；终态 Frontier 的 Next Frontier 为 None。
+
+    Raises:
+        FrontierProgressionContractError: progression contract 不满足。
+
+    事务边界：锁定并修改当前 Frontier、追加 Checkpoint、幂等创建 Next Frontier，均不 commit；调用方统一提交或 rollback。
     """
     execution_status = "running" if next_identity is not None else "completed"
     validate_frontier_progression_contract(
         frontier=frontier,
         next_identity=next_identity,
         execution_status=execution_status,
+        checkpoint_reason=checkpoint_reason,
+        node_id=node_id,
+        node_attempt=node_attempt,
+        node_status=node_status,
+        input_data=input_data,
+        output_data=output_data,
     )
 
     # 第一阶段：先验证并锁定当前 Frontier。只有当前 fencing generation 仍有效，

@@ -53,6 +53,7 @@ Join merged-state recovery guard
 - **Recovery / Replay lifecycle closure：Resume Contract 的幂等命中现在必须同时证明对应 Resume Execution 已建立 Durable Frontier；缺失 Frontier 的不完整 Resume 不得被伪装成成功 `idempotency_hit`。**
 - **Durable Resume Checkpoint continuation：线性 Resume 已在 Runtime 主入口过滤 completed Node，并在全部 Node 已完成时直接 terminalize Execution。**
 - **Durable Frontier Multi-frontier checkpoint boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`。**
+- **Durable Frontier Completion Contract Hardening：统一 progression primitive 现在在任何持久化动作前拒绝 `frontier_completed` 携带 Node identity/status/input/output，正式阻断 Node-level 与 Execution-level durable fact 混写。**
 
 ## 3. Durable Recovery Closure
 
@@ -169,6 +170,8 @@ backend/tests/unit/test_frontier_progression.py
 - Durable Multi-frontier Adapter 不重复追加 `frontier_completed` Checkpoint；
 - Durable Multi-frontier Adapter 继续复用唯一 WorkflowRuntime 的 Node Execution / Retry 逻辑；
 - Frontier progression 的 Execution-level Checkpoint 不携带 Node identity/status；
+- `frontier_completed` 误传 Node identity/status/input/output 时在任何数据库写入前拒绝；
+- Node-level Checkpoint 仍允许正常携带 Node identity、attempt、status 与 I/O；
 - completed Node Resume、Node Retry budget 与 Workflow Retry budget 恢复边界。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
@@ -188,7 +191,8 @@ Multi-frontier Join Recovery                  ✅
 Replay decision convergence                   ✅
 Resume lifecycle idempotency closure         ✅
 Durable Resume Checkpoint continuation        ✅
-Durable Multi-frontier completion boundary    ✅ 本轮
+Durable Multi-frontier completion boundary    ✅
+Durable Completion Contract Hardening        ✅ 本轮
 
         ↓
 
@@ -200,6 +204,6 @@ Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不�
 
 ## 6. 本轮交付说明
 
-本轮继续沿 Durable Frontier → Checkpoint → Next Frontier 闭环推进。生产路径发现共享 `WorkflowRuntime._execute_multi_frontier()` 会在 Branch 全部成功后提前追加 `frontier_completed` Checkpoint，而 Durable Frontier Worker 随后还会执行统一 `complete_frontier_with_checkpoint()`，形成重复 completion fact 的风险。
+本轮继续沿 Durable Frontier → Checkpoint → Next Frontier 闭环推进。除此前共享 Runtime 重复追加 `frontier_completed` 的风险已经通过 Durable Adapter 收口外，本轮进一步把层级约束下沉到统一 `complete_frontier_with_checkpoint()` progression Contract：调用方即使误传 Node identity、status 或 I/O，也必须在 Frontier 状态、Checkpoint 或 Next Frontier 任一持久化动作发生前失败。
 
-本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。Durable Frontier Worker 增加专用 Adapter，仅复用既有 `WorkflowRuntime._execute_node_with_policy()` 与 `WorkflowDagMultiFrontierExecutor` 完成 Branch 执行，把最终持久化责任统一交给 `complete_frontier_with_checkpoint()`。
+本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。新增约束复用既有 progression primitive，仅明确 `frontier_completed` 的 Execution-level schema boundary；Node-level Checkpoint 的既有能力保持不变。

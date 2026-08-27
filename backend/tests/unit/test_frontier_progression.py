@@ -1,3 +1,9 @@
+"""Durable Frontier progression Contract 的单元测试。
+
+验证 Frontier → Execution Checkpoint → Next Frontier 的层级边界，以及
+frontier_completed 只能作为 Execution-level snapshot 持久化。
+"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -68,6 +74,37 @@ def test_progression_contract_requires_running_execution_with_next_frontier() ->
             next_identity=next_identity,
             execution_status="completed",
         )
+
+
+def test_progression_contract_rejects_node_fact_on_frontier_completion() -> None:
+    frontier = _frontier()
+
+    with pytest.raises(FrontierProgressionContractError, match="不得携带 Node identity/status/input/output"):
+        validate_frontier_progression_contract(
+            frontier=frontier,
+            next_identity=None,
+            execution_status="completed",
+            checkpoint_reason="frontier_completed",
+            node_id="node-a",
+            node_status="completed",
+            output_data={"value": 1},
+        )
+
+
+def test_progression_contract_allows_node_fact_for_node_checkpoint() -> None:
+    frontier = _frontier()
+
+    validate_frontier_progression_contract(
+        frontier=frontier,
+        next_identity=None,
+        execution_status="completed",
+        checkpoint_reason="node_completed",
+        node_id="node-a",
+        node_attempt=2,
+        node_status="completed",
+        input_data={"value": 1},
+        output_data={"value": 2},
+    )
 
 
 @pytest.mark.asyncio

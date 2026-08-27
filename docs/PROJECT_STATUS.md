@@ -28,7 +28,8 @@
 - Durable Frontier completed-Node Resume：线性 Workflow 在 Retry / Lease Recovery 后过滤已成功持久化 Node，DAG Workflow 继续使用既有 Planner / Executor：✅
 - Durable Frontier Retry Budget Resume：Node `attempt` 与 Workflow Retry budget 在 Worker Recovery 后从持久化事实恢复，避免 Runtime 重启清零本地计数并绕过 Retry 上限：✅
 - **Durable Frontier Checkpoint Continuation：Resume Runtime 主入口已实际应用 completed-Node filtering；全部线性 Node 已完成时直接 terminalize Execution，避免 Recovery 后 Node replay：✅**
-- **Durable Frontier Multi-frontier Completion Boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`：✅ 本轮**
+- **Durable Frontier Multi-frontier Completion Boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`：✅**
+- **Durable Frontier Completion Contract Hardening：`frontier_completed` 在统一 progression primitive 内强制保持 Execution-level snapshot，禁止混入 Node identity/status/input/output：✅ 本轮**
 
 ## 当前实现边界
 
@@ -94,8 +95,8 @@ Recovery / Replay
 
 ## 本轮交付
 
-- `backend/app/services/workflow_worker/durable_frontier_execution.py`
-- `backend/tests/unit/test_durable_frontier_execution.py`
+- `backend/app/services/workflow/frontier_progression.py`
+- `backend/tests/unit/test_frontier_progression.py`
 - `docs/04-errors/2026-08-27-durable-frontier-checkpoint-continuation.md`
 - `docs/02-phases/PHASE_2_7.md`
 - `docs/PROJECT_STATUS.md`
