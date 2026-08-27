@@ -7,7 +7,7 @@
 
 ## 1. 当前目标
 
-在现有 Workflow DAG、Checkpoint、Resume、Branch、Join 基础上增加确定性 Conditional Branching，并保证首次执行与 Durable Resume 使用同一套 Planner / Runtime 语义；恢复过程只能依赖持久化完成事实，且所有完成 Node state 必须保持 tenant boundary。
+在现有 Workflow DAG、Checkpoint、Resume、Branch、Join 基础上增加确定性 Conditional Branching，并保证首次执行与 Durable Resume 使用同一套 Planner / Runtime 语义；恢复过程只能依赖持久化完成事实，且所有完成 Node state 与 Checkpoint 读取均保持 tenant boundary。
 
 ```text
 持久化 Node state
@@ -49,29 +49,30 @@ Recovery Resume
 - `dag_runtime.py` 不复制基础 Runtime 的 DAG state / Resume 逻辑；
 - Conditional Join 只消费 Planner selected predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
+- Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
 - 无 DAG edges 的历史顺序 Workflow 保留原顺序执行兼容语义。
 
 ## 3. 本轮安全边界加固
 
-发现 Durable Resume 的 completed Node 查询原先只按 Execution ID 读取，没有显式 tenant predicate。虽然正常调用链已经带有 tenant-scoped Execution，但该查询本身仍不满足多租户数据访问的防御式边界要求。
+发现 Checkpoint 表本身没有重复保存 `tenant_id`，而 Recovery 读取最新 Checkpoint 时原先只按 `execution_id` 查询。虽然上游正常调用链已经拥有 tenant-scoped Execution，但恢复领域服务自身仍应形成防御式租户边界。
 
 已修复：
 
 ```text
-Workflow Execution
+Automatic Recovery
       ↓
-execution.id / resume_of_execution_id
-      +
-execution.tenant_id
+execution.id + execution.tenant_id
       ↓
-WorkflowNodeExecution query
+Checkpoint.latest(..., tenant_id=...)
       ↓
-仅允许当前 tenant 的 completed facts
+JOIN workflow_executions
       ↓
-DAG Planner
+WorkflowExecution.tenant_id = tenant_id
+      ↓
+latest durable checkpoint
 ```
 
-这样即使内部调用者错误地传入跨租户 Execution ID，也不会通过该查询把其他租户的 Node state 带入 frontier 重建。
+这样 Checkpoint Recovery 与此前 NodeExecution Recovery 一样，不依赖调用者单独保证租户隔离。
 
 ## 4. 单元测试
 
@@ -86,9 +87,16 @@ backend/tests/unit/test_workflow_dag_runtime_initialization.py
 
 本轮补充：
 
-- Durable Resume Node 查询必须包含 tenant scope；
-- Resume 查询只能覆盖当前 Execution 与其 Resume Source；
-- 多 root 初始 frontier 的 Branch state 保持独立对象。
+```text
+backend/tests/unit/test_workflow_checkpoint_tenant_scope.py
+```
+
+覆盖：
+
+- Checkpoint latest 显式 tenant scope；
+- SQL 查询包含 `workflow_executions.tenant_id`；
+- 未提供 tenant_id 时保持明确的历史兼容调用契约；
+- Automatic Recovery 强制将当前 Execution tenant_id 传给 Checkpoint latest。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
@@ -103,7 +111,8 @@ Multi-root initialization       ✅
 Resume Runtime integration      ✅
 Conditional Join                ✅
 Runtime inheritance cleanup     ✅
-tenant boundary hardening       ✅ 本轮完成
+NodeExecution tenant boundary   ✅
+Checkpoint tenant boundary      ✅ 本轮完成
         ↓
 Durable Recovery Closure        ← 当前主线
         ├── Checkpoint fact 完整性
