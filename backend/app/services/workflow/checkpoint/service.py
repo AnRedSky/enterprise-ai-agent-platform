@@ -48,10 +48,7 @@ class WorkflowExecutionCheckpointService:
 
     @staticmethod
     def _validate_execution_status_boundary(*, execution: WorkflowExecution, execution_status: str) -> None:
-        """在 Durable Write 前确认 Checkpoint 快照没有跨越当前 Execution 生命周期。
-
-        Checkpoint 写入会锁定 Execution 行；锁定后再校验当前状态，避免 stale Worker 在 Execution
-        已 terminal 后继续追加旧的 running/pending durable fact。"""
+        """在 Durable Write 前确认 Checkpoint 快照没有跨越当前 Execution 生命周期。"""
         if execution.status != execution_status:
             raise HTTPException(
                 409,
@@ -60,12 +57,7 @@ class WorkflowExecutionCheckpointService:
 
     @staticmethod
     def assert_node_fact_complete(*, checkpoint, node_execution) -> None:
-        """验证带 Node 的 Checkpoint 与对应 NodeExecution 属于同一 Durable Fact。
-
-        Execution-level checkpoint（node_id=None）不绑定 NodeExecution；带 node_id 的 checkpoint
-        必须能找到同一 Node，且 status、attempt、output_data 完全一致。这样 Recovery 不会把不同
-        时间边界的 NodeExecution 与 Checkpoint 拼成一个 snapshot。
-        """
+        """验证带 Node 的 Checkpoint 与对应 NodeExecution 属于同一 Durable Fact。"""
         if checkpoint.node_id is None:
             return
         if node_execution is None:
@@ -86,12 +78,7 @@ class WorkflowExecutionCheckpointService:
         expected_worker_attempt: int | None,
         execution: WorkflowExecution,
     ) -> None:
-        """校验 Checkpoint 写入时的 Execution owner/generation，阻断 stale Worker。
-
-        Checkpoint 是不可变 Durable Fact；如果调用方来自 Worker，必须在目标 Execution 行锁定后
-        再确认 owner 与 generation 仍然一致。这样即使旧 Worker 持有已经过期的上下文，也不能在
-        Frontier fencing 之外单独追加 Checkpoint。
-        """
+        """校验 Checkpoint 写入时的 Execution owner/generation，阻断 stale Worker。"""
         if expected_worker_owner is None and expected_worker_attempt is None:
             return
         if expected_worker_owner is None or expected_worker_attempt is None:
@@ -100,11 +87,24 @@ class WorkflowExecutionCheckpointService:
         if execution.worker_owner != expected_worker_owner or locked_attempt != expected_worker_attempt:
             raise HTTPException(409, "Checkpoint Worker ownership 或 fencing generation 已失效")
 
-    def _build(self, *, execution_id: UUID, sequence: int, execution_status: str, state_data: dict,
-               checkpoint_reason: str, node_id: str | None = None, node_attempt: int | None = None,
-               node_status: str | None = None, input_data: dict | None = None, output_data: dict | None = None,
-               worker_owner: str | None = None, error_code: str | None = None,
-               error_message: str | None = None) -> WorkflowExecutionCheckpoint:
+    def _build(
+        self,
+        *,
+        execution_id: UUID,
+        frontier_id: UUID | None,
+        sequence: int,
+        execution_status: str,
+        state_data: dict,
+        checkpoint_reason: str,
+        node_id: str | None = None,
+        node_attempt: int | None = None,
+        node_status: str | None = None,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        worker_owner: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> WorkflowExecutionCheckpoint:
         self._validate(sequence, checkpoint_reason)
         self._validate_checkpoint_boundary(
             checkpoint_reason=checkpoint_reason,
@@ -113,61 +113,85 @@ class WorkflowExecutionCheckpointService:
             node_status=node_status,
         )
         return WorkflowExecutionCheckpoint(
-            execution_id=execution_id, sequence=sequence, node_id=node_id, node_attempt=node_attempt,
-            execution_status=execution_status, node_status=node_status, state_data=state_data,
-            input_data=input_data, output_data=output_data, checkpoint_reason=checkpoint_reason,
-            worker_owner=worker_owner, error_code=error_code, error_message=error_message,
+            execution_id=execution_id,
+            frontier_id=frontier_id,
+            sequence=sequence,
+            node_id=node_id,
+            node_attempt=node_attempt,
+            execution_status=execution_status,
+            node_status=node_status,
+            state_data=state_data,
+            input_data=input_data,
+            output_data=output_data,
+            checkpoint_reason=checkpoint_reason,
+            worker_owner=worker_owner,
+            error_code=error_code,
+            error_message=error_message,
         )
 
-    async def append(self, *, execution_id: UUID, sequence: int, execution_status: str, state_data: dict,
-                     checkpoint_reason: str, node_id: str | None = None, node_attempt: int | None = None,
-                     node_status: str | None = None, input_data: dict | None = None, output_data: dict | None = None,
-                     worker_owner: str | None = None, error_code: str | None = None,
-                     error_message: str | None = None) -> WorkflowExecutionCheckpoint:
-        checkpoint = self._build(execution_id=execution_id, sequence=sequence, execution_status=execution_status,
-                                 state_data=state_data, checkpoint_reason=checkpoint_reason, node_id=node_id,
-                                 node_attempt=node_attempt, node_status=node_status, input_data=input_data,
-                                 output_data=output_data, worker_owner=worker_owner, error_code=error_code,
-                                 error_message=error_message)
+    async def append(
+        self,
+        *,
+        execution_id: UUID,
+        sequence: int,
+        execution_status: str,
+        state_data: dict,
+        checkpoint_reason: str,
+        node_id: str | None = None,
+        node_attempt: int | None = None,
+        node_status: str | None = None,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        worker_owner: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> WorkflowExecutionCheckpoint:
+        checkpoint = self._build(
+            execution_id=execution_id,
+            frontier_id=None,
+            sequence=sequence,
+            execution_status=execution_status,
+            state_data=state_data,
+            checkpoint_reason=checkpoint_reason,
+            node_id=node_id,
+            node_attempt=node_attempt,
+            node_status=node_status,
+            input_data=input_data,
+            output_data=output_data,
+            worker_owner=worker_owner,
+            error_code=error_code,
+            error_message=error_message,
+        )
         self.db.add(checkpoint)
         await self.db.commit()
         await self.db.refresh(checkpoint)
         return checkpoint
 
-    async def append_next_in_transaction(self, *, execution_id: UUID, execution_status: str, state_data: dict,
-                                        checkpoint_reason: str, node_id: str | None = None,
-                                        node_attempt: int | None = None, node_status: str | None = None,
-                                        input_data: dict | None = None, output_data: dict | None = None,
-                                        worker_owner: str | None = None, error_code: str | None = None,
-                                        error_message: str | None = None, tenant_id: UUID | None = None,
-                                        expected_worker_owner: str | None = None,
-                                        expected_worker_attempt: int | None = None) -> WorkflowExecutionCheckpoint:
+    async def append_next_in_transaction(
+        self,
+        *,
+        execution_id: UUID,
+        execution_status: str,
+        state_data: dict,
+        checkpoint_reason: str,
+        node_id: str | None = None,
+        node_attempt: int | None = None,
+        node_status: str | None = None,
+        input_data: dict | None = None,
+        output_data: dict | None = None,
+        worker_owner: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        tenant_id: UUID | None = None,
+        expected_worker_owner: str | None = None,
+        expected_worker_attempt: int | None = None,
+        frontier_id: UUID | None = None,
+    ) -> WorkflowExecutionCheckpoint:
         """在调用方事务中写入下一个 Checkpoint，并校验 tenant、Execution 生命周期与 Worker fencing generation。
 
-        Args:
-            execution_id: 目标 Workflow Execution。
-            execution_status: Checkpoint 对应的 Execution 状态。
-            state_data: Checkpoint 的持久化状态快照。
-            checkpoint_reason: 生成 Checkpoint 的业务原因。
-            node_id: Node-level Checkpoint 对应的节点标识。
-            node_attempt: Node Execution attempt。
-            node_status: Node Execution 状态。
-            input_data: Node 输入快照。
-            output_data: Node 输出快照。
-            worker_owner: 写入事实中记录的 Worker owner。
-            error_code: 可选错误码。
-            error_message: 可选错误信息。
-            tenant_id: 可选 tenant scope。
-            expected_worker_owner: Worker 写入上下文中的 owner；提供后强制执行 fencing。
-            expected_worker_attempt: Worker 写入上下文中的 generation；提供后强制执行 fencing。
-
-        Returns:
-            新创建且尚未提交的 WorkflowExecutionCheckpoint；对同一事务内重复提交相同
-            `frontier_completed` durable boundary 时返回已经存在的同一 checkpoint，避免 Runtime
-            与 Frontier progression 双边界接线造成重复 Execution-level snapshot。
-
-        Raises:
-            HTTPException: Execution 不存在、tenant 不匹配、Execution 生命周期不匹配或 Worker fencing 已失效。
+        `frontier_id` 只用于把 `frontier_completed` Execution-level durable fact 绑定到其来源 Frontier；
+        它不是 Node identity，不改变 Execution-level snapshot 的语义。历史未绑定的 completion fact 不会
+        被猜测回填，避免多个并行 Frontier 共用同一 Execution 时把错误 Checkpoint 当成幂等事实。
         """
         self._validate(0, checkpoint_reason)
         self._validate_checkpoint_boundary(
@@ -176,6 +200,11 @@ class WorkflowExecutionCheckpointService:
             node_attempt=node_attempt,
             node_status=node_status,
         )
+        if checkpoint_reason == "frontier_completed" and frontier_id is None:
+            raise HTTPException(409, "frontier_completed Checkpoint 必须绑定 source Frontier")
+        if checkpoint_reason != "frontier_completed" and frontier_id is not None:
+            raise HTTPException(409, "只有 frontier_completed Checkpoint 可以绑定 source Frontier")
+
         execution_query = select(WorkflowExecution).where(WorkflowExecution.id == execution_id).with_for_update()
         if tenant_id is not None:
             execution_query = execution_query.where(WorkflowExecution.tenant_id == tenant_id)
@@ -194,6 +223,7 @@ class WorkflowExecutionCheckpointService:
                 select(WorkflowExecutionCheckpoint)
                 .where(
                     WorkflowExecutionCheckpoint.execution_id == execution_id,
+                    WorkflowExecutionCheckpoint.frontier_id == frontier_id,
                     WorkflowExecutionCheckpoint.checkpoint_reason == "frontier_completed",
                 )
                 .order_by(desc(WorkflowExecutionCheckpoint.sequence))
@@ -217,19 +247,32 @@ class WorkflowExecutionCheckpointService:
         )
         current_sequence = latest_sequence.scalar_one()
         sequence = 0 if current_sequence is None else current_sequence + 1
-        checkpoint = self._build(execution_id=execution_id, sequence=sequence, execution_status=execution_status,
-                                 state_data=state_data, checkpoint_reason=checkpoint_reason, node_id=node_id,
-                                 node_attempt=node_attempt, node_status=node_status, input_data=input_data,
-                                 output_data=output_data, worker_owner=worker_owner, error_code=error_code,
-                                 error_message=error_message)
+        checkpoint = self._build(
+            execution_id=execution_id,
+            frontier_id=frontier_id,
+            sequence=sequence,
+            execution_status=execution_status,
+            state_data=state_data,
+            checkpoint_reason=checkpoint_reason,
+            node_id=node_id,
+            node_attempt=node_attempt,
+            node_status=node_status,
+            input_data=input_data,
+            output_data=output_data,
+            worker_owner=worker_owner,
+            error_code=error_code,
+            error_message=error_message,
+        )
         self.db.add(checkpoint)
         await self.db.flush()
         return checkpoint
 
     async def latest(self, execution_id: UUID, *, tenant_id: UUID | None = None) -> WorkflowExecutionCheckpoint | None:
-        query = (select(WorkflowExecutionCheckpoint)
-                 .join(WorkflowExecution, WorkflowExecution.id == WorkflowExecutionCheckpoint.execution_id)
-                 .where(WorkflowExecutionCheckpoint.execution_id == execution_id))
+        query = (
+            select(WorkflowExecutionCheckpoint)
+            .join(WorkflowExecution, WorkflowExecution.id == WorkflowExecutionCheckpoint.execution_id)
+            .where(WorkflowExecutionCheckpoint.execution_id == execution_id)
+        )
         if tenant_id is not None:
             query = query.where(WorkflowExecution.tenant_id == tenant_id)
         result = await self.db.execute(query.order_by(desc(WorkflowExecutionCheckpoint.sequence)).limit(1))
@@ -242,11 +285,13 @@ class WorkflowExecutionCheckpointService:
             return None
         node_execution = None
         if checkpoint.node_id is not None:
-            node_query = select(WorkflowNodeExecution).join(
-                WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id
-            ).where(
-                WorkflowNodeExecution.execution_id == execution_id,
-                WorkflowNodeExecution.node_id == checkpoint.node_id,
+            node_query = (
+                select(WorkflowNodeExecution)
+                .join(WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id)
+                .where(
+                    WorkflowNodeExecution.execution_id == execution_id,
+                    WorkflowNodeExecution.node_id == checkpoint.node_id,
+                )
             )
             if tenant_id is not None:
                 node_query = node_query.where(WorkflowExecution.tenant_id == tenant_id)

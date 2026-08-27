@@ -30,12 +30,21 @@ class WorkflowExecutionCheckpoint(Base):
             "execution_id",
             "created_at",
         ),
+        Index(
+            "ix_workflow_execution_checkpoint_frontier",
+            "frontier_id",
+            "checkpoint_reason",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("workflow_executions.id", ondelete="CASCADE"),
         index=True,
+    )
+    frontier_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("workflow_frontiers.id", ondelete="SET NULL"),
+        nullable=True,
     )
     sequence: Mapped[int] = mapped_column(Integer)
     node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
