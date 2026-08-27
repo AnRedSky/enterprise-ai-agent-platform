@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前 `main` HEAD：继续推进 Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Durable Frontier Lease Fencing & Expiry Recovery**；新增过期 Frontier 回收、Worker ownership + attempt fencing transition，并补充 Unit Test Contract 与工程记录。
+- 本轮已完成：**Durable Frontier Idempotent Enqueue Boundary**；新增基于 Frontier Identity 的 PostgreSQL 幂等入队能力，并补充 Unit Test Contract。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution `completed/failed` transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
@@ -43,6 +43,7 @@
 - `WorkflowFrontierStatus` 提供 `pending → claimed → running → completed/failed` 及 `retry_wait` 生命周期；terminal Frontier 不允许重新 claim；
 - `WorkflowFrontier` 已建立 PostgreSQL 持久化模型，包含 tenant、execution、workflow version、decision fingerprint、frontier key、node IDs、attempt、Worker lease、available time、terminal/error facts；
 - Alembic `0035_workflow_frontier` 已加入 migration chain，正式建立 `workflow_frontiers` 表及 tenant/key 唯一约束、claim/execution/lease 索引；
+- `enqueue_frontier()` 使用 Frontier Identity + `uq_workflow_frontier_tenant_key` 完成幂等入队；并发唯一键冲突后读取既有 Frontier，不创建第二个 work item；该 Repository 只负责 INSERT/SELECT/flush，不负责 commit；
 - `claim_next_frontier()` 使用 tenant scope + `FOR UPDATE SKIP LOCKED`，只负责 claim 与 flush，不负责 commit；Scheduler/Worker 保持 caller-owned transaction；
 - `recover_expired_frontiers()` 锁定已过期 `claimed/running` Frontier，清除旧 Worker ownership 并回到 `retry_wait`，供下一次 Claim 重新分配；
 - `transition_owned_frontier()` 强制同时校验 `worker_owner + attempt` fencing generation，stale Worker 不能覆盖新 Worker 的 Frontier；
@@ -96,9 +97,10 @@ Durable Frontier Scheduling
   ├── Frontier lifecycle contract       ✅
   ├── PostgreSQL Durable Frontier       ✅
   ├── Tenant/key uniqueness             ✅
+  ├── Idempotent Frontier enqueue       ✅ 本轮
   ├── Claim repository                  ✅
-  ├── Worker lease fencing              ✅ 本轮
-  ├── Expired lease recovery            ✅ 本轮
+  ├── Worker lease fencing              ✅
+  ├── Expired lease recovery            ✅
   ├── Scheduler integration             ⏭
   ├── Worker integration                ⏭
   ├── Retry scheduling                  ⏭
