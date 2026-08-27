@@ -77,21 +77,11 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         trace_id = await trace_link.get_trace_id(execution)
         if trace_id is not None:
             await trace_link.assert_dag_decision_replay_consistent(
-                execution,
-                trace_id,
-                completed,
-                decision_id,
-                frontier,
-                selected,
+                execution, trace_id, completed, decision_id, frontier, selected,
             )
             await trace_link.record_dag_decision(
-                execution,
-                trace_id,
-                actor_id or execution.created_by,
-                decision_id,
-                completed,
-                frontier,
-                selected,
+                execution, trace_id, actor_id or execution.created_by,
+                decision_id, completed, frontier, selected,
             )
             return
 
@@ -145,10 +135,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 resume_plan=plan,
             )
             await self._record_dag_frontier_decision(
-                execution,
-                definition,
-                plan,
-                getattr(execution, "created_by", None),
+                execution, definition, plan, getattr(execution, "created_by", None),
             )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -181,74 +168,45 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         """
         try:
             return await super()._execute_node_with_policy(
-                service,
-                execution,
-                node,
-                current_data,
-                actor_id,
-                is_admin,
-                workflow_timeout,
-                max_retries,
-                started,
-                workflow_retry_counter,
+                service, execution, node, current_data, actor_id, is_admin,
+                workflow_timeout, max_retries, started, workflow_retry_counter,
             )
         except HTTPException as exc:
             detail = str(exc.detail)
             if exc.status_code == 504 and detail == "Retry backoff exceeds workflow deadline":
                 await service.governance.trace(
-                    execution,
-                    actor_id,
-                    "node.retry.exhausted",
-                    "failed",
-                    node_id=node["id"],
-                    error_code="WORKFLOW_TIMEOUT",
+                    execution, actor_id, "node.retry.exhausted", "failed",
+                    node_id=node["id"], error_code="WORKFLOW_TIMEOUT",
                     data={"reason": "workflow_deadline"},
                 )
                 await service.governance.audit(
-                    execution,
-                    actor_id,
-                    "workflow.node.retry_exhausted",
-                    "failed",
+                    execution, actor_id, "workflow.node.retry_exhausted", "failed",
                     error_code="WORKFLOW_TIMEOUT",
                     metadata={"node_id": node["id"], "reason": "workflow_deadline"},
                 )
             elif workflow_retry_counter[0] >= max_retries:
                 error_code = self.classify_error(exc)
                 await service.governance.trace(
-                    execution,
-                    actor_id,
-                    "node.retry.exhausted",
-                    "failed",
-                    node_id=node["id"],
-                    error_code=error_code,
+                    execution, actor_id, "node.retry.exhausted", "failed",
+                    node_id=node["id"], error_code=error_code,
                     data={"reason": "retry_budget"},
                 )
                 await service.governance.audit(
-                    execution,
-                    actor_id,
-                    "workflow.node.retry_exhausted",
-                    "failed",
+                    execution, actor_id, "workflow.node.retry_exhausted", "failed",
                     error_code=error_code,
                     metadata={"node_id": node["id"], "reason": "retry_budget"},
                 )
             raise
-        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as exc:
+        except (ConnectionError, TimeoutError) as exc:
             if workflow_retry_counter[0] >= max_retries:
                 error_code = self.classify_error(exc)
                 await service.governance.trace(
-                    execution,
-                    actor_id,
-                    "node.retry.exhausted",
-                    "failed",
-                    node_id=node["id"],
-                    error_code=error_code,
+                    execution, actor_id, "node.retry.exhausted", "failed",
+                    node_id=node["id"], error_code=error_code,
                     data={"reason": "retry_budget"},
                 )
                 await service.governance.audit(
-                    execution,
-                    actor_id,
-                    "workflow.node.retry_exhausted",
-                    "failed",
+                    execution, actor_id, "workflow.node.retry_exhausted", "failed",
                     error_code=error_code,
                     metadata={"node_id": node["id"], "reason": "retry_budget"},
                 )
@@ -264,8 +222,6 @@ class WorkflowRuntime(BaseWorkflowRuntime):
     async def execute(self, execution, version, actor_id, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
         """执行 Workflow，并在 Recovery Resume 场景延续持久化 trace_id。"""
-        # 普通 Execution 没有 Recovery trace lineage，不应执行无意义的 Trace 查询；
-        # 这也保证普通 Runtime 的单元测试与实际运行路径不依赖 Recovery 数据源。
         if getattr(execution, "resume_of_execution_id", None) is None:
             return await super().execute(execution, version, actor_id, is_admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
 
