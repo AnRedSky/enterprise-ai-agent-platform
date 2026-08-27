@@ -44,7 +44,9 @@
 - Durable Frontier Stale Lease Completion Guard：Frontier 最终 completion/failure transition 同时校验 owner、attempt 与未过期 Worker lease，阻断 lease 已过期但 Recovery 尚未完成清理时的旧 Worker 写入：✅
 - Durable Frontier Execution Worker Epoch Binding：Progression 在最终 durable write 前锁定关联 Execution，并使用 `Execution.worker_attempt` 作为 Worker fencing epoch；严格区分 Execution epoch 与 Frontier consumption attempt，Next Frontier 的 Checkpoint 不再错误使用 Frontier attempt 作为 Execution fencing generation：✅
 - Durable Checkpoint Worker Lease Write Guard：带 Worker fencing 参数的 Checkpoint durable write 在锁定 Execution 后再次证明 owner、worker epoch 与未过期 lease，阻断 stale Worker 在 Node-level Checkpoint 边界产生 durable fact：✅
-- Durable Frontier / Execution Atomic Lease Heartbeat：Frontier heartbeat 同一短事务内同时续租关联 Execution 与 Frontier；任一层 owner、status、fencing 或 lease 失效均整体回滚，禁止形成跨层 lease 不一致窗口：✅ 本轮
+- Durable Frontier / Execution Atomic Lease Heartbeat：Frontier heartbeat 同一短事务内同时续租关联 Execution 与 Frontier；任一层 owner、status、fencing 或 lease 失效均整体回滚，禁止形成跨层 lease 不一致窗口：✅
+- Durable Frontier Base Runtime Lease-Lost Abort：基础 Durable Frontier Worker 在 atomic heartbeat 发现 ownership 失效时取消当前 Runtime task，避免旧 Worker 继续执行：✅
+- Durable Frontier Planner Runtime Lease-Lost Abort：Planner/DAG Worker 显式将当前 `execute_frontier()` task 传递给 heartbeat；lease loss 后取消 Planner Runtime，`CancelledError` 不进入普通 failure convergence，当前事务 rollback 后交由 Recovery 接管：✅ 本轮
 
 ## 当前实现边界
 
@@ -66,7 +68,9 @@ Atomic Worker Lease Heartbeat
   ↓
 Unified Runtime Entry
   ↓
-WorkflowRuntime
+WorkflowRuntime / Planner Runtime
+  ├── lease loss → cancel Runtime
+  └── cancellation → rollback, no normal failure convergence
   ↓
 Node / Checkpoint durable facts
   ├── Checkpoint → Execution worker epoch + active lease
@@ -136,13 +140,14 @@ Phase 2.7 主线完成
 - Frontier terminal transition 除 owner 与 attempt 外必须证明 `worker_lease_expires_at > now`，lease 已失效的旧 Worker 不得完成或失败 Frontier；
 - Execution `worker_attempt` 是 Worker ownership epoch；Frontier `attempt` 仅是 Frontier consumption attempt，二者禁止互相替代；Progression 写入 Checkpoint 时必须使用锁定后的 Execution epoch；
 - 带 Worker fencing 参数的 Node-level Checkpoint 写入必须同时证明 Execution owner、worker epoch 与未过期 lease；stale Worker 不能仅凭 owner + epoch 写入新的 Node durable fact；
-- Worker heartbeat 必须在同一短事务内续租 Frontier 与关联 Execution；任一层续租失败必须整体 rollback，不得形成 Frontier 有效而 Execution 失效或反向的不一致 lease pair。
+- Worker heartbeat 必须在同一短事务内续租 Frontier 与关联 Execution；任一层续租失败必须整体 rollback，不得形成 Frontier 有效而 Execution 失效或反向的不一致 lease pair；
+- Frontier / Execution heartbeat 丢失 ownership 后必须取消当前 Planner / Node Runtime；lease loss 不得作为普通业务 failure 进入 retry / failed convergence。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier_lease_repository.py`
+- `backend/app/services/workflow_worker/frontier_runtime.py`
+- `backend/app/services/workflow_worker/durable_frontier_execution.py`
 - `docs/PROJECT_STATUS.md`
-- `docs/04-errors/2026-08-27-frontier-execution-frontier-atomic-lease-heartbeat.md`
-- `backend/tests/unit/test_frontier_atomic_lease_heartbeat.py`
+- `docs/04-errors/2026-08-27-planner-frontier-runtime-lease-loss-abort.md`
 
-**Unit Test：本轮仅实现/保留测试代码，当前环境未执行 pytest，因此不记录 PASS。**
+**测试：本轮未执行 pytest、集成测试、本地手动测试或 E2E；不得记录 PASS。**
