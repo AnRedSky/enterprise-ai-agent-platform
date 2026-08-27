@@ -4,14 +4,16 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前远端 `main` 基线：`8d16915f7f24ca081df4e26ed8b196da4697e263`。
+- 本轮开发基线：`8d16915f7f24ca081df4e26ed8b196da4697e263`。
+- 本轮已落地：Chat stream transport hardening + Chat / Runtime failure / disconnect / cancel UI lifecycle。
+- 本轮最新代码提交：`bfaec2e4ba81aeeea7481fa5af2251dd66e3d56c`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；Frontend / Browser E2E 与历史 Real API 验收已完成，本轮不再作为主线阻塞条件。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成，DAG Resume / Branch / Join / Automatic Recovery / Recovery Trace / Worker Reclaim / Lease Fencing / Lease Loss Active Abort / Terminal Ownership Boundary 均已落地；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
-- Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费迁移均已完成；当前进入 Chat / Runtime 失败、断流、取消 UI 生命周期。**
+- Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
 - Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 首个交付单元生产代码与 Unit Test 覆盖已完成，当前等待开发者本地 Unit Test 实际执行。**
 
 ## Phase 2.7-A 当前实现
@@ -32,11 +34,15 @@
 - `frontend/src/utils/sse.ts`：统一 SSE Parser；
 - `frontend/src/utils/runtime.ts`：统一 Runtime status / latency / ID / error helper；
 - `frontend/src/views/runtime/components/RuntimeExecutions.vue`：统一 Execution / Trace / Request / Session 展示与复制；
-- `frontend/src/api/chat.ts`：统一 SSE Parser 消费并支持 `AbortSignal`；
-- `frontend/tests/api/chat.test.ts`：Chat streaming 边界 Unit Test；
-- `frontend/tests/views/Runtime.test.ts`：Runtime 页面 Unit Test；
-- `frontend/scripts/test/phase-1-3-runtime-hardening.ps1`：可重复测试入口；
-- Chat / Runtime UI 失败、断流、取消生命周期为当前下一任务。
+- `frontend/src/api/chat.ts`：统一 SSE Parser 消费、AbortSignal、SSE error event；
+- `frontend/src/views/agents/components/AgentWorkbench.vue`：Chat 生命周期已统一为 `idle / streaming / completed / failed / cancelled`；
+- Chat 请求通过 `AbortController` 支持主动停止，并在关闭页面 / 组件卸载时主动取消；
+- 使用 `activeRun` 防止旧请求在新请求启动后继续写入 UI，避免断流/竞态覆盖；
+- Chat UI 展示真实 `request_id / trace_id / session_id / execution_id`；
+- 后端 SSE `error` event 会进入明确的 failed 状态，不伪装成成功完成；
+- `frontend/tests/api/chat.test.ts` 已覆盖 SSE chunk、最终 flush、AbortSignal、HTTP failure、无 body；
+- Runtime 页面已有 Unit Test；
+- 完整 Frontend Release Gate / Browser E2E 当前仍暂停。
 
 ## 当前开发策略
 
@@ -48,20 +54,20 @@
 
 ## 下一主线
 
-**Frontend Phase 1.3 — Chat / Runtime 失败、断流、取消 UI 生命周期**，并行推进 **Phase 2.7-A Conditional Branching Closure**。
+Frontend Phase 1.3 已完成当前生命周期交付，下一步不再继续堆叠 Chat UI；主线切回 **Phase 2.7-A Conditional Branching Closure / Advanced Workflow Orchestration**。
 
 ```text
-Chat streaming migration
+Frontend Chat lifecycle
   ↓ 已完成
-Chat / Runtime failure / disconnect / cancel lifecycle
-  ↓ 当前
-Unit Test 实际执行
-  ↓
 Conditional Branching Unit Test 实际执行
   ↓
 Phase 2.7-A Real API acceptance（后续）
   ↓
-继续 Phase 2.7 后续主线
+Phase 2.7-A Closure
+  ↓
+Phase 2.7 后续 orchestration capability
+  ↓
+继续主线直到全部任务完成
 ```
 
 Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Worker → Runtime。
