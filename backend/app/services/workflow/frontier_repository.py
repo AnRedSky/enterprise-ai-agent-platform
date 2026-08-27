@@ -84,6 +84,36 @@ async def enqueue_frontier(
     return frontier
 
 
+async def _has_active_node_overlap(
+    db: AsyncSession, *, frontier: WorkflowFrontier,
+) -> bool:
+    """检查候选 Frontier 是否与同一 Execution 的活动 Frontier 重叠消费 Node。
+
+    Args:
+        db: 当前 Claim 事务使用的异步数据库会话。
+        frontier: 已锁定、准备进入 claimed 状态的候选 Frontier。
+
+    Returns:
+        存在活动 Frontier 与候选 Node 集合重叠时返回 True，否则返回 False。
+
+    设计意图：Claim 阶段必须在 Execution ownership 锁定后再次检查 Node-set fencing。
+    查询本身不锁其他 Frontier，避免与 terminalization 的 Frontier → Execution 锁顺序形成死锁；
+    同一 Execution 的其他 Claim 必须先取得同一 Execution 锁，因此不会在本事务的 ownership 窗口内
+    并发改变 Claim 状态。若看到尚未提交的 terminalization 旧状态，本检查宁可暂时拒绝本次 Claim，
+    由下一轮调度重试，也不能冒险放行重复消费。
+    """
+    result = await db.execute(
+        select(WorkflowFrontier).where(
+            WorkflowFrontier.tenant_id == frontier.tenant_id,
+            WorkflowFrontier.execution_id == frontier.execution_id,
+            WorkflowFrontier.id != frontier.id,
+            WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
+        )
+    )
+    candidate_nodes = set(frontier.node_ids or [])
+    return any(candidate_nodes & set(active.node_ids or []) for active in result.scalars().all())
+
+
 async def claim_next_frontier(
     db: AsyncSession,
     *,
@@ -92,23 +122,35 @@ async def claim_next_frontier(
     lease_expires_at: datetime,
     now: datetime,
 ) -> WorkflowFrontier | None:
-    """Claim one schedulable Frontier for a tenant without committing the transaction。
+    """Claim 一个可调度 Frontier，并在同一事务内完成 Execution 与 Node-set fencing。
 
-    Frontier 只有在其关联 Execution 当前允许被该 Worker 消费时才可进入 claim。
-    这样可以避免 failed/completed Execution 上的旧 Frontier 阻塞其他租户或后继任务，
-    同时把 Execution ownership/fencing 判断固定在 Durable Frontier claim 的事务边界内。
+    Args:
+        db: 当前 Worker 持有的异步数据库会话；提交由调用方负责。
+        tenant_id: 当前 Worker 要消费的租户边界。
+        worker_owner: 当前 Worker ownership 标识。
+        lease_expires_at: 本次 Frontier claim 使用的 Worker lease 截止时间。
+        now: 当前时间，用于 available_at 与 Execution/Frontier lease 判断。
 
-    Recovery 后一个 Execution 可能同时存在多个 retry_wait Frontier；当 pending Execution 已经由
-    当前 Worker 重新取得 ownership 时，后续 Frontier 可以复用同一 Worker epoch，不应被 pending
-    状态本身错误阻塞。
+    Returns:
+        已进入 claimed 状态的 Frontier；没有安全可消费 Frontier 时返回 None。
+
+    Raises:
+        ValueError: 当前候选 Frontier 与同 Execution 的活动 Frontier Node 集合重叠时不应抛出，
+            而是返回 None，由上层事务 rollback 后等待下一轮调度；其他数据库错误正常向上传播。
+
+    设计意图：同一 Execution 允许多个并行 Frontier，但不同活动 Frontier 必须拥有互斥 Node 集合。
+    Claim 必须先锁定候选 Frontier，再尝试以 skip_locked 锁定 Execution，保持与 terminalization 的
+    Frontier → Execution 锁顺序一致；Execution 锁成功后再检查活动 Node-set overlap。这样多个 Worker
+    同时 Claim 同一 Execution 时只能串行完成 fencing，不会因为两个不同 Frontier 各自持锁而形成死锁。
     """
+    now_naive = now.replace(tzinfo=None)
     execution_available = or_(
         and_(
             WorkflowExecution.status == "pending",
             or_(
                 WorkflowExecution.worker_owner.is_(None),
                 WorkflowExecution.worker_lease_expires_at.is_(None),
-                WorkflowExecution.worker_lease_expires_at <= now,
+                WorkflowExecution.worker_lease_expires_at <= now_naive,
                 WorkflowExecution.worker_owner == worker_owner,
             ),
         ),
@@ -117,7 +159,7 @@ async def claim_next_frontier(
             or_(
                 WorkflowExecution.worker_owner == worker_owner,
                 WorkflowExecution.worker_lease_expires_at.is_(None),
-                WorkflowExecution.worker_lease_expires_at <= now,
+                WorkflowExecution.worker_lease_expires_at <= now_naive,
             ),
         ),
     )
@@ -133,7 +175,7 @@ async def claim_next_frontier(
         .where(
             WorkflowFrontier.tenant_id == tenant_id,
             WorkflowFrontier.status.in_(("pending", "retry_wait")),
-            WorkflowFrontier.available_at <= now,
+            WorkflowFrontier.available_at <= now_naive,
             execution_available,
         )
         .order_by(WorkflowFrontier.available_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
@@ -145,9 +187,38 @@ async def claim_next_frontier(
     if frontier is None:
         return None
 
+    execution_result = await db.execute(
+        select(WorkflowExecution)
+        .where(
+            WorkflowExecution.id == frontier.execution_id,
+            WorkflowExecution.tenant_id == frontier.tenant_id,
+            WorkflowExecution.status.in_(("pending", "running")),
+        )
+        .with_for_update(skip_locked=True)
+    )
+    execution = execution_result.scalar_one_or_none()
+    if execution is None:
+        return None
+
+    execution_lease_expired = (
+        execution.worker_lease_expires_at is None or execution.worker_lease_expires_at <= now_naive
+    )
+    execution_claimable = (
+        execution.status == "pending"
+        and (execution.worker_owner is None or execution_lease_expired or execution.worker_owner == worker_owner)
+    ) or (
+        execution.status == "running"
+        and (execution.worker_owner == worker_owner or execution_lease_expired)
+    )
+    if not execution_claimable:
+        return None
+
+    if await _has_active_node_overlap(db, frontier=frontier):
+        return None
+
     frontier.status = "claimed"
     frontier.worker_owner = worker_owner
-    frontier.worker_lease_expires_at = lease_expires_at
+    frontier.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
     frontier.attempt += 1
     await db.flush()
     return frontier
