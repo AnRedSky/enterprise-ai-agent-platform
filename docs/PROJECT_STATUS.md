@@ -9,7 +9,7 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract、Recovery Outcome Contract、created / idempotency_hit 并发收敛、DAG Branch State Merge Contract、Multi-frontier Runtime Plan、Multi-frontier Branch Execution Coordinator、Branch Checkpoint Boundary、真实 WorkflowRuntime Multi-frontier Resume、Join readiness / execution / idempotency / checkpoint、统一 Recovery Telemetry Facade、Automatic Recovery Trace 生命周期、Recovery → Resume Trace Link、Worker / Runtime Trace Continuity、Scheduler Trace Context 与 Scheduler Runtime Trace Integration 已完成；当前主线进入 Scheduler → Recovery parent/child trace lineage、Worker claim / lease / fencing 持久化闭环与 Phase 2.6 Closure。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract、Recovery Outcome Contract、created / idempotency_hit 并发收敛、DAG Branch State Merge Contract、Multi-frontier Runtime Plan、Multi-frontier Branch Execution Coordinator、Branch Checkpoint Boundary、真实 WorkflowRuntime Multi-frontier Resume、Join readiness / execution / idempotency / checkpoint、统一 Recovery Telemetry Facade、Automatic Recovery Trace 生命周期、Recovery → Resume Trace Link、Worker / Runtime Trace Continuity、Scheduler Trace Context、Scheduler Runtime Trace Integration、Scheduler → Recovery parent/child trace lineage、Worker expired running lease reclaim 已完成；当前主线进入 lease loss 后旧 Worker 主动中止、ownership fencing 最终闭环与 Phase 2.6 Closure。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 当前执行架构
@@ -39,6 +39,11 @@ Scheduler Service
        pending Resume Execution
               ↓
 Worker claim + lease + fencing
+      ┌───────┴────────┐
+      │                │
+ pending claim    expired running reclaim
+      │                │
+      └───────┬────────┘
               ↓
 WorkflowExecutionService
               ↓
@@ -68,7 +73,7 @@ Multi-frontier Runtime Plan
           next Branch / Join
 ```
 
-职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Resume Outcome Contract 负责 created / idempotency_hit 事实；Recovery Event / Telemetry Contract 负责统一恢复控制面事件与 Trace/Metrics 出口；Scheduler Trace Contract 负责 Scan trace 生命周期并通过 `parent_trace_id` 关联 Automatic Recovery child trace；DAG State Merge Contract 负责多 frontier 分支状态的安全收敛；Multi-frontier Runtime Planner 负责将 frontier + 已验证分支状态转换为确定性 Runtime Plan；Multi-frontier Branch Executor 负责在单 Worker 内以确定性顺序执行 Branch、隔离 Branch state 并判定 Join readiness；Join Executor 负责纯状态汇聚；Worker 负责 ownership / lease / fencing；WorkflowExecutionService 负责状态机与持久化事务边界；WorkflowRuntime 负责实际 Node 执行、Resume frontier 重新规划与 Retry；Checkpoint 记录执行事实。**
+职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Resume Outcome Contract 负责 created / idempotency_hit 事实；Recovery Event / Telemetry Contract 负责统一恢复控制面事件与 Trace/Metrics 出口；Scheduler Trace Contract 负责 Scan trace 生命周期并通过 `parent_trace_id` 关联 Automatic Recovery child trace；DAG State Merge Contract 负责多 frontier 分支状态的安全收敛；Multi-frontier Runtime Planner 负责将 frontier + 已验证分支状态转换为确定性 Runtime Plan；Multi-frontier Branch Executor 负责在单 Worker 内以确定性顺序执行 Branch、隔离 Branch state 并判定 Join readiness；Join Executor 负责纯状态汇聚；Worker 负责 ownership / lease / fencing，包括过期 running Execution 的原子回收；WorkflowExecutionService 负责状态机与持久化事务边界；WorkflowRuntime 负责实际 Node 执行、Resume frontier 重新规划与 Retry；Checkpoint 记录执行事实。**
 
 ## Phase 2.6 当前实现
 
@@ -120,11 +125,15 @@ Multi-frontier Runtime Plan
 - Join completed 后重新读取持久化 completed facts，再由 DAG Planner 计算 downstream frontier；
 - `WorkflowRecoveryTelemetry` 不携带 Checkpoint `state_data`、Secret、Provider credential 或完整业务 payload；
 - Automatic Recovery telemetry 使用 `phase=automatic_recovery`，并记录 attempt / trace start / trace finish 的统一关联字段；
-- `WorkflowRecoveryEvent` 新增 `parent_trace_id`，用于 Scheduler parent trace → Automatic Recovery child trace 的控制面 lineage；
+- `WorkflowRecoveryEvent` 使用 `parent_trace_id` 实现 Scheduler parent trace → Automatic Recovery child trace 控制面 lineage；
 - `WorkflowRecoveryScheduler.scan_once()` 为每轮 Scan 创建 parent trace，并将其传递给每个 Automatic Recovery；
 - Automatic Recovery child trace 保持独立 `trace_id`，避免一个 Scheduler Scan trace 被多个 Recovery 生命周期重复 finish；
-- Worker / Runtime 继续从持久化 Recovery Trace Link 恢复 child `trace_id`；
-- 新增 / 更新 Scheduler Recovery 与 Observability Unit Test 覆盖 parent trace 传播和字段序列化；
+- Worker / Runtime 从持久化 Recovery Trace Link 恢复 child `trace_id`；
+- Scheduler Runtime 已接入 Scan Trace 生命周期；
+- Scheduler Recovery 已将 Scan parent trace 传播给 Automatic Recovery child trace；
+- Worker `claim_one()` 已支持 `running + lease 已过期` Execution 的 PostgreSQL 行锁回收：重新置为 `pending`、替换 `worker_owner`、递增 `worker_attempt`，并交由新 Worker 正常执行；
+- 过期 running Execution 的已有 `WorkflowNodeExecution` 事实不在 claim 阶段删除，接管后继续通过 orphaned running Node recovery 收敛；
+- 新增 `backend/tests/unit/test_workflow_worker_lease_reclaim.py` 覆盖过期 running reclaim、普通 pending claim 与无任务返回语义；
 
 ## Recovery Trace Lineage Contract
 
@@ -147,6 +156,9 @@ WorkflowRecoveryTraceLinkService
           ▼
 Worker claim
           │
+          ├── pending
+          └── expired running reclaim
+          │
           ▼
 WorkflowRuntime
 ```
@@ -160,15 +172,25 @@ Contract 规则：
 5. Resume Execution 的 durable Trace Link 保存 child `trace_id`，Worker / Runtime 以此恢复 Recovery trace；
 6. Trace 字段不得携带 Checkpoint `state_data`、Prompt、Secret、Provider credential 或完整业务 payload。
 
+## Worker Lease / Fencing Contract
+
+1. `pending` 且无 owner 的 Execution 可以被 Worker claim；
+2. `running` 且 lease 已过期的 Execution 可以被新 Worker 在 PostgreSQL 行锁内回收；
+3. 回收时先转回 `pending`，再写入新 owner 与新 lease；
+4. 每次新的 claim 都递增 `worker_attempt`；
+5. 旧 Worker 的状态推进继续通过 `WorkflowExecutionService` ownership fencing；
+6. terminal Execution 不允许残留 worker owner / lease；
+7. 当前阶段继续收口 lease loss 后旧 Worker 的主动执行中止，不把“下一次状态转换才发现 fencing”作为最终完成条件。
+
 ## 当前开发策略
 
 按当前要求暂停完整测试流程。当前主线只以 **Unit Test 实际执行结果**作为开发验证范围；Backend Full Regression、Frontend Gate、Browser E2E、完整 Release Gate、Real API Acceptance 暂不作为当前主线阻塞条件。测试结果只能记录实际执行结果，不得预填通过。
 
 ## 下一步主线
 
-1. 完成 Worker claim / lease / fencing 与 Recovery Resume 的最终持久化闭环，重点验证 stale worker、lease loss、ownership fencing 不会错误完成 Recovery Execution；
-2. 让 durable Recovery Trace Link 与 Worker lease 生命周期形成一致的控制面事实；
-3. 完成 Real API + PostgreSQL + 独立 Worker 验证入口，但不作为当前主线阻塞项；
+1. 完成 lease heartbeat 失去 ownership 后的 Runtime 主动中止，让旧 Worker 在 lease loss 后立即停止继续调用 Runtime；
+2. 完成 stale Worker / lease loss / ownership fencing 的 Unit Test 闭环；
+3. 完成 durable Recovery Trace Link 与 Worker lease 生命周期的最终一致性记录；
 4. 完成 Phase 2.6 Closure；
 5. Closure 后进入下一阶段企业级执行能力。
 
