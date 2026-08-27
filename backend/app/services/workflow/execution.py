@@ -110,19 +110,7 @@ class WorkflowExecutionService:
         return list(result.scalars().all())
 
     async def _lock_execution(self, execution: WorkflowExecution) -> WorkflowExecution:
-        """在状态转换前重新读取 Execution 行并加锁，同时阻断失去租约的旧 Worker。
-
-        Args:
-            execution: 当前需要进行状态转换的 Execution。
-
-        Returns:
-            加锁后的最新 WorkflowExecution。
-
-        Raises:
-            HTTPException: Execution 不存在，或 Worker 已失去该 Execution 的 ownership。
-
-        并发边界：Worker 将 `worker_owner` 写入 Execution 后，所有 Runtime 状态转换都必须以该 owner 的最新持久化值为准。这样当旧 Worker 的租约失效并被新 Worker 接管后，旧 Worker 不能继续推进节点状态。
-        """
+        """在状态转换前重新读取 Execution 行并加锁，同时阻断失去租约的旧 Worker。"""
         if not isinstance(self.db, AsyncSession):
             return execution
         locked = (await self.db.execute(
@@ -148,26 +136,7 @@ class WorkflowExecutionService:
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
                          error_code: str | None = None, error_message: str | None = None,
                          output_data: dict | None = None, actor_id: UUID | None = None) -> WorkflowExecution:
-        """推进 Execution 状态，并在终态转换时原子释放 Worker ownership。
-
-        Args:
-            execution: 当前需要推进的 Workflow Execution。
-            target_status: 目标 Execution 状态。
-            node_id: 可选的当前节点 ID。
-            error_code: 可选的业务错误码。
-            error_message: 可选的错误说明。
-            output_data: 可选的最终输出数据。
-            actor_id: 可选的审计操作者身份。
-
-        Returns:
-            更新并重新加载后的 WorkflowExecution。
-
-        Raises:
-            HTTPException: 状态非法、Execution 已处于终态或 Worker ownership 已失效。
-
-        事务边界：状态、terminal 时间、current_node_id、worker_owner、worker_lease_expires_at 与审计/Trace 在同一数据库事务提交。
-        并发边界：终态与 ownership 必须原子可观察；不能先提交 failed/completed 再依赖 Worker finally 异步清理 owner，否则新 Worker 可能在旧 owner 尚未清理时无法安全接管。
-        """
+        """推进 Execution 状态，并在终态转换时原子释放 Worker ownership。"""
         if target_status not in self.EXECUTION_STATES:
             raise HTTPException(400, "不支持的 Execution 状态")
         execution = await self._lock_execution(execution)
@@ -235,8 +204,15 @@ class WorkflowExecutionService:
         await self.db.refresh(retry_execution)
         return retry_execution
 
-    async def resume_from_latest_checkpoint(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
+    async def resume_from_latest_checkpoint(self, execution: WorkflowExecution, actor_id: UUID,
+                                            *, commit: bool = True) -> WorkflowExecution:
         """基于最新可恢复 Checkpoint 创建新的 pending Resume Execution，不启动 Runtime。
+
+        Args:
+            execution: 作为恢复来源的 Execution。
+            actor_id: 创建 Resume 的操作者。
+            commit: 是否由本领域服务提交事务。HTTP Recovery 默认保持兼容；调用方需要把
+                Resume 与后续 Durable 写入纳入同一事务时传 False，并由调用方负责 commit。
 
         事务边界：Source Execution 行锁、Resume Candidate 判断与 Resume 创建属于同一调用方事务。
         Resume 的唯一键竞争只能回滚 SAVEPOINT，不能调用 Session.rollback() 破坏调用方已有的
@@ -320,8 +296,9 @@ class WorkflowExecutionService:
             "resume_checkpoint_sequence": assessment.checkpoint_sequence,
             "workflow_version_id": str(execution.workflow_version_id),
         })
-        await self.db.commit()
-        await self.db.refresh(resume_execution)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(resume_execution)
         return resume_execution
 
     async def transition_node(self, execution: WorkflowExecution, node_id: str, target_status: str,
