@@ -59,9 +59,12 @@ Recovery Resume
 - 未提供 Checkpoint writer 时仍可收集 Branch execution result，但保持 `join_ready=false` 且不生成 merged state；
 - 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
 - DAG Decision Trace 在同一 execution + tenant + workflow version + trace + decision fingerprint 下幂等落库，Recovery 重试不会重复创建相同 Decision event；
-- 无 DAG edges 的历史顺序 Workflow 保留原执行兼容语义。
+- 顺序 Resume Sequence Planner 完整传递 Planner 的 selected predecessor 与 decision fingerprint，不允许在顺序 Runtime 边界丢失 Durable Decision identity；
+- Checkpoint 自动序号分配先锁定目标 `WorkflowExecution` 再读取最大 sequence，确保同一 Execution 的并发 Checkpoint 写入具有确定的序号分配边界；
+- Checkpoint 若绑定 Node，则 Recovery 可通过 `assert_node_fact_complete()` 校验 NodeExecution 的 node、status、attempt、output_data；execution-level checkpoint 不要求 NodeExecution；
+- Recovery Trace → Resume lineage 强制校验 Source/Resume relationship、tenant、workflow version 与真实存在的 `resume_checkpoint_sequence`，并将 checkpoint sequence 作为 lineage audit metadata。
 
-## 3. 本轮 Durable Recovery Closure 推进
+## 3. Durable Recovery Closure 推进
 
 ### 3.1 Conditional Decision 持久化 Trace Fact
 
@@ -201,6 +204,26 @@ execution_id
 
 该能力只解决 Trace event 的幂等性，不改变 PostgreSQL NodeExecution / Checkpoint 作为 Recovery source of truth 的原则。
 
+### 3.8 Recovery Trace → Resume Checkpoint Lineage
+
+Recovery 创建 Resume Execution 时，Trace lineage 现在必须证明它对应 Source Execution 的真实 durable checkpoint：
+
+```text
+Source Execution
+      ↓
+Resume.resume_of_execution_id == Source.id
+      ↓
+tenant / workflow version 相同
+      ↓
+resume_checkpoint_sequence
+      ↓
+Source Checkpoint(sequence) 存在
+      ↓
+recovery.trace_linked
+```
+
+`recovery.trace_linked` 事件仅保存身份和 checkpoint sequence metadata，不复制 checkpoint `state_data`。这样独立 Worker 后续恢复 trace identity 时，可以同时审计 Resume 所依据的 durable checkpoint 边界。
+
 ## 4. 单元测试
 
 已有：
@@ -215,62 +238,58 @@ backend/tests/unit/test_workflow_dag_decision_trace.py
 backend/tests/unit/test_workflow_resume_contract_tenant_scope.py
 backend/tests/unit/test_workflow_dag_executor_checkpoint_gate.py
 backend/tests/unit/test_workflow_dag_replay_guard.py
+backend/tests/unit/test_workflow_dag_decision_trace_idempotency.py
+backend/tests/unit/test_workflow_checkpoint_sequence_allocation.py
+backend/tests/unit/test_workflow_checkpoint_fact_completeness.py
 ```
 
 本轮新增：
 
 ```text
-backend/tests/unit/test_workflow_dag_decision_trace_idempotency.py
+backend/tests/unit/test_workflow_recovery_trace_lineage.py
 ```
 
 覆盖：
 
-- 缺少 Recovery trace identity 时不写 Decision Trace；
-- 相同 execution + tenant + workflow version + trace + decision fingerprint 命中已有事件时幂等返回；
-- 新 Decision 只保存审计 metadata，不保存业务 `state_data`；
-- 新事件正确执行 flush / commit。
+- Resume 必须指向 Source Execution；
+- Source / Resume 必须保持同一 tenant 与 workflow version；
+- `resume_checkpoint_sequence` 必须存在；
+- 合法 checkpoint lineage 可以建立。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
 ## 5. 当前下一交付
 
 ```text
-Condition Evaluator              ✅
-DAG Contract                    ✅
-Conditional frontier planner    ✅
-Initial Execution Runtime       ✅
-Multi-root initialization       ✅
-Resume Runtime integration      ✅
-Conditional Join                ✅
-Runtime inheritance cleanup     ✅
-NodeExecution tenant boundary   ✅
-Checkpoint tenant boundary      ✅
-Conditional Decision Trace      ✅
-Resume Contract tenant scope   ✅
-Branch Checkpoint Gate          ✅
+Condition Evaluator               ✅
+DAG Contract                     ✅
+Conditional frontier planner     ✅
+Initial Runtime                  ✅
+Resume Runtime                   ✅
+Conditional Join                 ✅
+Tenant / Checkpoint boundary     ✅
+Decision Trace                   ✅
 Decision Fingerprint             ✅
 Runtime Plan fingerprint         ✅
-Recovery Frontier Replay Guard   ✅
-Decision Trace Idempotency       ✅ 本轮完成
+Branch Checkpoint Gate            ✅
+Recovery Replay Guard             ✅
+Decision Trace Idempotency        ✅
+Sequence Plan metadata            ✅
+Checkpoint sequence serialization ✅
+Checkpoint fact completeness      ✅
+Recovery Trace Checkpoint Lineage ✅
+Unit Test 实际执行                ⏳
+Real API acceptance               ⏸ 暂停
+
         ↓
-Durable Recovery Closure
-        ├── Checkpoint fact 完整性       ← 下一任务
-        ├── Conditional decision 可重建性 ← 继续收敛
-        └── Trace lineage 连续性         ← 继续收敛
+
+Phase 2.7-A Durable Recovery Closure
+  ├── Conditional decision 可重建性
+  └── Trace lineage 连续性
         ↓
 Phase 2.7-A Closure
         ↓
 Phase 2.7 后续 orchestration capability
 ```
 
-Real API acceptance 后续必须验证真实 HTTP、真实 PostgreSQL 持久化事实以及 Worker → Runtime 链路；当前不使用 Mock、JSON fixture 或 GitHub Actions 替代本地验收。
-
-## 6. 明确不实现
-
-- 人工审批节点；
-- Saga / compensation；
-- 通用 Policy DSL；
-- 任意代码表达式；
-- MQ / Kafka / Event Bus；
-- 跨 Workflow Version Resume；
-- 第二套 DAG Planner / Runtime / State Merge。
+Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Worker → Runtime。
