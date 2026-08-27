@@ -150,7 +150,9 @@ class WorkflowExecutionCheckpointService:
             expected_worker_attempt: Worker 写入上下文中的 generation；提供后强制执行 fencing。
 
         Returns:
-            新创建且尚未提交的 WorkflowExecutionCheckpoint。
+            新创建且尚未提交的 WorkflowExecutionCheckpoint；对同一事务内重复提交相同
+            `frontier_completed` durable boundary 时返回已经存在的同一 checkpoint，避免 Runtime
+            与 Frontier progression 双边界接线造成重复 Execution-level snapshot。
 
         Raises:
             HTTPException: Execution 不存在、tenant 不匹配或 Worker fencing 已失效。
@@ -174,6 +176,26 @@ class WorkflowExecutionCheckpointService:
             expected_worker_attempt=expected_worker_attempt,
             execution=execution,
         )
+
+        if checkpoint_reason == "frontier_completed":
+            latest_boundary = await self.db.execute(
+                select(WorkflowExecutionCheckpoint)
+                .where(
+                    WorkflowExecutionCheckpoint.execution_id == execution_id,
+                    WorkflowExecutionCheckpoint.checkpoint_reason == "frontier_completed",
+                )
+                .order_by(desc(WorkflowExecutionCheckpoint.sequence))
+                .limit(1)
+            )
+            existing_boundary = latest_boundary.scalar_one_or_none()
+            if (
+                existing_boundary is not None
+                and existing_boundary.execution_status == execution_status
+                and existing_boundary.state_data == state_data
+                and existing_boundary.worker_owner == worker_owner
+            ):
+                return existing_boundary
+
         latest_sequence = await self.db.execute(
             select(func.max(WorkflowExecutionCheckpoint.sequence)).where(
                 WorkflowExecutionCheckpoint.execution_id == execution_id
