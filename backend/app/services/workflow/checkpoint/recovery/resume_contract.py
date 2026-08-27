@@ -65,7 +65,7 @@ class WorkflowExecutionResumeContractService:
 
         execution_service = WorkflowExecutionService(self.db)
         locked_execution = await execution_service._lock_execution(execution)
-        checkpoint = await self.checkpoint.latest(
+        checkpoint = await self.checkpoint.latest_recovery_fact(
             locked_execution.id,
             tenant_id=locked_execution.tenant_id,
         )
