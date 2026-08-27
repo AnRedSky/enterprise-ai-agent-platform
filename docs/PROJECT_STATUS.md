@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
-- 本轮已完成：**Durable Frontier Retry Scheduling 基础生产能力**；可重试失败通过同一 Frontier 的 `retry_wait + available_at` 持久化调度，不创建新的 WorkflowExecution / Frontier，并继续使用 `worker_owner + attempt` fencing。
+- 本轮已完成：**Durable Frontier → Checkpoint → Next Frontier 原子推进基础能力**；当前 Worker fencing 成功后，可在同一外层事务内完成当前 Frontier、追加 Execution Checkpoint，并基于确定性 identity 幂等创建后继 Frontier。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
 - Runtime Durable Commit Ownership：**已完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由外层 Execution `completed/failed` transition 统一提交；直接调用方默认保持 `commit=True` 兼容。**
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
@@ -15,7 +15,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入以及 Retry Scheduling 基础能力。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling 以及 Frontier → Checkpoint → Next Frontier 原子推进基础能力。**
 
 ## Phase 2.7 当前实现
 
@@ -55,7 +55,10 @@
 - `FrontierRetryPolicy` 提供 max attempts、bounded exponential backoff；
 - `schedule_frontier_retry()` 将当前 Worker 持有的 Frontier 转为 `retry_wait` 并设置 `available_at`，下一次 Claim 才递增 attempt；达到 max attempts 后同一 Frontier 转为 `failed`；
 - Retry scheduling 不创建新的 WorkflowExecution / Frontier，并通过既有 fencing transition 防止 stale Worker 写入；
-- Retry policy 当前不自动把所有 Runtime failure 视为 retryable；明确的 Runtime error classification 仍由上层 Worker/Runtime integration 提供。
+- `complete_frontier_with_checkpoint()` 固定 Frontier → Execution/Checkpoint → Next Frontier 的锁顺序，在同一外层事务内完成当前 Frontier terminal transition、Checkpoint sequence 分配及 Next Frontier 幂等入队；
+- Next Frontier 强制复用当前 Execution / Workflow Version，并使用 `WorkflowFrontierIdentity` 作为唯一 durable identity；
+- Terminal Frontier 可以只追加最终 Checkpoint 而不创建后继 Frontier；
+- Frontier progression 不负责 Planner 决策、Runtime 执行或 commit，调用方仍拥有完整事务边界。
 
 ## 当前开发策略
 
@@ -80,12 +83,13 @@ Durable Frontier Scheduling
   ├── Claim repository                  ✅
   ├── Worker lease fencing              ✅
   ├── Expired lease recovery            ✅
-  ├── Scheduler → Frontier enqueue     ✅
+  ├── Scheduler → Frontier enqueue      ✅
   ├── Frontier → Worker claim           ✅
   ├── Worker → Runtime bridge           ✅
   ├── Frontier lease heartbeat          ✅
-  ├── Retry scheduling                  ✅ 本轮
-  └── Frontier → Checkpoint progression ⏭
+  ├── Retry scheduling                  ✅
+  ├── Frontier → Checkpoint progression ✅ 本轮
+  └── Next Frontier idempotent enqueue  ✅ 本轮
           ↓
 继续主线直到全部任务完成
 ```
