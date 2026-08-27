@@ -271,12 +271,16 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         try:
             async with SessionLocal() as db:
                 try:
+                    # 这里只读取 Runtime 所需的 Execution 快照，不提前取得行锁。
+                    # 成功 terminalization 的统一锁顺序是 Frontier → Execution；若这里先锁 Execution，
+                    # 会与 complete_frontier_with_checkpoint()/failure convergence 的反向竞争形成死锁窗口。
+                    # 最终 durable commit 前由 progression primitive 再次锁定并验证 Execution ownership/lease。
                     execution = (
                         await db.execute(
                             select(WorkflowExecution).where(
                                 WorkflowExecution.id == frontier.execution_id,
                                 WorkflowExecution.tenant_id == frontier.tenant_id,
-                            ).with_for_update()
+                            )
                         )
                     ).scalar_one_or_none()
                     if execution is None:
