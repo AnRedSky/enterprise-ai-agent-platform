@@ -9,7 +9,7 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭**。
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract、Recovery Outcome Contract、created / idempotency_hit 并发收敛、DAG Branch State Merge Contract、Multi-frontier Runtime Plan、Multi-frontier Branch Execution Coordinator、Branch Checkpoint Boundary 与真实 WorkflowRuntime Multi-frontier Resume 接入已完成；当前主线进入 Join readiness / next frontier 持久化事实闭环，统一 observability 接入与自动恢复 Real API / Worker 仍在主线推进。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract、Recovery Outcome Contract、created / idempotency_hit 并发收敛、DAG Branch State Merge Contract、Multi-frontier Runtime Plan、Multi-frontier Branch Execution Coordinator、Branch Checkpoint Boundary、真实 WorkflowRuntime Multi-frontier Resume、Join readiness / execution / idempotency / checkpoint、统一 Recovery Telemetry Facade，以及 Automatic Recovery Trace 生命周期接入已完成；当前主线进入 Worker / Runtime Trace Continuity、持久化 Recovery 闭环与 Phase 2.6 Closure。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 当前执行架构
@@ -23,11 +23,11 @@ Scheduler Service
               ↓
        Recovery Policy / Domain
               ↓
+       WorkflowRecoveryTelemetry
+              ↓
        Resume Outcome Contract
           ├── created
           └── idempotency_hit
-              ↓
-       workflow.recovery.attempt
               ↓
        pending Resume Execution
               ↓
@@ -46,20 +46,22 @@ Multi-frontier Runtime Plan
           │       │
           └───┬───┘
               ↓
-       transition_node()
-              ↓
- NodeExecution + Checkpoint（同事务）
+       NodeExecution + Checkpoint
               ↓
        Branch State Merge
               ↓
           Join Ready
+              ↓
+       Join NodeExecution
+              ↓
+       Join Checkpoint
               ↓
        recompute next frontier
               ↓
           next Branch / Join
 ```
 
-职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Resume Outcome Contract 负责 created / idempotency_hit 事实；Recovery Event Contract 负责统一恢复控制面事件；DAG State Merge Contract 负责多 frontier 分支状态的安全收敛；Multi-frontier Runtime Planner 负责将 frontier + 已验证分支状态转换为确定性 Runtime Plan；Multi-frontier Branch Executor 负责在单 Worker 内以确定性顺序执行 Branch、隔离 Branch state 并判定 Join readiness；Worker 负责 ownership / lease / fencing；WorkflowExecutionService 负责状态机与持久化事务边界；WorkflowRuntime 负责实际 Node 执行、Resume frontier 重新规划与 Retry；Checkpoint 记录执行事实。**
+职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Resume Outcome Contract 负责 created / idempotency_hit 事实；Recovery Event / Telemetry Contract 负责统一恢复控制面事件与 Trace/Metrics 出口；DAG State Merge Contract 负责多 frontier 分支状态的安全收敛；Multi-frontier Runtime Planner 负责将 frontier + 已验证分支状态转换为确定性 Runtime Plan；Multi-frontier Branch Executor 负责在单 Worker 内以确定性顺序执行 Branch、隔离 Branch state 并判定 Join readiness；Join Executor 负责纯状态汇聚；Worker 负责 ownership / lease / fencing；WorkflowExecutionService 负责状态机与持久化事务边界；WorkflowRuntime 负责实际 Node 执行、Resume frontier 重新规划与 Retry；Checkpoint 记录执行事实。**
 
 ## Phase 2.6 当前实现
 
@@ -77,8 +79,9 @@ Multi-frontier Runtime Plan
 - Scheduler Service 接入 Recovery Scan 独立生命周期；
 - Recovery Scan 聚合 `candidates / eligible / recovered / rejected / contention / failed`；
 - `WorkflowRecoveryEvent` / `WorkflowRecoveryEventLogger` 正式 Recovery observability 事件出口；
-- `workflow.recovery.attempt`；
-- `workflow.recovery.scan.completed`；
+- `WorkflowRecoveryTelemetry` 统一 Logger / Trace / Metrics fan-out；
+- `workflow.recovery.attempt` / `workflow.recovery.scan.completed` / trace lifecycle events；
+- Automatic Recovery `recover()` 已接入 `WorkflowRecoveryTelemetry.start_trace()` / `finish_trace()`，attempt event 与 trace 使用同一 `trace_id`；
 - `WorkflowExecutionResumeOutcome` 正式区分 `created` / `idempotency_hit`；
 - `WorkflowExecutionResumeContractService`：Source Execution row lock + deterministic key precheck + 既有 Resume Domain delegation；
 - Automatic Recovery 事件携带 `outcome`；
@@ -102,10 +105,16 @@ Multi-frontier Runtime Plan
 - 当前 Multi-frontier 在单 Worker 内确定性顺序执行，不伪装成多 Worker 并行；
 - 一个 frontier 完成后重新读取持久化完成事实并计算下一 frontier，避免一次性展平 DAG；
 - 如果下一 frontier 仍为多个 Node，则继续进入 Multi-frontier Executor；如果只有一个 Node，则复用同一 Node Retry / Checkpoint Contract；
-- `backend/tests/unit/test_workflow_runtime.py` 新增 Branch state reconstruction / Join predecessor merge Unit Test；
+- Join Readiness 要求所有 predecessor completed，并从持久化 predecessor `output_data` 构造 Join state；
+- Join State Merge 继续禁止 last-write-wins；
+- Join Node 是纯 state aggregation，不调用 Model Provider；
+- Join Node 使用现有 `(execution_id, node_id)` NodeExecution 唯一事实与 Worker ownership / fencing 保证幂等；
+- Join NodeExecution / Checkpoint 继续复用 `WorkflowExecutionService.transition_node()`，未新增 Join 专用数据库表；
+- Join completed 后重新读取持久化 completed facts，再由 DAG Planner 计算 downstream frontier；
+- `WorkflowRecoveryTelemetry` 不携带 Checkpoint `state_data`、Secret、Provider credential 或完整业务 payload；
+- Automatic Recovery telemetry 使用 `phase=automatic_recovery`，并记录 attempt / trace start / trace finish 的统一关联字段；
+- 新增 `backend/tests/unit/test_workflow_automatic_recovery_telemetry.py` 覆盖 Recovery success / rejection trace 生命周期与同一 trace_id 关联；
 - 已记录 Runtime Plan Contract 漂移工程错误：`docs/04-errors/2026-08-27-phase-2-6-runtime-plan-contract-drift.md`；
-- Recovery Event 禁止写入 Checkpoint `state_data`、Secret、Provider credential 和完整业务 payload；
-- Scheduler / Domain 不创建平行 Recovery metrics / trace 规则。
 
 ## DAG Multi-frontier Runtime Contract
 
@@ -136,6 +145,10 @@ Source Execution + Resume Execution completed Node facts
                     ↓
               Join readiness
                     ↓
+              Join execution
+                    ↓
+        NodeExecution + Checkpoint
+                    ↓
           persisted completed facts
                     ↓
         recompute next frontier
@@ -155,7 +168,8 @@ Contract 规则：
 10. 任一 Branch 执行或 Checkpoint 失败，Join 不得就绪，异常向上层 Worker / ExecutionService 传播；
 11. 所有 Branch 成功且 Checkpoint 已由 `transition_node()` 持久化后才允许生成 merged state 与 `join_ready=True`；
 12. Executor 不直接修改 ORM / DB，Node 状态与 Checkpoint 必须通过 `WorkflowExecutionService.transition_node()`；
-13. 当前已完成真实 WorkflowRuntime Resume 接入，但尚未完成独立 Join Node 状态机 / next frontier 持久化 Contract 的最终 Closure。
+13. Join readiness、Join execution、Join checkpoint 与 downstream frontier 必须基于持久化 completed facts 重新计算，不得依赖 Runtime 临时 state；
+14. Recovery Telemetry 只能记录控制面字段，禁止携带业务 state / Secret。
 
 ## 当前开发策略
 
@@ -163,13 +177,11 @@ Contract 规则：
 
 ## 下一步主线
 
-1. 将 Join readiness 从 Runtime 内存事实提升为明确的持久化 / 状态机 Contract，避免“所有 Branch 完成”与“Join Node 已执行”混淆；
-2. 完成 Join Node 的 NodeExecution / Checkpoint 事务边界，并验证 Join predecessor completion 的幂等性；
-3. 完成 Join 后 next frontier 的正式 Runtime Contract，确保 Resume 在 Join 后继续恢复而不是重复执行 Branch；
-4. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，保持领域事件出口，不新增平行 exporter；
-5. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
-6. 完成 Phase 2.6 Closure；
-7. 进入下一阶段企业级执行能力。
+1. 将 `WorkflowRecoveryTelemetry` 接入 Worker / Recovery Scheduler / Runtime，建立同一 Recovery → Resume → Runtime trace continuity；
+2. 完成 Worker claim / lease / fencing 与 Automatic Recovery 的持久化闭环；
+3. 完成 Real API + PostgreSQL + 独立 Worker 验证入口，但不作为当前主线阻塞项；
+4. 完成 Phase 2.6 Closure；
+5. Closure 后进入下一阶段企业级执行能力。
 
 ## 服务版本边界
 
