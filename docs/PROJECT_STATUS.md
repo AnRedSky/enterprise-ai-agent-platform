@@ -10,6 +10,7 @@
 - 本轮新增：**Recovery Execution fencing generation guard**；Execution Domain 在重新锁定 Worker-owned Execution 时同时校验 `worker_owner + worker_attempt`，同一 Worker 在重新 Claim 后 generation 变化、或 Execution 被其他 Worker reclaim 后，旧 Execution context 均不得继续状态转换或 Durable 写入。
 - 本轮新增：**Stale Worker Checkpoint late-write guard**；Checkpoint Service 在 `FOR UPDATE` 锁定 Execution 后再次校验 Worker owner/generation，Frontier progression 将当前 `worker_owner + attempt` 传入 Checkpoint Durable 写入边界，避免旧 Worker 绕过 Execution fencing 单独追加不可变 Checkpoint。
 - 本轮新增：**Node → Checkpoint fencing propagation guard**；Node completed 状态通过 `WorkflowExecutionService.transition_node()` 写入 Node-level Checkpoint 时，显式传递当前 `worker_owner + worker_attempt`，使 Node transition 到 Checkpoint append 的完整链路继续受同一 Execution fencing generation 保护。
+- 本轮新增：**Checkpoint durable write boundary guard**；Checkpoint Service 在真正构造/写入 Durable Fact 时再次区分 `node.completed` 与 `frontier_completed`，非法的 Node/Execution-level 混合快照在落库前直接拒绝。
 - Durable Recovery Resume Trace 原子事务闭环已完成；Automatic Recovery 现在将 Resume 创建、completed Node lineage、首个 Durable Frontier 与 `recovery.trace_linked` 在同一外层事务中提交，避免恢复审计事实与 Resume durable state 分裂。
 - Durable Resume 现在固定 Source Workflow Version，使用 `execution_id + checkpoint_sequence` 生成确定性 Resume idempotency key；并通过 Resume Bootstrap 计算首个 Planner frontier。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
@@ -21,7 +22,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环、Join predecessor Contract、Resume tenant boundary、Recovery Checkpoint Node Fact lineage guard、Resume Checkpoint lineage guard、Multi-frontier Recovery Checkpoint boundary guard、Recovery Execution fencing generation guard、Stale Worker Checkpoint late-write guard 以及 Node → Checkpoint fencing propagation guard。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环、Join predecessor Contract、Resume tenant boundary、Recovery Checkpoint Node Fact lineage guard、Resume Checkpoint lineage guard、Multi-frontier Recovery Checkpoint boundary guard、Recovery Execution fencing generation guard、Stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation guard 以及 Checkpoint durable write boundary guard。**
 
 ## Phase 2.7 当前实现
 
@@ -51,7 +52,7 @@
 - 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
 - DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity；
 - Checkpoint 自动序号分配锁定目标 `WorkflowExecution` 后读取最大 sequence；
-- Checkpoint Node fact completeness、Recovery Trace lineage、Decision rebuild、Trace lineage continuity、payload drift guard、fingerprint JSON boundary、single DAG planning boundary、tenant boundary、Resume idempotency lineage/key determinism、SAVEPOINT、Recovery Commit Ownership、Runtime Durable Commit Ownership、Recovery latest Node Fact guard、Cross-Execution Replay Identity、Multi-frontier Recovery Checkpoint boundary、Execution worker owner/generation fencing、Stale Worker Checkpoint late-write guard 与 Node → Checkpoint fencing propagation guard 均已完成；
+- Checkpoint Node fact completeness、Recovery Trace lineage、Decision rebuild、Trace lineage continuity、payload drift guard、fingerprint JSON boundary、single DAG planning boundary、tenant boundary、Resume idempotency lineage/key determinism、SAVEPOINT、Recovery Commit Ownership、Runtime Durable Commit Ownership、Recovery latest Node Fact guard、Cross-Execution Replay Identity、Multi-frontier Recovery Checkpoint boundary、Execution worker owner/generation fencing、Stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation guard 与 Checkpoint durable write boundary guard 均已完成；
 - `WorkflowFrontierIdentity` 提供基于 execution + workflow version + decision fingerprint + ordered node IDs 的确定性 Frontier key；
 - `WorkflowFrontierStatus` 提供 `pending → claimed → running → completed/failed` 及 `retry_wait` 生命周期；terminal Frontier 不允许重新 claim；
 - `WorkflowFrontier` 已建立 PostgreSQL 持久化模型，包含 tenant、execution、workflow version、decision fingerprint、frontier key、node IDs、attempt、Worker lease、available time、terminal/error facts；
@@ -83,7 +84,8 @@
 - Recovery Trace Link 校验 Source / Resume / Checkpoint tenant、workflow version 与 checkpoint sequence lineage；自动恢复路径使用 caller-owned transaction，Resume / Frontier / trace link 一次提交；
 - Execution Domain 的 `_lock_execution()` 在 `FOR UPDATE` 后同时验证 `worker_owner + worker_attempt`，将 Frontier fencing generation 向 Execution / Node 状态转换边界延伸，旧 generation 无法继续产生 Durable 写入；
 - Checkpoint Service 的 Worker-owned append 在锁定 Execution 后再次验证 `expected_worker_owner + expected_worker_attempt`，并由 Frontier progression 传递当前 generation，形成 Frontier → Execution → Checkpoint 的 stale Worker 防护链；
-- `WorkflowExecutionService.transition_node()` 在 `node.completed` Checkpoint append 时继续传递 Execution 当前 owner/generation，避免旧 Runtime context 在 Node 状态转换后绕过 Checkpoint fencing。
+- `WorkflowExecutionService.transition_node()` 在 `node.completed` Checkpoint append 时继续传递 Execution 当前 owner/generation，避免旧 Runtime context 在 Node 状态转换后绕过 Checkpoint fencing；
+- Checkpoint Service 在 Durable Write 入口强制 `frontier_completed` 只能是 Execution-level snapshot，`node.completed` 必须携带 Node identity，避免非法混合事实先落库后才由 Recovery 拒绝。
 
 ## 当前开发策略
 
@@ -130,7 +132,8 @@ Recovery / Replay Closure
   ├── Multi-frontier Checkpoint boundary ✅
   ├── Execution fencing generation      ✅
   ├── stale Worker Checkpoint late-write protection ✅
-  ├── Node → Checkpoint fencing propagation ✅ 本轮
+  ├── Node → Checkpoint fencing propagation ✅
+  ├── Checkpoint durable write boundary  ✅ 本轮
   └── Multi-frontier Join Recovery       ← 下一任务
           ↓
 继续主线直到全部任务完成
