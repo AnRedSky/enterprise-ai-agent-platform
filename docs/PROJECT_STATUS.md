@@ -49,7 +49,8 @@
 - Durable Frontier Planner Runtime Lease-Lost Abort：Planner/DAG Worker 显式将当前 `execute_frontier()` task 传递给 heartbeat；lease loss 后取消 Planner Runtime，`CancelledError` 不进入普通 failure convergence，当前事务 rollback 后交由 Recovery 接管：✅
 - Durable Frontier Failure Convergence Ownership Guard：failure retry / failed convergence 在任何 Frontier transition、retry scheduling 或 Execution terminalization 前重新证明 Execution owner 与有效 lease；stale Worker 不得跨层终止其他 Worker 持有的 Execution：✅
 - Durable Frontier Runtime Consumption Guard：Runtime 真正执行 Node 前重新锁定 Frontier 与 Execution，证明当前 Worker owner、Frontier attempt、两层 active lease 与可执行状态；Claim 后发生 ownership 转移、回收或 terminalization 的 stale task 不得继续消费：✅
-- Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前在同一事务内锁定同 Execution 的活动 Frontier，并拒绝 Node 集合重叠，避免不同 identity / fingerprint 的并行 work item 重复消费同一 Node：✅ 本轮
+- Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前在同一事务内锁定同 Execution 的活动 Frontier，并拒绝 Node 集合重叠，避免不同 identity / fingerprint 的并行 work item 重复消费同一 Node：✅
+- Durable Frontier Claim-layer Duplicate Consumption Guard：Worker Claim 在锁定候选 Frontier 后，以同一事务锁定关联 Execution，并在 Claim 前检查同 Execution 活动 Frontier Node-set；重叠 Frontier 不进入 claimed，disjoint parallel Frontier 正常消费：✅ 本轮
 
 ## 当前实现边界
 
@@ -63,7 +64,8 @@ WorkflowFrontierIdentity
 Execution-aware Worker Claim
   ├── fresh pending Execution → acquire + increment epoch
   ├── recovered pending + current owner → reuse epoch
-  └── expired foreign owner → reacquire + increment epoch
+  ├── expired foreign owner → reacquire + increment epoch
+  └── same Execution active Frontier Node-set overlap → reject Claim
   ↓
 Runtime Consumption Guard
   ├── Frontier owner + attempt + active lease
@@ -88,7 +90,8 @@ Success / Failure Convergence
   └── failure → ownership/lease guard → retry_wait / failed
   ↓
 Duplicate Consumption Guard
-  └── same Execution active Frontier Node-set must remain disjoint
+  ├── progression → active Frontier Node-set fencing
+  └── claim → same-Execution active Frontier Node-set fencing
   ↓
 Frontier / Checkpoint / Execution progression
   ↓
@@ -110,18 +113,16 @@ Recovery / Replay
 继续收口：
 
 ```text
-Concurrent multi-frontier Claim
+Concurrent multi-frontier Claim / Claim-layer overlap fencing     ← 本轮已完成
         ↓
-Duplicate consumption guard                 ← 本轮已完成 Next-frontier 层
-        ↓
-Success / Failure terminalization
+Success / Failure terminalization closure
         ↓
 Replay convergence
         ↓
 Phase 2.7 主线完成
 ```
 
-下一步重点仍为 **Worker Claim 层的同一 Execution 并发边界**：Claim 必须与活动 Frontier Node-set fencing 保持同一事务语义；在完成该项后再收口 Success / Failure terminalization 与 Replay convergence。
+下一步重点为 **Success / Failure terminalization closure**：统一检查成功与失败路径在 Frontier、Checkpoint、Execution 生命周期之间的终态一致性，并继续验证 Replay convergence 不产生第二套 Durable fact。Claim-layer 同一 Execution 并发边界已完成，不再重复实现第二套 fencing 逻辑。
 
 核心不变量：
 
@@ -148,14 +149,14 @@ Phase 2.7 主线完成
 - Frontier / Execution heartbeat 丢失 ownership 后必须取消当前 Planner / Node Runtime；lease loss 不得作为普通业务 failure 进入 retry / failed convergence；
 - Failure convergence 在进入 retry / failed 前必须重新证明 Execution owner 与有效 lease；stale Worker 不得通过 failure path 改变其他 Worker 的 Execution 生命周期；
 - Runtime Node execution 前必须重新证明 Frontier 与 Execution consumption ownership；stale task 不得仅凭 Claim 阶段的内存快照继续执行；
-- Next Frontier 创建前必须证明其 Node 集合与同一 Execution 的其他活动 Frontier 互斥；Node-set overlap 必须在 durable progression transaction 内拒绝。
+- Next Frontier 创建前必须证明其 Node 集合与同一 Execution 的其他活动 Frontier 互斥；Node-set overlap 必须在 durable progression transaction 内拒绝；
+- Worker Claim 必须在同一 Execution durable ownership 边界内再次证明活动 Frontier Node-set 互斥；发生 overlap 时不得进入 claimed，且不得修改 attempt / owner / lease。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier_progression.py`
-- `backend/tests/unit/test_frontier_duplicate_consumption.py`
+- `backend/app/services/workflow/frontier_repository.py`
+- `backend/tests/unit/test_frontier_claim_fencing.py`
 - `docs/PROJECT_STATUS.md`
-- `docs/02-phases/PHASE_2_7.md`
-- `docs/04-errors/2026-08-27-durable-frontier-duplicate-consumption.md`
+- `docs/04-errors/2026-08-27-durable-frontier-claim-overlap-fencing.md`
 
 **测试：本轮未执行 pytest、集成测试、本地手动测试或 E2E；不得记录 PASS。**
