@@ -40,12 +40,12 @@ async def test_resume_contract_returns_idempotency_hit_without_creating_new_exec
     db = _DB(existing=existing)
     service = WorkflowExecutionResumeContractService(db)
 
-    async def fake_latest(_execution_id):
+    async def fake_latest(_execution_id, tenant_id=None):
         return SimpleNamespace(id=uuid4())
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
-        resume_idempotency_key="resume:key",
+        resume_idempotency_key=f"resume:{source.id}:checkpoint:7",
         checkpoint_sequence=7,
     )
 
@@ -63,7 +63,7 @@ async def test_resume_contract_returns_idempotency_hit_without_creating_new_exec
 
     assert result.outcome == "idempotency_hit"
     assert result.execution.id == existing.id
-    assert result.idempotency_key == "resume:key"
+    assert result.idempotency_key == f"resume:{source.id}:checkpoint:7"
 
 
 @pytest.mark.asyncio
@@ -80,9 +80,12 @@ async def test_resume_contract_rejects_idempotency_hit_with_lineage_drift():
     db = _DB(existing=existing)
     service = WorkflowExecutionResumeContractService(db)
 
-    service.checkpoint.latest = lambda _execution_id: _fake_latest()
+    async def fake_latest(_execution_id, tenant_id=None):
+        return await _fake_latest()
+
+    service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
-        resume_idempotency_key="resume:key",
+        resume_idempotency_key=f"resume:{source.id}:checkpoint:7",
         checkpoint_sequence=7,
     )
 
@@ -103,6 +106,35 @@ async def test_resume_contract_rejects_idempotency_hit_with_lineage_drift():
         monkeypatch.undo()
 
 
+@pytest.mark.asyncio
+async def test_resume_contract_rejects_non_deterministic_idempotency_key(monkeypatch):
+    source = SimpleNamespace(
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="failed",
+        worker_owner=None,
+    )
+    db = _DB(existing=None)
+    service = WorkflowExecutionResumeContractService(db)
+
+    async def fake_latest(_execution_id, tenant_id=None):
+        return SimpleNamespace(id=uuid4())
+
+    service.checkpoint.latest = fake_latest
+    service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
+        resume_idempotency_key="resume:external:key",
+        checkpoint_sequence=7,
+    )
+
+    class _ExecutionService:
+        async def _lock_execution(self, execution):
+            return execution
+
+    import app.services.workflow.execution as execution_module
+    monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
+
+    with pytest.raises(ValueError, match="幂等键"):
+        await service.resume_with_outcome(source, uuid4())
+
+
 async def _fake_latest():
     return SimpleNamespace(id=uuid4())
 
@@ -117,12 +149,12 @@ async def test_resume_contract_returns_created_when_key_is_absent(monkeypatch):
     db = _DB(existing=None)
     service = WorkflowExecutionResumeContractService(db)
 
-    async def fake_latest(_execution_id):
+    async def fake_latest(_execution_id, tenant_id=None):
         return SimpleNamespace(id=uuid4())
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
-        resume_idempotency_key="resume:key",
+        resume_idempotency_key=f"resume:{source.id}:checkpoint:7",
         checkpoint_sequence=7,
     )
 
@@ -140,4 +172,4 @@ async def test_resume_contract_returns_created_when_key_is_absent(monkeypatch):
 
     assert result.outcome == "created"
     assert result.execution.id == created.id
-    assert result.idempotency_key == "resume:key"
+    assert result.idempotency_key == f"resume:{source.id}:checkpoint:7"
