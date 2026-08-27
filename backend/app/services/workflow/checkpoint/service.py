@@ -148,8 +148,11 @@ class WorkflowExecutionCheckpointService:
                 raise HTTPException(409, "同一 source Frontier 存在多个 completion Checkpoint，Durable fact 已分叉")
             if existing_boundaries:
                 existing_boundary = existing_boundaries[0]
-                if existing_boundary.execution_status == execution_status and existing_boundary.state_data == state_data:
-                    return existing_boundary
+                if existing_boundary.execution_status != execution_status:
+                    raise HTTPException(409, "同一 source Frontier 的 completion Checkpoint lifecycle 与本次写入不一致，拒绝产生第二条 Durable fact")
+                if existing_boundary.state_data != state_data:
+                    raise HTTPException(409, "同一 source Frontier 的 completion Checkpoint payload 与本次写入不一致，拒绝产生第二条 Durable fact")
+                return existing_boundary
 
         self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
         latest_sequence = await self.db.execute(
