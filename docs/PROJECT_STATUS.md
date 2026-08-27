@@ -17,7 +17,8 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；DAG 分支 Resume / 多-frontier Runtime 正在继续收口；Unit Test 实际 Closure 仍按本地执行结果记录。
 - **DAG Next Frontier progression Contract 已完成：Checkpoint 后重新调用唯一 `WorkflowDagResumePlanner`，基于完整 completed durable facts 生成下一 Frontier 的 deterministic `WorkflowFrontierIdentity`；不创建第二套 Planner / Frontier persistence。**
 - **`frontier_completed` Execution-level Checkpoint 已完成同事务幂等收敛：Runtime 与 `complete_frontier_with_checkpoint()` 双边界重复提交相同 merged-state durable fact 时复用已有 Checkpoint，不再产生重复 sequence。**
-- **本轮完成 DAG Frontier → Durable Frontier 原子推进接线：`WorkflowDagFrontierProgressionService.complete_frontier()` 先通过唯一 Planner 生成 Next Frontier identity，再统一调用 `complete_frontier_with_checkpoint()` 完成 Frontier → Checkpoint → Next Frontier，不允许 Runtime 旁路 enqueue。**
+- **已完成 DAG Frontier → Durable Frontier 原子推进接线：`WorkflowDagFrontierProgressionService.complete_frontier()` 先通过唯一 Planner 生成 Next Frontier identity，再统一调用 `complete_frontier_with_checkpoint()` 完成 Frontier → Checkpoint → Next Frontier，不允许 Runtime 旁路 enqueue。**
+- **已完成 Durable Frontier Worker 的后继 Frontier ownership 复用：同一 Worker 在同一 Execution 内继续消费后继 Frontier 时复用现有 Execution fencing generation；只有接管过期的其他 Worker lease 才递增 generation，避免后继 Frontier 因错误 generation 被 Checkpoint fencing 拒绝。**
 - Backend 模块化整改：继续按最新治理规则推进，不作为当前主线阻塞条件。
 - Frontend Phase 1.3：SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。
 
@@ -39,6 +40,7 @@
 - **`WorkflowDagFrontierProgressionService` 负责把当前 frontier 完成后的 durable facts 重新交给唯一 Planner，并生成下一 Frontier identity；真正的持久化继续由 `complete_frontier_with_checkpoint()` 负责。**
 - **`WorkflowDagFrontierProgressionService.complete_frontier()` 已将上述 planning 与原子持久化正式接线：Planner 不写库，Runtime 不自行 enqueue，所有 Frontier → Checkpoint → Next Frontier 持久化统一进入既有 transaction contract。**
 - **`WorkflowExecutionCheckpointService.append_next_in_transaction()` 对相同 `frontier_completed` execution status / merged state / worker owner 的重复 durable boundary 进行幂等复用，避免 Runtime 与 Frontier progression 接线产生重复 Execution-level snapshot。**
+- **`DurableFrontierWorkflowWorker.claim_one_frontier()` 已支持同一 Worker 在同一 running Execution 中继续领取后继 Frontier，并保持原 `worker_attempt`；外部过期 ownership 则通过新的 generation 接管。**
 - Replay Decision Convergence 已将历史 Decision、frontier、selected predecessor 收敛检查提升为写入前强制边界；
 - Resume lifecycle closure 已完成：完整 Resume 幂等命中必须具有 Durable Frontier；pending 且缺少 Frontier 的历史不完整 Resume 现在允许在 Source Execution 锁内幂等重新 Bootstrap。
 
@@ -83,7 +85,8 @@ Recovery / Replay Closure
   ├── Multi-frontier Runtime completion checkpoint ✅
   ├── DAG Next Frontier deterministic identity      ✅
   ├── frontier_completed checkpoint idempotency      ✅
-  └── DAG Frontier → Durable Frontier atomic bridge  ✅ 本轮
+  ├── DAG Frontier → Durable Frontier atomic bridge  ✅
+  └── Durable Frontier → running Execution ownership reuse ✅ 本轮
 
 Phase 2.4 Durable Scheduler
   ├── Persistence / Runtime                ✅
@@ -97,9 +100,9 @@ Phase 2.4 完整 Gate / Acceptance
 
 ## 本轮交付与文档
 
-- `backend/app/services/workflow/checkpoint/recovery/dag_frontier_progression.py`
-- `backend/tests/unit/test_workflow_dag_frontier_progression_persistence.py`
-- `docs/04-errors/2026-08-27-dag-frontier-atomic-progression-bridge.md`
+- `backend/app/services/workflow_worker/frontier_runtime.py`
+- `backend/tests/unit/test_durable_frontier_worker_dispatch.py`
+- `docs/04-errors/2026-08-27-durable-frontier-execution-ownership-reuse.md`
 - `docs/PROJECT_STATUS.md`
 
 **Unit Test：本轮未在当前环境执行，因此不记录 PASS。完整 Gate / Acceptance 继续暂停。**
