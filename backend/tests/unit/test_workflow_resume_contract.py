@@ -181,3 +181,43 @@ async def test_resume_contract_bootstraps_frontier_and_commits_atomically(monkey
     assert bootstrapped[0]["source_execution"] is source
     assert bootstrapped[0]["resume_execution"] is created
     assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_contract_can_defer_commit_to_outer_recovery_transaction(monkeypatch):
+    source = SimpleNamespace(
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="failed",
+        worker_owner=None,
+    )
+    created = SimpleNamespace(id=uuid4())
+    db = _DB(existing=None)
+    service = WorkflowExecutionResumeContractService(db)
+
+    async def fake_latest(_execution_id, tenant_id=None):
+        return SimpleNamespace(id=uuid4())
+
+    service.checkpoint.latest = fake_latest
+    service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
+        resume_idempotency_key=f"resume:{source.id}:checkpoint:8",
+        checkpoint_sequence=8,
+    )
+
+    class _ExecutionService:
+        async def _lock_execution(self, execution):
+            return execution
+
+        async def resume_from_latest_checkpoint(self, *_args, **_kwargs):
+            assert _kwargs["commit"] is False
+            return created
+
+    async def fake_bootstrap(**_kwargs):
+        return ("node-c",)
+
+    import app.services.workflow.execution as execution_module
+    monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
+    service.bootstrap.bootstrap = fake_bootstrap
+
+    result = await service.resume_with_outcome(source, uuid4(), commit=False)
+
+    assert result.outcome == "created"
+    assert db.commits == 0
