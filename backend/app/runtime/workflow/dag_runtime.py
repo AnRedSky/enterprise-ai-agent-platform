@@ -160,6 +160,11 @@ class WorkflowRuntime(BaseWorkflowRuntime):
     async def execute(self, execution, version, actor_id, is_admin: bool = False,
                       allow_legacy_empty_nodes: bool = False) -> dict:
         """执行 Workflow，并在 Recovery Resume 场景延续持久化 trace_id。"""
+        # 普通 Execution 没有 Recovery trace lineage，不应执行无意义的 Trace 查询；
+        # 这也保证普通 Runtime 的单元测试与实际运行路径不依赖 Recovery 数据源。
+        if getattr(execution, "resume_of_execution_id", None) is None:
+            return await super().execute(execution, version, actor_id, is_admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
+
         trace_link = WorkflowRecoveryTraceLinkService(self.db)
         trace_id = await trace_link.get_trace_id(execution)
         if trace_id is None:
