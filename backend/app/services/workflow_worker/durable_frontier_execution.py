@@ -79,26 +79,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         started,
         workflow_retry_counter,
     ):
-        """执行 Multi-frontier，但把 Checkpoint 持久化交给 Durable Frontier progression。
-
-        Args:
-            runtime: 唯一 WorkflowRuntime 实例，提供 Node 执行与 Retry 策略。
-            service: 当前 Execution Service。
-            execution: 当前 Workflow Execution。
-            plan: 已确定的 DAG frontier plan。
-            branch_state_data: Planner 计算出的各 Branch 输入状态。
-            actor_id: 当前执行操作者。
-            is_admin: 是否使用管理员执行权限。
-            workflow_timeout: Workflow 总超时时间，单位毫秒。
-            max_retries: Workflow Retry budget。
-            started: Runtime 开始时间。
-            workflow_retry_counter: 当前 Runtime 已消耗的 Retry 次数。
-
-        Returns:
-            Multi-frontier Executor 结果。Branch NodeExecution 仍写入当前事务，
-            但不提前追加 `frontier_completed` Checkpoint；外层 progression 会把 Frontier、
-            Checkpoint、Execution terminalization 与 Next Frontier 一次性提交，避免同一 frontier 产生两个完成快照。
-        """
+        """执行 Multi-frontier，但把 Checkpoint 持久化交给 Durable Frontier progression。"""
         async def execute_branch(node, input_data):
             return await runtime._execute_node_with_policy(
                 service,
@@ -133,12 +114,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         error_code: str,
         error_message: str,
     ) -> None:
-        """在当前 Frontier failure 事务内 terminalize Execution，不调用会自行 commit 的通用 transition。
-
-        Frontier failure 与 Execution failure 必须保持同一 COMMIT/ROLLBACK 边界；否则通用
-        WorkflowExecutionService.transition() 的内部 commit 会先提交 Execution，再让 Frontier
-        retry/failed 状态单独提交，产生半完成 durable lifecycle。
-        """
+        """在当前 Frontier failure 事务内 terminalize Execution。"""
         if execution.status in {"completed", "failed", "cancelled"}:
             if execution.status != "failed":
                 raise HTTPException(409, f"Execution 已进入终态 {execution.status}，拒绝重复 failure")
@@ -232,7 +208,10 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
 
     async def execute_frontier(self, frontier: WorkflowFrontier) -> None:
         """执行一个 Durable Frontier，并通过统一 Progression primitive 完成成功提交。"""
-        heartbeat = asyncio.create_task(self._renew_frontier_forever(frontier.id, frontier.attempt))
+        runtime_task = asyncio.current_task()
+        heartbeat = asyncio.create_task(
+            self._renew_frontier_forever(frontier.id, frontier.attempt, runtime_task)
+        )
         try:
             async with SessionLocal() as db:
                 try:
@@ -347,20 +326,23 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 except Exception:
                     await db.rollback()
                     raise
+        except asyncio.CancelledError:
+            await self._cancel_heartbeat(heartbeat)
+            raise
         except Exception as exc:
             try:
                 await self._converge_failure(frontier, exc)
             finally:
-                heartbeat.cancel()
-                try:
-                    await heartbeat
-                except asyncio.CancelledError:
-                    pass
+                await self._cancel_heartbeat(heartbeat)
             raise
         finally:
             if not heartbeat.done():
-                heartbeat.cancel()
-                try:
-                    await heartbeat
-                except asyncio.CancelledError:
-                    pass
+                await self._cancel_heartbeat(heartbeat)
+
+    @staticmethod
+    async def _cancel_heartbeat(heartbeat: asyncio.Task[object]) -> None:
+        heartbeat.cancel()
+        try:
+            await heartbeat
+        except asyncio.CancelledError:
+            pass
