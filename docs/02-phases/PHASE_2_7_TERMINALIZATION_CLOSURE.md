@@ -77,6 +77,12 @@ frontier_completed Checkpoint
 - Checkpoint `execution_status` 必须与当前 Execution lifecycle 一致，否则 fail-closed；
 - Execution 缺失时拒绝 Replay convergence。
 
+### 2.9 Checkpoint writer Replay ownership independence
+
+- `frontier_completed` Checkpoint 的重复写入幂等边界只比较 Durable completion fact，不比较历史 `worker_owner`；
+- 新 Worker Replay 同一 completion fact 时不得因为 ephemeral owner 变化而追加第二条 Checkpoint；
+- `worker_owner / worker_attempt / lease` 继续只用于当前实时写入的 fencing，而不成为历史 Replay identity。
+
 ## 3. 当前终态模型
 
 ```text
@@ -96,6 +102,7 @@ Replay binding
      ├── source Frontier
      ├── fingerprint
      ├── Node-set
+     ├── Checkpoint payload
      └── lifecycle
      ↓
 Durable fact uniqueness
@@ -132,6 +139,8 @@ same Frontier identity
       ↓
 same Checkpoint binding
       ↓
+same Checkpoint payload
+      ↓
 same lifecycle
       ↓
 same terminal result
@@ -149,6 +158,36 @@ worker_owner
 
 Replay 的最终一致性必须由 Durable facts 本身证明，而不是由“当前 Worker 恰好与历史 Worker 相同”证明。
 
+### 4.3 Checkpoint writer / Replay symmetry audit
+
+最终需要确认两条路径对同一 `frontier_completed` Durable fact 使用完全一致的 identity：
+
+```text
+Original completion
+    ↓
+append_next_in_transaction()
+    ↓
+(frontier_id, reason, execution, payload, lifecycle)
+
+Replay completion
+    ↓
+append_next_in_transaction()
+    ↓
+同一 Durable identity
+    ↓
+返回既有 Checkpoint
+```
+
+禁止出现：
+
+```text
+Original path identity
+    !=
+Replay path identity
+```
+
+导致“原始提交只有一条、Replay 又追加一条”的情况。
+
 ## 5. 单元测试
 
 已补充 / 调整 Unit Test：
@@ -160,6 +199,7 @@ backend/tests/unit/test_frontier_terminalization_sibling_guard.py
 backend/tests/unit/test_frontier_failure_terminalization.py
 backend/tests/unit/test_frontier_lock_order.py
 backend/tests/unit/test_frontier_replay_lifecycle_audit.py
+backend/tests/unit/test_checkpoint_replay_worker_independence.py
 ```
 
 当前 Unit Test 仅作为生产主线的断言实现，不提前执行完整测试 Gate。
@@ -187,11 +227,14 @@ Terminal Replay Binding                    ✅
 Terminal Replay Lifecycle                  ✅
 Success / Failure sibling closure          ✅
 Duplicate completion fact closure          ✅
-Replay worker/lifecycle independence       ✅ 本轮
+Replay worker/lifecycle independence       ✅
+Checkpoint writer Replay independence      ✅ 本轮
         ↓
 Success / Failure terminalization final audit
         ↓
 Replay convergence final audit
+        ↓
+Checkpoint writer / Replay symmetry audit
         ↓
 Phase 2.7 主线完成
         ↓
