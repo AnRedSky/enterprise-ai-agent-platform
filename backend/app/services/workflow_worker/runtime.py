@@ -2,7 +2,7 @@
 
 职责：从 PostgreSQL 认领 pending Workflow Execution，并复用唯一 WorkflowExecutionService 执行 Runtime。
 边界：不负责 Scheduled Trigger 时间计算、slot、misfire 或 Trigger API；Scheduler 只负责产生 pending Execution。
-关键外部依赖：PostgreSQL、WorkflowExecutionService、Workflow/WorkflowVersion ORM。
+关键外部依赖：PostgreSQL、WorkflowExecutionService、Workflow/WorkflowVersion ORM、Recovery Trace Lineage。
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -20,6 +21,14 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.runtime.workflow import WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
+from app.services.workflow.checkpoint.recovery.observability import (
+    RECOVERY_WORKER_FINISHED,
+    RECOVERY_WORKER_STARTED,
+    WorkflowRecoveryEvent,
+    WorkflowRecoveryEventLogger,
+    WorkflowRecoveryTelemetry,
+)
+from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +46,7 @@ class WorkflowWorker:
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         concurrency: int = DEFAULT_CONCURRENCY,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        telemetry: WorkflowRecoveryTelemetry | None = None,
     ):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds 必须大于 0")
@@ -50,18 +60,11 @@ class WorkflowWorker:
         self.owner = f"worker:{uuid4()}"
         self._stop_event = asyncio.Event()
         self._semaphore = asyncio.Semaphore(concurrency)
+        self.event_logger = WorkflowRecoveryEventLogger(logging.getLogger(__name__))
+        self.telemetry = telemetry or WorkflowRecoveryTelemetry(event_logger=self.event_logger)
 
     async def claim_one(self, now: datetime | None = None) -> WorkflowExecution | None:
-        """原子认领一个 pending Execution。
-
-        Args:
-            now: 可选的当前时间；主要用于确定性测试和租约计算。
-
-        Returns:
-            成功认领的 WorkflowExecution；没有可消费任务时返回 None。
-
-        事务边界：在 PostgreSQL 行锁事务中写入 Worker owner、租约到期时间和尝试次数并立即提交。
-        """
+        """原子认领一个 pending Execution。"""
         now = now or datetime.now(UTC)
         now_naive = now.replace(tzinfo=None)
         lease_expires_at = now_naive + timedelta(seconds=self.lease_seconds)
@@ -88,18 +91,7 @@ class WorkflowWorker:
             return execution
 
     async def _renew_lease_once(self, execution_id: UUID) -> bool:
-        """原子刷新当前 Worker 的 Execution 租约。
-
-        Args:
-            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
-
-        Returns:
-            成功刷新并仍持有 ownership 时返回 True；Execution 已进入终态、ownership 已丢失或租约已失效时返回 False。
-
-        事务边界：使用带 ownership/status fencing 的单条 UPDATE。不能先 SELECT ORM 对象再赋值提交，
-        因为 Runtime 可能在 SELECT 与 COMMIT 之间把 Execution 推进到 completed/failed/cancelled 并释放
-        worker ownership；旧 Worker 随后只更新 `worker_lease_expires_at` 会违反 worker lease pair constraint。
-        """
+        """原子刷新当前 Worker 的 Execution 租约。"""
         now = datetime.now(UTC).replace(tzinfo=None)
         lease_expires_at = now + timedelta(seconds=self.lease_seconds)
         async with SessionLocal() as db:
@@ -120,16 +112,7 @@ class WorkflowWorker:
             return True
 
     async def _renew_lease_forever(self, execution_id: UUID) -> None:
-        """持续刷新当前 Worker 的 Execution 租约。
-
-        Args:
-            execution_id: 当前 Worker 正在执行的 Workflow Execution ID。
-
-        Returns:
-            无；Execution 不再属于当前 Worker 或租约已失效后自动退出。
-
-        事务边界：每次刷新使用独立短事务；数据库瞬时失败只记录日志并继续下一轮。heartbeat 首轮立即执行一次 ownership 检查，租约失效后立即退出，后续 Runtime 状态转换由 ownership fencing 阻断旧 Worker。
-        """
+        """持续刷新当前 Worker 的 Execution 租约。"""
         interval = max(0.1, self.lease_seconds / 3)
         while True:
             try:
@@ -233,19 +216,49 @@ class WorkflowWorker:
             workflow_timeout_ms = WorkflowRuntime.resolve_timeout_ms(runtime_config or {})
             execution_timeout = workflow_timeout_ms / 1000 + self.EXECUTION_TIMEOUT_GRACE_SECONDS
             service = WorkflowExecutionService(db)
+            trace_link = WorkflowRecoveryTraceLinkService(db)
+            recovery_trace_id = await trace_link.get_trace_id(execution)
+            started = monotonic()
+            if recovery_trace_id:
+                self.telemetry.emit(
+                    WorkflowRecoveryEvent(
+                        event_name=RECOVERY_WORKER_STARTED,
+                        execution_id=execution.id,
+                        resume_execution_id=execution.id,
+                        trace_id=recovery_trace_id,
+                        phase="worker",
+                    )
+                )
             await self._recover_orphaned_running_nodes(execution, service)
             execution, runtime_version = await self._prepare_resume_runtime(db, execution, version)
             lease_task = asyncio.create_task(self._renew_lease_forever(execution.id))
+            outcome = "completed"
+            reason_code = None
             try:
-                await asyncio.wait_for(service.run(execution, runtime_version, execution.created_by, allow_legacy_empty_nodes=allow_legacy_empty_nodes, worker_owner=self.owner), timeout=execution_timeout)
+                await asyncio.wait_for(
+                    service.run(
+                        execution,
+                        runtime_version,
+                        execution.created_by,
+                        allow_legacy_empty_nodes=allow_legacy_empty_nodes,
+                        worker_owner=self.owner,
+                    ),
+                    timeout=execution_timeout,
+                )
             except asyncio.TimeoutError as exc:
+                outcome = "failed"
+                reason_code = "WORKER_EXECUTION_TIMEOUT"
                 current = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution.id))).scalar_one_or_none()
                 if current is not None and current.status == "running":
                     try:
-                        await service.transition(current, "failed", error_code="WORKER_EXECUTION_TIMEOUT", error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
+                        await service.transition(current, "failed", error_code=reason_code, error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
                     except HTTPException:
                         await db.rollback()
                 raise RuntimeError("Worker Execution 超过受控执行时间") from exc
+            except Exception:
+                outcome = "failed"
+                reason_code = "WORKER_EXECUTION_FAILED"
+                raise
             finally:
                 lease_task.cancel()
                 try:
@@ -257,13 +270,22 @@ class WorkflowWorker:
                     current.worker_owner = None
                     current.worker_lease_expires_at = None
                     await db.commit()
+                if recovery_trace_id:
+                    self.telemetry.emit(
+                        WorkflowRecoveryEvent(
+                            event_name=RECOVERY_WORKER_FINISHED,
+                            execution_id=execution.id,
+                            resume_execution_id=execution.id,
+                            trace_id=recovery_trace_id,
+                            outcome=outcome,
+                            reason_code=reason_code,
+                            phase="worker",
+                            duration_ms=(monotonic() - started) * 1000,
+                        )
+                    )
 
     async def dispatch_once(self) -> int:
-        """批量认领并并发执行当前可用任务。
-
-        Returns:
-            本轮成功认领的 Execution 数量。
-        """
+        """批量认领并并发执行当前可用任务。"""
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
             execution = await self.claim_one()
