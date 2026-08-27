@@ -1,4 +1,5 @@
 import { getToken } from "./auth";
+import { createSseParser, parseSseData } from "@/utils/sse";
 
 export interface ChatRequest {
   agent_id: string;
@@ -33,17 +34,33 @@ export type ChatEvent = ChatStartEvent | ChatDeltaEvent | ChatDoneEvent;
 
 const apiOrigin = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 
+/**
+ * 通过后端 SSE 接口流式执行对话，并将真实事件按顺序交给调用方。
+ *
+ * Args:
+ *   payload: Chat 请求参数。
+ *   onEvent: 收到完整 Chat 事件后的回调。
+ *   signal: 可选的请求取消信号。
+ *
+ * Returns:
+ *   流正常结束时返回 Promise<void>；HTTP、流读取或事件解析失败时抛出异常。
+ *
+ * 重要约束：SSE 分片必须通过统一解析器处理，避免网络 chunk 边界被误认为事件边界；取消由调用方通过 AbortController 管理 fetch 生命周期。
+ */
 export async function streamChat(
   payload: ChatRequest,
   onEvent: (event: ChatEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  const token = getToken();
   const response = await fetch(`${apiOrigin}/api/v1/agents/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!response.ok) {
@@ -54,23 +71,21 @@ export async function streamChat(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  const parser = createSseParser();
 
   while (true) {
     const { done, value } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-    const frames = buffer.split("\n\n");
-    buffer = frames.pop() || "";
-
-    for (const frame of frames) {
-      const data = frame
-        .split("\n")
-        .find((line) => line.startsWith("data: "))
-        ?.slice(6)
-        .trim();
-      if (data) onEvent(JSON.parse(data) as ChatEvent);
+    const chunk = decoder.decode(value || new Uint8Array(), { stream: !done });
+    for (const event of parser.push(chunk)) {
+      if (!event.data) continue;
+      onEvent(parseSseData<ChatEvent>(event) as ChatEvent);
     }
     if (done) break;
+  }
+
+  for (const event of parser.flush()) {
+    if (!event.data) continue;
+    onEvent(parseSseData<ChatEvent>(event) as ChatEvent);
   }
 }
 

@@ -10,79 +10,46 @@
 
 ### 2.1 SSE Parser
 
-`src/utils/sse.ts` 建立统一 SSE Parser：
-
-- 支持一个 SSE event 被拆成多个 HTTP 网络 chunk。
-- 支持 LF / CRLF。
-- 支持 SSE comment heartbeat。
-- 支持 `event`、多行 `data`、`id`、`retry`。
-- 支持流结束时 flush 未以空行结束的最后一个事件。
-- JSON data 自动解析；非 JSON data 保留原始字符串。
-
-Runtime、Chat、Tool streaming 后续统一复用该解析边界，不在页面自行 `split('\\n\\n')`。
+`src/utils/sse.ts` 建立统一 SSE Parser，处理网络 chunk、LF/CRLF、heartbeat comment、多行 data、id/retry 及最终 flush。Runtime、Chat、Tool streaming 统一复用该边界。
 
 ### 2.2 Runtime Context / Status
 
-`src/utils/runtime.ts` 建立统一展示边界：
+`src/utils/runtime.ts` 统一 Runtime 状态归一化、Tag 类型、latency、长 ID 和后端错误提取，不改变后端协议。
 
-- Runtime 状态归一化及展示文案。
-- Element Plus Tag 类型映射。
-- latency 格式化。
-- execution/request/trace/session 长 ID 缩略。
-- `detail/error/message` 后端错误提取。
+### 2.3 Runtime Execution 页面
 
-这些 helper 不改变后端协议，只集中前端展示规则。
+`RuntimeExecutions.vue` 已迁移公共 helper，统一展示并复制真实 Execution / Trace / Request / Session 上下文，Workflow Trace 同样使用统一 ID 展示。
 
-### 2.3 Runtime Execution 页面迁移
+### 2.4 Chat Streaming 消费迁移
 
-`RuntimeExecutions.vue` 已迁移到公共 Runtime helper：
+`src/api/chat.ts` 已迁移到 `createSseParser` / `parseSseData`：
 
-- Execution / Trace / Request / Session 使用统一长 ID 展示。
-- 状态使用统一状态枚举与 Tag 展示。
-- Duration 使用统一 latency 格式化。
-- 保留真实后端 `execution_id` / `trace_id` / `request_id` / `session_id`，不在前端生成替代 ID。
-- 提供执行上下文复制能力，复制内容直接来自后端字段。
-- Workflow Trace 的 Trace ID 同样使用统一缩略规则。
+- 不再自行按网络 chunk 切分 SSE frame。
+- 支持跨 chunk 事件与最终 flush。
+- HTTP 非 2xx 继续抛出真实后端错误。
+- 支持 `AbortSignal` 取消 fetch 生命周期。
+- 不生成虚假的执行上下文 ID。
 
-### 2.4 自动化 Unit Test
+### 2.5 自动化 Unit Test
 
-新增：
+新增 `tests/api/chat.test.ts`，覆盖跨 chunk、最终 flush、AbortSignal、HTTP 错误及 response body 缺失；既有 Runtime / SSE / helper Unit Test 继续保留。
 
-- `src/utils/sse.test.ts`
-- `src/utils/runtime.test.ts`
-- `tests/views/Runtime.test.ts` 对 Runtime 页面消费边界进行补充验证。
-- `scripts/test/phase-1-3-runtime-hardening.ps1` 提供可重复的 frontend test/build 入口。
+## 3. 当前阶段边界
 
-测试重点覆盖网络分片、SSE 事件格式、状态归一化、延迟展示、错误提取、Execution Trace 加载及执行上下文复制。
-
-## 3. 与后端关系
-
-当前后端已经具备 Agent Runtime、Model Gateway、SSE、Session/Message 以及 request_id / trace_id / execution_id 等执行上下文。前端不重复实现这些能力，而是围绕真实 API 返回增强消费层稳定性。
-
-特别注意：
-
-- 不使用 JSON 文件模拟 Runtime 数据。
-- 不在前端生成虚假的 execution_id / trace_id。
-- 不把后端执行状态写死为“成功”。
-- Provider / Tool / Runtime 错误必须沿真实 API 响应传递到 UI。
-
-## 4. 当前阶段边界
-
-公共 SSE / Runtime 数据边界与 Runtime Execution 页面迁移已经完成。下一步继续处理 Chat streaming 及 Runtime 失败、断流、取消场景，但不引入第二套 SSE 或状态解析实现。
+公共 SSE、Runtime Execution、Chat streaming 消费迁移已经完成。下一步处理 Chat / Runtime UI 的失败、断流、取消生命周期，并继续消除重复状态解析。
 
 下一步优先级：
 
-1. 将现有 Chat streaming 消费逻辑迁移到 `createSseParser`。
-2. 梳理 Runtime 相关页面，消除重复状态 / ID / latency 展示逻辑。
-3. 增加 Chat / Runtime 断流、失败、取消组件级 Unit Test。
-4. 后端新增 Runtime/DAG 执行字段后，先补充 API 契约测试，再扩展 UI，不通过 mock 数据掩盖接口差异。
+1. 梳理 Chat 页面实际调用 `streamChat` 的生命周期，补充取消按钮与流状态收口。
+2. 增加 Chat / Runtime 断流、失败、取消组件级 Unit Test。
+3. 梳理其他 Runtime 页面，消除重复状态 / ID / latency 展示逻辑。
+4. 后端新增 Runtime/DAG 字段后，先补充 API 契约测试，再扩展 UI。
 
-## 5. 本地验收
+## 4. 测试范围
 
-在 `frontend` 目录执行：
+当前只执行 Unit Test；Frontend production build、Browser E2E、Real API 和完整 Release Gate 暂不作为主线阻塞条件。实际执行结果必须如实记录，不得预填通过。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-1-3-runtime-hardening.ps1
+cd frontend
+npm test -- --run tests/api/chat.test.ts tests/views/Runtime.test.ts src/utils/sse.test.ts src/utils/runtime.test.ts
 ```
-
-当前按主线开发策略仅要求 Unit Test 实际通过；production build 属于完整 Frontend Gate，暂不作为主线阻塞条件。任何实际执行结果必须如实记录，不得预填“通过”。
