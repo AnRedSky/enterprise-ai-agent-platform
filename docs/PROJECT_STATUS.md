@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前 `main` HEAD：继续推进 Phase 2.7-A Durable Recovery Closure。
-- 本轮已完成：**Checkpoint 序号并发分配的一致性修复**；`WorkflowExecutionCheckpointService.append_next_in_transaction()` 现在先锁定目标 `WorkflowExecution` 行，再读取最大 Checkpoint sequence 并追加快照，避免并发 Worker 在同一 Execution 上计算出相同序号。
+- 本轮已完成：**Checkpoint Durable Fact 完整性校验**；带 Node 的 Checkpoint 现在可验证对应 `WorkflowNodeExecution` 的 node、status、attempt、output_data 一致性，避免 Recovery 将不同时间边界的 NodeExecution 与 Checkpoint 拼成一个 snapshot。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -13,7 +13,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization，并继续进行 Durable Recovery Closure。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization / Checkpoint Durable Fact completeness，并继续进行 Durable Recovery Closure。**
 
 ## Phase 2.7-A 当前实现
 
@@ -39,7 +39,8 @@
 - DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity，Recovery 重试不会重复创建相同 Decision event；
 - 顺序 Resume Sequence Planner 完整传递 Planner 的 selected predecessor 与 decision fingerprint，不允许在顺序 Runtime 边界丢失 Durable Decision identity；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径；
-- Checkpoint 自动序号分配现在先锁定目标 `WorkflowExecution` 再读取最大 sequence，确保同一 Execution 的并发 Checkpoint 写入具有确定的序号分配边界。
+- Checkpoint 自动序号分配现在先锁定目标 `WorkflowExecution` 再读取最大 sequence，确保同一 Execution 的并发 Checkpoint 写入具有确定的序号分配边界；
+- Checkpoint 若绑定 Node，则 Recovery 可通过 `assert_node_fact_complete()` 校验 NodeExecution 的 node、status、attempt、output_data；execution-level checkpoint 不要求 NodeExecution。
 
 ## 当前开发策略
 
@@ -53,28 +54,28 @@
 
 ```text
 Phase 2.7-A Conditional Branching
-  ├── Evaluator                       ✅
-  ├── DAG Contract                   ✅
-  ├── Conditional Planner            ✅
-  ├── Initial Execution Runtime      ✅
-  ├── Resume Runtime Integration     ✅
-  ├── Conditional Join               ✅
-  ├── Durable tenant boundary        ✅
-  ├── Checkpoint tenant boundary     ✅
-  ├── Conditional Decision Trace     ✅
-  ├── Resume Contract tenant scope   ✅
-  ├── Branch Checkpoint Gate         ✅
-  ├── Decision Fingerprint            ✅
-  ├── Runtime Plan fingerprint        ✅
-  ├── Recovery Frontier Replay Guard  ✅
-  ├── Decision Trace Idempotency       ✅
-  ├── Sequence Plan metadata          ✅
-  ├── Checkpoint sequence serialization ✅ 本轮完成
-  ├── Unit Test 实际执行              ⏳
-  └── Real API acceptance              ⏸ 暂停
+  ├── Evaluator                         ✅
+  ├── DAG Contract                     ✅
+  ├── Conditional Planner              ✅
+  ├── Initial Execution Runtime        ✅
+  ├── Resume Runtime Integration       ✅
+  ├── Conditional Join                 ✅
+  ├── Durable tenant boundary          ✅
+  ├── Checkpoint tenant boundary       ✅
+  ├── Conditional Decision Trace       ✅
+  ├── Resume Contract tenant scope     ✅
+  ├── Branch Checkpoint Gate            ✅
+  ├── Decision Fingerprint              ✅
+  ├── Runtime Plan fingerprint          ✅
+  ├── Recovery Frontier Replay Guard    ✅
+  ├── Decision Trace Idempotency         ✅
+  ├── Sequence Plan metadata            ✅
+  ├── Checkpoint sequence serialization  ✅
+  ├── Checkpoint fact completeness       ✅ 本轮完成
+  ├── Unit Test 实际执行                ⏳
+  └── Real API acceptance               ⏸ 暂停
           ↓
 Phase 2.7-A Durable Recovery Closure
-  ├── Checkpoint fact 完整性
   ├── Conditional decision 可重建性
   └── Trace lineage 连续性
           ↓
