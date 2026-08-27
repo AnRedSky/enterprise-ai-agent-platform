@@ -23,7 +23,8 @@
 - DAG Frontier → Durable Frontier atomic progression bridge：✅
 - Durable Frontier → same-Execution Worker ownership reuse：✅
 - Durable Frontier expired-lease recovery 已接入统一 Recovery Scheduler：过期 `claimed` / `running` Frontier 会被原子回收为 `retry_wait`，清除旧 Worker ownership，并重新进入 Durable Claim 队列；Recovery Scheduler 同一轮继续处理 failed Execution：✅
-- **Durable Frontier Execution-aware Claim：Claim 在同一数据库事务内校验关联 Execution ownership / fencing eligibility，排除 completed / failed / cancelled Execution，避免不可消费 Frontier 形成调度头阻塞：✅ 本轮**
+- Durable Frontier Execution-aware Claim：Claim 在同一数据库事务内校验关联 Execution ownership / fencing eligibility，排除 completed / failed / cancelled Execution，避免不可消费 Frontier 形成调度头阻塞：✅
+- **Durable Frontier Runtime Entry Contract：统一支持 `pending + owner` 新 Execution 与 `running + same owner + fencing generation` 后继 Frontier；Node Runtime 仍唯一委托 `WorkflowRuntime`，LeaseGuard 继续负责 ownership loss abort：✅ 本轮**
 
 ## 当前实现边界
 
@@ -40,9 +41,13 @@ Execution-aware Worker Claim
   ↓
 Execution Ownership / Fencing
   ↓
-Workflow Runtime
+Unified Runtime Entry
+  ├── pending + owner → running
+  └── running + same owner → continue
   ↓
-Node Checkpoint
+WorkflowRuntime
+  ↓
+Node / Checkpoint durable facts
   ↓
 frontier_completed
   ↓
@@ -71,6 +76,8 @@ Runtime Resume
 4. 同一 Worker 在同一 Execution 内继续消费后继 Frontier 时复用 Execution fencing generation；只有 lease 失效后才产生新的 generation。
 5. Frontier → Checkpoint → Next Frontier 继续由统一 `complete_frontier_with_checkpoint()` 原子提交。
 6. `completed` / `failed` / `cancelled` Execution 不允许再次成为 Durable Frontier Runtime 的消费入口。
+7. Runtime Entry 不允许通过回退数据库状态绕过 Execution 状态机；`pending` 才执行 `pending → running`，`running + same owner` 直接继续唯一 `WorkflowRuntime`。
+8. Runtime 执行期间必须由 `WorkflowWorkerLeaseGuard` 持续验证 ownership；明确 Lease Lost 后立即取消 Runtime，旧 Worker 不再提交终态。
 
 ## 当前开发策略
 
@@ -85,28 +92,27 @@ Runtime Resume
 下一步继续收口：
 
 ```text
-Execution-aware Frontier Claim
-  ↓
-Worker fencing generation
-  ↓
-Runtime Entry / Resume
+Unified Runtime Entry
   ↓
 已有 Node / Checkpoint durable facts
   ↓
 跳过已完成 Node
+  ↓
+Node retry / lease recovery
   ↓
 frontier completion
   ↓
 Next Frontier
 ```
 
-重点解决 Durable Frontier Worker 当前仍依赖 `WorkflowWorker.execute_claimed()` 的 `pending → running` Runtime 入口：需要形成统一的 `pending` 新 Execution 与 `running + same owner` 后继 Frontier 两类 Runtime Entry Contract，同时保持 Execution / Node / Checkpoint fencing，不创建第二套 Runtime 状态机。
+重点验证 Durable Frontier 后继 Frontier 进入 Runtime 后，`WorkflowRuntime` 能基于已有 Node / Checkpoint durable facts 正确跳过已完成节点，并在 Worker Lease Recovery 后以新的 fencing generation 从正确的 Node 边界继续执行；不得重复执行已经成功 Checkpoint 的 Node。
 
 ## 本轮交付
 
-- `backend/app/services/workflow/frontier_repository.py`
+- `backend/app/services/workflow_worker/runtime_entry.py`
+- `backend/app/services/workflow_worker/frontier_runtime.py`
 - `backend/tests/unit/test_durable_frontier_worker_dispatch.py`
-- `docs/04-errors/2026-08-27-durable-frontier-execution-aware-claim.md`
+- `docs/04-errors/2026-08-27-durable-frontier-runtime-entry-contract.md`
 - `docs/PROJECT_STATUS.md`
 
 **Unit Test：本轮只实现/更新测试代码，当前环境未执行 pytest，因此不记录 PASS。**
