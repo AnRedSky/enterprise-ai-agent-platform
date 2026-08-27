@@ -5,7 +5,7 @@
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
 - 当前 `main` HEAD：继续推进 Phase 2.7-A Durable Recovery Closure。
-- 本轮已完成：**Decision Trace 幂等 Payload Drift Guard**；已有 `workflow.dag.frontier_decided` event 命中幂等 identity 后，现在重新校验 decision_id、completed_node_ids、frontier_node_ids、selected_predecessors，避免历史 Trace payload 漂移被静默接受。
+- 本轮已完成：**Deterministic Decision Fingerprint JSON Boundary**；Planner 不再使用 `default=str` 静默转换非 JSON 类型，并使用 `allow_nan=false`，使 Decision fingerprint 严格绑定 JSON-safe durable condition state。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -13,7 +13,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization / Checkpoint Durable Fact completeness / Recovery Trace Checkpoint Lineage / Conditional Decision Rebuild / Trace Lineage 连续性 / Decision Trace 幂等 Payload Drift Guard，并进入 Phase 2.7-A Closure。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency / Sequence Plan metadata / Checkpoint sequence serialization / Checkpoint Durable Fact completeness / Recovery Trace Checkpoint Lineage / Conditional Decision Rebuild / Trace Lineage 连续性 / Decision Trace 幂等 Payload Drift Guard / Deterministic Decision Fingerprint JSON Boundary，并继续进行 Phase 2.7-A Closure。**
 
 ## Phase 2.7-A 当前实现
 
@@ -45,7 +45,8 @@
 - Conditional Decision Replay 不仅比较 fingerprint，还比较历史 Decision 的 frontier 与 selected predecessor outputs，保证同一 durable completed facts 的 Decision 能完整重建；
 - Recovery Trace 幂等命中已有 lineage event 后重新校验 Source / Resume / Checkpoint identity，避免旧数据污染被静默接受；
 - `get_trace_id()` 同时限定 Resume Execution 的 tenant 与 workflow version，避免跨版本恢复错误 trace；
-- Decision Trace 幂等命中已有 event 后重新校验 decision_id、completed_node_ids、frontier_node_ids、selected_predecessors，避免历史 Decision payload drift 被静默接受。
+- Decision Trace 幂等命中已有 event 后重新校验 decision_id、completed_node_ids、frontier_node_ids、selected_predecessors，避免历史 Decision payload drift 被静默接受；
+- Decision fingerprint canonicalization 严格要求 JSON-safe condition state，禁止 `default=str` 隐式转换，并拒绝 NaN / Infinity 等非标准 JSON 数值。
 
 ## 当前开发策略
 
@@ -80,12 +81,13 @@ Phase 2.7-A Conditional Branching
   ├── Recovery Trace Checkpoint Lineage ✅
   ├── Conditional Decision Rebuild     ✅
   ├── Trace Lineage 连续性             ✅
-  ├── Decision Trace payload drift guard ✅ 本轮完成
+  ├── Decision Trace payload drift guard ✅
+  ├── Deterministic fingerprint JSON boundary ✅ 本轮完成
   ├── Unit Test 实际执行               ⏳
   └── Real API acceptance              ⏸ 暂停
           ↓
 Phase 2.7-A Closure
-  └── Closure review / invariant sweep  ← 下一任务
+  └── Closure review / invariant sweep  ← 当前
           ↓
 Phase 2.7 后续 orchestration capability
           ↓
