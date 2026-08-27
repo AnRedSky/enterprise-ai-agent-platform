@@ -7,6 +7,7 @@
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线已从 Conditional Branching Closure 转入 Durable Frontier Scheduling。
 - 本轮已完成：**Recovery / Replay Resume Checkpoint lineage 收敛**；Resume Bootstrap 在复制 Durable Node Facts 前重新读取 Source 的 `latest_recovery_fact()`，强制 `resume_checkpoint_sequence` 与实际 Source Checkpoint sequence 一致，明确 Source lineage 与 Resume 自身未来 Checkpoint sequence 的语义隔离。
 - 本轮新增：**Multi-frontier Recovery Checkpoint boundary guard**；`frontier_completed` 现在强制为 Execution-level Checkpoint，不得携带 `node_id` 或 `node_status`，避免 merged state 被错误解释为单 Node Durable Fact。
+- 本轮新增：**Recovery Execution fencing generation guard**；Execution Domain 在重新锁定 Worker-owned Execution 时同时校验 `worker_owner + worker_attempt`，同一 Worker 在重新 Claim 后 generation 变化、或 Execution 被其他 Worker reclaim 后，旧 Execution context 均不得继续状态转换或 Durable 写入。
 - Durable Recovery Resume Trace 原子事务闭环已完成；Automatic Recovery 现在将 Resume 创建、completed Node lineage、首个 Durable Frontier 与 `recovery.trace_linked` 在同一外层事务中提交，避免恢复审计事实与 Resume durable state 分裂。
 - Durable Resume 现在固定 Source Workflow Version，使用 `execution_id + checkpoint_sequence` 生成确定性 Resume idempotency key；并通过 Resume Bootstrap 计算首个 Planner frontier。
 - Scheduler → Durable Frontier → Worker → Runtime 实际桥接已完成；Scheduled Trigger 创建 pending Execution 时同步创建首个 Durable Frontier，默认 Worker 以 Frontier 为调度入口并复用唯一 WorkflowExecution Runtime。
@@ -18,7 +19,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环、Join predecessor Contract、Resume tenant boundary、Recovery Checkpoint Node Fact lineage guard、Resume Checkpoint lineage guard 以及 Multi-frontier Recovery Checkpoint boundary guard。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching Closure 已完成其当前实现范围，Durable Frontier 已完成持久化、Claim/Fencing/Recovery、Scheduler/Worker 实际接入、Retry Scheduling、Frontier → Checkpoint → Next Frontier 原子推进、Runtime/Planner progression wiring、Runtime 异常路径收敛、成功路径统一持久化、Durable Resume Bootstrap、Recovery Trace 原子事务闭环、Join predecessor Contract、Resume tenant boundary、Recovery Checkpoint Node Fact lineage guard、Resume Checkpoint lineage guard、Multi-frontier Recovery Checkpoint boundary guard 以及 Recovery Execution fencing generation guard。**
 
 ## Phase 2.7 当前实现
 
@@ -48,7 +49,7 @@
 - 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
 - DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity；
 - Checkpoint 自动序号分配锁定目标 `WorkflowExecution` 后读取最大 sequence；
-- Checkpoint Node fact completeness、Recovery Trace lineage、Decision rebuild、Trace lineage continuity、payload drift guard、fingerprint JSON boundary、single DAG planning boundary、tenant boundary、Resume idempotency lineage/key determinism、SAVEPOINT、Recovery Commit Ownership、Runtime Durable Commit Ownership、Recovery latest Node Fact guard、Cross-Execution Replay Identity 与 Multi-frontier Recovery Checkpoint boundary 均已完成；
+- Checkpoint Node fact completeness、Recovery Trace lineage、Decision rebuild、Trace lineage continuity、payload drift guard、fingerprint JSON boundary、single DAG planning boundary、tenant boundary、Resume idempotency lineage/key determinism、SAVEPOINT、Recovery Commit Ownership、Runtime Durable Commit Ownership、Recovery latest Node Fact guard、Cross-Execution Replay Identity、Multi-frontier Recovery Checkpoint boundary 与 Execution worker owner/generation fencing 均已完成；
 - `WorkflowFrontierIdentity` 提供基于 execution + workflow version + decision fingerprint + ordered node IDs 的确定性 Frontier key；
 - `WorkflowFrontierStatus` 提供 `pending → claimed → running → completed/failed` 及 `retry_wait` 生命周期；terminal Frontier 不允许重新 claim；
 - `WorkflowFrontier` 已建立 PostgreSQL 持久化模型，包含 tenant、execution、workflow version、decision fingerprint、frontier key、node IDs、attempt、Worker lease、available time、terminal/error facts；
@@ -77,7 +78,8 @@
 - Progression contract 强制 Next Frontier 与当前 Execution / Workflow Version 一致，禁止 self-loop identity，并要求存在后继时 Execution 保持 running、无后继时 Execution 进入 completed；
 - Automatic Recovery Scheduler 独立运行于 Scheduler Service 进程，不进入 API 多实例后台任务；扫描 failed Execution 后委托唯一 Recovery Domain Service；
 - Automatic Recovery 只允许 failed、无 active Worker ownership 且存在合法 resumable Checkpoint 的 Execution；冷却时间与最大恢复次数由唯一 Recovery Policy 决定；
-- Recovery Trace Link 校验 Source / Resume / Checkpoint tenant、workflow version 与 checkpoint sequence lineage；自动恢复路径使用 caller-owned transaction，Resume / Frontier / trace link 一次提交。
+- Recovery Trace Link 校验 Source / Resume / Checkpoint tenant、workflow version 与 checkpoint sequence lineage；自动恢复路径使用 caller-owned transaction，Resume / Frontier / trace link 一次提交；
+- Execution Domain 的 `_lock_execution()` 现在在 `FOR UPDATE` 后同时验证 `worker_owner + worker_attempt`，将 Frontier fencing generation 向 Execution / Node 状态转换边界延伸，旧 generation 无法继续产生 Durable 写入。
 
 ## 当前开发策略
 
@@ -122,13 +124,13 @@ Recovery / Replay Closure
   ├── Resume Checkpoint lineage          ✅
   ├── Cross-Execution Replay Identity   ✅
   ├── Multi-frontier Checkpoint boundary ✅
-  ├── Recovery fencing generation       ← 下一任务
-  ├── stale Worker late-write protection ← 后续
+  ├── Execution fencing generation      ✅ 本轮
+  ├── stale Worker late-write protection ← 下一任务
   └── Multi-frontier Join Recovery       ← 后续
           ↓
 继续主线直到全部任务完成
 ```
 
-下一主线：**Recovery / Replay Closure**，继续收敛 Recovery fencing generation、Replay identity、旧 Worker late-write 防护以及 Multi-frontier Join Recovery 的完整生命周期。
+下一主线：**Recovery / Replay Closure**，继续收敛旧 Worker late-write 防护、Replay identity 完整生命周期以及 Multi-frontier Join Recovery。
 
 Phase 2.7 禁止创建第二套 DAG Planner / Runtime / State Merge；Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler → Frontier → Worker → Runtime → Retry → Checkpoint → Next Frontier → Recovery 生命周期。
