@@ -46,23 +46,7 @@ async def enqueue_frontier(
     node_ids: tuple[str, ...],
     now: datetime,
 ) -> WorkflowFrontier:
-    """幂等创建一个待调度 Frontier，并保持事务由调用方拥有。
-
-    Args:
-        db: 当前数据库会话。
-        tenant_id: 当前租户 ID，必须与 Execution 所属租户一致。
-        identity: Planner 产生的确定性 Frontier 身份。
-        node_ids: 当前 Frontier 的有序节点集合。
-        now: Frontier 可调度时间。
-
-    Returns:
-        已创建或已经存在的 Durable Frontier。
-
-    Raises:
-        RuntimeError: 数据库唯一约束发生并发竞争后仍无法读取 Frontier。
-
-    事务边界：这里只执行 INSERT/SELECT 与 flush，不执行 commit；Scheduler/Worker 必须在自己的原子事务中提交。
-    """
+    """幂等创建一个待调度 Frontier，并保持事务由调用方拥有。"""
     frontier_key = identity.key()
     statement = (
         pg_insert(WorkflowFrontier)
@@ -108,23 +92,15 @@ async def claim_next_frontier(
     lease_expires_at: datetime,
     now: datetime,
 ) -> WorkflowFrontier | None:
-    """Claim one schedulable Frontier for a tenant without committing the transaction。
+    """Claim one schedulable Frontier for a tenant without committing the transaction.
 
     Frontier 只有在其关联 Execution 当前允许被该 Worker 消费时才可进入 claim。
     这样可以避免 failed/completed Execution 上的旧 Frontier 阻塞其他租户或后继任务，
     同时把 Execution ownership/fencing 判断固定在 Durable Frontier claim 的事务边界内。
 
-    Args:
-        db: 当前数据库会话。
-        tenant_id: 当前租户 ID。
-        worker_owner: 当前 Worker ownership 标识。
-        lease_expires_at: 本次 Worker lease 到期时间。
-        now: 当前时间。
-
-    Returns:
-        成功认领的 Frontier；没有可调度任务时返回 None。
-
-    事务边界：只锁定、修改并 flush Frontier，不执行 commit；调用方负责最终事务提交。
+    Recovery 后一个 Execution 可能同时存在多个 retry_wait Frontier；当 pending Execution 已经由
+    当前 Worker 重新取得 ownership 时，后续 Frontier 可以复用同一 Worker epoch，不应被 pending
+    状态本身错误阻塞。
     """
     execution_available = or_(
         and_(
@@ -133,6 +109,7 @@ async def claim_next_frontier(
                 WorkflowExecution.worker_owner.is_(None),
                 WorkflowExecution.worker_lease_expires_at.is_(None),
                 WorkflowExecution.worker_lease_expires_at <= now,
+                WorkflowExecution.worker_owner == worker_owner,
             ),
         ),
         and_(
@@ -182,25 +159,7 @@ async def recover_expired_frontiers(
     now: datetime,
     limit: int = 100,
 ) -> list[WorkflowFrontier]:
-    """只回收 Frontier 与关联 Execution 都已失去租约的可恢复任务。
-
-    Args:
-        db: 当前数据库会话。
-        now: 当前时间。
-        limit: 单次最多回收的 Frontier 数量。
-
-    Returns:
-        本次回收的 Frontier 列表。
-
-    Raises:
-        ValueError: limit 非正数。
-
-    设计意图：Frontier lease 与 Execution lease 是同一个 Worker ownership 生命周期的两层事实。
-    只看到 Frontier 过期而 Execution 仍持有有效 lease 时，不能立即把 Frontier 放回 retry 队列，
-    否则第二个 Worker 可能在第一个 Worker 仍拥有 Execution 时抢占 Frontier，形成双重消费窗口。
-    因此 running Execution 必须同时满足“无 owner 或 Execution lease 已过期”；pending Execution
-    则只能在没有有效 owner 时恢复。回收动作只清除 Frontier 调度权，不递增 attempt，最终事务由调用方提交。
-    """
+    """只回收 Frontier 与关联 Execution 都已失去租约的可恢复任务。"""
     if limit <= 0:
         raise ValueError("limit must be positive")
     stmt = (
@@ -245,23 +204,7 @@ async def transition_owned_frontier(
     target_status: str,
     now: datetime,
 ) -> WorkflowFrontier:
-    """仅允许当前 Worker ownership 与 fencing generation 匹配时推进 Frontier。
-
-    Args:
-        db: 当前数据库会话。
-        frontier_id: Frontier ID。
-        worker_owner: 当前 Worker ownership 标识。
-        attempt: 当前 fencing generation。
-        target_status: 目标状态。
-
-    Returns:
-        完成状态变更后的 Frontier。
-
-    Raises:
-        ValueError: ownership、attempt 或当前状态不满足要求。
-
-    事务边界：只执行带行锁的状态变更与 flush，不执行 commit。
-    """
+    """仅允许当前 Worker ownership 与 fencing generation 匹配时推进 Frontier。"""
     result = await db.execute(
         select(WorkflowFrontier)
         .where(
