@@ -26,6 +26,7 @@ from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_progression import complete_frontier_with_checkpoint
 from app.services.workflow.frontier_repository import transition_owned_frontier
 from app.services.workflow.frontier_retry import FrontierRetryPolicy, schedule_frontier_retry
+from app.services.workflow.governance import WorkflowGovernanceService
 from app.services.workflow_worker.frontier_runtime import DurableFrontierWorkflowWorker
 
 
@@ -123,8 +124,56 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             checkpoint_writer=checkpoint_branch,
         )
 
+    async def _mark_execution_failed_in_transaction(
+        self,
+        db,
+        execution: WorkflowExecution,
+        *,
+        now: datetime,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        """在当前 Frontier failure 事务内 terminalize Execution，不调用会自行 commit 的通用 transition。
+
+        Frontier failure 与 Execution failure 必须保持同一 COMMIT/ROLLBACK 边界；否则通用
+        WorkflowExecutionService.transition() 的内部 commit 会先提交 Execution，再让 Frontier
+        retry/failed 状态单独提交，产生半完成 durable lifecycle。
+        """
+        if execution.status in {"completed", "failed", "cancelled"}:
+            if execution.status != "failed":
+                raise HTTPException(409, f"Execution 已进入终态 {execution.status}，拒绝重复 failure")
+            return
+        if execution.status not in {"pending", "running"}:
+            raise HTTPException(409, f"Execution 当前状态 {execution.status} 不允许 failure terminalization")
+        current = execution.status
+        execution.status = "failed"
+        execution.ended_at = now
+        execution.current_node_id = None
+        execution.error_code = error_code
+        execution.error_message = error_message
+        execution.worker_owner = None
+        execution.worker_lease_expires_at = None
+        actor_id = execution.created_by
+        governance = WorkflowGovernanceService(db)
+        await governance.trace(
+            execution,
+            actor_id,
+            "execution.state_changed",
+            "failed",
+            error_code=error_code,
+            error_message=error_message,
+            data={"from": current, "to": "failed", "frontier_id": str(execution.id)},
+        )
+        await governance.audit(
+            execution,
+            actor_id,
+            "workflow.execution.failed",
+            "failed",
+            error_code=error_code,
+        )
+
     async def _converge_failure(self, frontier: WorkflowFrontier, exc: Exception) -> None:
-        """在独立补偿事务中将 Runtime 异常收敛到 retry_wait 或 failed。"""
+        """在单一补偿事务中将 Runtime 异常收敛到 retry_wait 或 failed。"""
         retryable, error_code, error_message = self._classify_failure(exc)
         now = datetime.now(UTC).replace(tzinfo=None)
         async with SessionLocal() as db:
@@ -162,9 +211,8 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                     policy=self._retry_policy(version),
                 )
                 if updated_frontier.status == "failed":
-                    await WorkflowExecutionService(db).transition(
-                        execution, "failed", error_code=error_code,
-                        error_message=error_message, actor_id=execution.created_by,
+                    await self._mark_execution_failed_in_transaction(
+                        db, execution, now=now, error_code=error_code, error_message=error_message,
                     )
                 else:
                     execution.worker_owner = None
@@ -177,9 +225,8 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 db, frontier_id=locked_frontier.id, worker_owner=self.owner,
                 attempt=frontier.attempt, target_status="failed", now=now,
             )
-            await WorkflowExecutionService(db).transition(
-                execution, "failed", error_code=error_code,
-                error_message=error_message, actor_id=execution.created_by,
+            await self._mark_execution_failed_in_transaction(
+                db, execution, now=now, error_code=error_code, error_message=error_message,
             )
             await db.commit()
 
@@ -282,7 +329,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                             )
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}
-                        next_ids = tuple(node_id for node_id in ordered if node_id not in after_ids)[:1]
+                        next_ids = tuple(node_id for node in ordered if node_id not in after_ids)[:1]
                         fingerprint = self._bootstrap_fingerprint(execution.id, version.id, ordered)
 
                     next_identity = None
