@@ -9,7 +9,7 @@
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**API / Scheduler 进程解耦已完成；独立 Scheduler recovery acceptance 已通过。**
 - Phase 2.5 Scheduler → Worker Execution Decoupling：**已正式关闭。**
-- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、顺序 Runtime Resume、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期与 Recovery Event Contract 已完成基础实现；自动恢复 Real API / Worker、统一 observability 接入、contention 收敛及 DAG 分支 Resume 仍在主线推进。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：**开发中；Checkpoint、Resume Candidate、Resume Contract、顺序 Runtime Resume、HTTP Resume API、Recovery Policy / Domain、Recovery Scan、Scheduler 生命周期、Recovery Event Contract 与 Recovery outcome classification 已完成基础实现；自动恢复 Real API / Worker、统一 observability 接入、contention / idempotency 精确收敛及 DAG 分支 Resume 仍在主线推进。**
 - Backend 模块化整改：**已完成最终 Closure Gate，不再阻塞主线。**
 
 ## 当前执行架构
@@ -22,6 +22,8 @@ Scheduler Service
     └── WorkflowRecoveryScheduler
               ↓
        Recovery Policy / Domain
+              ↓
+       workflow.recovery.attempt
               ↓
        pending Resume Execution
               ↓
@@ -36,7 +38,7 @@ Node transition
 Checkpoint / terminal lease release
 ```
 
-职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Worker 负责执行；WorkflowExecutionService 负责状态机与 Resume 安全边界；WorkflowRuntime 负责节点/frontier；Checkpoint 记录执行事实。**
+职责冻结：**Scheduler 负责什么时候检查/触发；Recovery Policy 负责是否允许自动恢复；Recovery Domain 负责如何安全创建 Resume；Recovery Event Contract 负责统一恢复控制面事件；Worker 负责执行；WorkflowExecutionService 负责状态机与 Resume 安全边界；WorkflowRuntime 负责节点/frontier；Checkpoint 记录执行事实。**
 
 ## Phase 2.6 当前实现
 
@@ -57,9 +59,35 @@ Checkpoint / terminal lease release
 - `WorkflowRecoveryEvent` / `WorkflowRecoveryEventLogger` 正式 Recovery observability 事件出口；
 - `workflow.recovery.attempt`；
 - `workflow.recovery.scan.completed`；
+- Automatic Recovery Result 正式区分 `rejected` / `recovered` outcome；
+- 每次自动恢复 attempt 都通过统一 Event Contract 输出 `reason_code + attempt_count + max_attempts + resume_execution_id`；
 - 事件禁止写入 Checkpoint `state_data`、Secret、Provider credential 和完整业务 payload；
 - Scheduler / Domain 不创建平行 Recovery metrics / trace 规则；
-- Unit tests 覆盖 Recovery Policy、Automatic Recovery、Scheduler Scan 与 Observability Event Contract。
+- Unit tests 覆盖 Recovery Policy、Automatic Recovery、Scheduler Scan、Recovery Outcome 与 Observability Event Contract。
+
+## Recovery Outcome Contract
+
+```text
+Recovery Domain
+    ↓
+Policy Decision
+    ├── rejected
+    │      └── reason_code
+    │
+    └── eligible
+           ↓
+       Resume Contract
+           ↓
+       recovered
+           └── resume_execution_id
+```
+
+当前 outcome 仅表达 Recovery Domain 本次调用的控制结果：
+
+- `rejected`：Policy 不允许自动恢复；不会创建 Resume；
+- `recovered`：Resume Contract 返回新建或幂等命中的 Resume Execution。
+
+**注意：** `recovered` 当前不进一步猜测“新建”与“幂等命中”；这一区分必须由 Resume Domain 显式返回结果后才能作为 `idempotency_hit` 统计，Scheduler / Recovery Domain 不得根据对象时间或其他旁路信息猜测。
 
 ## Recovery Observability Contract
 
@@ -97,15 +125,13 @@ occurred_at
 
 ## 当前开发策略
 
-按当前要求暂停完整测试流程。当前主线只以 **Unit Test + API Test** 作为开发验证范围；Backend Full Regression、Frontend Gate、Browser E2E、完整 Release Gate 暂不作为主线阻塞条件。真实 API 测试必须使用真实 HTTP + PostgreSQL；后台服务生命周期由开发者人工控制。
-
-测试结果只能记录实际执行结果，不得预填通过。
+按当前要求暂停完整测试流程。当前主线只以 **Unit Test** 作为开发验证范围；Backend Full Regression、Frontend Gate、Browser E2E、完整 Release Gate、Real API Acceptance 暂不作为当前主线阻塞条件。测试结果只能记录实际执行结果，不得预填通过。
 
 ## 下一步主线
 
-1. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口；
-2. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；
-3. 精确实现 recovery contention / idempotency convergence；
+1. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，继续保持领域事件出口，不新增平行 exporter；
+2. 让 Resume Domain 显式返回 `created` / `idempotency_hit` outcome，精确实现 recovery contention / idempotency convergence；
+3. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
 4. 冻结 DAG Branch State Merge Contract；
 5. 实现 Multi-frontier Resume；
 6. 完成 Phase 2.6 Closure；
