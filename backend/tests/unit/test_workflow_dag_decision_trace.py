@@ -9,10 +9,21 @@ import pytest
 from app.runtime.workflow.dag_runtime import WorkflowRuntime
 
 
+def _trace_result(trace_id=None):
+    """构造同时覆盖 SQLAlchemy scalar 与 scalars 读取契约的测试结果。"""
+    return SimpleNamespace(
+        scalar_one_or_none=lambda: trace_id,
+        scalars=lambda: SimpleNamespace(all=lambda: []),
+    )
+
+
 @pytest.mark.asyncio
 async def test_dag_frontier_decision_is_persisted_without_business_state():
     db = AsyncMock()
-    db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+    db.execute.side_effect = [
+        _trace_result(),
+        _trace_result(),
+    ]
     governance = SimpleNamespace(trace=AsyncMock())
     execution_service = SimpleNamespace(governance=governance)
     runtime = WorkflowRuntime(db, execution_service=execution_service)
@@ -55,7 +66,10 @@ async def test_dag_frontier_decision_is_persisted_without_business_state():
 async def test_recovery_dag_decision_trace_contains_selected_predecessor_facts():
     db = AsyncMock()
     completed = SimpleNamespace(node_id="root", output_data={"status": "approved"})
-    db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [completed]))
+    db.execute.side_effect = [
+        SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [completed])),
+        _trace_result(),
+    ]
     governance = SimpleNamespace(trace=AsyncMock())
     execution_service = SimpleNamespace(governance=governance)
     runtime = WorkflowRuntime(db, execution_service=execution_service)

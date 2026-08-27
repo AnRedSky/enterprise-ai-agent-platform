@@ -55,6 +55,7 @@ class WorkflowDagResumeRuntimeSequencePlanner:
             frontier_plan = WorkflowDagResumeRuntimePlanner.plan(
                 definition=definition,
                 completed_node_ids=completed,
+                state_data=state_data,
                 state_data_by_node=node_state,
             )
             if len(frontier_plan.frontier_node_ids) != 1:
