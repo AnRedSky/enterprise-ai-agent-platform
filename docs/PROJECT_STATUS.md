@@ -40,18 +40,19 @@
 - Durable Frontier Claim Head-of-Line Guard：blocked tenant 不再阻塞其他可执行 tenant：✅
 - Durable Frontier Failure Terminalization Transaction Boundary：Failure retry/failed 与 Execution failed 统一补偿事务：✅
 - Durable Frontier Completion Source Binding：`frontier_completed` Checkpoint 显式绑定 source Frontier，重复 completion 不再按 Execution 下最新 Checkpoint 猜测来源；历史未绑定事实不启发式回填：✅
-- Durable Frontier Recovery Multi-frontier Re-entry：Recovery 同时释放同一 Execution 的多个过期 Frontier 后，首个 Claim 取得 Execution ownership，后续 Frontier 允许复用同一 Worker epoch，不再因 `pending + current owner` 被错误阻塞：✅
-- Durable Frontier Stale Lease Completion Guard：Frontier 最终 completion/failure transition 同时校验 owner、attempt 与未过期 Worker lease，阻断 lease 已过期但 Recovery 尚未完成清理时的旧 Worker 写入：✅
-- Durable Frontier Execution Worker Epoch Binding：Progression 在最终 durable write 前锁定关联 Execution，并使用 `Execution.worker_attempt` 作为 Worker fencing epoch；严格区分 Execution epoch 与 Frontier consumption attempt，Next Frontier 的 Checkpoint 不再错误使用 Frontier attempt 作为 Execution fencing generation：✅
-- Durable Checkpoint Worker Lease Write Guard：带 Worker fencing 参数的 Checkpoint durable write 在锁定 Execution 后再次证明 owner、worker epoch 与未过期 lease，阻断 stale Worker 在 Node-level Checkpoint 边界产生 durable fact：✅
-- Durable Frontier / Execution Atomic Lease Heartbeat：Frontier heartbeat 同一短事务内同时续租关联 Execution 与 Frontier；任一层 owner、status、fencing 或 lease 失效均整体回滚，禁止形成跨层 lease 不一致窗口：✅
-- Durable Frontier Base Runtime Lease-Lost Abort：基础 Durable Frontier Worker 在 atomic heartbeat 发现 ownership 失效时取消当前 Runtime task，避免旧 Worker 继续执行：✅
-- Durable Frontier Planner Runtime Lease-Lost Abort：Planner/DAG Worker 显式将当前 `execute_frontier()` task 传递给 heartbeat；lease loss 后取消 Planner Runtime，`CancelledError` 不进入普通 failure convergence，当前事务 rollback 后交由 Recovery 接管：✅
-- Durable Frontier Failure Convergence Ownership Guard：failure retry / failed convergence 在任何 Frontier transition、retry scheduling 或 Execution terminalization 前重新证明 Execution owner 与有效 lease；stale Worker 不得跨层终止其他 Worker 持有的 Execution：✅
-- Durable Frontier Runtime Consumption Guard：Runtime 真正执行 Node 前重新锁定 Frontier 与 Execution，证明当前 Worker owner、Frontier attempt、两层 active lease 与可执行状态；Claim 后发生 ownership 转移、回收或 terminalization 的 stale task 不得继续消费：✅
-- Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前在同一事务内锁定同 Execution 的活动 Frontier，并拒绝 Node 集合重叠，避免不同 identity / fingerprint 的并行 work item 重复消费同一 Node：✅
-- Durable Frontier Claim-layer Duplicate Consumption Guard：Worker Claim 在锁定候选 Frontier 后，以同一事务锁定关联 Execution，并在 Claim 前检查同 Execution 活动 Frontier Node-set；重叠 Frontier 不进入 claimed，disjoint parallel Frontier 正常消费：✅
-- **Durable Frontier Terminalization Lock-order Closure：Planner Runtime 成功路径不再提前锁定 Execution；Runtime 仅读取执行快照，最终 progression 统一按 Frontier → Execution 顺序取得锁并重新验证 ownership / lease / lifecycle，与 failure convergence 保持一致锁序，避免 Execution → Frontier / Frontier → Execution 交叉死锁窗口：✅ 本轮**
+- Durable Frontier Recovery Multi-frontier Re-entry：Recovery 同时释放同一 Execution 的多个过期 Frontier 后，首个 Claim 取得 Execution ownership，后续 Frontier 允许复用同一 Worker epoch：✅
+- Durable Frontier Stale Lease Completion Guard：Frontier 最终 completion/failure transition 同时校验 owner、attempt 与未过期 Worker lease：✅
+- Durable Frontier Execution Worker Epoch Binding：Progression 使用 `Execution.worker_attempt` 作为 Worker fencing epoch：✅
+- Durable Checkpoint Worker Lease Write Guard：Checkpoint durable write 在锁定 Execution 后再次证明 owner、worker epoch 与未过期 lease：✅
+- Durable Frontier / Execution Atomic Lease Heartbeat：Frontier heartbeat 同一短事务内同时续租关联 Execution 与 Frontier：✅
+- Durable Frontier Base Runtime Lease-Lost Abort：heartbeat 发现 ownership 失效时取消当前 Runtime task：✅
+- Durable Frontier Planner Runtime Lease-Lost Abort：lease loss 后取消 Planner Runtime，rollback 后交由 Recovery：✅
+- Durable Frontier Failure Convergence Ownership Guard：failure convergence 前重新证明 Execution owner 与有效 lease：✅
+- Durable Frontier Runtime Consumption Guard：Runtime Node execution 前重新证明 Frontier 与 Execution consumption ownership：✅
+- Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前拒绝与同 Execution 活动 Frontier Node 集合重叠：✅
+- Durable Frontier Claim-layer Duplicate Consumption Guard：Worker Claim 前检查同 Execution 活动 Frontier Node-set，overlap 不进入 claimed：✅
+- Durable Frontier Terminalization Lock-order Closure：Planner Runtime 成功路径不再提前锁定 Execution，成功与失败路径统一遵循 Frontier → Execution 锁序：✅
+- **Durable Frontier Terminal Replay Binding Closure：重复 completion 对既有 Next Frontier 的 decision fingerprint 与 Node 集合执行严格一致性校验；同 key 但 fingerprint 或 Node-set drift 均拒绝收敛：✅ 本轮**
 
 ## 当前实现边界
 
@@ -94,6 +95,11 @@ Duplicate Consumption Guard
   ├── progression → active Frontier Node-set fencing
   └── claim → same-Execution active Frontier Node-set fencing
   ↓
+Terminal Replay Binding
+  ├── source Frontier checkpoint binding
+  ├── decision fingerprint equality
+  └── Next Frontier Node-set equality
+  ↓
 Frontier / Checkpoint / Execution progression
   ↓
 唯一 COMMIT / ROLLBACK
@@ -116,6 +122,7 @@ Recovery / Replay
 ```text
 Concurrent multi-frontier Claim / Claim-layer overlap fencing     ← 已完成
 Terminalization lock-order closure                                ← 已完成
+Terminal Replay Binding Closure                                   ← 已完成
         ↓
 Success / Failure terminalization closure
         ↓
@@ -124,7 +131,7 @@ Replay convergence
 Phase 2.7 主线完成
 ```
 
-下一步重点为 **Success / Failure terminalization closure**：统一检查成功与失败路径在 Frontier、Checkpoint、Execution 生命周期之间的终态一致性，并继续验证 Replay convergence 不产生第二套 Durable fact。Claim-layer 同一 Execution 并发边界与 terminalization lock-order 已完成，不再重复实现第二套 fencing 逻辑。
+下一步重点为 **Success / Failure terminalization closure**：统一检查成功与失败路径在 Frontier、Checkpoint、Execution 生命周期之间的终态一致性，并继续验证 Replay convergence 不产生第二套 Durable fact。Claim-layer 同一 Execution 并发边界、terminalization lock-order 与 Next Frontier replay binding 已完成，不再重复实现第二套 fencing 逻辑。
 
 核心不变量：
 
@@ -138,27 +145,28 @@ Phase 2.7 主线完成
 - stale Worker 不得在 terminalization 或 Recovery transaction 之外写入新的 durable fact；
 - 终态 Frontier 的 Frontier、Checkpoint、Execution terminalization 必须共享同一数据库事务；
 - 终态 Frontier terminalization 前必须再次证明 Frontier owner、Execution owner 与 fencing generation 属于同一 Worker epoch；
-- 已提交 Frontier 的重复 completion 必须精确绑定其 source Frontier 的 Durable Checkpoint / Next Frontier；payload drift、缺失绑定 Checkpoint 或缺失 Next Frontier 必须拒绝收敛；
+- 已提交 Frontier 的重复 completion 必须精确绑定其 source Frontier 的 Durable Checkpoint / Next Frontier；payload drift、缺失绑定 Checkpoint、fingerprint drift 或 Node-set drift 必须拒绝收敛；
 - Recovery 只有在 Frontier lease 与关联 Execution ownership 同时失效后才能把 Frontier 重新放入 retry 队列；
 - Worker tenant candidate 必须与实际 Frontier Claim 使用相同的 Execution eligibility 规则；
 - Durable Frontier failure 的 Frontier retry/failed 与 Execution failed 必须共享同一补偿事务；
 - `frontier_completed` Checkpoint 必须绑定 source Frontier，不得从同一 Execution 下其他 Frontier 的最新 completion fact 推断当前 Frontier 的幂等事实；
 - 同一 Execution Recovery 后存在多个 retry_wait Frontier 时，当前 Worker 已取得 pending Execution ownership 后，后续 Frontier 必须复用同一 worker_attempt，不得再次递增 fencing generation，也不得被 pending 状态阻塞；
 - Frontier terminal transition 除 owner 与 attempt 外必须证明 `worker_lease_expires_at > now`，lease 已失效的旧 Worker 不得完成或失败 Frontier；
-- Execution `worker_attempt` 是 Worker ownership epoch；Frontier `attempt` 仅是 Frontier consumption attempt，二者禁止互相替代；Progression 写入 Checkpoint 时必须使用锁定后的 Execution epoch；
+- Execution `worker_attempt` 是 Worker ownership epoch；Frontier `attempt` 仅是 Frontier consumption attempt，二者禁止互相替代；
 - 带 Worker fencing 参数的 Node-level Checkpoint 写入必须同时证明 Execution owner、worker epoch 与未过期 lease；stale Worker 不能仅凭 owner + epoch 写入新的 Node durable fact；
-- Worker heartbeat 必须在同一短事务内续租 Frontier 与关联 Execution；任一层续租失败必须整体 rollback，不得形成 Frontier 有效而 Execution 失效或反向的不一致 lease pair；
+- Worker heartbeat 必须在同一短事务内续租 Frontier 与关联 Execution；任一层续租失败必须整体 rollback；
 - Frontier / Execution heartbeat 丢失 ownership 后必须取消当前 Planner / Node Runtime；lease loss 不得作为普通业务 failure 进入 retry / failed convergence；
 - Failure convergence 在进入 retry / failed 前必须重新证明 Execution owner 与有效 lease；stale Worker 不得通过 failure path 改变其他 Worker 的 Execution 生命周期；
 - Runtime Node execution 前必须重新证明 Frontier 与 Execution consumption ownership；stale task 不得仅凭 Claim 阶段的内存快照继续执行；
 - Next Frontier 创建前必须证明其 Node 集合与同一 Execution 的其他活动 Frontier 互斥；Node-set overlap 必须在 durable progression transaction 内拒绝；
 - Worker Claim 必须在同一 Execution durable ownership 边界内再次证明活动 Frontier Node-set 互斥；发生 overlap 时不得进入 claimed，且不得修改 attempt / owner / lease；
-- Success Runtime 不得先锁 Execution 再锁 Frontier；成功 terminalization 与 failure convergence 均必须遵循 Frontier → Execution 的统一 durable lock order。
+- Success Runtime 不得先锁 Execution 再锁 Frontier；成功 terminalization 与 failure convergence 均必须遵循 Frontier → Execution 的统一 durable lock order；
+- 重复 completion 找到既有 Next Frontier 时，必须同时证明 execution、workflow version、decision fingerprint 与 Node 集合完全一致；任何 drift 都必须拒绝 Replay convergence。
 
 ## 本轮交付
 
-- `backend/app/services/workflow_worker/durable_frontier_execution.py`
-- `docs/04-errors/2026-08-27-durable-frontier-terminalization-lock-order.md`
+- `backend/app/services/workflow/frontier_progression.py`
+- `backend/tests/unit/test_frontier_duplicate_consumption.py`
 - `docs/PROJECT_STATUS.md`
 
 **测试：本轮未执行 pytest、集成测试、本地手动测试或 E2E；不得记录 PASS。**
