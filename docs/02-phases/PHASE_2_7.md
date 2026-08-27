@@ -7,7 +7,7 @@
 
 ## 1. 当前目标
 
-在现有 Workflow DAG、Checkpoint、Resume、Branch、Join 基础上增加确定性 Conditional Branching：
+在现有 Workflow DAG、Checkpoint、Resume、Branch、Join 基础上增加确定性 Conditional Branching，并保证**首次执行与 Durable Resume 使用同一套 Planner / Runtime 语义**：
 
 ```text
 持久化 Node state
@@ -23,7 +23,7 @@ existing Branch / Join / Runtime
 
 不引入第二套 DAG Planner、Runtime 或 State Merge；条件规则只存在于统一 Condition Evaluator，Runtime 只消费 Planner 结果。
 
-## 2. 本轮已实现
+## 2. 本轮实现推进
 
 - `WorkflowConditionEvaluator`：有限 JSON Condition DSL；
 - `eq / ne / gt / gte / lt / lte / in / contains`；
@@ -40,52 +40,42 @@ existing Branch / Join / Runtime
 - 无条件边继续保持原 DAG 语义；
 - Planner 输出 selected predecessor facts；
 - Join readiness 消费 Planner 已选 predecessor，不自行解析条件；
-- Resume 从持久化 completed Node output 重新计算 frontier，不使用创建 Resume 时缓存 frontier；
-- Runtime 接入现有 DAG Runtime Planner，未新增第二套 Runtime。
+- Resume 从持久化 completed Node output 重新计算 frontier；
+- Runtime 复用现有 DAG Runtime Planner；
+- **首次执行现在同样进入 DAG Planner，条件边不再只在 Resume 路径生效；**
+- **Join Branch state 现在优先消费 Planner 选中的 predecessor，未命中条件分支不会被当作 Join 输入；**
+- 无 `edges` 的历史顺序 Workflow 保留原顺序执行兼容语义。
 
 ## 3. 单元测试
 
-新增：
+已有：
 
 ```text
 backend/tests/unit/test_workflow_condition_evaluator.py
 backend/tests/unit/test_workflow_conditional_branching.py
 ```
 
-`test_workflow_condition_evaluator.py` 覆盖：
+并补充 `backend/tests/unit/test_workflow_runtime.py`：
 
-- `eq / ne / gt / gte / lt / lte`；
-- 严格 JSON 类型比较，特别是 `bool` 与 `number`；
-- `in` 严格元素匹配；
-- 字符串 / 数组 `contains`；
-- 缺失 path 与显式 `null`；
-- `and / or / not` 短路求值；
-- 数组 / 对象递归严格相等；
-- 非法字段、结构、path 与缺失 `value`；
-- 非对象 Runtime state；
-- Condition 深度 / 节点数限制。
-
-`test_workflow_conditional_branching.py` 覆盖：
-
-- condition frontier；
-- default fallback；
-- 多条件同时命中顺序；
-- 未命中分支不进入 Join predecessor；
-- Runtime Planner 透传 selected predecessor；
-- 混合 edge / 多 default Contract 拒绝；
-- 缺失持久化 source state 拒绝。
+- Conditional Join 只使用 selected predecessor；
+- 初始 DAG Execution 从 root frontier 启动并复用同一 Planner Contract；
+- 既有线性 Runtime 与 Agent governance 行为保持覆盖。
 
 **当前运行环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。** 按当前开发策略，完整 Backend / Frontend / Browser / Real API Gate 继续暂停，不作为主线阻塞条件。
 
-## 4. 下一交付
+## 4. 当前下一交付
 
 ```text
-Conditional evaluator + DAG Contract
-        ↓ 当前已完成
+Condition Evaluator
+        ↓ 已完成
+DAG Contract
+        ↓ 已完成
 Conditional frontier planner
-        ↓ 当前已完成
-Runtime integration
-        ↓ 当前已完成首版接入
+        ↓ 已完成
+首次执行 Runtime integration
+        ↓ 本轮完成
+Resume Runtime integration
+        ↓ 已完成
 Unit Test 实际执行
         ↓ 待开发者本地执行
 Real API acceptance
@@ -93,7 +83,7 @@ Real API acceptance
 Phase 2.7-A Closure
 ```
 
-Real API acceptance 必须验证真实 HTTP、真实 PostgreSQL 持久化事实以及 Worker → Runtime 链路；当前不使用 Mock、JSON fixture 或 GitHub Actions 替代本地验收。
+Real API acceptance 后续必须验证真实 HTTP、真实 PostgreSQL 持久化事实以及 Worker → Runtime 链路；当前不使用 Mock、JSON fixture 或 GitHub Actions 替代本地验收。
 
 ## 5. 明确不实现
 
