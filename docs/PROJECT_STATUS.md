@@ -6,15 +6,16 @@
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线正在完成 Recovery / Replay Closure。
 - Phase 2.7 已完成 Conditional Branching、Durable Frontier Scheduling、Scheduler → Worker → Runtime、Retry Scheduling、Frontier → Checkpoint 原子推进、Runtime failure convergence、Durable Resume Bootstrap、Recovery Trace 原子事务、Join predecessor contract、tenant boundary、Checkpoint lineage、Decision Replay Guard、Multi-frontier Checkpoint boundary、Execution fencing、stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation、Checkpoint durable write boundary、Multi-frontier Join Recovery、Replay Decision Convergence。
-- **本轮完成 Multi-frontier Runtime 的 Execution-level `frontier_completed` Checkpoint 持久化：所有 Branch 执行成功并完成 Node-level Checkpoint 后，Runtime 才写入 merged state 的 frontier completion durable boundary，并继续使用 Worker fencing 与当前事务。**
+- **已完成 Multi-frontier Runtime 的 Execution-level `frontier_completed` Checkpoint 持久化：所有 Branch 执行成功并完成 Node-level Checkpoint 后，Runtime 才写入 merged state 的 frontier completion durable boundary，并继续使用 Worker fencing 与当前事务。**
 - **Recovery / Replay lifecycle closure 已完成：已有但未完成 Bootstrap 的 pending Resume 现在可以在 Source Execution 锁内安全重新 Bootstrap，结果明确记录为 `reconciled`，不创建第二个 Resume。**
 - **Recovery Scheduler 已将 `reconciled` 作为成功恢复结果统计，避免合法自愈被记录为 failed / rejected。**
-- **上一轮完成 Scheduler Service 双循环生命周期监督：Scheduled Trigger Dispatch 与 Durable Recovery Scan 任一循环异常时统一停止另一循环并传播原始异常，避免 Scheduler Service 半存活。**
+- **Scheduler Service 双循环生命周期监督已完成：Scheduled Trigger Dispatch 与 Durable Recovery Scan 任一循环异常时统一停止另一循环并传播原始异常，避免 Scheduler Service 半存活。**
 - Phase 2.2 Retrieval Production Quality：已正式关闭。
 - Phase 2.3 Model Provider Governance：已正式关闭。
 - Phase 2.4 Durable Scheduler：生产实现继续收口；Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦及双循环生命周期监督均已实现。
 - Phase 2.5 Scheduler → Worker Execution Decoupling：已正式关闭。
 - Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；DAG 分支 Resume / 多-frontier Runtime 正在继续收口；Unit Test 实际 Closure 仍按本地执行结果记录。
+- **本轮完成 DAG Next Frontier progression Contract：Checkpoint 后重新调用唯一 `WorkflowDagResumePlanner`，基于完整 completed durable facts 生成下一 Frontier 的 deterministic `WorkflowFrontierIdentity`；不创建第二套 Planner / Frontier persistence。**
 - Backend 模块化整改：继续按最新治理规则推进，不作为当前主线阻塞条件。
 - Frontend Phase 1.3：SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。
 
@@ -32,7 +33,8 @@
 - `frontier_completed` 为 Execution-level Checkpoint；
 - Execution / Node / Checkpoint durable write 均受 worker generation fencing 保护；
 - Multi-frontier Join Recovery 已从 durable predecessor facts 重建 merged state，并校验 `frontier_completed.state_data`；
-- **Multi-frontier Runtime 现在在所有 Branch Node-level Checkpoint 成功后追加 merged-state `frontier_completed` Execution-level Checkpoint，作为进入下一 frontier planning 的 durable boundary。**
+- Multi-frontier Runtime 在所有 Branch Node-level Checkpoint 成功后追加 merged-state `frontier_completed` Execution-level Checkpoint，作为进入下一 frontier planning 的 durable boundary；
+- **`WorkflowDagFrontierProgressionService` 负责把当前 frontier 完成后的 durable facts 重新交给唯一 Planner，并生成下一 Frontier identity；真正的持久化继续由 `complete_frontier_with_checkpoint()` 负责。**
 - Replay Decision Convergence 已将历史 Decision、frontier、selected predecessor 收敛检查提升为写入前强制边界；
 - Resume lifecycle closure 已完成：完整 Resume 幂等命中必须具有 Durable Frontier；pending 且缺少 Frontier 的历史不完整 Resume 现在允许在 Source Execution 锁内幂等重新 Bootstrap。
 
@@ -74,7 +76,8 @@ Recovery / Replay Closure
   ├── Replay decision convergence           ✅
   ├── Resume lifecycle idempotency closure  ✅
   ├── Incomplete Resume Bootstrap reconcile ✅
-  └── Multi-frontier Runtime completion checkpoint ✅ 本轮
+  ├── Multi-frontier Runtime completion checkpoint ✅
+  └── DAG Next Frontier deterministic identity      ✅ 本轮
 
 Phase 2.4 Durable Scheduler
   ├── Persistence / Runtime                ✅
@@ -88,9 +91,9 @@ Phase 2.4 完整 Gate / Acceptance
 
 ## 本轮交付与文档
 
-- `backend/app/runtime/workflow/runtime.py`
-- `backend/tests/unit/test_workflow_runtime_frontier_checkpoint.py`
-- `docs/04-errors/2026-08-27-multi-frontier-checkpoint-boundary.md`
+- `backend/app/services/workflow/checkpoint/recovery/dag_frontier_progression.py`
+- `backend/tests/unit/test_workflow_dag_frontier_progression.py`
+- `docs/04-errors/2026-08-27-dag-next-frontier-progression.md`
 - `docs/PROJECT_STATUS.md`
 
 **Unit Test：本轮未在当前环境执行，因此不记录 PASS。完整 Gate / Acceptance 继续暂停。**
