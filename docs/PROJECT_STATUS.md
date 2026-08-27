@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前 `main` HEAD：本轮已继续推进 Durable Recovery Frontier Replay Guard。
-- 本轮已完成：**Recovery Frontier Replay Guard**；同一 Recovery trace 下，相同 durable `completed_node_ids` 若产生不同 `decision_fingerprint` 将被立即拒绝，防止 Recovery 静默继续错误 Decision。
+- 当前 `main` HEAD：本轮继续推进 Durable Recovery Decision Trace 幂等性。
+- 本轮已完成：**Decision Trace Idempotency**；同一 execution + tenant + workflow version + recovery trace + decision fingerprint 的 DAG Decision 只允许幂等复用，不因 Recovery 重试重复创建相同 Trace event。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -13,7 +13,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard，并继续进行 Durable Recovery Closure。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime / Join / Durable tenant boundary / Conditional Decision Trace / Resume Contract tenant scope / Branch Checkpoint Gate / Decision Fingerprint / Runtime Plan fingerprint / Recovery Frontier Replay Guard / Decision Trace Idempotency，并继续进行 Durable Recovery Closure。**
 
 ## Phase 2.7-A 当前实现
 
@@ -36,6 +36,7 @@
 - Multi-frontier Executor 只有在所有 Branch Checkpoint callback 成功后才允许生成 merged state / `join_ready=true`；
 - 未提供 Checkpoint writer 时仍可收集 Branch execution result，但明确保持 `join_ready=false` 且不生成 merged state；
 - 同一 Recovery trace 下相同 durable completed facts 必须保持相同 `decision_fingerprint`，Replay Guard 对不一致 Decision 立即失败；
+- DAG Decision Trace 使用 execution + tenant + workflow version + trace + decision fingerprint 作为幂等 identity，Recovery 重试不会重复创建相同 Decision event；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
 
 ## 当前开发策略
@@ -63,7 +64,8 @@ Phase 2.7-A Conditional Branching
   ├── Branch Checkpoint Gate       ✅
   ├── Decision Fingerprint         ✅
   ├── Runtime Plan fingerprint     ✅
-  ├── Recovery Replay Guard        ✅ 本轮完成
+  ├── Recovery Frontier Replay Guard ✅
+  ├── Decision Trace Idempotency    ✅ 本轮完成
   ├── Unit Test 实际执行            ⏳
   └── Real API acceptance           ⏸ 暂停
           ↓
