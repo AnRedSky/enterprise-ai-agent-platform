@@ -1,6 +1,6 @@
 """Durable Resume creation outcome contract。
 
-职责：在 Resume Domain 边界内把“创建 Resume”与“幂等命中”显式区分，并约束恢复候选使用确定性的幂等键。
+职责：在 Resume Domain 边界内把“创建 Resume”、“幂等命中”与“不完整 Resume 修复”显式区分，并约束恢复候选使用确定性的幂等键。
 边界：不复制 Resume 创建持久化逻辑；实际创建仍委托 WorkflowExecutionService，创建后由 Resume Bootstrap 建立 durable lineage 与首个 Frontier。
 并发语义：先锁定 Source Execution，再检查确定性 Resume 幂等键。所有正式 Resume 路径都会锁定同一 Source 行，因此同一 Source 的并发恢复调用在 Domain 内串行化；数据库唯一约束仍是最终安全兜底。
 """
@@ -29,7 +29,7 @@ class WorkflowExecutionResumeOutcome:
 
 
 class WorkflowExecutionResumeContractService:
-    """为 Recovery Domain 提供 created / idempotency_hit 的稳定 Resume Contract。"""
+    """为 Recovery Domain 提供 created / idempotency_hit / reconciled 的稳定 Resume Contract。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -44,23 +44,20 @@ class WorkflowExecutionResumeContractService:
         *,
         commit: bool = True,
     ) -> WorkflowExecutionResumeOutcome:
-        """在 Source Execution 锁内判断并执行一次确定性 Resume。
+        """在 Source Execution 锁内判断、创建或修复一次确定性 Resume。
 
         Args:
             execution: 当前需要恢复的源 Workflow Execution。
-            actor_id: 创建 Resume 时记录的操作者身份。
-            commit: 是否在本 Contract 内提交事务。Recovery 自动恢复会传入 False，
-                使 Resume、lineage、Frontier 与 Recovery trace 在同一外层事务中提交。
+            actor_id: 创建或修复 Resume 时记录的操作者身份。
+            commit: 是否在本 Contract 内提交事务。Recovery 自动恢复会传入 False，使 Resume、lineage、Frontier 与 Recovery trace 在同一外层事务中提交。
 
         Returns:
-            明确区分 `created` 与 `idempotency_hit` 的 Resume 结果。
+            明确区分 `created`、`idempotency_hit` 与 `reconciled` 的 Resume 结果。
 
         Raises:
-            ValueError: 恢复候选缺少确定性幂等键、已有 Resume 的 lineage 与当前恢复请求不一致，
-                或幂等命中的 Resume 缺少 Durable Frontier。
+            ValueError: 恢复候选缺少确定性幂等键、已有 Resume 的 lineage 与当前恢复请求不一致，或已有 pending Resume 缺少且无法安全重建的 Durable Frontier。
 
-        事务边界：Source Execution 锁定、Resume 创建、completed Node lineage 复制与首个 Durable Frontier
-        入队必须在同一调用方事务中完成；commit=False 时由调用方负责最终提交。
+        事务边界：Source Execution 锁定、Resume 创建/修复、completed Node lineage 复制与首个 Durable Frontier 入队必须在同一调用方事务中完成；commit=False 时由调用方负责最终提交。
         """
         from app.services.workflow.execution import WorkflowExecutionService
 
@@ -102,8 +99,6 @@ class WorkflowExecutionResumeContractService:
             ):
                 raise ValueError("Resume 幂等键已绑定不一致的 Execution lineage")
 
-            # 设计意图：幂等命中不能只证明“Resume 记录存在”。若此前事务在 Bootstrap
-            # 完成前异常退出而遗留不完整数据，继续返回 idempotency_hit 会永久吞掉恢复任务。
             frontier = (
                 await self.db.execute(
                     select(WorkflowFrontier.id)
@@ -114,12 +109,28 @@ class WorkflowExecutionResumeContractService:
                     .limit(1)
                 )
             ).scalar_one_or_none()
-            if frontier is None:
-                raise ValueError("Resume 幂等命中但 Durable Frontier 不存在，拒绝继续隐藏不完整 Recovery lifecycle")
+            if frontier is not None:
+                return WorkflowExecutionResumeOutcome(
+                    execution=existing,
+                    outcome="idempotency_hit",
+                    idempotency_key=assessment.resume_idempotency_key,
+                )
 
+            # 之前事务可能已经成功创建 Resume Execution，但在 Bootstrap 建立 Node lineage / Frontier 前中断。
+            # 这里在同一个 Source Execution 锁内重跑幂等 Bootstrap，使 Recovery 从“永久拒绝”升级为可安全自愈。
+            if existing.status != "pending" or existing.worker_owner is not None:
+                raise ValueError("不完整 Resume 已脱离 pending/未持有 Worker ownership，拒绝自动修复")
+            await self.bootstrap.bootstrap(
+                source_execution=locked_execution,
+                resume_execution=existing,
+                actor_id=actor_id,
+            )
+            if commit:
+                await self.db.commit()
+                await self.db.refresh(existing)
             return WorkflowExecutionResumeOutcome(
                 execution=existing,
-                outcome="idempotency_hit",
+                outcome="reconciled",
                 idempotency_key=assessment.resume_idempotency_key,
             )
 
