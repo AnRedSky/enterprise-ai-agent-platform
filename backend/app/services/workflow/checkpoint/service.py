@@ -1,4 +1,8 @@
-"""Workflow Execution Checkpoint 领域服务。"""
+"""Workflow Execution Checkpoint 领域服务。
+
+负责 Workflow Execution Checkpoint 的持久化边界，并保证同一 Execution 的序号分配在并发 Worker 下保持串行一致。
+本模块不负责恢复调度、状态机推进或 Worker ownership 校验。
+"""
 
 from __future__ import annotations
 
@@ -19,6 +23,12 @@ class WorkflowExecutionCheckpointService:
 
     @staticmethod
     def _validate(sequence: int, checkpoint_reason: str) -> None:
+        """校验 Checkpoint 序号与原因，避免写入不可恢复的非法快照。
+
+        Args:
+            sequence: Checkpoint 在当前 Execution 中的单调序号。
+            checkpoint_reason: 记录本次快照产生原因的非空文本。
+        """
         if sequence < 0:
             raise ValueError("Checkpoint sequence 必须大于等于 0")
         if not checkpoint_reason.strip():
@@ -75,6 +85,26 @@ class WorkflowExecutionCheckpointService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> WorkflowExecutionCheckpoint:
+        """追加指定序号的 Checkpoint，并提交当前事务。
+
+        Args:
+            execution_id: 目标 Workflow Execution 标识。
+            sequence: 调用方已经确定的 Checkpoint 序号。
+            execution_status: 写入快照时的 Execution 状态。
+            state_data: 用于恢复的持久化状态快照。
+            checkpoint_reason: 本次快照产生原因。
+            node_id: 触发快照的 Node 标识。
+            node_attempt: Node 当前尝试次数。
+            node_status: Node 写入快照时的状态。
+            input_data: Node 输入快照。
+            output_data: Node 输出快照。
+            worker_owner: 当前 Worker ownership 标识。
+            error_code: 失败时的稳定错误码。
+            error_message: 失败时的错误描述。
+
+        Returns:
+            已持久化并刷新数据库字段的 Checkpoint 实例。
+        """
         checkpoint = self._build(
             execution_id=execution_id,
             sequence=sequence,
@@ -111,7 +141,40 @@ class WorkflowExecutionCheckpointService:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> WorkflowExecutionCheckpoint:
+        """在当前事务内分配下一个 Checkpoint 序号并追加快照。
+
+        Args:
+            execution_id: 目标 Workflow Execution 标识。
+            execution_status: 写入快照时的 Execution 状态。
+            state_data: 用于恢复的持久化状态快照。
+            checkpoint_reason: 本次快照产生原因。
+            node_id: 触发快照的 Node 标识。
+            node_attempt: Node 当前尝试次数。
+            node_status: Node 写入快照时的状态。
+            input_data: Node 输入快照。
+            output_data: Node 输出快照。
+            worker_owner: 当前 Worker ownership 标识。
+            error_code: 失败时的稳定错误码。
+            error_message: 失败时的错误描述。
+
+        Returns:
+            已加入当前事务、尚未独立提交的 Checkpoint 实例。
+
+        Raises:
+            ValueError: Checkpoint 原因为空或序号规则非法时抛出。
+
+        设计约束：同一 Execution 的序号必须在数据库事务内串行分配。先锁定 Execution 行，再读取最大序号，避免两个 Worker 同时计算出相同的 sequence 并触发唯一键冲突。
+        """
         self._validate(0, checkpoint_reason)
+        execution_result = await self.db.execute(
+            select(WorkflowExecution)
+            .where(WorkflowExecution.id == execution_id)
+            .with_for_update()
+        )
+        execution = execution_result.scalar_one_or_none()
+        if execution is None:
+            raise ValueError(f"Checkpoint 对应的 Workflow Execution 不存在: {execution_id}")
+
         latest_sequence = await self.db.execute(
             select(func.max(WorkflowExecutionCheckpoint.sequence)).where(
                 WorkflowExecutionCheckpoint.execution_id == execution_id
