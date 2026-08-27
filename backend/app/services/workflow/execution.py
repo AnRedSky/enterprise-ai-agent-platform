@@ -370,6 +370,8 @@ class WorkflowExecutionService:
                 input_data=node.input_data,
                 output_data=node.output_data,
                 worker_owner=execution.worker_owner,
+                expected_worker_owner=execution.worker_owner,
+                expected_worker_attempt=int(execution.worker_attempt or 0),
             )
         if commit:
             await self.db.commit()
