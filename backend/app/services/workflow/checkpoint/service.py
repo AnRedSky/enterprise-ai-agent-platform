@@ -47,6 +47,18 @@ class WorkflowExecutionCheckpointService:
             raise ValueError("node.completed Checkpoint 必须携带 node_id")
 
     @staticmethod
+    def _validate_execution_status_boundary(*, execution: WorkflowExecution, execution_status: str) -> None:
+        """在 Durable Write 前确认 Checkpoint 快照没有跨越当前 Execution 生命周期。
+
+        Checkpoint 写入会锁定 Execution 行；锁定后再校验当前状态，避免 stale Worker 在 Execution
+        已 terminal 后继续追加旧的 running/pending durable fact。"""
+        if execution.status != execution_status:
+            raise HTTPException(
+                409,
+                f"Checkpoint Execution status 已变化: current={execution.status}, requested={execution_status}",
+            )
+
+    @staticmethod
     def assert_node_fact_complete(*, checkpoint, node_execution) -> None:
         """验证带 Node 的 Checkpoint 与对应 NodeExecution 属于同一 Durable Fact。
 
@@ -130,7 +142,7 @@ class WorkflowExecutionCheckpointService:
                                         error_message: str | None = None, tenant_id: UUID | None = None,
                                         expected_worker_owner: str | None = None,
                                         expected_worker_attempt: int | None = None) -> WorkflowExecutionCheckpoint:
-        """在调用方事务中写入下一个 Checkpoint，并校验 tenant 与 Worker fencing generation。
+        """在调用方事务中写入下一个 Checkpoint，并校验 tenant、Execution 生命周期与 Worker fencing generation。
 
         Args:
             execution_id: 目标 Workflow Execution。
@@ -155,7 +167,7 @@ class WorkflowExecutionCheckpointService:
             与 Frontier progression 双边界接线造成重复 Execution-level snapshot。
 
         Raises:
-            HTTPException: Execution 不存在、tenant 不匹配或 Worker fencing 已失效。
+            HTTPException: Execution 不存在、tenant 不匹配、Execution 生命周期不匹配或 Worker fencing 已失效。
         """
         self._validate(0, checkpoint_reason)
         self._validate_checkpoint_boundary(
@@ -195,6 +207,8 @@ class WorkflowExecutionCheckpointService:
                 and existing_boundary.worker_owner == worker_owner
             ):
                 return existing_boundary
+
+        self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
 
         latest_sequence = await self.db.execute(
             select(func.max(WorkflowExecutionCheckpoint.sequence)).where(
