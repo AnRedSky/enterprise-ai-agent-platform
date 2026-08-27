@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import json
+from hashlib import sha256
 from time import monotonic
 
 from fastapi import HTTPException
@@ -22,6 +24,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
     """支持 Join、Conditional DAG 初始化与 Recovery Trace Continuity 的 Workflow Runtime。"""
 
     NODE_TYPES = BaseWorkflowRuntime.NODE_TYPES | {"join"}
+    DAG_DECISION_EVENT = "workflow.dag.frontier_decided"
 
     @classmethod
     def validate_definition(cls, definition: dict, *, allow_legacy_empty_nodes: bool = False) -> list[dict]:
@@ -44,6 +47,49 @@ class WorkflowRuntime(BaseWorkflowRuntime):
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
         return nodes
+
+    async def _record_dag_frontier_decision(self, execution, version_definition: dict, plan, actor_id) -> None:
+        """将 Planner 的 frontier decision 持久化为可审计 Trace fact。
+
+        Args:
+            execution: 当前 Workflow Execution。
+            version_definition: 当前冻结 Workflow Version Definition。
+            plan: `WorkflowDagResumePlan` 生成的确定性 frontier 计划。
+            actor_id: 当前 Runtime actor。
+
+        设计意图：Conditional Decision 本身不是 Recovery 的 source of truth；source of truth 仍是持久化 Node/Checkpoint facts。
+        本 Trace 只保存可重建的 decision metadata，使 Worker 重启后可以审计“当时选择了什么”，同时不会把业务 state_data 写入日志。
+        `decision_id` 对相同 Execution + completed facts + frontier + predecessor 选择保持确定性，便于消费端去重。
+        """
+        if self.execution_service is None or execution is None:
+            return
+        completed = list(plan.completed_node_ids)
+        frontier = list(plan.frontier_node_ids)
+        selected = [
+            {"node_id": node_id, "predecessor_node_ids": list(predecessors)}
+            for node_id, predecessors in plan.selected_predecessor_node_ids
+        ]
+        decision_payload = {
+            "execution_id": str(execution.id),
+            "workflow_version_id": str(getattr(execution, "workflow_version_id", "")),
+            "completed_node_ids": completed,
+            "frontier_node_ids": frontier,
+            "selected_predecessors": selected,
+        }
+        decision_id = sha256(json.dumps(decision_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        await self.execution_service.governance.trace(
+            execution,
+            actor_id or execution.created_by,
+            self.DAG_DECISION_EVENT,
+            "planned",
+            data={
+                "decision_id": decision_id,
+                "workflow_version_id": str(getattr(execution, "workflow_version_id", "")),
+                "completed_node_ids": completed,
+                "frontier_node_ids": frontier,
+                "selected_predecessors": selected,
+            },
+        )
 
     async def _resolve_dag_context(self, execution, definition: dict, state_data: dict):
         """统一解析首次执行与 Resume 的 DAG frontier，并为多根首次执行初始化独立分支状态。
@@ -89,6 +135,7 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 branch_state_data=branch_state_data if len(plan.frontier_node_ids) > 1 else None,
                 state_data_by_node=state_data_by_node,
             )
+            await self._record_dag_frontier_decision(execution, definition, plan, getattr(execution, "created_by", None))
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         return runtime_plan, branch_state_data
