@@ -38,6 +38,69 @@ async def test_multi_frontier_executes_each_branch_with_isolated_state_and_marks
 
 
 @pytest.mark.asyncio
+async def test_multi_frontier_persists_each_branch_before_join() -> None:
+    plan = SimpleNamespace(
+        frontier_node_ids=("branch-a", "branch-b"),
+        nodes=(
+            {"id": "branch-a", "type": "input", "config": {}},
+            {"id": "branch-b", "type": "input", "config": {}},
+        ),
+        state_data={},
+    )
+    checkpoints = []
+
+    async def executor(node, state):
+        state[node["id"]] = "completed"
+        return state
+
+    async def checkpoint_writer(node_id, state):
+        checkpoints.append((node_id, dict(state)))
+
+    result = await WorkflowDagMultiFrontierExecutor.execute(
+        plan,
+        branch_state_data={"branch-a": {}, "branch-b": {}},
+        executor=executor,
+        checkpoint_writer=checkpoint_writer,
+    )
+
+    assert checkpoints == [
+        ("branch-a", {"branch-a": "completed"}),
+        ("branch-b", {"branch-b": "completed"}),
+    ]
+    assert result.join_ready is True
+
+
+@pytest.mark.asyncio
+async def test_multi_frontier_checkpoint_failure_blocks_join_and_later_branch() -> None:
+    plan = SimpleNamespace(
+        frontier_node_ids=("branch-a", "branch-b"),
+        nodes=(
+            {"id": "branch-a", "type": "input", "config": {}},
+            {"id": "branch-b", "type": "input", "config": {}},
+        ),
+        state_data={},
+    )
+    executed = []
+
+    async def executor(node, state):
+        executed.append(node["id"])
+        return state
+
+    async def checkpoint_writer(node_id, state):
+        raise RuntimeError(f"checkpoint failed: {node_id}")
+
+    with pytest.raises(RuntimeError, match="checkpoint failed: branch-a"):
+        await WorkflowDagMultiFrontierExecutor.execute(
+            plan,
+            branch_state_data={"branch-a": {}, "branch-b": {}},
+            executor=executor,
+            checkpoint_writer=checkpoint_writer,
+        )
+
+    assert executed == ["branch-a"]
+
+
+@pytest.mark.asyncio
 async def test_multi_frontier_rejects_missing_branch_state() -> None:
     plan = SimpleNamespace(
         frontier_node_ids=("branch-a", "branch-b"),
