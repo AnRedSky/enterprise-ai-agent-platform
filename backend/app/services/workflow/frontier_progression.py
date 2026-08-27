@@ -1,7 +1,7 @@
-"""Durable Frontier -> Checkpoint -> Next Frontier 原子推进边界。
+"""Durable Frontier progression contract and atomic persistence boundary.
 
 职责：在调用方事务内，将当前 Frontier 的成功结果固化为 Checkpoint，并幂等创建下一 Frontier。
-边界：不负责 Planner 决策；next_identity 必须由调用方提供并保持确定性。
+边界：不负责 DAG Planner；next_identity 必须由调用方提供并保持确定性。
 事务：本模块绝不 commit，当前 Frontier、Checkpoint、Next Frontier 必须在同一外层事务中提交。
 """
 
@@ -16,6 +16,46 @@ from app.models.workflow_execution import WorkflowFrontier
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier, transition_owned_frontier
+
+
+class FrontierProgressionContractError(ValueError):
+    """表示 Frontier → Checkpoint → Next Frontier 违反 Durable contract。"""
+
+
+def validate_frontier_progression_contract(
+    *,
+    frontier: WorkflowFrontier,
+    next_identity: WorkflowFrontierIdentity | None,
+    execution_status: str,
+) -> None:
+    """在任何持久化动作前校验 Frontier progression 的最终一致性边界。
+
+    成功的非终态 Frontier 必须产生同一 Execution/Version 的 Next Frontier；终态 Frontier
+    必须同时把 Execution 视为 completed。禁止把当前 Frontier 自己作为 Next Frontier，避免
+    唯一键幂等机制把已完成 work item 重新排回队列。
+    """
+    if execution_status not in {"running", "completed"}:
+        raise FrontierProgressionContractError(
+            f"成功 Frontier 只能对应 running/completed Execution: {execution_status}"
+        )
+    if next_identity is None:
+        if execution_status != "completed":
+            raise FrontierProgressionContractError(
+                "没有 Next Frontier 时 Execution 必须进入 completed"
+            )
+        return
+    if execution_status != "running":
+        raise FrontierProgressionContractError(
+            "存在 Next Frontier 时 Execution 必须保持 running"
+        )
+    if next_identity.execution_id != frontier.execution_id:
+        raise FrontierProgressionContractError("Next Frontier 必须属于同一个 Workflow Execution")
+    if next_identity.workflow_version_id != frontier.workflow_version_id:
+        raise FrontierProgressionContractError("Next Frontier 必须属于同一个 Workflow Version")
+    if not next_identity.node_ids:
+        raise FrontierProgressionContractError("Next Frontier 至少需要一个 Node")
+    if next_identity.key() == frontier.frontier_key:
+        raise FrontierProgressionContractError("Next Frontier identity 不能与当前 Frontier 相同")
 
 
 async def complete_frontier_with_checkpoint(
@@ -41,10 +81,12 @@ async def complete_frontier_with_checkpoint(
     锁顺序固定为 Frontier -> Execution/Checkpoint -> Next Frontier，避免与 Worker Claim
     的 Frontier -> Execution 锁顺序产生数据库死锁风险。任何后续步骤失败都由调用方回滚。
     """
-    if next_identity is not None and next_identity.execution_id != frontier.execution_id:
-        raise ValueError("Next Frontier 必须属于同一个 Workflow Execution")
-    if next_identity is not None and next_identity.workflow_version_id != frontier.workflow_version_id:
-        raise ValueError("Next Frontier 必须属于同一个 Workflow Version")
+    execution_status = "running" if next_identity is not None else "completed"
+    validate_frontier_progression_contract(
+        frontier=frontier,
+        next_identity=next_identity,
+        execution_status=execution_status,
+    )
 
     # 第一阶段：先验证并锁定当前 Frontier。只有当前 fencing generation 仍有效，
     # 才允许写入 Checkpoint；因此 stale Worker 不会产生新的持久化事实。
@@ -62,7 +104,7 @@ async def complete_frontier_with_checkpoint(
     checkpoint_service = WorkflowExecutionCheckpointService(db)
     checkpoint = await checkpoint_service.append_next_in_transaction(
         execution_id=frontier.execution_id,
-        execution_status="running" if next_identity is not None else "completed",
+        execution_status=execution_status,
         state_data=checkpoint_state,
         checkpoint_reason=checkpoint_reason,
         node_id=node_id,
