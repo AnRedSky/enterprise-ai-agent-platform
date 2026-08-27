@@ -131,10 +131,48 @@ WorkflowDagResumeRuntimePlan
 4. 冲突顶层状态键直接拒绝；
 5. Merge Result 和 Node Definition 均为深拷贝；
 6. 单 frontier 继续兼容旧 `state_data` 参数；
-7. 多 frontier 不提供 `frontier_node_id` / `node` 的隐式单 Node 选择；
-8. 当前只完成 Runtime Plan，尚未宣称并行 Node 实际执行、Join readiness、Checkpoint frontier persistence 已完成。
+7. 多 frontier 不提供 `frontier_node_id` / `node` 的隐式单 Node 选择。
 
-## 7. Recovery Observability Contract
+## 7. Multi-frontier Branch Execution Coordinator
+
+新增正式入口：
+
+```text
+WorkflowDagBranchExecutionResult
+WorkflowDagMultiFrontierExecutionResult
+WorkflowDagMultiFrontierExecutor
+```
+
+执行边界：
+
+```text
+Runtime Plan
+    ↓
+Branch A state ──→ Branch A executor
+    ↓
+Branch B state ──→ Branch B executor
+    ↓
+全部 Branch 成功
+    ↓
+WorkflowDagBranchStateMergeService
+    ↓
+join_ready = true
+```
+
+Contract：
+
+- 当前实现是**单 Worker 内确定性顺序 Branch 执行**，不伪装成多 Worker 并行；
+- 每个 Branch 的输入 state 都经过独立 deep-copy；
+- Branch executor 必须返回对象 state；
+- 任一 Branch 抛出异常时立即停止后续 Branch，Join 不就绪，异常交给上层 Worker / ExecutionService；
+- 只有所有 Branch 成功后才允许执行最终 Merge；
+- Merge 冲突仍然显式拒绝；
+- Executor 不创建 Worker ownership、不直接修改 Execution ORM、不直接写 Checkpoint；
+- Checkpoint persistence 必须继续由 WorkflowExecutionService / Checkpoint Service 在现有事务与 fencing 边界内完成。
+
+因此本轮完成的是 **Branch Execution Coordination Contract**，而不是宣称真实 WorkflowRuntime / Worker 已经完成多 frontier 执行。
+
+## 8. Recovery Observability Contract
 
 正式入口：
 
@@ -166,7 +204,7 @@ occurred_at
 
 后续 Metrics / Trace 接入必须复用该事件 Contract，不建立平行 Recovery 日志字段体系。
 
-## 8. 单元测试
+## 9. 单元测试
 
 覆盖：
 
@@ -178,25 +216,27 @@ backend/tests/unit/test_workflow_recovery_scheduler.py
 backend/tests/unit/test_workflow_recovery_observability.py
 backend/tests/unit/test_workflow_dag_state_merge.py
 backend/tests/unit/test_workflow_dag_runtime.py
+backend/tests/unit/test_workflow_dag_executor.py
 ```
 
 本轮新增覆盖：
 
-- 多 frontier Runtime Plan；
-- frontier Node 确定性排序；
-- Branch State Merge 接入；
-- 缺失 / 非 frontier branch state 拒绝；
-- branch state 冲突拒绝；
-- 单 frontier API 兼容；
-- 多 frontier 禁止隐式选择单 Node。
+- Branch state 独立隔离；
+- 多 frontier Branch 按确定性顺序执行；
+- Branch 执行结果必须为对象；
+- 缺失 Branch state 拒绝；
+- Branch 冲突阻止 Join；
+- 任一 Branch 失败后不继续执行后续 Branch；
+- 全部 Branch 成功后 `join_ready=True`。
 
 当前环境未实际执行新增测试，因此不得记录为“已通过”。
 
-## 9. 下一任务
+## 10. 下一任务
 
-1. 将 Multi-frontier Runtime Plan 接入真实 WorkflowRuntime / Worker；
-2. 定义 branch execution 与 Join readiness；
-3. 持久化 frontier / branch execution Checkpoint 事实；
-4. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，保持领域事件出口，不新增平行 exporter；
-5. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
-6. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
+1. 将 `WorkflowDagMultiFrontierExecutor` 接入真实 `WorkflowRuntime` / `WorkflowExecutionService.run()` 的 Resume execution path；
+2. 在同一 Worker ownership / fencing 边界内持久化每个 Branch 的 Node Execution 与 Checkpoint；
+3. 基于 DAG predecessor 完成事实实现 Join readiness / next frontier 计算；
+4. 将合并后的 state 作为下一 frontier 的唯一输入，禁止跨 Branch 隐式共享可变 state；
+5. 将 Recovery Event Contract 接入项目已有统一 observability / trace 基础设施；若当前没有统一基础设施，保持领域事件出口，不新增平行 exporter；
+6. 增加自动恢复 Real HTTP + PostgreSQL + 独立 Worker 测试入口，但不作为当前主线阻塞项；
+7. 完成 Phase 2.6 Closure 后进入下一阶段主线能力。
