@@ -58,21 +58,7 @@ def validate_frontier_progression_contract(
 async def _assert_next_frontier_has_no_active_node_overlap(
     db: AsyncSession, *, frontier: WorkflowFrontier, next_identity: WorkflowFrontierIdentity,
 ) -> None:
-    """证明下一 Frontier 不会与同一 Execution 的其他活动 Frontier 重复消费 Node。
-
-    Args:
-        db: 当前调用方持有的异步数据库会话。
-        frontier: 当前正在完成的 Frontier。
-        next_identity: 即将创建的下一 Frontier identity。
-
-    Raises:
-        FrontierProgressionContractError: 已存在其他可消费 Frontier 与 next Node 集合发生重叠。
-
-    设计意图：同一 Execution 允许多个并行 Frontier，但并行 Frontier 必须是互斥的 Node 集合。
-    identity 唯一约束只能阻止完全相同的 frontier_key，不能阻止 fingerprint 不同却消费同一 Node 的
-    平行 work item。因此在同一事务内锁定该 Execution 的其他活动 Frontier，并在创建 Next Frontier
-    前执行集合级 fencing，避免后续 Worker 同时消费同一个 Node。
-    """
+    """证明下一 Frontier 不会与同一 Execution 的其他活动 Frontier 重复消费 Node。"""
     result = await db.execute(
         select(WorkflowFrontier).where(
             WorkflowFrontier.tenant_id == frontier.tenant_id,
@@ -119,6 +105,23 @@ async def _resolve_completed_frontier_idempotency(
     if checkpoint.state_data != checkpoint_state or checkpoint.worker_owner != worker_owner:
         raise FrontierProgressionContractError("重复 completion 的 Checkpoint payload 与既有 Durable fact 不一致")
 
+    # Replay 必须复现第一次 terminalization 的生命周期边界：
+    # running checkpoint 必须仍然带有 Next Frontier；completed checkpoint 必须明确是 Execution terminalization。
+    # 不能因为调用方第二次 replay 时省略 next_identity，就把一次“有后继 Frontier”的 completion
+    # 错误收敛成“无后继”的另一种 durable 结果。
+    if checkpoint.execution_status == "running" and next_identity is None:
+        raise FrontierProgressionContractError(
+            "既有 completion Checkpoint 表明 Execution 仍在 running，Replay 必须提供原始 Next Frontier identity"
+        )
+    if checkpoint.execution_status == "completed" and next_identity is not None:
+        raise FrontierProgressionContractError(
+            "既有 completion Checkpoint 已 terminalize Execution，Replay 不得追加 Next Frontier identity"
+        )
+    if checkpoint.execution_status not in {"running", "completed"}:
+        raise FrontierProgressionContractError(
+            f"completion Checkpoint 的 execution_status 非法，拒绝 Replay convergence: {checkpoint.execution_status}"
+        )
+
     next_frontier = None
     if next_identity is not None:
         next_result = await db.execute(
@@ -149,11 +152,7 @@ async def complete_frontier_with_checkpoint(
     error_code: str | None = None, error_message: str | None = None,
     next_identity: WorkflowFrontierIdentity | None = None, now: datetime, actor_id: UUID | None = None,
 ) -> tuple[WorkflowExecutionCheckpoint, WorkflowFrontier | None]:
-    """原子完成当前 Frontier、追加 Checkpoint、Terminalize Execution 并幂等创建 Next Frontier。
-
-    `attempt` 只代表当前 Frontier consumption attempt；Execution 的 `worker_attempt` 是独立的
-    Worker ownership epoch。两者必须分别校验，禁止用 Frontier attempt 充当 Execution fencing generation。
-    """
+    """原子完成当前 Frontier、追加 Checkpoint、Terminalize Execution 并幂等创建 Next Frontier。"""
     execution_status = "running" if next_identity is not None else "completed"
     validate_frontier_progression_contract(
         frontier=frontier, next_identity=next_identity, execution_status=execution_status,
