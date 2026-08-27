@@ -57,6 +57,8 @@ class WorkflowRuntime(BaseWorkflowRuntime):
                 trace_id,
                 completed,
                 decision_id,
+                frontier,
+                selected,
             )
             await trace_link.record_dag_decision(
                 execution,
