@@ -43,7 +43,9 @@ existing Branch / Join / Runtime
 - Resume 从持久化 completed Node output 重新计算 frontier；
 - Runtime 复用现有 DAG Runtime Planner；
 - **首次执行现在同样进入 DAG Planner，条件边不再只在 Resume 路径生效；**
-- **Join Branch state 现在优先消费 Planner 选中的 predecessor，未命中条件分支不会被当作 Join 输入；**
+- **首次执行存在多个 root 时，为每个 root 建立独立输入快照，再进入现有 Multi-frontier Runtime；**
+- **Join Branch state 优先消费 Planner 选中的 predecessor，未命中条件分支不会被当作 Join 输入；**
+- 修正 `app/runtime/workflow/dag_runtime.py` 与基础 Runtime 的 `_build_frontier_branch_states()` 契约不一致问题，删除重复的 DAG state / Resume 逻辑，仅保留 Join 与 Recovery Trace 扩展；
 - 无 `edges` 的历史顺序 Workflow 保留原顺序执行兼容语义。
 
 ## 3. 单元测试
@@ -53,15 +55,19 @@ existing Branch / Join / Runtime
 ```text
 backend/tests/unit/test_workflow_condition_evaluator.py
 backend/tests/unit/test_workflow_conditional_branching.py
+backend/tests/unit/test_workflow_runtime.py
+backend/tests/unit/test_workflow_dag_runtime_initialization.py
 ```
 
-并补充 `backend/tests/unit/test_workflow_runtime.py`：
+新增覆盖：
 
 - Conditional Join 只使用 selected predecessor；
 - 初始 DAG Execution 从 root frontier 启动并复用同一 Planner Contract；
+- 多 root 初始 DAG 为每个 frontier 建立独立输入 state；
+- Join Node 类型扩展不复制基础 Runtime 的执行能力；
 - 既有线性 Runtime 与 Agent governance 行为保持覆盖。
 
-**当前运行环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。** 按当前开发策略，完整 Backend / Frontend / Browser / Real API Gate 继续暂停，不作为主线阻塞条件。
+**当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。** 按当前开发策略，完整 Backend / Frontend / Browser / Real API Gate 继续暂停，不作为主线阻塞条件。
 
 ## 4. 当前下一交付
 
@@ -73,15 +79,19 @@ DAG Contract
 Conditional frontier planner
         ↓ 已完成
 首次执行 Runtime integration
-        ↓ 本轮完成
+        ↓ 已完成
+多 root Initial frontier initialization
+        ↓ 已完成
 Resume Runtime integration
         ↓ 已完成
 Unit Test 实际执行
         ↓ 待开发者本地执行
-Real API acceptance
-        ↓ 后续
-Phase 2.7-A Closure
+Phase 2.7-A Closure hardening
+        ↓ 当前主线
+Phase 2.7 后续 orchestration capability
 ```
+
+下一主线继续检查 Conditional Decision、Checkpoint、Workflow Trace 与 Recovery Resume 的可重建一致性，重点保证恢复后不依赖进程内临时状态，并继续复用现有 Planner / Runtime / State Merge。
 
 Real API acceptance 后续必须验证真实 HTTP、真实 PostgreSQL 持久化事实以及 Worker → Runtime 链路；当前不使用 Mock、JSON fixture 或 GitHub Actions 替代本地验收。
 
