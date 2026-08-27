@@ -1,7 +1,7 @@
 """Workflow Checkpoint Recovery 正式领域入口。
 
 职责：暴露恢复评估、自动恢复策略、自动恢复领域服务、恢复可观测事件、顺序 Runtime Resume 规划及 DAG frontier 能力。
-边界：Recovery Planner / Policy / Automatic Recovery Service / State Merge / Join Readiness / Join Execution 不直接启动 Runtime；实际 Execution 仍由 Worker + WorkflowExecutionService 完成。
+边界：Recovery Planner / Policy / Automatic Recovery Service / State Merge / Join Readiness / Join Execution / Trace Link 不直接启动 Runtime；实际 Execution 仍由 Worker + WorkflowExecutionService 完成。
 """
 
 from app.services.workflow.checkpoint.recovery.automatic import (
@@ -59,6 +59,7 @@ from app.services.workflow.checkpoint.recovery.service import (
     WorkflowExecutionCheckpointRecoveryService,
     WorkflowExecutionResumeAssessment,
 )
+from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
 
 __all__ = [
     "WorkflowDagBranchState",
@@ -87,6 +88,7 @@ __all__ = [
     "WorkflowRecoveryEvent",
     "WorkflowRecoveryEventLogger",
     "WorkflowRecoveryTelemetry",
+    "WorkflowRecoveryTraceLinkService",
     "WorkflowResumePlan",
     "RECOVERY_ATTEMPT",
     "RECOVERY_SCAN_COMPLETED",
