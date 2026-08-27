@@ -6,11 +6,12 @@
 - Branch: `main`
 - 当前阶段：Phase 2.7 Advanced Workflow Orchestration，主线正在完成 Recovery / Replay Closure。
 - Phase 2.7 已完成 Conditional Branching、Durable Frontier Scheduling、Scheduler → Worker → Runtime、Retry Scheduling、Frontier → Checkpoint 原子推进、Runtime failure convergence、Durable Resume Bootstrap、Recovery Trace 原子事务、Join predecessor contract、tenant boundary、Checkpoint lineage、Decision Replay Guard、Multi-frontier Checkpoint boundary、Execution fencing、stale Worker Checkpoint late-write guard、Node → Checkpoint fencing propagation、Checkpoint durable write boundary、Multi-frontier Join Recovery、Replay Decision Convergence。
-- **本轮完成 Recovery / Replay lifecycle closure：Resume 幂等命中现在必须验证对应 Resume Execution 已存在 Durable Frontier；缺失 Frontier 的不完整 Resume 不得返回 `idempotency_hit`。**
-- **本轮继续完成 Scheduler Service 双循环生命周期监督：Scheduled Trigger Dispatch 与 Durable Recovery Scan 任一循环异常时统一停止另一循环并传播原始异常，避免 Scheduler Service 半存活。**
+- **本轮完成 Recovery / Replay lifecycle closure 的进一步收口：已有但未完成 Bootstrap 的 pending Resume 现在可以在 Source Execution 锁内安全重新 Bootstrap，结果明确记录为 `reconciled`，不创建第二个 Resume。**
+- **Recovery Scheduler 已将 `reconciled` 作为成功恢复结果统计，避免合法自愈被记录为 failed / rejected。**
+- **上一轮完成 Scheduler Service 双循环生命周期监督：Scheduled Trigger Dispatch 与 Durable Recovery Scan 任一循环异常时统一停止另一循环并传播原始异常，避免 Scheduler Service 半存活。**
 - Phase 2.2 Retrieval Production Quality：已正式关闭。
 - Phase 2.3 Model Provider Governance：已正式关闭。
-- Phase 2.4 Durable Scheduler：生产实现继续收口；Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦及本轮双循环生命周期监督均已实现。
+- Phase 2.4 Durable Scheduler：生产实现继续收口；Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦及双循环生命周期监督均已实现。
 - Phase 2.5 Scheduler → Worker Execution Decoupling：已正式关闭。
 - Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；Unit Test 实际 Closure 仍按本地执行结果记录。
 - Backend 模块化整改：继续按最新治理规则推进，不作为当前主线阻塞条件。
@@ -31,7 +32,7 @@
 - Execution / Node / Checkpoint durable write 均受 worker generation fencing 保护；
 - Multi-frontier Join Recovery 已从 durable predecessor facts 重建 merged state，并校验 `frontier_completed.state_data`；
 - Replay Decision Convergence 已将历史 Decision、frontier、selected predecessor 收敛检查提升为写入前强制边界；
-- **Resume lifecycle closure 已完成：`WorkflowExecutionResumeContractService` 对幂等命中增加 Durable Frontier 完整性证明，防止历史不完整 Resume 永久吞掉恢复请求。**
+- **Resume lifecycle closure 已完成：完整 Resume 幂等命中必须具有 Durable Frontier；pending 且缺少 Frontier 的历史不完整 Resume 现在允许在 Source Execution 锁内幂等重新 Bootstrap。**
 
 ## 当前开发策略
 
@@ -69,13 +70,14 @@ Recovery / Replay Closure
   ├── Checkpoint durable write boundary    ✅
   ├── Multi-frontier Join Recovery         ✅
   ├── Replay decision convergence           ✅
-  └── Resume lifecycle idempotency closure  ✅ 本轮
+  ├── Resume lifecycle idempotency closure  ✅
+  └── Incomplete Resume Bootstrap reconcile ✅ 本轮
 
 Phase 2.4 Durable Scheduler
   ├── Persistence / Runtime                ✅
   ├── API Contract / tenant / misfire      ✅
   ├── API / Scheduler process separation   ✅
-  └── Dual-loop lifecycle supervision      ✅ 本轮
+  └── Dual-loop lifecycle supervision      ✅
 
 Phase 2.4 完整 Gate / Acceptance
   └── 按当前策略暂缓，不阻塞主线开发
@@ -83,10 +85,10 @@ Phase 2.4 完整 Gate / Acceptance
 
 ## 本轮交付与文档
 
-- `backend/app/entrypoints/scheduler.py`
-- `backend/tests/unit/test_service_entrypoints.py`
-- `docs/04-errors/2026-08-27-scheduler-service-supervision.md`
-- `docs/02-phases/PHASE_2_4.md`
+- `backend/app/services/workflow/checkpoint/recovery/resume_contract.py`
+- `backend/app/services/workflow_scheduler/recovery.py`
+- `backend/tests/unit/test_workflow_resume_reconciliation.py`
+- `docs/04-errors/2026-08-27-incomplete-resume-bootstrap-reconciliation.md`
 - `docs/PROJECT_STATUS.md`
 
-**Unit Test：本轮未在当前环境执行，因此不记录 PASS。Scheduler Service 双循环生命周期监督生产代码已完成；完整 Gate / Acceptance 继续暂停。**
+**Unit Test：本轮未在当前环境执行，因此不记录 PASS。完整 Gate / Acceptance 继续暂停。**
