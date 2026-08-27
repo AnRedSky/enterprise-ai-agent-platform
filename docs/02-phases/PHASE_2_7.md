@@ -62,7 +62,13 @@ Recovery Resume
 - 顺序 Resume Sequence Planner 完整传递 Planner 的 selected predecessor 与 decision fingerprint，不允许在顺序 Runtime 边界丢失 Durable Decision identity；
 - Checkpoint 自动序号分配先锁定目标 `WorkflowExecution` 再读取最大 sequence，确保同一 Execution 的并发 Checkpoint 写入具有确定的序号分配边界；
 - Checkpoint 若绑定 Node，则 Recovery 可通过 `assert_node_fact_complete()` 校验 NodeExecution 的 node、status、attempt、output_data；execution-level checkpoint 不要求 NodeExecution；
-- Recovery Trace → Resume lineage 强制校验 Source/Resume relationship、tenant、workflow version 与真实存在的 `resume_checkpoint_sequence`，并将 checkpoint sequence 作为 lineage audit metadata。
+- Recovery Trace → Resume lineage 强制校验 Source/Resume relationship、tenant、workflow version 与真实存在的 `resume_checkpoint_sequence`，并将 checkpoint sequence 作为 lineage audit metadata；
+- Recovery Trace 幂等命中已有 lineage event 后重新校验 Source / Resume / Checkpoint identity，避免旧数据污染被静默接受；
+- `get_trace_id()` 同时限定 Resume Execution 的 tenant 与 workflow version，避免跨版本恢复错误 trace；
+- Decision Trace 幂等命中已有 event 后重新校验 decision_id、completed_node_ids、frontier_node_ids、selected_predecessors，避免历史 Decision payload drift 被静默接受；
+- Conditional Decision Replay 不仅比较 fingerprint，还比较历史 Decision 的 frontier 与 selected predecessor outputs，保证同一 durable completed facts 的 Decision 能完整重建；
+- Decision fingerprint canonicalization 严格要求 JSON-safe condition state，禁止 `default=str` 隐式转换，并拒绝 NaN / Infinity 等非标准 JSON 数值；
+- `WorkflowDagResumeRuntimePlanner` 可直接消费已经计算的 immutable `WorkflowDagResumePlan`，正式 `_resolve_dag_context()` 不再对同一次 Runtime Resolution 二次运行 Planner，保证单一 Decision calculation boundary。
 
 ## 3. Durable Recovery Closure 推进
 
@@ -224,6 +230,29 @@ recovery.trace_linked
 
 `recovery.trace_linked` 事件仅保存身份和 checkpoint sequence metadata，不复制 checkpoint `state_data`。这样独立 Worker 后续恢复 trace identity 时，可以同时审计 Resume 所依据的 durable checkpoint 边界。
 
+### 3.9 Single DAG Decision Planning Boundary
+
+一次 `_resolve_dag_context()` 必须只有一个 Decision calculation boundary：
+
+```text
+Durable completed facts
+        ↓
+WorkflowDagResumePlanner.plan()
+        ↓
+WorkflowDagResumePlan
+        │
+        ├── completed
+        ├── frontier
+        ├── selected predecessors
+        └── decision fingerprint
+        ↓
+WorkflowDagResumeRuntimePlanner.plan(resume_plan=plan)
+        ↓
+Runtime Plan
+```
+
+Runtime Planner 在收到已经计算的 immutable `WorkflowDagResumePlan` 后不得重新运行 Planner。这样可避免同一次 Runtime Resolution 出现两个独立 Decision 计算结果，也确保 Runtime 消费的 frontier、selected predecessor 与 fingerprint 来自同一个 Decision。
+
 ## 4. 单元测试
 
 已有：
@@ -241,20 +270,19 @@ backend/tests/unit/test_workflow_dag_replay_guard.py
 backend/tests/unit/test_workflow_dag_decision_trace_idempotency.py
 backend/tests/unit/test_workflow_checkpoint_sequence_allocation.py
 backend/tests/unit/test_workflow_checkpoint_fact_completeness.py
+backend/tests/unit/test_workflow_recovery_trace_lineage.py
 ```
 
 本轮新增：
 
 ```text
-backend/tests/unit/test_workflow_recovery_trace_lineage.py
+backend/tests/unit/test_workflow_dag_runtime_initialization.py
 ```
 
 覆盖：
 
-- Resume 必须指向 Source Execution；
-- Source / Resume 必须保持同一 tenant 与 workflow version；
-- `resume_checkpoint_sequence` 必须存在；
-- 合法 checkpoint lineage 可以建立。
+- 已计算 `WorkflowDagResumePlan` 时 Runtime Planner 不得再次调用 Planner；
+- Runtime Plan 必须完整继承 completed / frontier / selected predecessor / decision fingerprint。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
@@ -272,22 +300,24 @@ Decision Trace                   ✅
 Decision Fingerprint             ✅
 Runtime Plan fingerprint         ✅
 Branch Checkpoint Gate            ✅
-Recovery Replay Guard             ✅
+Recovery Frontier Replay Guard   ✅
 Decision Trace Idempotency        ✅
 Sequence Plan metadata            ✅
 Checkpoint sequence serialization ✅
 Checkpoint fact completeness      ✅
 Recovery Trace Checkpoint Lineage ✅
+Conditional Decision Rebuild      ✅
+Trace Lineage 连续性              ✅
+Decision Trace payload drift guard ✅
+Deterministic fingerprint JSON boundary ✅
+Single DAG Decision Planning Boundary ✅
 Unit Test 实际执行                ⏳
 Real API acceptance               ⏸ 暂停
 
         ↓
 
 Phase 2.7-A Durable Recovery Closure
-  ├── Conditional decision 可重建性
-  └── Trace lineage 连续性
-        ↓
-Phase 2.7-A Closure
+  └── Closure invariant sweep
         ↓
 Phase 2.7 后续 orchestration capability
 ```
