@@ -35,8 +35,11 @@ class TracedScheduledTriggerScheduler(_ScheduledTriggerScheduler):
         context = self.trace_service.start_scan()
         counters: dict[str, int] | None = None
         try:
-            # 使用位置参数调用父类，避免测试/装饰器替换父类 tick_once 时出现重复绑定 now。
-            counters = await super().tick_once(now)
+            # 未显式传入时间时不向父类传递 None，保持被替换/装饰的父类方法默认参数契约。
+            if now is None:
+                counters = await super().tick_once()
+            else:
+                counters = await super().tick_once(now=now)
             self.trace_service.finish_scan(
                 context,
                 candidates=counters.get("eligible", 0),

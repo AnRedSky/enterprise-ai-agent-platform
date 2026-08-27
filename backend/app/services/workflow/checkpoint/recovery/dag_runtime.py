@@ -77,10 +77,12 @@ class WorkflowDagResumeRuntimePlanner:
         )
         if not isinstance(plan, WorkflowDagResumePlan):
             raise ValueError("DAG Resume Runtime resume_plan 必须为 WorkflowDagResumePlan")
-        if tuple(plan.completed_node_ids) != tuple(
-            node_id for node_id in definition.get("nodes", [])
-            if isinstance(node_id, dict) and node_id.get("id") in completed_node_ids
-        ):
+        expected_completed_node_ids = tuple(
+            node["id"]
+            for node in definition.get("nodes", [])
+            if isinstance(node, dict) and node.get("id") in completed_node_ids
+        )
+        if tuple(plan.completed_node_ids) != expected_completed_node_ids:
             raise ValueError("DAG Resume Runtime resume_plan 与 completed_node_ids 不一致")
         if not plan.decision_fingerprint:
             raise ValueError("DAG Resume Planner 未生成 decision fingerprint")
