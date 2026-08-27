@@ -1,7 +1,7 @@
 """Durable Frontier 并行消费与终态 Replay 收敛的单元测试。
 
 验证同一 Execution 的 Next Frontier 不会与其他活动 Frontier 重叠消费同一个 Node，且重复 completion
-必须严格绑定原始 Next Frontier 的 fingerprint 与 Node 集合。
+必须严格绑定原始 Next Frontier 的 fingerprint、Node 集合以及唯一 completion Checkpoint。
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ async def test_duplicate_completion_rejects_next_frontier_fingerprint_drift() ->
     checkpoint = MagicMock()
     checkpoint.state_data = {"done": True}
     checkpoint.worker_owner = "worker-a"
-    checkpoint_lookup.scalar_one_or_none.return_value = checkpoint
+    checkpoint_lookup.scalars.return_value.all.return_value = [checkpoint]
     next_lookup = MagicMock()
     existing_next = MagicMock()
     existing_next.execution_id = frontier.execution_id
@@ -198,7 +198,7 @@ async def test_duplicate_completion_rejects_next_frontier_node_set_drift() -> No
     checkpoint = MagicMock()
     checkpoint.state_data = {"done": True}
     checkpoint.worker_owner = "worker-a"
-    checkpoint_lookup.scalar_one_or_none.return_value = checkpoint
+    checkpoint_lookup.scalars.return_value.all.return_value = [checkpoint]
     next_lookup = MagicMock()
     existing_next = MagicMock()
     existing_next.execution_id = frontier.execution_id
@@ -224,5 +224,31 @@ async def test_duplicate_completion_rejects_next_frontier_node_set_drift() -> No
             checkpoint_state={"done": True},
             checkpoint_reason="frontier_completed",
             next_identity=next_identity,
+            now=datetime(2026, 8, 27, 8, 0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_completion_rejects_multiple_completion_checkpoints() -> None:
+    """同一 Frontier 已经存在多个 completion facts 时必须 fail-closed，不能只取最新一条。"""
+    db = AsyncMock()
+    frontier = _frontier()
+    current_lookup = MagicMock()
+    current_lookup.scalar_one_or_none.return_value = frontier
+    checkpoint_lookup = MagicMock()
+    checkpoint_a = MagicMock()
+    checkpoint_b = MagicMock()
+    checkpoint_lookup.scalars.return_value.all.return_value = [checkpoint_a, checkpoint_b]
+    db.execute.side_effect = [current_lookup, checkpoint_lookup]
+
+    with pytest.raises(FrontierProgressionContractError, match="多个 completion Checkpoint"):
+        await complete_frontier_with_checkpoint(
+            db,
+            frontier=frontier,
+            worker_owner="worker-a",
+            attempt=2,
+            checkpoint_state={"done": True},
+            checkpoint_reason="frontier_completed",
+            next_identity=None,
             now=datetime(2026, 8, 27, 8, 0),
         )
