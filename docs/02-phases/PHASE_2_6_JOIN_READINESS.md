@@ -6,7 +6,7 @@
 
 ## 本轮完成
 
-Join 已从独立 Readiness / Execution Contract 推进到真实 `WorkflowRuntime` Resume 路径，并完成 Recovery telemetry 的统一出口边界。
+Join 已从独立 Readiness / Execution Contract 推进到真实 `WorkflowRuntime` Resume 路径，并完成 Recovery telemetry 统一出口以及 Automatic Recovery trace 生命周期接入。
 
 正式入口：
 
@@ -79,7 +79,7 @@ Join Node 使用现有 `(execution_id, node_id)` NodeExecution 唯一事实及 W
 
 ## Recovery Observability / Trace Contract
 
-Recovery、Scheduler 和后续 Worker/Runtime 接入统一使用：
+Recovery、Scheduler、Automatic Recovery 与后续 Worker/Runtime 接入统一使用：
 
 ```text
 WorkflowRecoveryEvent
@@ -113,23 +113,42 @@ finish_trace()
 RECOVERY_TRACE_FINISHED
 ```
 
-当前仍不在 Recovery Domain 内直接依赖具体 Trace/Metrics SDK，后续 Worker 与 Automatic Recovery 接入时复用该 facade。
+### Automatic Recovery 当前接入
+
+`WorkflowExecutionAutomaticRecoveryService.recover()` 已使用同一 `WorkflowRecoveryTelemetry` 完成：
+
+```text
+start_trace(execution_id)
+        ↓
+evaluate / resume
+        ↓
+RECOVERY_ATTEMPT(trace_id)
+        ↓
+finish_trace(trace_id)
+```
+
+成功与拒绝两条路径都必须关闭 trace；`RECOVERY_ATTEMPT` 与 `RECOVERY_TRACE_FINISHED` 使用相同 `trace_id`，并携带 `phase=automatic_recovery`。duration 使用服务内 monotonic clock 计算，不把业务时间字段作为耗时来源。
+
+当前保留 `event_logger` 构造参数兼容既有调用方，但新代码统一经 `WorkflowRecoveryTelemetry` 出口发射事件；未引入第二套 exporter。
 
 ## Unit Test
 
-覆盖：
+新增 / 覆盖：
 
 ```text
 backend/tests/unit/test_workflow_dag_runtime_join.py
 backend/tests/unit/test_workflow_recovery_observability.py
+backend/tests/unit/test_workflow_automatic_recovery_telemetry.py
 ```
 
-新增 telemetry 测试：
+新增 Automatic Recovery telemetry 测试：
 
-- 相同 Recovery Event 同时 fan-out 到 Trace / Metrics sink；
-- Trace start / finish 使用同一 `trace_id`；
-- duration / outcome / reason_code 正确传递；
-- 事件序列化继续排除 `state_data` / Secret。
+- 成功恢复产生 start → attempt → finish；
+- 三个事件使用同一 `trace_id`；
+- Resume Execution ID 在 attempt / finish 中保持关联；
+- duration 在 attempt / finish 中一致；
+- 拒绝恢复同样必须关闭 trace；
+- reason_code / outcome 正确传递。
 
 完整 Backend Regression、Real API、E2E、Release Gate 继续暂停。**本轮未实际执行测试，因此不得记录 Unit Test PASS。**
 
@@ -151,9 +170,12 @@ Join NodeExecution + Checkpoint
 Next Frontier
 ```
 
-当前进入收口阶段：
+Recovery telemetry 已进一步从“事件出口 Contract”推进到 Automatic Recovery 实际调用链。
 
-1. Recovery / Worker / Runtime 统一接入 `WorkflowRecoveryTelemetry`；
-2. Worker 自动恢复与真实 PostgreSQL / API 集成验证；
-3. Phase 2.6 Closure；
-4. Closure 后进入下一阶段主线能力。
+当前进入最终收口阶段：
+
+1. Worker / Recovery Scheduler / Runtime 统一接入 `WorkflowRecoveryTelemetry`，建立 Recovery → Resume → Runtime trace continuity；
+2. Worker claim / lease / fencing 与 Automatic Recovery 的持久化闭环；
+3. Real API + PostgreSQL + 独立 Worker 验证入口，但不作为当前主线阻塞项；
+4. Phase 2.6 Closure；
+5. Closure 后进入下一阶段企业级执行能力。
