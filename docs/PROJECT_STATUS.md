@@ -52,7 +52,8 @@
 - Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前拒绝与同 Execution 活动 Frontier Node 集合重叠：✅
 - Durable Frontier Claim-layer Duplicate Consumption Guard：Worker Claim 前检查同 Execution 活动 Frontier Node-set，overlap 不进入 claimed：✅
 - Durable Frontier Terminalization Lock-order Closure：Planner Runtime 成功路径不再提前锁定 Execution，成功与失败路径统一遵循 Frontier → Execution 锁序：✅
-- **Durable Frontier Terminal Replay Binding Closure：重复 completion 对既有 Next Frontier 的 decision fingerprint 与 Node 集合执行严格一致性校验；同 key 但 fingerprint 或 Node-set drift 均拒绝收敛：✅ 本轮**
+- Durable Frontier Terminal Replay Binding Closure：重复 completion 对既有 Next Frontier 的 decision fingerprint 与 Node 集合执行严格一致性校验；同 key 但 fingerprint 或 Node-set drift 均拒绝收敛：✅
+- **Durable Frontier Terminal Replay Lifecycle Closure：重复 completion 必须复现第一次 completion 的 Execution lifecycle；running completion 必须继续提供原始 Next Frontier identity，terminal completion 禁止追加 Next Frontier identity，非法 replay lifecycle 直接拒绝：✅ 本轮**
 
 ## 当前实现边界
 
@@ -100,6 +101,10 @@ Terminal Replay Binding
   ├── decision fingerprint equality
   └── Next Frontier Node-set equality
   ↓
+Terminal Replay Lifecycle Guard
+  ├── running completion ↔ Next Frontier identity required
+  └── completed terminalization ↔ Next Frontier identity forbidden
+  ↓
 Frontier / Checkpoint / Execution progression
   ↓
 唯一 COMMIT / ROLLBACK
@@ -123,15 +128,16 @@ Recovery / Replay
 Concurrent multi-frontier Claim / Claim-layer overlap fencing     ← 已完成
 Terminalization lock-order closure                                ← 已完成
 Terminal Replay Binding Closure                                   ← 已完成
+Terminal Replay Lifecycle Closure                                 ← 已完成
         ↓
 Success / Failure terminalization closure
         ↓
-Replay convergence
+Replay convergence final closure
         ↓
 Phase 2.7 主线完成
 ```
 
-下一步重点为 **Success / Failure terminalization closure**：统一检查成功与失败路径在 Frontier、Checkpoint、Execution 生命周期之间的终态一致性，并继续验证 Replay convergence 不产生第二套 Durable fact。Claim-layer 同一 Execution 并发边界、terminalization lock-order 与 Next Frontier replay binding 已完成，不再重复实现第二套 fencing 逻辑。
+下一步重点为 **Success / Failure terminalization closure**：统一检查成功与失败路径在 Frontier、Checkpoint、Execution 生命周期之间的终态一致性，并继续验证 Replay convergence 不产生第二套 Durable fact。Claim-layer 同一 Execution 并发边界、terminalization lock-order、Next Frontier replay binding 与 Replay lifecycle boundary 已完成，不再重复实现第二套 fencing 逻辑。
 
 核心不变量：
 
@@ -161,12 +167,13 @@ Phase 2.7 主线完成
 - Next Frontier 创建前必须证明其 Node 集合与同一 Execution 的其他活动 Frontier 互斥；Node-set overlap 必须在 durable progression transaction 内拒绝；
 - Worker Claim 必须在同一 Execution durable ownership 边界内再次证明活动 Frontier Node-set 互斥；发生 overlap 时不得进入 claimed，且不得修改 attempt / owner / lease；
 - Success Runtime 不得先锁 Execution 再锁 Frontier；成功 terminalization 与 failure convergence 均必须遵循 Frontier → Execution 的统一 durable lock order；
-- 重复 completion 找到既有 Next Frontier 时，必须同时证明 execution、workflow version、decision fingerprint 与 Node 集合完全一致；任何 drift 都必须拒绝 Replay convergence。
+- 重复 completion 找到既有 Next Frontier 时，必须同时证明 execution、workflow version、decision fingerprint 与 Node 集合完全一致；任何 drift 都必须拒绝 Replay convergence；
+- 重复 completion 的 `execution_status` 必须与第一次 completion 的 lifecycle 形态一致：running 必须伴随原始 Next Frontier identity，completed 必须禁止追加 Next Frontier identity；不得通过省略或伪造 next identity 改变 Replay 的生命周期语义。
 
 ## 本轮交付
 
 - `backend/app/services/workflow/frontier_progression.py`
-- `backend/tests/unit/test_frontier_duplicate_consumption.py`
+- `backend/tests/unit/test_frontier_terminal_replay_lifecycle.py`
 - `docs/PROJECT_STATUS.md`
 
 **测试：本轮未执行 pytest、集成测试、本地手动测试或 E2E；不得记录 PASS。**
