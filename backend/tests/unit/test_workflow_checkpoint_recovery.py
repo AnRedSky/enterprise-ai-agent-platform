@@ -1,10 +1,14 @@
 """Workflow Checkpoint Resume 候选评估单元测试。"""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
+
+import pytest
 
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.services.workflow.checkpoint.recovery import WorkflowExecutionCheckpointRecoveryService
+from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
 
 def _checkpoint(
@@ -138,3 +142,36 @@ def test_assess_rejects_missing_or_invalid_checkpoint_boundary() -> None:
     assert missing.reason_code == "checkpoint_missing"
     assert invalid_reason.reason_code == "checkpoint_not_resumable"
     assert invalid_boundary.reason_code == "checkpoint_boundary_invalid"
+
+
+def test_assert_node_fact_complete_accepts_matching_durable_fact() -> None:
+    """Node-level Checkpoint 与 Durable Node Fact 完全一致时允许进入 Recovery。"""
+    checkpoint = _checkpoint(execution_id=uuid4())
+    node_execution = SimpleNamespace(
+        node_id="agent-1",
+        status="completed",
+        attempt=1,
+        output_data={"text": "ok"},
+    )
+
+    WorkflowExecutionCheckpointService.assert_node_fact_complete(
+        checkpoint=checkpoint,
+        node_execution=node_execution,
+    )
+
+
+def test_assert_node_fact_complete_rejects_output_drift() -> None:
+    """Checkpoint output 与 Durable Node Fact 漂移时必须拒绝 Recovery。"""
+    checkpoint = _checkpoint(execution_id=uuid4())
+    node_execution = SimpleNamespace(
+        node_id="agent-1",
+        status="completed",
+        attempt=1,
+        output_data={"text": "drifted"},
+    )
+
+    with pytest.raises(ValueError, match="output_data"):
+        WorkflowExecutionCheckpointService.assert_node_fact_complete(
+            checkpoint=checkpoint,
+            node_execution=node_execution,
+        )
