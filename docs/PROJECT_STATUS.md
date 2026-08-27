@@ -4,8 +4,8 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前代码基线：`0916683a4ae411a7b3c331f00d34003bab61be49`。
-- 本轮已完成：**Conditional Branching Durable Recovery 边界加固中的租户隔离修复**；Durable Resume 读取 completed Node facts 现在强制使用当前 `tenant_id`，并补齐对应 Unit Test。
+- 本轮最新代码提交：`cce25cdf22e5dda5e44caa5357e9d6d68b304fe4`。
+- 本轮已完成：**Conditional Branching Durable Recovery 的 Checkpoint 读取租户边界加固**；Checkpoint `latest()` 现在可通过 `WorkflowExecution.tenant_id` JOIN 强制限定租户，Automatic Recovery 已强制传入当前 Execution tenant_id，并补齐 Unit Test。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -24,13 +24,12 @@
 - DAG Edge 支持 `condition` / `default`，统一 Contract 校验 source、default 数量、重复 edge、未知 Node 和循环图；
 - Conditional frontier 按 Definition 顺序确定性选择并允许多个条件同时命中形成并行 frontier；
 - Planner 输出 selected predecessor facts，Join readiness 不复制条件解析；
-- Resume 从持久化 completed Node output 重新计算 frontier；
-- Runtime 复用现有 DAG Planner / State Merge；
-- 首次执行存在 DAG edges 时通过统一 Planner 计算 frontier；
-- 首次执行存在多个 root 时，每个 root 获得独立输入 state，并进入现有 Multi-frontier Runtime；
-- `app/runtime/workflow/dag_runtime.py` 不复制基础 Runtime 的 DAG state / Resume 逻辑，仅保留 Join、Contract 校验、多 root 初始化和 Recovery Trace 扩展；
-- Conditional Join state 使用 Planner selected predecessor facts；
-- Durable Resume 读取 completed Node facts 时强制 `tenant_id` scope，防止跨租户状态进入 frontier 重建；
+- 首次执行与 Resume 均通过统一 DAG Planner；
+- 多 root 首次执行为每个 root 建立独立输入 state；
+- `dag_runtime.py` 不复制基础 Runtime 的 DAG state / Resume 逻辑；
+- Conditional Join 只消费 Planner selected predecessor；
+- Durable Resume completed Node 查询强制当前 `tenant_id` scope；
+- Checkpoint latest 查询现在支持并由 Automatic Recovery 强制使用 `tenant_id` scope；
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
 
 ## 当前开发策略
@@ -53,15 +52,18 @@ Phase 2.7-A Conditional Branching
   ├── Resume Runtime Integration   ✅
   ├── Runtime inheritance cleanup  ✅
   ├── Conditional Join             ✅
-  ├── Durable tenant boundary      ✅ 本轮完成
+  ├── Durable tenant boundary      ✅
+  ├── Checkpoint tenant boundary   ✅ 本轮完成
   ├── Unit Test 实际执行            ⏳
   └── Real API acceptance           ⏸ 暂停
           ↓
 Phase 2.7-A Durable Recovery Closure
-          ↓ 当前主线
-Checkpoint / Trace / Recovery Resume
+  ├── Checkpoint fact 完整性
+  ├── Conditional decision 可重建性
+  ├── Trace lineage 连续性
+  └── Recovery 后 frontier 一致性
           ↓
-frontier 可重建一致性 + tenant isolation
+Phase 2.7-A Closure
           ↓
 Phase 2.7 后续 orchestration capability
           ↓
