@@ -78,7 +78,7 @@ class WorkflowExecutionCheckpointService:
         expected_worker_attempt: int | None,
         execution: WorkflowExecution,
     ) -> None:
-        """校验 Checkpoint 写入时的 Execution owner/generation，阻断 stale Worker。"""
+        """校验 Checkpoint 写入时的 Execution owner/generation/lease，阻断 stale Worker。"""
         if expected_worker_owner is None and expected_worker_attempt is None:
             return
         if expected_worker_owner is None or expected_worker_attempt is None:
@@ -86,6 +86,9 @@ class WorkflowExecutionCheckpointService:
         locked_attempt = int(execution.worker_attempt or 0)
         if execution.worker_owner != expected_worker_owner or locked_attempt != expected_worker_attempt:
             raise HTTPException(409, "Checkpoint Worker ownership 或 fencing generation 已失效")
+        now = __import__("datetime").datetime.now(__import__("datetime").UTC).replace(tzinfo=None)
+        if execution.worker_lease_expires_at is None or execution.worker_lease_expires_at <= now:
+            raise HTTPException(409, "Checkpoint Worker lease 已失效")
 
     def _build(
         self,
