@@ -24,13 +24,15 @@ class WorkflowDagResumeRuntimeSequencePlanner:
         definition: dict,
         completed_node_ids: set[str] | frozenset[str],
         state_data: dict,
+        state_data_by_node: dict | None = None,
     ) -> tuple[WorkflowDagResumeRuntimePlan, ...]:
-        """生成当前 DAG 可以安全交给顺序 Runtime 的单 frontier Node 计划序列。
+        """生成当前 DAG 可以安全交给顺序 Runtime 的单 Node 计划序列。
 
         Args:
             definition: 固定 Workflow Version 的 DAG Definition。
             completed_node_ids: 已由调用方确认完成的持久化 Node ID 集合。
             state_data: 最新 Checkpoint 的状态快照。
+            state_data_by_node: 已完成 Node 的持久化输出；存在条件边时必须提供。
 
         Returns:
             按 DAG frontier 逐步推进得到的确定性单 Node 计划；全部 Node 已完成时返回空元组。
@@ -47,22 +49,26 @@ class WorkflowDagResumeRuntimeSequencePlanner:
             node.get("id") for node in definition.get("nodes", [])
             if isinstance(node, dict) and isinstance(node.get("id"), str)
         }
+        node_state = deepcopy(state_data_by_node) if state_data_by_node is not None else None
         plans: list[WorkflowDagResumeRuntimePlan] = []
         while len(completed) < len(node_ids):
             frontier_plan = WorkflowDagResumeRuntimePlanner.plan(
                 definition=definition,
                 completed_node_ids=completed,
-                state_data=state_data,
+                state_data_by_node=node_state,
             )
             if len(frontier_plan.frontier_node_ids) != 1:
                 raise ValueError("DAG Resume Runtime 存在多个 frontier，必须交给 Multi-frontier Executor 执行")
             node_id = frontier_plan.frontier_node_ids[0]
+            node = next(node for node in definition["nodes"] if node.get("id") == node_id)
             plans.append(
                 WorkflowDagResumeRuntimePlan(
                     completed_node_ids=frontier_plan.completed_node_ids,
                     frontier_node_ids=(node_id,),
-                    nodes=(deepcopy(frontier_plan.nodes[0]),),
-                    state_data=deepcopy(frontier_plan.state_data),
+                    nodes=(deepcopy(node),),
+                    state_data=deepcopy(state_data),
+                    selected_predecessor_node_ids=frontier_plan.selected_predecessor_node_ids,
+                    decision_fingerprint=frontier_plan.decision_fingerprint,
                 )
             )
             completed.add(node_id)
