@@ -1,6 +1,6 @@
 """Unit tests for atomic Durable Frontier / Execution lease heartbeat."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -28,15 +28,15 @@ async def test_heartbeat_renews_frontier_and_execution_in_same_transaction(monke
     db.flush = AsyncMock()
     db.rollback = AsyncMock()
 
-    # The repository uses SQLAlchemy expressions; this test focuses on the durable
+    # Repository uses SQLAlchemy expressions; this test focuses on the durable
     # transaction contract and verifies both UPDATEs plus the final flush.
     result = await renew_owned_frontier_lease(
         db,
         frontier_id=frontier_id,
         worker_owner="worker:test",
         attempt=3,
-        lease_expires_at=datetime.utcnow() + timedelta(seconds=60),
-        now=datetime.utcnow(),
+        lease_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=60),
+        now=datetime.now(UTC).replace(tzinfo=None),
     )
 
     assert result is True
@@ -59,8 +59,8 @@ async def test_heartbeat_rolls_back_when_execution_lease_cannot_be_renewed(monke
         frontier_id=frontier_id,
         worker_owner="worker:test",
         attempt=3,
-        lease_expires_at=datetime.utcnow() + timedelta(seconds=60),
-        now=datetime.utcnow(),
+        lease_expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=60),
+        now=datetime.now(UTC).replace(tzinfo=None),
     )
 
     assert result is False
