@@ -27,7 +27,8 @@
 - Durable Frontier Runtime Entry Contract：统一支持 `pending + owner` 新 Execution 与 `running + same owner + fencing generation` 后继 Frontier；Node Runtime 仍唯一委托 `WorkflowRuntime`，LeaseGuard 继续负责 ownership loss abort：✅
 - Durable Frontier completed-Node Resume：线性 Workflow 在 Retry / Lease Recovery 后过滤已成功持久化 Node，DAG Workflow 继续使用既有 Planner / Executor：✅
 - Durable Frontier Retry Budget Resume：Node `attempt` 与 Workflow Retry budget 在 Worker Recovery 后从持久化事实恢复，避免 Runtime 重启清零本地计数并绕过 Retry 上限：✅
-- **Durable Frontier Checkpoint Continuation：Resume Runtime 主入口已实际应用 completed-Node filtering；全部线性 Node 已完成时直接 terminalize Execution，避免 Recovery 后 Node replay：✅ 本轮**
+- **Durable Frontier Checkpoint Continuation：Resume Runtime 主入口已实际应用 completed-Node filtering；全部线性 Node 已完成时直接 terminalize Execution，避免 Recovery 后 Node replay：✅**
+- **Durable Frontier Multi-frontier Completion Boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`：✅ 本轮**
 
 ## 当前实现边界
 
@@ -73,31 +74,30 @@ Next Frontier
 
 ## 下一主线
 
-下一步继续收口 Node Retry 与 Frontier Retry 的执行边界，并进入 Checkpoint continuation 后的 Frontier completion / Next Frontier 闭环：
+下一步继续收口 Frontier completion / Next Frontier 后的 Recovery consistency，重点检查 Multi-frontier Branch Node durable completion、`frontier_completed` Execution-level snapshot、Next Frontier deterministic identity 与 Worker lease/fencing 在失败、重试、Recovery 及重复消费窗口下是否保持单一事实来源。
 
 ```text
-Durable Resume Runtime
+Multi-frontier Branch
   ↓
-Node Retry / Lease Recovery
+NodeExecution durable completion
   ↓
-持久化 Node attempt
-  ↓
-Workflow Retry budget
-  ↓
-Checkpoint continuation
-  ↓
-frontier completion
+唯一 frontier_completed Checkpoint
   ↓
 Next Frontier
+  ↓
+Worker Claim / Fencing
+  ↓
+Recovery / Replay
 ```
 
-重点检查 Node Runtime 成功、NodeExecution durable completion、Checkpoint 写入与 Frontier completion 之间的崩溃窗口；任何已成功持久化的 Node 不得因 Worker Recovery 被重复执行，新的 fencing generation 必须能够继续写入合法 Checkpoint。
+重点检查：同一 Frontier 不得产生两个 completion Checkpoint；Next Frontier 不得因为重复 completion 被重复执行；stale Worker 不得在 completion transaction 外写入新的 durable fact；Retry / Lease Recovery 不得重置已经持久化的 Node attempt 与 Workflow Retry budget。
 
 ## 本轮交付
 
-- `backend/app/services/workflow_worker/resume_runtime.py`
-- `backend/tests/unit/test_durable_resume_runtime.py`
+- `backend/app/services/workflow_worker/durable_frontier_execution.py`
+- `backend/tests/unit/test_durable_frontier_execution.py`
 - `docs/04-errors/2026-08-27-durable-frontier-checkpoint-continuation.md`
+- `docs/02-phases/PHASE_2_7.md`
 - `docs/PROJECT_STATUS.md`
 
 **Unit Test：本轮只实现/更新测试代码，当前环境未执行 pytest，因此不记录 PASS。**

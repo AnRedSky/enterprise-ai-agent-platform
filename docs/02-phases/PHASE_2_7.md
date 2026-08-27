@@ -51,6 +51,8 @@ Join merged-state recovery guard
 - Multi-frontier Join Recovery：Recovery Bootstrap 在进入 Join frontier 前，从 Planner selected predecessors 的 durable Node outputs 重新计算 merged state，并与最新 `frontier_completed` Checkpoint state 做严格一致性校验；drift 或缺失 predecessor 时立即拒绝 Recovery；
 - Replay Decision Convergence：Decision Trace 写入前强制复用既有 Replay Guard，对相同 durable completed facts 的历史 Decision、frontier 与 selected predecessor 做收敛校验；不同 fingerprint 或 payload drift 在任何 flush/commit 前立即拒绝；
 - **Recovery / Replay lifecycle closure：Resume Contract 的幂等命中现在必须同时证明对应 Resume Execution 已建立 Durable Frontier；缺失 Frontier 的不完整 Resume 不得被伪装成成功 `idempotency_hit`。**
+- **Durable Resume Checkpoint continuation：线性 Resume 已在 Runtime 主入口过滤 completed Node，并在全部 Node 已完成时直接 terminalize Execution。**
+- **Durable Frontier Multi-frontier checkpoint boundary：Branch Node facts 与 Frontier completion Checkpoint 现在只保留一个正式持久化入口，避免共享 Runtime helper 与 Durable Frontier progression 重复追加 `frontier_completed`。**
 
 ## 3. Durable Recovery Closure
 
@@ -78,12 +80,14 @@ Branch Checkpoint callback
       ↓ all success
 merged state
       ↓
+Durable Frontier progression
+      ↓
 frontier_completed
       ↓
 Join frontier
 ```
 
-没有 Branch Checkpoint 或任一 Branch 写入失败时，不得声明 Join ready，也不得生成 merged state。
+没有 Branch Checkpoint 或任一 Branch 写入失败时，不得声明 Join ready，也不得生成 merged state。Durable Frontier Worker 不得在共享 Runtime helper 与 progression primitive 中重复追加同一 completion Checkpoint。
 
 ### 3.3 Multi-frontier Join Recovery
 
@@ -133,26 +137,39 @@ idempotency_hit / Worker scheduling
 
 Recovery 查询均使用当前 locked Execution 的 `tenant_id`；Resume 必须固定 Source Workflow Version，并保存且重新校验真实 Source Checkpoint sequence；Node lineage、Checkpoint、Resume、Recovery Trace 不得形成跨 tenant / cross-execution replay。
 
+### 3.7 Frontier Completion Atomicity
+
+Durable Frontier 成功路径必须满足单一事务边界：
+
+```text
+NodeExecution completed facts
+        ↓
+complete_frontier_with_checkpoint()
+   ├── current Frontier → completed
+   ├── one frontier_completed Checkpoint
+   └── deterministic Next Frontier
+        ↓
+       COMMIT
+```
+
+共享 `WorkflowRuntime` 可以继续保留普通 Runtime 所需的 Checkpoint 行为，但 Durable Frontier Adapter 必须使用不提前追加 completion Checkpoint 的 Multi-frontier 执行入口，让最终 completion fact 只由 Frontier progression 产生。
+
 ## 4. 本轮单元测试
 
 新增 / 更新：
 
 ```text
-backend/tests/unit/test_workflow_dag_join_recovery.py
-backend/tests/unit/test_workflow_recovery_trace_link.py
-backend/tests/unit/test_workflow_recovery_lifecycle_closure.py
+backend/tests/unit/test_durable_frontier_execution.py
+backend/tests/unit/test_durable_resume_runtime.py
+backend/tests/unit/test_frontier_progression.py
 ```
 
 覆盖：
 
-- 从 durable predecessor facts 重建 Join merged state；
-- Checkpoint merged state drift 拒绝；
-- Recovery 校验不修改输入 state；
-- predecessor 未完成时拒绝 Join Recovery；
-- Decision Trace 正常写入及外层事务模式；
-- 相同 durable completed facts + 不同 fingerprint 时在写入前拒绝 Replay；
-- Resume 幂等命中但缺失 Durable Frontier 时拒绝；
-- Resume 幂等命中且存在 Durable Frontier 时正常收敛，不创建第二个 Resume。
+- Durable Multi-frontier Adapter 不重复追加 `frontier_completed` Checkpoint；
+- Durable Multi-frontier Adapter 继续复用唯一 WorkflowRuntime 的 Node Execution / Retry 逻辑；
+- Frontier progression 的 Execution-level Checkpoint 不携带 Node identity/status；
+- completed Node Resume、Node Retry budget 与 Workflow Retry budget 恢复边界。
 
 **当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待开发者本地实际执行。**
 
@@ -169,7 +186,9 @@ Node → Checkpoint fencing propagation         ✅
 Checkpoint durable write boundary             ✅
 Multi-frontier Join Recovery                  ✅
 Replay decision convergence                   ✅
-Resume lifecycle idempotency closure         ✅ 本轮
+Resume lifecycle idempotency closure         ✅
+Durable Resume Checkpoint continuation        ✅
+Durable Multi-frontier completion boundary    ✅ 本轮
 
         ↓
 
@@ -179,8 +198,8 @@ Recovery / Replay lifecycle closure           ✅ 生产代码闭环
 
 Unit Test 实际执行与 Real API acceptance 继续按开发准则暂停，不阻塞主线代码推进。Real API acceptance 后续必须验证真实 HTTP + PostgreSQL + Scheduler/Worker → Runtime。
 
-## 6. 本轮 Recovery / Replay lifecycle closure 交付说明
+## 6. 本轮交付说明
 
-`WorkflowExecutionResumeContractService.resume_with_outcome()` 在检测到已有 Resume 幂等记录后，不再仅凭 lineage 直接返回 `idempotency_hit`；它必须确认对应 Resume Execution 至少存在一个 Durable Frontier，证明 Bootstrap 已跨过 Durable scheduling boundary。缺失 Frontier 时在任何新写入前拒绝继续。
+本轮继续沿 Durable Frontier → Checkpoint → Next Frontier 闭环推进。生产路径发现共享 `WorkflowRuntime._execute_multi_frontier()` 会在 Branch 全部成功后提前追加 `frontier_completed` Checkpoint，而 Durable Frontier Worker 随后还会执行统一 `complete_frontier_with_checkpoint()`，形成重复 completion fact 的风险。
 
-该修复不新增第二套 Resume 创建、Frontier Planner 或 Runtime 逻辑。新 Resume 仍由既有 `WorkflowExecutionService` + `WorkflowExecutionResumeBootstrapService` 建立，幂等命中只负责验证既有 Durable lifecycle 已经完整。
+本轮没有创建第二套 Planner、Runtime 或 Checkpoint Service。Durable Frontier Worker 增加专用 Adapter，仅复用既有 `WorkflowRuntime._execute_node_with_policy()` 与 `WorkflowDagMultiFrontierExecutor` 完成 Branch 执行，把最终持久化责任统一交给 `complete_frontier_with_checkpoint()`。
