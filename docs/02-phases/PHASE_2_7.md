@@ -50,13 +50,16 @@ Recovery Resume
 - Conditional Join 只消费 Planner selected predecessor；
 - Durable Resume completed Node 查询强制当前 `tenant_id` scope；
 - Checkpoint latest 查询通过 `WorkflowExecution` JOIN 支持 tenant scope；Automatic Recovery 强制使用当前 Execution 的 `tenant_id`；
-- 无 DAG edges 的历史顺序 Workflow 保留原顺序执行兼容语义。
+- Resume Contract 在 Source Execution row lock 后，Checkpoint lookup 强制使用 locked Execution 的 `tenant_id`；
+- Runtime 持久化 `workflow.dag.frontier_decided` decision metadata；
+- Decision Trace 不保存业务 `state_data`，不能替代 PostgreSQL durable facts；
+- 无 DAG edges 的历史顺序 Workflow 保留原执行兼容语义。
 
 ## 3. 本轮 Durable Recovery Closure 推进
 
 ### 3.1 Conditional Decision 持久化 Trace Fact
 
-之前 Planner 已能确定性得到：
+Planner 得到：
 
 ```text
 completed_node_ids
@@ -64,33 +67,11 @@ frontier_node_ids
 selected_predecessor_node_ids
 ```
 
-但这些 decision 仅存在于本次 Runtime 调用内。虽然 Recovery 可以重新计算，但缺少一条持久化、可审计的 decision lineage。
+Runtime 将这些可重建 metadata 持久化为 `workflow.dag.frontier_decided` Trace fact，并使用 deterministic `decision_id` 支持审计与消费端去重。
 
-本轮在 `backend/app/runtime/workflow/dag_runtime.py` 增加统一 Decision Trace：
+**不持久化业务 `state_data`。** Trace 不是 Recovery source of truth。
 
-```text
-WorkflowDagResumePlanner
-        ↓
-WorkflowDagResumePlan
-        ↓
-workflow.dag.frontier_decided
-        ↓
-WorkflowTraceEvent
-```
-
-Trace 只持久化可重建 metadata：
-
-- `decision_id`；
-- `workflow_version_id`；
-- `completed_node_ids`；
-- `frontier_node_ids`；
-- `selected_predecessors`。
-
-**不持久化业务 `state_data`。** 因此 Trace 是审计事实而不是 Recovery source of truth。
-
-`decision_id` 对相同 Execution、完成 Node 集合、frontier 和 selected predecessor 保持确定性，可用于消费端幂等/去重。
-
-### 3.2 Recovery Source of Truth 保持不变
+### 3.2 Recovery Source of Truth
 
 ```text
 PostgreSQL
@@ -109,19 +90,29 @@ PostgreSQL
        selected frontier
 ```
 
-`workflow.dag.frontier_decided` Trace **不能反向替代** completed Node / Checkpoint facts；Worker 重启后仍必须从持久化完成事实重新计算 frontier。
+`workflow.dag.frontier_decided` 只能用于审计，Worker 重启后仍必须从 durable Node / Checkpoint facts 重新计算 frontier。
 
-### 3.3 首次执行 Multi-root
+### 3.3 Tenant Boundary
 
-首次执行且没有 completed Node 时：
+当前 Recovery 正式路径统一遵循：
 
 ```text
-input state
-    ├── root-A → independent snapshot
-    └── root-B → independent snapshot
+Source Execution
+      ↓ lock
+locked_execution.tenant_id
+      ↓
+Checkpoint.latest(..., tenant_id=...)
+      ↓
+Resume assessment
+      ↓
+Resume idempotency lookup
 ```
 
-每个 root 使用独立字典副本，避免后续 Node 对一个 branch state 的修改污染其他 root。
+Node completed facts、Checkpoint、Resume Contract 的读取均不得退回无 tenant scope 的正式 Recovery 查询。
+
+### 3.4 首次执行 Multi-root
+
+首次执行且没有 completed Node 时，每个 root 使用独立 input state snapshot，避免后续 branch state 互相污染。
 
 ## 4. 单元测试
 
@@ -133,21 +124,16 @@ backend/tests/unit/test_workflow_conditional_branching.py
 backend/tests/unit/test_workflow_runtime.py
 backend/tests/unit/test_workflow_dag_runtime_initialization.py
 backend/tests/unit/test_workflow_checkpoint_tenant_scope.py
+backend/tests/unit/test_workflow_dag_decision_trace.py
 ```
 
 本轮新增：
 
 ```text
-backend/tests/unit/test_workflow_dag_decision_trace.py
+backend/tests/unit/test_workflow_resume_contract_tenant_scope.py
 ```
 
-覆盖：
-
-- Initial multi-root frontier decision Trace；
-- Trace 只包含 decision metadata，不包含业务 state；
-- `decision_id` 为确定性 SHA-256；
-- Recovery Conditional Branch Trace 包含 selected predecessor facts；
-- 不把 source Node 的业务 state 写入 decision Trace。
+覆盖 Resume Contract 锁定 Source Execution 后使用 tenant-scoped Checkpoint lookup。
 
 **当前环境未执行仓库本地 pytest，因此不得记录 Unit Test 为 PASS。**
 
@@ -164,11 +150,12 @@ Conditional Join                ✅
 Runtime inheritance cleanup     ✅
 NodeExecution tenant boundary   ✅
 Checkpoint tenant boundary      ✅
-Conditional Decision Trace      ✅ 本轮完成
+Conditional Decision Trace      ✅
+Resume Contract tenant scope    ✅ 本轮完成
         ↓
 Durable Recovery Closure
         ├── Checkpoint fact 完整性       ← 继续
-        ├── Conditional decision 可重建性 ← 基本完成，继续验证
+        ├── Conditional decision 可重建性 ← 继续
         ├── Trace lineage 连续性         ← 继续
         └── Recovery 后 frontier 一致性   ← 继续
         ↓
