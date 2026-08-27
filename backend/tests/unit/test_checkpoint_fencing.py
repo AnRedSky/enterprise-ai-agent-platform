@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,6 +13,7 @@ def _execution(*, owner: str | None, attempt: int) -> MagicMock:
     execution = MagicMock()
     execution.worker_owner = owner
     execution.worker_attempt = attempt
+    execution.worker_lease_expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
     return execution
 
 
