@@ -4,9 +4,9 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 本轮代码基线：`8d16915f7f24ca081df4e26ed8b196da4697e263`。
-- 本轮已落地：**Conditional Branching 首次执行 Runtime Integration**；同时修正 Conditional Join state 只能消费 Planner selected predecessor 的边界。
-- 最新代码提交：`deb9143166a059ddde0aa1c2d69ee19098ba7933`。
+- 本轮代码基线：`19aa054857851a5acb51d1b0c4f90a6346e387df`。
+- 本轮已完成：**Conditional Branching 首次执行 Runtime Integration 加固**，修复 DAG Runtime 扩展与基础 Runtime 的方法契约不一致，并补齐多 root 初始 frontier 的独立输入状态。
+- 最新代码提交：`636bda9083d5e051a26dec15fa2ba674ac533c94`。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
 - Phase 2.4 Durable Scheduler：**已完成既定实现范围，不作为当前主线阻塞条件。**
@@ -14,7 +14,7 @@
 - Phase 2.6 Durable Execution Checkpoint Foundation：**生产代码实现已完成；当前仅等待开发者本地 Unit Test 实际结果完成 Closure。**
 - Backend 模块化整改：**继续按最新治理规则推进，不作为当前主线阻塞条件。**
 - Frontend Phase 1.3：**SSE / Runtime 公共边界、Runtime Execution 页面、Chat streaming 消费、Chat / Runtime 失败、断流、取消 UI 生命周期均已完成。**
-- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 首个交付单元已完成 Condition Evaluator / DAG Contract / Planner / Resume Runtime Integration，并在本轮完成首次执行 Runtime Integration。**
+- Phase 2.7 Advanced Workflow Orchestration：**开发中；Conditional Branching 首个交付单元已完成 Evaluator / DAG Contract / Planner / Initial Runtime / Resume Runtime，并继续进行 Durable Recovery 一致性加固。**
 
 ## Phase 2.7-A 当前实现
 
@@ -27,18 +27,11 @@
 - Planner 输出 selected predecessor facts，Join readiness 不复制条件解析；
 - Resume 从持久化 completed Node output 重新计算 frontier；
 - Runtime 复用现有 DAG Planner / State Merge；
-- **首次执行存在 DAG edges 时现在也通过统一 `WorkflowDagResumePlanner` / `WorkflowDagResumeRuntimePlanner` 计算 frontier；**
+- **首次执行存在 DAG edges 时通过统一 `WorkflowDagResumePlanner` / `WorkflowDagResumeRuntimePlanner` 计算 frontier；**
+- **首次执行存在多个 root 时，每个 root 获得独立输入 state，并进入现有 Multi-frontier Runtime；**
+- **`app/runtime/workflow/dag_runtime.py` 不再复制基础 Runtime 的 DAG state / Resume 逻辑，仅保留 Join 类型扩展、Contract 校验和 Recovery Trace Continuity；**
 - **Conditional Join state 使用 Planner selected predecessor facts，不再按静态全部 predecessor 读取状态；**
 - 无 DAG edges 的历史顺序 Workflow 保留原执行路径。
-
-## Frontend Phase 1.3 当前实现
-
-- SSE / Runtime 公共边界完成；
-- Runtime Execution 页面完成；
-- Chat streaming 消费统一使用共享 SSE Parser；
-- Chat 生命周期统一为 `idle / streaming / completed / failed / cancelled`；
-- `AbortController`、SSE error、stale stream race protection 已完成；
-- 当前完整 Frontend Release Gate / Browser E2E 暂停。
 
 ## 当前开发策略
 
@@ -46,23 +39,29 @@
 
 ## 最新执行限制
 
-当前环境可通过 GitHub Repository API 直接核对和修改远端 `main`，但无法在本地启动完整项目执行 pytest / npm；因此本轮不伪造 Unit Test 结果。
+当前环境只能通过 GitHub Repository API 直接核对和修改远端 `main`，无法在本地启动完整项目执行 pytest / npm；因此本轮继续不伪造 Unit Test 结果。
 
 ## 当前主线
 
 ```text
-Frontend Phase 1.3
-  ↓ 已完成
 Phase 2.7-A Conditional Branching
   ├── Evaluator                    ✅
   ├── DAG Contract                ✅
   ├── Conditional Planner         ✅
+  ├── Initial Execution Runtime   ✅
+  ├── Multi-root Initialization   ✅ 本轮完成
   ├── Resume Runtime Integration  ✅
-  ├── Initial Execution Runtime   ✅ 本轮完成
+  ├── Runtime inheritance cleanup ✅ 本轮完成
   ├── Unit Test 实际执行           ⏳
   └── Real API acceptance          ⏸ 暂停
           ↓
-Phase 2.7-A Closure
+Phase 2.7-A Durable Recovery Closure
+          ↓ 当前主线
+Conditional Decision
+  → Checkpoint
+  → Trace
+  → Recovery Resume
+  → frontier 重建一致性
           ↓
 Phase 2.7 后续 orchestration capability
           ↓
