@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Mapping
 
-from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlanner
+from app.services.workflow.checkpoint.recovery.dag_planner import WorkflowDagResumePlan, WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_state_merge import WorkflowDagBranchState, WorkflowDagBranchStateMergeService
 
 
@@ -47,7 +47,8 @@ class WorkflowDagResumeRuntimePlanner:
     @staticmethod
     def plan(*, definition: dict, completed_node_ids: set[str] | frozenset[str], state_data: dict | None = None,
              branch_state_data: Mapping[str, Mapping[str, object]] | None = None,
-             state_data_by_node: Mapping[str, Mapping[str, object]] | None = None) -> WorkflowDagResumeRuntimePlan:
+             state_data_by_node: Mapping[str, Mapping[str, object]] | None = None,
+             resume_plan: WorkflowDagResumePlan | None = None) -> WorkflowDagResumeRuntimePlan:
         """生成当前 Runtime 可以执行的 DAG Resume frontier 计划。
 
         Args:
@@ -56,6 +57,8 @@ class WorkflowDagResumeRuntimePlanner:
             state_data: 已有单 frontier Resume 的兼容输入状态。
             branch_state_data: 多 frontier 每个分支独立状态，必须来自持久化事实。
             state_data_by_node: 已完成 Node 的持久化输出，用于 Conditional Branching 重新计算 frontier。
+            resume_plan: 可选的、已经由 WorkflowDagResumePlanner 计算出的纯内存计划。
+                提供该值时不得再次运行 Planner，确保一次 Runtime Resolution 只产生一个 Decision。
 
         Returns:
             Runtime 可消费的确定性 frontier、状态快照、有效 predecessor 与 decision fingerprint。
@@ -67,16 +70,26 @@ class WorkflowDagResumeRuntimePlanner:
             raise ValueError("DAG Resume Runtime state_data 必须为对象")
         if branch_state_data is not None and not isinstance(branch_state_data, Mapping):
             raise ValueError("DAG Resume Runtime branch_state_data 必须为对象")
-        plan = WorkflowDagResumePlanner.plan(
+        plan = resume_plan or WorkflowDagResumePlanner.plan(
             definition=definition,
             completed_node_ids=completed_node_ids,
             state_data_by_node=state_data_by_node,
         )
+        if not isinstance(plan, WorkflowDagResumePlan):
+            raise ValueError("DAG Resume Runtime resume_plan 必须为 WorkflowDagResumePlan")
+        if tuple(plan.completed_node_ids) != tuple(
+            node_id for node_id in definition.get("nodes", [])
+            if isinstance(node_id, dict) and node_id.get("id") in completed_node_ids
+        ):
+            raise ValueError("DAG Resume Runtime resume_plan 与 completed_node_ids 不一致")
         if not plan.decision_fingerprint:
             raise ValueError("DAG Resume Planner 未生成 decision fingerprint")
         node_by_id = {node["id"]: node for node in definition["nodes"] if isinstance(node, dict) and isinstance(node.get("id"), str)}
         frontier_node_ids = plan.frontier_node_ids
-        nodes = tuple(deepcopy(node_by_id[node_id]) for node_id in frontier_node_ids)
+        try:
+            nodes = tuple(deepcopy(node_by_id[node_id]) for node_id in frontier_node_ids)
+        except KeyError as exc:
+            raise ValueError(f"DAG Resume Runtime frontier 引用了未知 Node: {exc.args[0]}") from exc
         if len(frontier_node_ids) <= 1:
             if state_data is None:
                 raise ValueError("DAG Resume Runtime 单 frontier 必须提供 state_data")
