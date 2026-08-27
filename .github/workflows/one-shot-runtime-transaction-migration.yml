@@ -57,14 +57,6 @@ jobs:
           test.parent.mkdir(parents=True, exist_ok=True)
           test.write_text('''from __future__ import annotations\n\nimport inspect\n\nfrom app.services.workflow.execution import WorkflowExecutionService\n\n\ndef test_transition_node_exposes_explicit_commit_ownership() -> None:\n    parameter = inspect.signature(WorkflowExecutionService.transition_node).parameters["commit"]\n    assert parameter.default is True\n    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY\n''', encoding='utf-8')
 
-          status = Path('docs/PROJECT_STATUS.md')
-          status_text = status.read_text(encoding='utf-8')
-          marker = '- Recovery Commit Ownership Boundary：**已完成；Resume Domain Service 支持显式 `commit=False`，HTTP Recovery endpoint 负责调用方事务的唯一 commit。**\n'
-          addition = marker + '- Runtime Durable Commit Ownership：**本轮完成；Runtime NodeExecution / Checkpoint transition 使用 `commit=False`，由 `WorkflowExecutionService.run()` 的最终 completed/failed transition 统一提交。**\n'
-          if marker not in status_text:
-              raise SystemExit('PROJECT_STATUS marker not found')
-          status.write_text(status_text.replace(marker, addition, 1), encoding='utf-8')
-
           error = Path('docs/04-errors/2026-08-27-runtime-durable-commit-ownership.md')
           error.write_text('''# Runtime Durable Commit Ownership\n\n## Problem\n\n`WorkflowRuntime` previously called `transition_node()` without an explicit transaction contract, while `transition_node()` committed every NodeExecution/Checkpoint transition. That allowed a completed branch to become durable before the Runtime had finished the current execution frontier.\n\n## Fix\n\n`transition_node(..., commit=False)` is now the Runtime contract. NodeExecution state changes, governance trace, and completed-node Checkpoint writes remain in the caller transaction. The outer `WorkflowExecutionService.run()` commits through the final `completed` or `failed` Execution transition.\n\n## Invariant\n\n```text\nRuntime node transition\n  -> NodeExecution\n  -> Trace\n  -> Checkpoint\n  -> no intermediate commit\n  -> Execution completed/failed transition\n  -> single durable commit\n```\n\nDirect legacy callers retain the default `commit=True` behavior.\n''', encoding='utf-8')
 
@@ -74,6 +66,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add backend/app/services/workflow/execution.py backend/app/runtime/workflow/runtime.py backend/tests/unit/test_workflow_runtime_transaction_boundary.py docs/PROJECT_STATUS.md docs/04-errors/2026-08-27-runtime-durable-commit-ownership.md .github/workflows/one-shot-runtime-transaction-migration.yml
+          git add backend/app/services/workflow/execution.py backend/app/runtime/workflow/runtime.py backend/tests/unit/test_workflow_runtime_transaction_boundary.py docs/04-errors/2026-08-27-runtime-durable-commit-ownership.md .github/workflows/one-shot-runtime-transaction-migration.yml
+          git diff --cached --check
           git commit -m "fix(workflow): close runtime durable commit boundary [runtime-transaction-migration]"
           git push
