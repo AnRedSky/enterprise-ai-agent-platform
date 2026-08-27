@@ -37,13 +37,13 @@ class WorkflowDagJoinReadinessService:
             node_id: 当前待判断的 Node ID。
             completed_node_ids: 已从持久化 Node Execution 验证的 completed Node 集合。
             node_outputs: 已完成 Node 的持久化输出状态。
-            predecessor_node_ids: 可选的有效 predecessor 快照；由 Conditional Planner 提供，省略时使用 Definition 入边。
+            predecessor_node_ids: Planner 已选定的有效 predecessor 快照；条件 DAG 必须显式提供。
 
         Returns:
             包含有效 predecessor 列表、ready 标记和安全合并状态的 readiness 事实。
 
         Raises:
-            ValueError: Node、完成事实、predecessor 输出或状态合并不满足 Contract。
+            ValueError: Node、完成事实、predecessor 关系或状态合并不满足 Contract。
         """
         nodes = definition.get("nodes")
         if not isinstance(nodes, list):
@@ -56,16 +56,37 @@ class WorkflowDagJoinReadinessService:
         if not isinstance(node_outputs, Mapping):
             raise ValueError("DAG Join node_outputs 必须为对象")
 
+        edges = definition.get("edges", []) or []
+        if not isinstance(edges, list):
+            raise ValueError("DAG Join Definition edges 必须为数组")
+        incoming_edges = [
+            edge for edge in edges
+            if isinstance(edge, dict) and edge.get("target") == node_id
+        ]
+        direct_predecessors = {
+            edge.get("source") for edge in incoming_edges
+            if isinstance(edge.get("source"), str)
+        }
+        has_conditional_edge = any(
+            isinstance(edge, dict) and ("condition" in edge or edge.get("default") is True)
+            for edge in incoming_edges
+        )
+
         if predecessor_node_ids is None:
-            predecessors = sorted(
-                edge.get("source") for edge in definition.get("edges", []) or []
-                if isinstance(edge, dict) and edge.get("target") == node_id
-            )
-            predecessor_node_ids = tuple(item for item in predecessors if isinstance(item, str))
+            # 条件边的最终 predecessor 必须由唯一 Planner 决定；直接使用 Definition 入边会把未命中的分支错误地带入 Join。
+            if has_conditional_edge:
+                raise ValueError("条件 DAG Join 的 predecessor 必须由 Planner 提供")
+            predecessor_node_ids = tuple(sorted(direct_predecessors))
         else:
             predecessor_node_ids = tuple(predecessor_node_ids)
+
         if not predecessor_node_ids:
             raise ValueError(f"DAG Join Node {node_id} 必须至少存在一个 predecessor")
+        if len(set(predecessor_node_ids)) != len(predecessor_node_ids):
+            raise ValueError(f"DAG Join Node {node_id} predecessor 不能重复")
+        unknown_predecessors = [item for item in predecessor_node_ids if item not in direct_predecessors]
+        if unknown_predecessors:
+            raise ValueError(f"DAG Join predecessor 不是 Join Node 的直接 predecessor: {unknown_predecessors[0]}")
 
         missing_completed = [item for item in predecessor_node_ids if item not in completed_node_ids]
         if missing_completed:
