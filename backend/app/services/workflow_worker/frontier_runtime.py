@@ -34,7 +34,7 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             成功认领的 Durable Frontier；没有可安全领取的 Frontier 时返回 None。
 
         事务边界：Frontier claim 与 Execution ownership 在同一数据库事务中完成。
-        已由当前 Worker 持有的 running Execution 不递增 Execution fencing generation，
+        已由当前 Worker 持有的 running/pending Execution 不递增 Execution fencing generation，
         这样同一 Worker 执行下一 Frontier 时不会制造虚假的 ownership 变更；已过期且属于其他
         Worker 的 Execution 才会重新取得 ownership 并递增 generation。
         """
@@ -82,6 +82,11 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                 execution.worker_owner = self.owner
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
                 execution.worker_attempt = int(execution.worker_attempt or 0) + 1
+            elif execution.status == "pending" and owned_by_current_worker:
+                # Recovery 后一个 Execution 可能有多个 retry_wait Frontier；首个 Frontier
+                # 已重新取得 Execution ownership，后续 Frontier 必须复用同一 Worker epoch，
+                # 而不能因为 Execution 仍处于 pending 就被错误地视为不可消费。
+                execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
             elif execution.status == "running" and owned_by_current_worker:
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
             elif execution.status == "running" and execution_lease_expired:
@@ -114,6 +119,7 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                     WorkflowExecution.worker_owner.is_(None),
                     WorkflowExecution.worker_lease_expires_at.is_(None),
                     WorkflowExecution.worker_lease_expires_at <= now_naive,
+                    WorkflowExecution.worker_owner == self.owner,
                 ),
             ),
             and_(
