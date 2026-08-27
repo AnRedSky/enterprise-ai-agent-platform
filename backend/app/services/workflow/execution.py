@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import Workflow, WorkflowVersion
-from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution, WorkflowFrontier
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow.checkpoint import (
@@ -140,6 +140,29 @@ class WorkflowExecutionService:
         )
         return locked
 
+    async def _assert_no_active_frontiers_for_terminal_transition(self, execution: WorkflowExecution) -> None:
+        """终止 Execution 前证明不存在仍可消费的 Frontier，阻断通用状态入口绕过 Durable terminalization。
+
+        Args:
+            execution: 已通过 `_lock_execution` 获得行锁的当前 Execution。
+
+        Raises:
+            HTTPException: 仍存在 pending、retry_wait、claimed 或 running Frontier 时拒绝终止。
+
+        设计意图：Frontier progression 是 Success/Failure 的正式 Durable terminalization 边界；
+        通用 Execution.transition 不能在仍有活动 Frontier 时直接把 Execution 写成 completed/failed，
+        否则会留下“terminal Execution + 可消费 Frontier”的分叉 Durable 状态。
+        """
+        result = await self.db.execute(
+            select(WorkflowFrontier.id).where(
+                WorkflowFrontier.tenant_id == execution.tenant_id,
+                WorkflowFrontier.execution_id == execution.id,
+                WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
+            ).limit(1)
+        )
+        if result.scalar_one_or_none() is not None:
+            raise HTTPException(409, "Execution 仍存在活动 Frontier，不允许直接进入 terminal 状态")
+
     def _validate_run_owner(self, execution: WorkflowExecution, worker_owner: str | None) -> None:
         """校验 Runtime 执行者是否与已认领 Execution 的 Worker owner 一致。"""
         claimed_owner = execution.worker_owner
@@ -162,6 +185,8 @@ class WorkflowExecutionService:
                    "completed": set(), "failed": set(), "cancelled": set()}
         if target_status not in allowed[current]:
             raise HTTPException(409, f"Execution 不允许从 {current} 转换到 {target_status}")
+        if target_status in {"completed", "failed"}:
+            await self._assert_no_active_frontiers_for_terminal_transition(execution)
         now = datetime.now(UTC).replace(tzinfo=None)
         execution.status = target_status
         if node_id is not None:
