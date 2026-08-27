@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.services.workflow_worker import WorkflowWorker
+from app.services.workflow_worker.runtime import WorkflowWorker
 
 
 @pytest.mark.asyncio
