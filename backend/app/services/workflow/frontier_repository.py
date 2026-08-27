@@ -92,7 +92,7 @@ async def claim_next_frontier(
     lease_expires_at: datetime,
     now: datetime,
 ) -> WorkflowFrontier | None:
-    """Claim one schedulable Frontier for a tenant without committing the transaction.
+    """Claim one schedulable Frontier for a tenant without committing the transaction。
 
     Frontier 只有在其关联 Execution 当前允许被该 Worker 消费时才可进入 claim。
     这样可以避免 failed/completed Execution 上的旧 Frontier 阻塞其他租户或后继任务，
@@ -204,20 +204,41 @@ async def transition_owned_frontier(
     target_status: str,
     now: datetime,
 ) -> WorkflowFrontier:
-    """仅允许当前 Worker ownership 与 fencing generation 匹配时推进 Frontier。"""
+    """仅允许当前 Worker ownership、Frontier attempt 与有效 lease 同时匹配时推进 Frontier。
+
+    Args:
+        db: 当前调用方持有的异步数据库会话。
+        frontier_id: 要推进的 Durable Frontier 标识。
+        worker_owner: 当前 Worker ownership 标识。
+        attempt: 当前 Frontier consumption attempt，用于 fencing 旧 Worker。
+        target_status: 目标 Frontier 状态。
+        now: 当前时间；必须用于判断 Worker lease 是否仍然有效。
+
+    Returns:
+        已完成状态变更并 flush 的 WorkflowFrontier。
+
+    Raises:
+        ValueError: Frontier 不再属于当前 Worker、attempt 已变化或 lease 已失效。
+
+    设计意图：仅校验 owner + attempt 不能阻止“lease 已过期但旧 Worker 尚未被 Recovery 清理”的并发窗口。
+    因此最终状态推进必须把有效 lease 一并纳入数据库锁定条件，让 stale Worker 的 completion/failure
+    在 Recovery 抢先或并发竞争时都无法写入 Durable terminal state。
+    """
     result = await db.execute(
         select(WorkflowFrontier)
         .where(
             WorkflowFrontier.id == frontier_id,
             WorkflowFrontier.worker_owner == worker_owner,
             WorkflowFrontier.attempt == attempt,
+            WorkflowFrontier.worker_lease_expires_at.is_not(None),
+            WorkflowFrontier.worker_lease_expires_at > now,
             WorkflowFrontier.status.in_(("claimed", "running")),
         )
         .with_for_update()
     )
     frontier = result.scalar_one_or_none()
     if frontier is None:
-        raise ValueError("Frontier worker ownership or fencing generation mismatch")
+        raise ValueError("Frontier worker ownership, fencing generation or lease validity mismatch")
     frontier.status = target_status
     frontier.completed_at = now if target_status in ("completed", "failed") else None
     if target_status in ("completed", "failed", "retry_wait"):
