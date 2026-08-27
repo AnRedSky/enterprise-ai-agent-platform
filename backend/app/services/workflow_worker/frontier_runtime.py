@@ -18,6 +18,7 @@ from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow.frontier_lease_repository import renew_owned_frontier_lease
 from app.services.workflow.frontier_repository import claim_next_frontier, transition_owned_frontier
 from app.services.workflow_worker.lease_runtime import LeaseAwareWorkflowWorker
+from app.services.workflow_worker.runtime_entry import execute_claimed_execution
 
 
 class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
@@ -82,11 +83,8 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
                 execution.worker_attempt = int(execution.worker_attempt or 0) + 1
             elif execution.status == "running" and owned_by_current_worker:
-                # 同一 Worker 在同一 Execution 内推进下一 Frontier 时继续复用当前 fencing generation。
-                # 只刷新 lease，不递增 worker_attempt，避免后续 Checkpoint 被旧 generation 错误拒绝。
                 execution.worker_lease_expires_at = lease_expires_at.replace(tzinfo=None)
             elif execution.status == "running" and execution_lease_expired:
-                # 原 Worker lease 已过期，当前 Worker 接管新的 Execution fencing generation。
                 execution.status = "pending"
                 execution.current_node_id = None
                 execution.worker_owner = self.owner
@@ -141,7 +139,7 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
         """执行 Frontier 对应 Execution，并将 Frontier 终态与 Execution 结果收敛。"""
         heartbeat = asyncio.create_task(self._renew_frontier_forever(frontier.id, frontier.attempt))
         try:
-            await super().execute_claimed(frontier.execution_id)
+            await execute_claimed_execution(self, frontier.execution_id)
         finally:
             heartbeat.cancel()
             try:
