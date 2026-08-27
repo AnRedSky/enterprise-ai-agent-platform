@@ -4,13 +4,13 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前阶段：**Phase 2.7 Advanced Workflow Orchestration 主线生产开发已完成，进入本地测试与验收准备阶段。**
+- 当前阶段：**Phase 2.7 Advanced Workflow Orchestration 主线生产开发已完成，进入本地测试、回归修复与验收准备阶段。**
 - Phase 2.2 Retrieval Production Quality：已正式关闭。
 - Phase 2.3 Model Provider Governance：已正式关闭。
 - Phase 2.4 Durable Scheduler：生产实现继续收口；Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦及双循环生命周期监督均已实现。
 - Phase 2.5 Scheduler → Worker Execution Decoupling：已正式关闭。
 - Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；DAG 分支 Resume / 多-frontier Runtime 已完成本阶段主线收口。
-- Phase 2.7 Conditional Branching、Durable Frontier Scheduling、Recovery / Replay Closure：**主线生产开发已完成，测试待执行。**
+- Phase 2.7 Conditional Branching、Durable Frontier Scheduling、Recovery / Replay Closure：**主线生产开发已完成；已开始基于真实本地结果进行回归修复。**
 
 ## Phase 2.7 主线完成清单
 
@@ -87,24 +87,41 @@ Execution terminal write bypass      ✅
 - Success / Failure terminalization 统一遵循 Frontier → Execution 锁序；
 - Execution 通用 `completed/failed` 入口不得绕过活动 Frontier guard。
 
-## 当前开发策略
+## 当前本地回归结果
 
-**Phase 2.7 主线生产开发已完成。现在才切换到本地测试与验收。**
-
-当前只实现 Unit Test，尚未执行 pytest、Backend Full Regression、Frontend Release Gate、Browser E2E、Real API Acceptance 或本地手动测试。不得把未执行测试写成通过。
-
-## 最新测试限制
-
-当前环境只能通过 GitHub Repository API 核对和修改远端 `main`，无法在本地启动完整项目执行 pytest / npm。因此本轮没有伪造任何测试结果。
-
-## 下一阶段：本地测试与验收
-
-按照 `docs/01-governance/DEVELOPMENT.md`：
+开发者于 2026-08-28 在 `backend` 实际执行：
 
 ```text
-环境检查
+uv run pytest -q tests/unit
+94 failed, 622 passed, 2 warnings
+```
+
+另一次 Workflow Retry / Timeout / Runtime 定向回归：
+
+```text
+5 failed, 14 passed
+```
+
+已确认并开始修复的生产 Contract 问题：
+
+- Retry Budget 耗尽缺少 `node.retry.exhausted` / `workflow.node.retry_exhausted` 治理事实；
+- Retry Backoff 跨越 Workflow Deadline 缺少 `workflow_deadline` 治理事实；
+- DAG 单 root 首次执行错误地产生 Branch State。
+
+已在 `docs/04-errors/2026-08-28-phase-2-7-local-regression-retry-governance-and-dag-root-state.md` 记录。
+
+其余失败主要集中在 Durable Frontier、Checkpoint、Resume、Recovery、tenant scope、worker fencing、DAG Contract 等测试 double / fixture 与当前正式 Contract 不一致，后续按当前 Contract 更新测试，不放宽生产约束、不增加兼容垫片。
+
+## 下一步
+
+```text
+修复已确认生产 Contract 回归
+  ↓
+定向 Workflow Unit Regression
   ↓
 Backend Unit / Default Regression
+  ↓
+修正剩余测试 double / fixture Contract
   ↓
 Alembic head / migration verification
   ↓
