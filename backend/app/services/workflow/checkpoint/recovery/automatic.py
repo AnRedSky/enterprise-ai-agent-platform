@@ -86,9 +86,20 @@ class WorkflowExecutionAutomaticRecoveryService:
             self._emit_attempt(execution, rejected, trace_id=trace_id, parent_trace_id=parent_trace_id, duration_ms=duration_ms)
             self.telemetry.finish_trace(trace_id, execution_id=execution.id, outcome=rejected.outcome, reason_code=rejected.decision.reason_code, phase="automatic_recovery", parent_trace_id=parent_trace_id, duration_ms=duration_ms)
             return rejected
-        resume_result = await self.resume_contract.resume_with_outcome(execution, actor_id or execution.created_by)
+        resume_result = await self.resume_contract.resume_with_outcome(
+            execution,
+            actor_id or execution.created_by,
+            commit=False,
+        )
         recovered = WorkflowExecutionAutomaticRecoveryResult(decision=result.decision, resume_execution_id=resume_result.execution.id, outcome=resume_result.outcome)
-        await self.trace_link.link(execution, resume_result.execution, trace_id, actor_id or execution.created_by)
+        await self.trace_link.link(
+            execution,
+            resume_result.execution,
+            trace_id,
+            actor_id or execution.created_by,
+            commit=False,
+        )
+        await self.db.commit()
         duration_ms = (monotonic() - started) * 1000
         self._emit_attempt(execution, recovered, trace_id=trace_id, parent_trace_id=parent_trace_id, duration_ms=duration_ms)
         self.telemetry.finish_trace(trace_id, execution_id=execution.id, resume_execution_id=recovered.resume_execution_id, outcome=recovered.outcome, reason_code=recovered.decision.reason_code, phase="automatic_recovery", parent_trace_id=parent_trace_id, duration_ms=duration_ms)
