@@ -1,4 +1,4 @@
-"""Workflow Worker 单元测试：验证独立消费器的并发编排、恢复、租约与停止语义。"""
+"""Workflow Worker 单元测试：验证基础独立消费器的并发编排、恢复、租约与停止语义。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.services.workflow_worker import WorkflowWorker
+from app.services.workflow_worker.runtime import WorkflowWorker
 
 
 @dataclass(frozen=True)
@@ -213,7 +213,6 @@ async def test_renew_lease_forever_retries_transient_failure_then_exits_on_lost_
     await worker._renew_lease_forever(uuid4())
 
     assert calls == 2
-    # 第一次是瞬态异常后的下一轮等待；第二次 renew 已明确失去 ownership，必须立即退出。
     assert sleeps == 1
 
 
