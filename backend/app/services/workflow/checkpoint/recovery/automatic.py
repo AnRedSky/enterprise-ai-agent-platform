@@ -113,6 +113,7 @@ class WorkflowExecutionAutomaticRecoveryService:
                 event_name=RECOVERY_ATTEMPT,
                 execution_id=execution.id,
                 resume_execution_id=result.resume_execution_id,
+                outcome=result.outcome,
                 reason_code=result.decision.reason_code,
                 attempt_count=result.decision.attempt_count,
                 max_attempts=result.decision.max_attempts,
