@@ -4,7 +4,7 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 本轮最新代码提交：`ad46a5a8dc628442d915c8c85ec3ceb508f99653`。
+- 当前 `main` HEAD：`5ed73fe912f7f89ce956bbd4fc0264a949e45143`。
 - 本轮已完成：**DAG Durable Frontier Decision Fingerprint**；Planner 现在将持久化完成事实、条件源 state、frontier 和 selected predecessor 规范化后生成确定性 fingerprint，并由 Runtime 直接写入 `workflow.dag.frontier_decided`，用于 Recovery 后 decision replay 对账。
 - Phase 2.2 Retrieval Production Quality：**已正式关闭**。
 - Phase 2.3 Model Provider Governance：**已正式关闭**。
@@ -21,7 +21,7 @@
 - DSL 支持 `eq / ne / gt / gte / lt / lte / in / contains / and / or / not`；
 - 条件只读取当前持久化 Node state，禁止代码执行、外部调用和危险类型转换；
 - 已实现深度 / 节点数上限；
-- DAG Edge 支持 `condition` / `default`，统一 Contract 校验 source、default 数量、重复 edge、未知 Node 和循环图；
+- DAG Edge 支持 `condition` / `default`，统一 Contract 校验 source、default 数量、重复 edge、未知 Node 和循环图；当前第一版 DAG Contract 要求单 root，不能将多个静态 root 视为已完成能力；
 - Conditional frontier 按 Definition 顺序确定性选择并允许多个条件同时命中形成并行 frontier；
 - Planner 输出 selected predecessor facts，Join readiness 不复制条件解析；
 - 首次执行与 Resume 均通过统一 DAG Planner；
