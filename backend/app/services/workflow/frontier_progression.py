@@ -1,21 +1,24 @@
-"""Durable Frontier progression contract and atomic persistence boundary.
+"""Durable Frontier progression contract and atomic persistence boundary。
 
 职责：在调用方事务内，将当前 Frontier 的成功结果固化为 Checkpoint，并幂等创建下一 Frontier。
 边界：不负责 DAG Planner；next_identity 必须由调用方提供并保持确定性。
-事务：本模块绝不 commit，当前 Frontier、Checkpoint、Next Frontier 必须在同一外层事务中提交。
+事务：本模块绝不 commit，当前 Frontier、Checkpoint、Next Frontier、Execution terminalization 必须在同一外层事务中提交。
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
-from app.models.workflow_execution import WorkflowFrontier
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier, transition_owned_frontier
+from app.services.workflow.governance import WorkflowGovernanceService
 
 
 class FrontierProgressionContractError(ValueError):
@@ -101,8 +104,9 @@ async def complete_frontier_with_checkpoint(
     error_message: str | None = None,
     next_identity: WorkflowFrontierIdentity | None = None,
     now: datetime,
+    actor_id: UUID | None = None,
 ) -> tuple[WorkflowExecutionCheckpoint, WorkflowFrontier | None]:
-    """原子完成当前 Frontier、追加 Checkpoint，并幂等创建 Next Frontier。
+    """原子完成当前 Frontier、追加 Checkpoint、Terminalize Execution 并幂等创建 Next Frontier。
 
     Args:
         db: 当前事务数据库会话。
@@ -120,14 +124,16 @@ async def complete_frontier_with_checkpoint(
         error_message: 可选错误信息。
         next_identity: 下一 Frontier 的确定性 identity。
         now: 当前时间。
+        actor_id: Execution terminalization 审计主体；未提供时使用 Execution created_by。
 
     Returns:
         `(Checkpoint, Next Frontier)`；终态 Frontier 的 Next Frontier 为 None。
 
     Raises:
         FrontierProgressionContractError: progression contract 不满足。
+        HTTPException: Execution 已经不是 running 或 Worker fencing 已失效。
 
-    事务边界：锁定并修改当前 Frontier、追加 Checkpoint、幂等创建 Next Frontier，均不 commit；调用方统一提交或 rollback。
+    事务边界：锁定并修改当前 Frontier、追加 Checkpoint、终态 Execution、幂等创建 Next Frontier，均不 commit；调用方统一提交或 rollback。
     """
     execution_status = "running" if next_identity is not None else "completed"
     validate_frontier_progression_contract(
@@ -174,7 +180,52 @@ async def complete_frontier_with_checkpoint(
         expected_worker_attempt=attempt,
     )
 
-    # 第三阶段：后继 Frontier 使用确定性 identity 幂等创建；冲突时收敛到已有记录。
+    # 第三阶段：终态 Frontier 必须在同一事务内同步 terminalize Execution。
+    # 不能调用带 commit 的通用 transition，否则会在 Next Frontier/Checkpoint 尚未完成时提前提交事务。
+    if next_identity is None:
+        execution_query = (
+            select(WorkflowExecution)
+            .where(
+                WorkflowExecution.id == frontier.execution_id,
+                WorkflowExecution.tenant_id == frontier.tenant_id,
+            )
+            .with_for_update()
+        )
+        execution_result = await db.execute(execution_query)
+        execution = execution_result.scalar_one_or_none()
+        if execution is None:
+            raise FrontierProgressionContractError("Frontier 对应的 Workflow Execution 不存在")
+        if execution.status != "running":
+            raise FrontierProgressionContractError(
+                f"终态 Frontier 只能从 running Execution 收敛: {execution.status}"
+            )
+        if execution.worker_owner != worker_owner or int(execution.worker_attempt or 0) != attempt:
+            raise FrontierProgressionContractError("Execution Worker ownership 或 fencing generation 已失效")
+
+        execution.status = "completed"
+        execution.ended_at = now
+        execution.current_node_id = None
+        execution.output_data = dict(checkpoint_state)
+        execution.worker_owner = None
+        execution.worker_lease_expires_at = None
+        audit_actor = actor_id or execution.created_by
+        governance = WorkflowGovernanceService(db)
+        await governance.trace(
+            execution,
+            audit_actor,
+            "execution.state_changed",
+            "completed",
+            data={"from": "running", "to": "completed", "frontier_id": str(frontier.id)},
+        )
+        await governance.audit(
+            execution,
+            audit_actor,
+            "workflow.execution.completed",
+            "success",
+            metadata={"frontier_id": str(frontier.id)},
+        )
+
+    # 第四阶段：后继 Frontier 使用确定性 identity 幂等创建；冲突时收敛到已有记录。
     next_frontier = None
     if next_identity is not None:
         next_frontier = await enqueue_frontier(
