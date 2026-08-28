@@ -116,7 +116,7 @@ async def test_non_terminal_frontier_keeps_execution_running_and_uses_worker_fen
     current_frontier_result.scalar_one_or_none.return_value = None
     active_frontiers_result = MagicMock()
     active_frontiers_result.scalars.return_value.all.return_value = []
-    db.execute.side_effect = [current_frontier_result, execution_result, MagicMock(), active_frontiers_result]
+    db.execute.side_effect = [current_frontier_result, execution_result, active_frontiers_result]
     checkpoint = MagicMock()
     next_frontier = MagicMock()
     next_identity = MagicMock()
