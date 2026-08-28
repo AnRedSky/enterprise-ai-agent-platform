@@ -163,10 +163,11 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
 
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
+        delegation_uuid = delegation_row.id
         claimed = await claim_delegation(
             db=db,
             tenant_id=delegation_row.tenant_id,
-            delegation_id=delegation_row.id,
+            delegation_id=delegation_uuid,
             worker_owner=f"b3-worker-{suffix}",
         )
         assert claimed.worker_execution_id is not None
@@ -175,12 +176,12 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
             await complete_delegation(
                 db=db,
                 tenant_id=delegation_row.tenant_id,
-                delegation_id=delegation_row.id,
+                delegation_id=delegation_uuid,
                 worker_execution_id=stale_worker_execution_id,
             )
         assert exc_info.value.status_code == 409
         await db.rollback()
-        persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_row.id))).scalar_one()
+        persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         assert persisted.status == "running"
         assert persisted.worker_execution_id == claimed.worker_execution_id
 
