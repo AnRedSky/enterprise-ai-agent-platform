@@ -32,7 +32,11 @@ function Assert-WorkerAvailable {
     if ($processes.Count -eq 0) {
         throw 'Required Worker Service is not running. Start it manually before running this gate: uv run python run_worker.py'
     }
-    $processes | ForEach-Object { Write-Host "[INFO] Existing Worker PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
+    if ($processes.Count -ne 1) {
+        $details = ($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join [Environment]::NewLine
+        throw "Real API tenant-safe Gate requires exactly one Worker process. Found $($processes.Count) Worker processes. Stop all stale/duplicate run_worker.py processes, then start exactly one current-main Worker.`n$details"
+    }
+    $processes | ForEach-Object { Write-Host "[PASS] Exactly one Worker process is running: PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
 }
 
 Push-Location $backendRoot
