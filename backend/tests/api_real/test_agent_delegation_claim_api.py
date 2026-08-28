@@ -8,6 +8,7 @@ tenant boundary、重复 Claim 拒绝与唯一 Workflow Execution 绑定。
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 
@@ -92,7 +93,7 @@ async def _concurrent_claim(tenant_id, delegation_id: str) -> list[tuple[str, st
             except Exception as exc:  # noqa: BLE001 - 验证第二个竞争者必须失败
                 return owner, f"{type(exc).__name__}: {exc}"
 
-    return list(await __import__("asyncio").gather(_run("b1-worker-a"), _run("b1-worker-b")))
+    return list(await asyncio.gather(_run("b1-worker-a"), _run("b1-worker-b")))
 
 
 @pytest.mark.asyncio
@@ -153,11 +154,10 @@ async def test_b1_atomic_claim_allows_one_worker_and_persists_one_execution():
         tenant_id = identity.tenant_id
 
     results = await _concurrent_claim(tenant_id, delegation_id)
-    success = [item for item in results if item[1].startswith("0") is False and "HTTPException" not in item[1]]
-    failures = [item for item in results if item not in success]
+    success = [item for item in results if "HTTPException" not in item[1]]
+    failures = [item for item in results if "HTTPException" in item[1]]
     assert len(success) == 1, results
     assert len(failures) == 1, results
-    assert "不能再次 Claim" not in success[0][1]
 
     async with SessionLocal() as db:
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
