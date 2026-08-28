@@ -224,8 +224,11 @@ async def test_real_worker_executes_full_linear_dag_after_resume():
                 ("provider-call", "completed"),
                 ("finish", "completed"),
             ]
-            assert [checkpoint.node_id for checkpoint in resume_checkpoints] == ["provider-call", "finish"]
-            assert [checkpoint.sequence for checkpoint in resume_checkpoints] == [0, 1]
+            assert [(checkpoint.sequence, checkpoint.checkpoint_reason, checkpoint.node_id, checkpoint.node_status) for checkpoint in resume_checkpoints] == [
+                (0, "frontier_completed", None, None),
+                (1, "frontier_completed", None, None),
+            ]
+            assert all(checkpoint.frontier_id is not None for checkpoint in resume_checkpoints)
             with lock:
                 assert state["calls"] == 2
         finally:
@@ -424,9 +427,10 @@ async def test_real_worker_resume_dag_failure_after_frontier_preserves_checkpoin
                 ("provider-call", "completed"),
                 ("broken-after-resume", "failed"),
             ]
-            assert [(checkpoint.sequence, checkpoint.node_id, checkpoint.node_status) for checkpoint in resume_checkpoints] == [
-                (0, "provider-call", "completed"),
+            assert [(checkpoint.sequence, checkpoint.checkpoint_reason, checkpoint.node_id, checkpoint.node_status) for checkpoint in resume_checkpoints] == [
+                (0, "frontier_completed", None, None),
             ]
+            assert resume_checkpoints[0].frontier_id is not None
             assert source_after.status == "failed"
             assert source_after.worker_owner is None
             with lock:
