@@ -4,54 +4,39 @@ $ErrorActionPreference = "Stop"
 $Backend = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $Repository = Split-Path -Parent $Backend
 Set-Location $Backend
-$script:ApiProcess = $null
 
 function Assert-ExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }
 }
 
-function Wait-Api([string]$Url, [int]$TimeoutSeconds = 60) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    do {
-        try {
-            $response = Invoke-RestMethod -Uri $Url -Method Get -TimeoutSec 3
-            if ($response.status -eq "ok") { return }
-        } catch {
-            Start-Sleep -Seconds 2
-        }
-    } while ((Get-Date) -lt $deadline)
-    throw "API Service did not become healthy: $Url"
-}
-
-function Ensure-Infrastructure {
+function Assert-PrerequisiteServices {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         throw "Docker is required to run the Phase 2.8 B2 acceptance gate."
     }
+
     Push-Location $Repository
     try {
-        docker compose up -d postgres redis
-        Assert-ExitCode "PostgreSQL/Redis infrastructure startup failed."
+        $services = docker compose ps --services --filter "status=running"
+        Assert-ExitCode "Unable to inspect local Docker services."
+        $running = @($services | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        foreach ($required in @("postgres", "redis")) {
+            if ($running -notcontains $required) {
+                throw "Required service '$required' is not running. The gate never starts services; start the project prerequisite environment before running the gate."
+            }
+        }
     } finally {
         Pop-Location
     }
-}
 
-function Ensure-ApiService {
-    $apiUrl = "http://127.0.0.1:8000/api/v1"
     $healthUrl = "http://127.0.0.1:8000/health"
     try {
-        Wait-Api $healthUrl 5
-        return $apiUrl
+        $response = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 5
     } catch {
-        Write-Host "API Service is not running; starting a local uvicorn process."
-        $logDir = Join-Path $Backend ".phase-2.8-gate"
-        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-        $stdout = Join-Path $logDir "b2-api.stdout.log"
-        $stderr = Join-Path $logDir "b2-api.stderr.log"
-        $script:ApiProcess = Start-Process -FilePath "uv" -ArgumentList "run","uvicorn","app.main:app","--host","127.0.0.1","--port","8000" -WorkingDirectory $Backend -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-        Wait-Api $healthUrl 60
+        throw "Backend API is not healthy at $healthUrl. The gate never starts services; start the project prerequisite environment before running the gate."
     }
-    return $apiUrl
+    if ($response.status -ne "ok") {
+        throw "Backend API health check returned an unexpected status."
+    }
 }
 
 function Get-AutomatedAccessToken([string]$ApiUrl) {
@@ -70,6 +55,9 @@ try {
     Write-Host "Enterprise AI Agent Platform - Phase 2.8 B2 Worker Bridge Gate"
     Write-Host "============================================================"
 
+    Write-Host "[0/4] Local prerequisite service verification (no service startup)"
+    Assert-PrerequisiteServices
+
     Write-Host "[1/4] B2 bridge Unit"
     uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py
     Assert-ExitCode "B2 bridge unit gate failed."
@@ -85,8 +73,7 @@ try {
     Assert-ExitCode "Alembic current failed."
 
     Write-Host "[4/4] Real HTTP + PostgreSQL B2 Worker Execution Bridge"
-    Ensure-Infrastructure
-    $ApiBaseUrl = Ensure-ApiService
+    $ApiBaseUrl = "http://127.0.0.1:8000/api/v1"
     $env:API_BASE_URL = $ApiBaseUrl
     $env:ACCESS_TOKEN = Get-AutomatedAccessToken $ApiBaseUrl
     uv run pytest -q -o "addopts=" -m real_api tests/api_real/test_agent_delegation_bridge_api.py
@@ -96,7 +83,4 @@ try {
 } finally {
     Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:API_BASE_URL -ErrorAction SilentlyContinue
-    if ($script:ApiProcess) {
-        Stop-Process -Id $script:ApiProcess.Id -Force -ErrorAction SilentlyContinue
-    }
 }

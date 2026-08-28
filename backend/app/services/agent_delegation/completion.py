@@ -10,7 +10,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_delegation import AgentDelegation
@@ -87,7 +87,7 @@ async def complete_delegation(
 
     Args:
         db: 当前异步数据库会话。
-        tenant_id: Delegation 所属租户。
+        tenant_id: Delegation 所属租户，用于 tenant boundary 校验。
         delegation_id: Delegation 标识。
         worker_execution_id: 完成请求所属的 Worker Execution generation。
 
@@ -97,8 +97,10 @@ async def complete_delegation(
     Raises:
         HTTPException: generation 失效、Worker Execution 未完成或状态转换非法。
 
-    事务边界：Delegation 状态、结果关联、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
-    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并使用 PostgreSQL RETURNING 取得终态行；同时要求 ORM Session 使用 fetch 同步并刷新已存在的 identity，避免当前 Session 中旧的 running 对象覆盖或继续代表 terminal state。
+    事务边界：Delegation 行先通过 `SELECT ... FOR UPDATE` 锁定，并在锁内验证 tenant 与
+    Worker generation fencing。终态字段直接更新到已锁定的 ORM identity 后，与 AuditLog、
+    WorkflowTraceEvent 在同一事务提交；提交后显式 refresh，避免 ORM-enabled bulk DML 的
+    identity synchronization 与 PostgreSQL RETURNING 组合产生不确定的 Session 边界。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -114,28 +116,11 @@ async def complete_delegation(
         raise HTTPException(409, str(exc)) from exc
 
     now = utcnow_naive()
-    updated = (
-        await db.execute(
-            update(AgentDelegation)
-            .where(
-                AgentDelegation.id == delegation_id,
-                AgentDelegation.tenant_id == tenant_id,
-                AgentDelegation.status == "running",
-                AgentDelegation.worker_execution_id == worker_execution_id,
-            )
-            .values(
-                status="completed",
-                ended_at=now,
-                error_code=None,
-                error_message=None,
-            )
-            .returning(AgentDelegation),
-            execution_options={"synchronize_session": "fetch", "populate_existing": True},
-        )
-    ).scalars().all()
-    if len(updated) != 1:
-        raise HTTPException(409, "Delegation Worker generation 已失效，完成写入被拒绝")
-    delegation = updated[0]
+    delegation.status = "completed"
+    delegation.ended_at = now
+    delegation.error_code = None
+    delegation.error_message = None
+    await db.flush()
 
     db.add(AuditLog(
         actor_id=execution.created_by,
@@ -191,8 +176,10 @@ async def fail_delegation(
     Raises:
         HTTPException: generation 失效、Worker Execution 状态不匹配或状态转换非法。
 
-    事务边界：Delegation 失败状态、错误字段、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
-    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并使用 PostgreSQL RETURNING 取得终态行；同时要求 ORM Session 使用 fetch 同步并刷新已存在的 identity，避免当前 Session 中旧的 running 对象覆盖或继续代表 terminal state。
+    事务边界：Delegation 行先通过 `SELECT ... FOR UPDATE` 锁定，并在锁内验证 tenant 与
+    Worker generation fencing。终态字段直接更新到已锁定的 ORM identity 后，与 AuditLog、
+    WorkflowTraceEvent 在同一事务提交；提交后显式 refresh，避免 ORM-enabled bulk DML 的
+    identity synchronization 与 PostgreSQL RETURNING 组合产生不确定的 Session 边界。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -213,28 +200,11 @@ async def fail_delegation(
     if not normalized_error_code or not normalized_error_message:
         raise HTTPException(422, "Delegation 失败收敛必须提供 error_code 与 error_message")
 
-    updated = (
-        await db.execute(
-            update(AgentDelegation)
-            .where(
-                AgentDelegation.id == delegation_id,
-                AgentDelegation.tenant_id == tenant_id,
-                AgentDelegation.status == "running",
-                AgentDelegation.worker_execution_id == worker_execution_id,
-            )
-            .values(
-                status="failed",
-                ended_at=now,
-                error_code=normalized_error_code,
-                error_message=normalized_error_message,
-            )
-            .returning(AgentDelegation),
-            execution_options={"synchronize_session": "fetch", "populate_existing": True},
-        )
-    ).scalars().all()
-    if len(updated) != 1:
-        raise HTTPException(409, "Delegation Worker generation 已失效，失败写入被拒绝")
-    delegation = updated[0]
+    delegation.status = "failed"
+    delegation.ended_at = now
+    delegation.error_code = normalized_error_code
+    delegation.error_message = normalized_error_message
+    await db.flush()
 
     db.add(AuditLog(
         actor_id=execution.created_by,
