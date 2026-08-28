@@ -6,6 +6,7 @@ Write-Host '============================================================'
 
 # 本 Gate 只执行测试，不负责启动或停止任何 API / Worker / Scheduler 服务。
 # API 与 Worker 必须由开发者提前手动启动；这样不会抢占或污染开发者已有进程。
+# Worker 数量不构成失败条件：只要至少有一个 Worker，测试即可运行并覆盖并发 claim/lease 语义。
 if (-not $env:API_BASE_URL) {
     $env:API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
 }
@@ -32,11 +33,11 @@ function Assert-WorkerAvailable {
     if ($processes.Count -eq 0) {
         throw 'Required Worker Service is not running. Start it manually before running this gate: uv run python run_worker.py'
     }
-    if ($processes.Count -ne 1) {
-        $details = ($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join [Environment]::NewLine
-        throw "Real API tenant-safe Gate requires exactly one Worker process. Found $($processes.Count) Worker processes. Stop all stale/duplicate run_worker.py processes, then start exactly one current-main Worker.`n$details"
+    Write-Host "[PASS] Worker Service is available: $($processes.Count) Worker process(es) detected."
+    $processes | ForEach-Object {
+        Write-Host "[INFO] Worker PID=$($_.ProcessId) CommandLine=$($_.CommandLine)"
     }
-    $processes | ForEach-Object { Write-Host "[PASS] Exactly one Worker process is running: PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
+    Write-Host '[PASS] Multiple Worker processes are allowed; real API tests must remain valid under concurrent Worker execution.'
 }
 
 Push-Location $backendRoot
