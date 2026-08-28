@@ -12,8 +12,9 @@ def _source() -> str:
 
 def test_progression_distinguishes_frontier_attempt_from_execution_worker_epoch() -> None:
     source = _source()
-    assert "`attempt` 只代表 Frontier consumption attempt" in source
-    assert "Execution 的 `worker_attempt` 是独立的" in source
+    assert "attempt=attempt" in source
+    assert "execution_worker_attempt = int(execution.worker_attempt or 0)" in source
+    assert "expected_worker_attempt=execution_worker_attempt if next_identity is not None else None" in source
 
 
 def test_progression_locks_execution_before_durable_completion() -> None:
