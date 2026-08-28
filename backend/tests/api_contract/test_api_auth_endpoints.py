@@ -1,9 +1,13 @@
+from uuid import uuid4
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import IntegrityError
-from app.main import app
+
 from app.dependencies.db import get_db
-from app.models.core import Role, Tenant, User
+from app.main import app
+from app.models.core import DEFAULT_TENANT_ID, Role, Tenant, User, UserRole
+from app.models.organization import Organization, OrganizationMembership
 
 
 class FakeResult:
@@ -14,10 +18,16 @@ class FakeResult:
 
 
 class FakeDB:
-    def __init__(self, user=None, role=None, tenant=None):
+    def __init__(self, user=None, role=None, tenant=None, organization=None):
         self.user = user
         self.role = role
-        self.tenant = tenant
+        self.tenant = tenant or Tenant(id=DEFAULT_TENANT_ID, name="Default Tenant", status="active")
+        self.organization = organization or Organization(
+            id=uuid4(),
+            tenant_id=DEFAULT_TENANT_ID,
+            name="Default Organization",
+            status="active",
+        )
         self.added = []
         self.raise_integrity_error = False
         self.rolled_back = False
@@ -26,6 +36,7 @@ class FakeDB:
         text = str(statement)
         if "users" in text: return FakeResult(self.user)
         if "tenants" in text: return FakeResult(self.tenant)
+        if "organizations" in text: return FakeResult(self.organization)
         if "roles" in text: return FakeResult(self.role)
         return FakeResult()
 
@@ -34,7 +45,6 @@ class FakeDB:
     async def flush(self):
         if self.raise_integrity_error:
             raise IntegrityError("flush", {}, Exception("duplicate key"))
-        from uuid import uuid4
         for value in self.added:
             if isinstance(value, (User, Role)) and value.id is None: value.id = uuid4()
 
@@ -59,7 +69,9 @@ async def test_register_returns_user_payload(db_override):
     assert response.status_code == 200
     assert response.json()["username"] == "tester"
     assert response.json()["roles"] == ["user"]
-    assert any(isinstance(value, Tenant) for value in db_override.added)
+    assert any(isinstance(value, User) for value in db_override.added)
+    assert any(isinstance(value, UserRole) for value in db_override.added)
+    assert any(isinstance(value, OrganizationMembership) for value in db_override.added)
 
 
 @pytest.mark.asyncio
@@ -72,8 +84,16 @@ async def test_register_rejects_integrity_conflict(db_override):
 
 
 @pytest.mark.asyncio
+async def test_register_rejects_missing_default_organization(db_override):
+    db_override.organization = None
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/v1/auth/register", json={"username":"tester","password":"password123"})
+    assert response.status_code == 409
+    assert db_override.rolled_back is True
+
+
+@pytest.mark.asyncio
 async def test_register_rejects_duplicate_user(db_override):
-    from uuid import uuid4
     db_override.user = User(id=uuid4(), username="tester", password_hash="hash")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/api/v1/auth/register", json={"username":"tester","password":"password123"})
