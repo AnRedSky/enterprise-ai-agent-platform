@@ -3,6 +3,7 @@
 职责：在基础 WorkflowRuntime 上接入 Join Node、Conditional DAG 首次执行的多根 frontier 初始化，以及 Recovery Trace Continuity。
 边界：不复制基础 Runtime 的 Retry、Timeout、Checkpoint、ownership 或模型调用逻辑；条件规则仍由 Condition Evaluator / DAG Planner 负责。
 关键依赖：基础 WorkflowRuntime、WorkflowDagContractValidator、WorkflowDagResumePlanner、WorkflowDagResumeRuntimePlanner、WorkflowRecoveryTraceLinkService。
+
 """
 
 from __future__ import annotations
@@ -25,9 +26,11 @@ class WorkflowRuntime(BaseWorkflowRuntime):
 
     @classmethod
     def validate_definition(cls, definition: dict, *, allow_legacy_empty_nodes: bool = False) -> list[dict]:
-        """校验基础 Runtime Definition，并在存在 edges 时冻结 DAG / Conditional Contract。"""
+        """校验基础 Runtime Definition，并在存在非空 edges 时冻结 DAG / Conditional Contract。"""
         nodes = super().validate_definition(definition, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
-        if "edges" in definition:
+        # 空 edges 表示未启用 DAG；基础 Runtime 与 _resolve_dag_context 都把它视为顺序 Workflow。
+        # 只有真正存在 DAG 边时才进入 DAG Contract 校验，避免历史/普通 Workflow 的 edges: [] 被误判为非法 DAG。
+        if definition.get("edges"):
             try:
                 WorkflowDagContractValidator.validate(definition=definition)
             except ValueError as exc:
