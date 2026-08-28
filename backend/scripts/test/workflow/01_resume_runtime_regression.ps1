@@ -11,10 +11,12 @@ $TestFiles = @(
     "tests/unit/test_durable_resume_runtime.py",
     "tests/unit/test_workflow_execution_idempotency.py",
     "tests/unit/test_workflow_execution_governance.py",
-    "tests/unit/test_workflow_dag_runtime_initialization.py"
+    "tests/unit/test_workflow_dag_runtime_initialization.py",
+    "tests/unit/test_frontier_duplicate_completion.py",
+    "tests/unit/test_frontier_duplicate_consumption.py"
 )
 
-Write-Host "[TEST] Durable Resume / Execution / DAG Runtime targeted regression"
+Write-Host "[TEST] Durable Resume / Execution / DAG / Frontier targeted regression"
 Write-Host "[TEST] Backend: $BackendRoot"
 Write-Host "[TEST] Tests:"
 $TestFiles | ForEach-Object { Write-Host "  - $_" }

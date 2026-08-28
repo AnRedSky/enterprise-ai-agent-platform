@@ -35,20 +35,44 @@ def _completed_frontier_result(frontier: MagicMock) -> MagicMock:
     return current
 
 
+def _execution(frontier: MagicMock, *, status: str) -> MagicMock:
+    execution = MagicMock()
+    execution.id = frontier.execution_id
+    execution.status = status
+    execution.worker_owner = "worker-a"
+    execution.worker_lease_expires_at = datetime(2026, 8, 27, 9, 0)
+    execution.worker_attempt = 7
+    execution.created_by = uuid4()
+    return execution
+
+
+def _checkpoint(state_data: dict, *, execution_status: str) -> MagicMock:
+    checkpoint = MagicMock()
+    checkpoint.state_data = state_data
+    checkpoint.worker_owner = "worker-a"
+    checkpoint.execution_status = execution_status
+    return checkpoint
+
+
+def _checkpoint_lookup(checkpoint: MagicMock) -> MagicMock:
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [checkpoint]
+    return result
+
+
 @pytest.mark.asyncio
 async def test_duplicate_terminal_completion_returns_existing_checkpoint_without_transition() -> None:
     db = AsyncMock()
     frontier = _frontier()
     existing_frontier = _completed_frontier_result(frontier)
-    checkpoint = MagicMock()
-    checkpoint.state_data = {"done": True}
-    checkpoint.worker_owner = "worker-a"
+    checkpoint = _checkpoint({"done": True}, execution_status="completed")
+    execution = _execution(frontier, status="completed")
 
     frontier_result = MagicMock()
     frontier_result.scalar_one_or_none.return_value = existing_frontier
-    checkpoint_result = MagicMock()
-    checkpoint_result.scalar_one_or_none.return_value = checkpoint
-    db.execute.side_effect = [frontier_result, checkpoint_result]
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    db.execute.side_effect = [frontier_result, _checkpoint_lookup(checkpoint), execution_result]
 
     with patch(
         "app.services.workflow.frontier_progression.transition_owned_frontier",
@@ -75,15 +99,14 @@ async def test_duplicate_completion_rejects_payload_drift() -> None:
     db = AsyncMock()
     frontier = _frontier()
     existing_frontier = _completed_frontier_result(frontier)
-    checkpoint = MagicMock()
-    checkpoint.state_data = {"done": True}
-    checkpoint.worker_owner = "worker-a"
+    checkpoint = _checkpoint({"done": True}, execution_status="completed")
+    execution = _execution(frontier, status="completed")
 
     frontier_result = MagicMock()
     frontier_result.scalar_one_or_none.return_value = existing_frontier
-    checkpoint_result = MagicMock()
-    checkpoint_result.scalar_one_or_none.return_value = checkpoint
-    db.execute.side_effect = [frontier_result, checkpoint_result]
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    db.execute.side_effect = [frontier_result, _checkpoint_lookup(checkpoint), execution_result]
 
     with pytest.raises(FrontierProgressionContractError, match="payload 与既有 Durable fact 不一致"):
         await complete_frontier_with_checkpoint(
@@ -103,9 +126,8 @@ async def test_duplicate_non_terminal_completion_requires_existing_next_frontier
     db = AsyncMock()
     frontier = _frontier()
     existing_frontier = _completed_frontier_result(frontier)
-    checkpoint = MagicMock()
-    checkpoint.state_data = {"branch": "A"}
-    checkpoint.worker_owner = "worker-a"
+    checkpoint = _checkpoint({"branch": "A"}, execution_status="running")
+    execution = _execution(frontier, status="running")
     next_identity = WorkflowFrontierIdentity(
         execution_id=frontier.execution_id,
         workflow_version_id=frontier.workflow_version_id,
@@ -113,16 +135,19 @@ async def test_duplicate_non_terminal_completion_requires_existing_next_frontier
         node_ids=("node-b", "node-c"),
     )
 
-    frontier_result = MagicMock()
-    frontier_result.scalar_one_or_none.return_value = existing_frontier
-    checkpoint_result = MagicMock()
-    checkpoint_result.scalar_one_or_none.return_value = checkpoint
-    next_result = MagicMock()
-    next_result.scalar_one_or_none.return_value = MagicMock(
+    existing_next = MagicMock(
         execution_id=frontier.execution_id,
         workflow_version_id=frontier.workflow_version_id,
+        decision_fingerprint="next",
+        node_ids=["node-b", "node-c"],
     )
-    db.execute.side_effect = [frontier_result, checkpoint_result, next_result]
+    frontier_result = MagicMock()
+    frontier_result.scalar_one_or_none.return_value = existing_frontier
+    next_result = MagicMock()
+    next_result.scalar_one_or_none.return_value = existing_next
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    db.execute.side_effect = [frontier_result, _checkpoint_lookup(checkpoint), execution_result, next_result]
 
     with patch(
         "app.services.workflow.frontier_progression.transition_owned_frontier",
@@ -139,6 +164,5 @@ async def test_duplicate_non_terminal_completion_requires_existing_next_frontier
             now=datetime(2026, 8, 27, 8, 0),
         )
 
-    assert result[0] is checkpoint
-    assert result[1] is not None
+    assert result == (checkpoint, existing_next)
     transition.assert_not_awaited()

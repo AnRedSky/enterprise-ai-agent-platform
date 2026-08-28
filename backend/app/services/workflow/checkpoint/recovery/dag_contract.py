@@ -124,8 +124,8 @@ class WorkflowDagContractValidator:
         if isolated:
             raise ValueError(f"DAG 不允许孤立 Node: {isolated[0]}")
         roots = tuple(node_id for node_id in node_ids if incoming_count[node_id] == 0)
-        if len(roots) != 1:
-            raise ValueError("DAG Workflow 第一版 Resume 必须只有一个 root")
+        if not roots:
+            raise ValueError("DAG Workflow 至少需要一个 root")
 
         queue = deque(roots)
         visited_count = 0

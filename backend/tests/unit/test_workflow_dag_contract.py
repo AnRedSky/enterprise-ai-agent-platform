@@ -42,13 +42,14 @@ def test_dag_contract_freezes_nodes_edges_and_roots() -> None:
     ]
 
 
-def test_dag_contract_rejects_multiple_roots() -> None:
+def test_dag_contract_allows_multiple_roots_for_parallel_frontier() -> None:
     definition = _definition()
     definition["nodes"].append({"id": "second-input", "type": "input", "config": {}})
     definition["edges"].append({"source": "second-input", "target": "output"})
 
-    with pytest.raises(ValueError, match="第一版 Resume 必须只有一个 root"):
-        WorkflowDagContractValidator.validate(definition=definition)
+    contract = WorkflowDagContractValidator.validate(definition=definition)
+
+    assert contract.roots == ("input", "second-input")
 
 
 @pytest.mark.parametrize(
@@ -70,9 +71,9 @@ def test_dag_contract_rejects_invalid_graph(mutator, message: str) -> None:
 
 def test_dag_contract_rejects_extra_edge_fields() -> None:
     definition = _definition()
-    definition["edges"][0]["condition"] = "x > 0"
+    definition["edges"][0]["unexpected"] = True
 
-    with pytest.raises(ValueError, match="DAG Edge 必须只包含 source / target 字段"):
+    with pytest.raises(ValueError, match="DAG Edge 包含未允许字段"):
         WorkflowDagContractValidator.validate(definition=definition)
 
 

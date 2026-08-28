@@ -40,6 +40,32 @@ def _execution(frontier: MagicMock) -> MagicMock:
     return execution
 
 
+def _completed_checkpoint() -> MagicMock:
+    checkpoint = MagicMock()
+    checkpoint.state_data = {"done": True}
+    checkpoint.worker_owner = "worker-a"
+    checkpoint.execution_status = "running"
+    return checkpoint
+
+
+def _completed_frontier_lookup(frontier: MagicMock) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = frontier
+    return result
+
+
+def _checkpoint_lookup(checkpoint: MagicMock | list[MagicMock]) -> MagicMock:
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = checkpoint if isinstance(checkpoint, list) else [checkpoint]
+    return result
+
+
+def _execution_lookup(execution: MagicMock) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = execution
+    return result
+
+
 @pytest.mark.asyncio
 async def test_next_frontier_rejects_node_overlap_with_active_frontier() -> None:
     db = AsyncMock()
@@ -51,8 +77,7 @@ async def test_next_frontier_rejects_node_overlap_with_active_frontier() -> None
 
     completed_lookup = MagicMock()
     completed_lookup.scalar_one_or_none.return_value = None
-    execution_lookup = MagicMock()
-    execution_lookup.scalar_one_or_none.return_value = execution
+    execution_lookup = _execution_lookup(execution)
     overlap_lookup = MagicMock()
     overlap_lookup.scalars.return_value.all.return_value = [active]
     db.execute.side_effect = [completed_lookup, execution_lookup, overlap_lookup]
@@ -102,8 +127,7 @@ async def test_next_frontier_allows_disjoint_parallel_node_set() -> None:
 
     completed_lookup = MagicMock()
     completed_lookup.scalar_one_or_none.return_value = None
-    execution_lookup = MagicMock()
-    execution_lookup.scalar_one_or_none.return_value = execution
+    execution_lookup = _execution_lookup(execution)
     overlap_lookup = MagicMock()
     overlap_lookup.scalars.return_value.all.return_value = [active]
     db.execute.side_effect = [completed_lookup, execution_lookup, overlap_lookup]
@@ -149,23 +173,19 @@ async def test_duplicate_completion_rejects_next_frontier_fingerprint_drift() ->
     """重复 completion 即使使用同一 key，也不得接受不同 decision fingerprint。"""
     db = AsyncMock()
     frontier = _frontier()
-    frontier.frontier_key = "frontier-current"
-
-    current_lookup = MagicMock()
-    current_lookup.scalar_one_or_none.return_value = frontier
-    checkpoint_lookup = MagicMock()
-    checkpoint = MagicMock()
-    checkpoint.state_data = {"done": True}
-    checkpoint.worker_owner = "worker-a"
-    checkpoint_lookup.scalars.return_value.all.return_value = [checkpoint]
+    current = _completed_frontier_lookup(frontier)
+    checkpoint = _completed_checkpoint()
+    execution = _execution(frontier)
+    existing_next = MagicMock(
+        execution_id=frontier.execution_id,
+        workflow_version_id=frontier.workflow_version_id,
+        decision_fingerprint="fingerprint-old",
+        node_ids=["node-a"],
+    )
     next_lookup = MagicMock()
-    existing_next = MagicMock()
-    existing_next.execution_id = frontier.execution_id
-    existing_next.workflow_version_id = frontier.workflow_version_id
-    existing_next.decision_fingerprint = "fingerprint-old"
-    existing_next.node_ids = ["node-a"]
     next_lookup.scalar_one_or_none.return_value = existing_next
-    db.execute.side_effect = [current_lookup, checkpoint_lookup, next_lookup]
+    execution_lookup = _execution_lookup(execution)
+    db.execute.side_effect = [current, _checkpoint_lookup(checkpoint), execution_lookup, next_lookup]
 
     next_identity = MagicMock()
     next_identity.key.return_value = "frontier-next"
@@ -192,21 +212,19 @@ async def test_duplicate_completion_rejects_next_frontier_node_set_drift() -> No
     """重复 completion 即使 fingerprint 相同，也不得接受不同 Node 集合。"""
     db = AsyncMock()
     frontier = _frontier()
-    current_lookup = MagicMock()
-    current_lookup.scalar_one_or_none.return_value = frontier
-    checkpoint_lookup = MagicMock()
-    checkpoint = MagicMock()
-    checkpoint.state_data = {"done": True}
-    checkpoint.worker_owner = "worker-a"
-    checkpoint_lookup.scalars.return_value.all.return_value = [checkpoint]
+    current = _completed_frontier_lookup(frontier)
+    checkpoint = _completed_checkpoint()
+    execution = _execution(frontier)
+    existing_next = MagicMock(
+        execution_id=frontier.execution_id,
+        workflow_version_id=frontier.workflow_version_id,
+        decision_fingerprint="fingerprint",
+        node_ids=["node-a", "node-b"],
+    )
     next_lookup = MagicMock()
-    existing_next = MagicMock()
-    existing_next.execution_id = frontier.execution_id
-    existing_next.workflow_version_id = frontier.workflow_version_id
-    existing_next.decision_fingerprint = "fingerprint"
-    existing_next.node_ids = ["node-a", "node-b"]
     next_lookup.scalar_one_or_none.return_value = existing_next
-    db.execute.side_effect = [current_lookup, checkpoint_lookup, next_lookup]
+    execution_lookup = _execution_lookup(execution)
+    db.execute.side_effect = [current, _checkpoint_lookup(checkpoint), execution_lookup, next_lookup]
 
     next_identity = MagicMock()
     next_identity.key.return_value = "frontier-next"
@@ -233,12 +251,8 @@ async def test_duplicate_completion_rejects_multiple_completion_checkpoints() ->
     """同一 Frontier 已经存在多个 completion facts 时必须 fail-closed，不能只取最新一条。"""
     db = AsyncMock()
     frontier = _frontier()
-    current_lookup = MagicMock()
-    current_lookup.scalar_one_or_none.return_value = frontier
-    checkpoint_lookup = MagicMock()
-    checkpoint_a = MagicMock()
-    checkpoint_b = MagicMock()
-    checkpoint_lookup.scalars.return_value.all.return_value = [checkpoint_a, checkpoint_b]
+    current_lookup = _completed_frontier_lookup(frontier)
+    checkpoint_lookup = _checkpoint_lookup([MagicMock(), MagicMock()])
     db.execute.side_effect = [current_lookup, checkpoint_lookup]
 
     with pytest.raises(FrontierProgressionContractError, match="多个 completion Checkpoint"):
