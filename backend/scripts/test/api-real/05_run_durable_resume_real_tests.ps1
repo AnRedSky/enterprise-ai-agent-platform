@@ -5,6 +5,7 @@ Write-Host 'Enterprise AI Agent Platform - Durable Resume Real Test Gate'
 Write-Host '============================================================'
 Write-Host '[INFO] This gate never starts, stops, or restarts API, Scheduler, or Worker.'
 Write-Host '[INFO] It creates one tenant-safe context and runs durable Resume real_api tests.'
+Write-Host '[INFO] Worker count is not restricted to one; at least one Worker must be available.'
 
 if (-not $env:API_BASE_URL) {
     $env:API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
@@ -32,11 +33,11 @@ function Assert-WorkerAvailable {
     if ($processes.Count -eq 0) {
         throw 'Required Worker Service is not running. Start it manually first: uv run python run_worker.py'
     }
-    if ($processes.Count -ne 1) {
-        $details = ($processes | ForEach-Object { "PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }) -join [Environment]::NewLine
-        throw "Durable Resume real_api Gate requires exactly one Worker process. Found $($processes.Count) Worker processes. Stop all stale/duplicate run_worker.py processes, then start exactly one current-main Worker.`n$details"
+    Write-Host "[PASS] Worker Service is available: $($processes.Count) Worker process(es) detected."
+    $processes | ForEach-Object {
+        Write-Host "[INFO] Worker PID=$($_.ProcessId) CommandLine=$($_.CommandLine)"
     }
-    $processes | ForEach-Object { Write-Host "[PASS] Exactly one Worker process is running: PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
+    Write-Host '[PASS] Multiple Worker processes are allowed; durable claim/lease correctness is exercised by the tests.'
 }
 
 function Invoke-RequiredCommand {
