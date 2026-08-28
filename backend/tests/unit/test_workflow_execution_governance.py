@@ -32,7 +32,15 @@ async def test_cancel_rejects_terminal_execution():
 @pytest.mark.asyncio
 async def test_retry_creates_new_execution_with_lineage():
     db = AsyncMock(); db.add = Mock()
-    version = SimpleNamespace(definition={"nodes": [{"id": "input", "type": "input"}, {"id": "output", "type": "output"}], "edges": []})
+    version = SimpleNamespace(
+        definition={
+            "nodes": [
+                {"id": "input", "type": "input"},
+                {"id": "output", "type": "output"},
+            ],
+            "edges": [{"source": "input", "target": "output"}],
+        }
+    )
     db.execute.return_value = SimpleNamespace(scalar_one=lambda: version)
     service = WorkflowExecutionService(db)
     service.governance.audit = AsyncMock(); service.governance.trace = AsyncMock()

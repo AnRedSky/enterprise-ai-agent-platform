@@ -11,7 +11,17 @@ from app.services.workflow import WorkflowExecutionService
 
 @pytest.fixture
 def workflow_and_version():
-    version = SimpleNamespace(id=uuid4(), status="published", definition={"nodes": [{"id": "input", "type": "input"}], "edges": []})
+    version = SimpleNamespace(
+        id=uuid4(),
+        status="published",
+        definition={
+            "nodes": [
+                {"id": "input", "type": "input"},
+                {"id": "output", "type": "output"},
+            ],
+            "edges": [{"source": "input", "target": "output"}],
+        },
+    )
     workflow = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), published_version_id=version.id)
     return workflow, version
 
