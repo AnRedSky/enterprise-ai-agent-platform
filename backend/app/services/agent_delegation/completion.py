@@ -10,7 +10,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent_delegation import AgentDelegation
@@ -98,6 +98,7 @@ async def complete_delegation(
         HTTPException: generation 失效、Worker Execution 未完成或状态转换非法。
 
     事务边界：Delegation 状态、结果关联、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
+    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，确保 terminal state 的 durable write 与 fencing 条件保持同一数据库边界。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -113,10 +114,23 @@ async def complete_delegation(
         raise HTTPException(409, str(exc)) from exc
 
     now = utcnow_naive()
-    delegation.status = "completed"
-    delegation.ended_at = now
-    delegation.error_code = None
-    delegation.error_message = None
+    result = await db.execute(
+        update(AgentDelegation)
+        .where(
+            AgentDelegation.id == delegation_id,
+            AgentDelegation.tenant_id == tenant_id,
+            AgentDelegation.status == "running",
+            AgentDelegation.worker_execution_id == worker_execution_id,
+        )
+        .values(
+            status="completed",
+            ended_at=now,
+            error_code=None,
+            error_message=None,
+        )
+    )
+    if result.rowcount != 1:
+        raise HTTPException(409, "Delegation Worker generation 已失效，完成写入被拒绝")
 
     db.add(AuditLog(
         actor_id=execution.created_by,
@@ -173,6 +187,7 @@ async def fail_delegation(
         HTTPException: generation 失效、Worker Execution 状态不匹配或状态转换非法。
 
     事务边界：Delegation 失败状态、错误字段、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
+    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，确保 terminal state 的 durable write 与 fencing 条件保持同一数据库边界。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -192,10 +207,24 @@ async def fail_delegation(
     normalized_error_message = error_message.strip()[:2000]
     if not normalized_error_code or not normalized_error_message:
         raise HTTPException(422, "Delegation 失败收敛必须提供 error_code 与 error_message")
-    delegation.status = "failed"
-    delegation.ended_at = now
-    delegation.error_code = normalized_error_code
-    delegation.error_message = normalized_error_message
+
+    result = await db.execute(
+        update(AgentDelegation)
+        .where(
+            AgentDelegation.id == delegation_id,
+            AgentDelegation.tenant_id == tenant_id,
+            AgentDelegation.status == "running",
+            AgentDelegation.worker_execution_id == worker_execution_id,
+        )
+        .values(
+            status="failed",
+            ended_at=now,
+            error_code=normalized_error_code,
+            error_message=normalized_error_message,
+        )
+    )
+    if result.rowcount != 1:
+        raise HTTPException(409, "Delegation Worker generation 已失效，失败写入被拒绝")
 
     db.add(AuditLog(
         actor_id=execution.created_by,
