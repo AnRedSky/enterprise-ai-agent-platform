@@ -108,7 +108,23 @@ async def claim_next_frontier(
     lease_expires_at: datetime,
     now: datetime,
 ) -> WorkflowFrontier | None:
-    """Claim 一个可调度 Frontier，并在同一事务内完成 Execution 与 Node-set fencing。"""
+    """Claim 一个可调度 Frontier，并在同一事务内完成 Execution 与 Node-set fencing。
+
+    Args:
+        db: 当前 Worker 持有的数据库事务会话。
+        tenant_id: 本次 Claim 允许消费的租户。
+        worker_owner: 当前 Worker ownership 标识。
+        lease_expires_at: 本次 Frontier/Execution lease 的截止时间。
+        now: 当前时间，用于可调度、过期和 lease 判断。
+
+    Returns:
+        成功时返回已进入 ``claimed`` 状态并绑定当前 Worker 的 Frontier；没有安全可领取任务时返回 ``None``。
+
+    设计意图：所有会改变同一 Execution 下 Frontier ownership 的路径统一遵循
+    ``Execution → Frontier`` 锁序。候选 Frontier 首先只读选择，不提前持有 Frontier 行锁；随后先锁关联
+    Execution，再锁候选 Frontier，并重新校验 Frontier 状态。这样可与 terminalization 的
+    ``Execution → sibling Frontier`` 锁序一致，避免 Claim 与 completion 形成反向锁序死锁。
+    """
     now_naive = now.replace(tzinfo=None)
     execution_available = or_(
         and_(
@@ -129,8 +145,11 @@ async def claim_next_frontier(
             ),
         ),
     )
-    stmt = (
-        select(WorkflowFrontier)
+
+    # 这里只读选择候选，不能在这里锁 Frontier。否则会形成 Frontier → Execution 锁序，
+    # 与 completion / terminalization 的 Execution → sibling Frontier 锁序相反。
+    candidate_stmt = (
+        select(WorkflowFrontier.id)
         .join(
             WorkflowExecution,
             and_(
@@ -145,25 +164,51 @@ async def claim_next_frontier(
             execution_available,
         )
         .order_by(WorkflowFrontier.available_at, WorkflowFrontier.created_at, WorkflowFrontier.id)
-        .with_for_update(skip_locked=True)
         .limit(1)
     )
-    result = await db.execute(stmt)
-    frontier = result.scalar_one_or_none()
-    if frontier is None:
+    candidate_id = (await db.execute(candidate_stmt)).scalar_one_or_none()
+    if candidate_id is None:
         return None
+
+    # 先锁 Execution，统一所有同 Execution ownership 竞争路径的锁序。
+    execution_id_result = await db.execute(
+        select(WorkflowFrontier.execution_id, WorkflowFrontier.tenant_id)
+        .where(
+            WorkflowFrontier.id == candidate_id,
+            WorkflowFrontier.tenant_id == tenant_id,
+        )
+    )
+    candidate_identity = execution_id_result.one_or_none()
+    if candidate_identity is None:
+        return None
+    candidate_execution_id, candidate_tenant_id = candidate_identity
 
     execution_result = await db.execute(
         select(WorkflowExecution)
         .where(
-            WorkflowExecution.id == frontier.execution_id,
-            WorkflowExecution.tenant_id == frontier.tenant_id,
+            WorkflowExecution.id == candidate_execution_id,
+            WorkflowExecution.tenant_id == candidate_tenant_id,
             WorkflowExecution.status.in_(("pending", "running")),
         )
         .with_for_update(skip_locked=True)
     )
     execution = execution_result.scalar_one_or_none()
     if execution is None:
+        return None
+
+    # Execution 已锁定后再锁候选 Frontier；如果候选已被其他 Worker 消费，则本事务不再接管。
+    frontier_result = await db.execute(
+        select(WorkflowFrontier)
+        .where(
+            WorkflowFrontier.id == candidate_id,
+            WorkflowFrontier.tenant_id == candidate_tenant_id,
+            WorkflowFrontier.status.in_(("pending", "retry_wait")),
+            WorkflowFrontier.available_at <= now_naive,
+        )
+        .with_for_update(skip_locked=True)
+    )
+    frontier = frontier_result.scalar_one_or_none()
+    if frontier is None:
         return None
 
     execution_lease_expired = (
