@@ -4,6 +4,7 @@ from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
@@ -17,6 +18,10 @@ async def test_append_next_locks_execution_before_reading_sequence() -> None:
     db.flush = AsyncMock()
 
     execution = MagicMock()
+    execution.status = "running"
+    execution.worker_owner = None
+    execution.worker_attempt = 0
+    execution.worker_lease_expires_at = None
     first_result = MagicMock()
     first_result.scalar_one_or_none.return_value = execution
     second_result = MagicMock()
@@ -28,7 +33,7 @@ async def test_append_next_locks_execution_before_reading_sequence() -> None:
         execution_id=uuid4(),
         execution_status="running",
         state_data={"frontier": ["node-b"]},
-        checkpoint_reason="node_completed",
+        checkpoint_reason="node.completed",
         node_id="node-a",
         node_attempt=1,
         node_status="succeeded",
@@ -55,12 +60,12 @@ async def test_append_next_rejects_unknown_execution() -> None:
     db.execute.return_value = result
 
     service = WorkflowExecutionCheckpointService(db)
-    with pytest.raises(ValueError, match="Execution 不存在"):
+    with pytest.raises(HTTPException, match="Execution 不存在"):
         await service.append_next_in_transaction(
             execution_id=uuid4(),
             execution_status="running",
             state_data={},
-            checkpoint_reason="node_completed",
+            checkpoint_reason="node.completed",
         )
 
     db.add.assert_not_called()
