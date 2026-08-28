@@ -1,7 +1,7 @@
 # 企业级 AI Agent Platform 产品整体实现路线
 
 > 基线：远端 `main`
-> 评估日期：2026-08-28
+> 评估日期：2026-08-29
 > 目的：以真实企业产品场景为依据，对已确认能力缺口进行优先级排序，并形成后续阶段路线。
 > 规则：只有已进入正式 Phase 的范围才允许转化为开发任务；候选路线必须先完成 Contract 决策。
 
@@ -15,9 +15,7 @@
 
 ## 3. 当前正式阶段
 
-**Phase 2.7 主线生产实现已完成；Backend Regression、Migration 与 Tenant Safe Real API 已有开发者实际证据。当前主线已进入 Phase 2.8 Multi-Agent Collaboration Runtime Integration。**
-
-Phase 2.8-A Contract 已冻结，Domain / API / Migration 已实现，lifecycle / Worker completion fencing 纯规则已建立但尚无 `37061ab` 之后的本地执行证据。当前第一开发任务是修正 Service 中重复 lifecycle 规则后实现 B1 Atomic Delegation Claim。
+**Phase 2.7 主线生产实现已完成；当前主线进入 Phase 2.8 Multi-Agent Collaboration Runtime Integration，B1/B2/B3 已通过开发者本地实际验收，当前正在实现 B4。**
 
 ## 4. 优先级路线
 
@@ -30,7 +28,7 @@ Phase 2.8-A Contract 已冻结，Domain / API / Migration 已实现，lifecycle 
 | 2.5 | Scheduler → Worker Execution Decoupling | 已正式关闭 | 仅回归 |
 | 2.6 | Durable Execution Checkpoint Foundation | 已正式关闭 | 仅回归 |
 | 2.7 | Advanced Workflow Orchestration | 主线生产实现完成，验收收口 | 完成必要 Frontend / Browser 验收 |
-| **2.8** | **Multi-Agent Collaboration** | **Contract / Domain / API 已完成，Runtime Integration 进行中** | **B1 → B2 → B3/B4 → B5 → Real API 并发验收** |
+| **2.8** | **Multi-Agent Collaboration** | **B1/B2/B3 已完成，本轮进入 B4** | **B4 → B5 → 多 Worker + PostgreSQL + Runtime acceptance** |
 | 2.9 | Enterprise Integration / Event Infrastructure | 候选 | 2.8 后按真实吞吐/可靠性需求评估 |
 | 2.10 | Agent Asset / Marketplace | 候选 | 明确资产所有权、版本、审批和跨组织共享后再立项 |
 
@@ -46,16 +44,10 @@ Phase 2.8-A Contract 已冻结，Domain / API / Migration 已实现，lifecycle 
 Contract 冻结
     ↓
 Domain + API + Migration              ✅
-lifecycle pure rules                  🟡 待本地验证
-    ↓
-B1 Atomic Delegation Claim            ← 当前
-    ↓
-B2 Existing Worker Execution bridge
-    ↓
-B3 generation-fenced completion
-    ↓
-B4 timeout / cancel / parent semantics
-    ↓
+B1 Atomic Delegation Claim            ✅
+B2 Existing Worker Execution bridge   ✅
+B3 generation-fenced completion       ✅
+B4 timeout / cancel / parent semantics ← 当前
 B5 Audit / Trace closure
     ↓
 Real API + PostgreSQL + multi-worker acceptance
@@ -65,6 +57,18 @@ Backend Regression
 Frontend / Browser E2E（如范围需要）
 ```
 
-## 7. 工程纪律
+## 7. B4 交付定义
+
+B4 必须证明：
+
+1. Delegation timeout 与既有 Workflow Runtime timeout 取有效最短边界；
+2. timeout 后子 Worker Execution 使用既有 Execution lifecycle 结束，不继续占用 Worker lease；
+3. Delegation 独立收敛为 `timed_out`；
+4. cancel 后 Delegation 为 `cancelled`，重复 cancel fail-closed；
+5. timeout / cancel 不直接修改父 Workflow Execution terminal 状态；
+6. timeout / cancel 后迟到 Worker completion/failure 被 generation fencing 拒绝；
+7. 不引入新的 Retry / Recovery 状态机。
+
+## 8. 工程纪律
 
 所有实际完成度以代码、Phase、Acceptance 与本地测试证据为准。未执行的测试不得标记 Passed；新增 Migration 必须实际 `alembic upgrade head`；Phase 完成、延期、阻塞或范围变更必须同步更新 Phase / Acceptance / Project Status / Error 文档。
