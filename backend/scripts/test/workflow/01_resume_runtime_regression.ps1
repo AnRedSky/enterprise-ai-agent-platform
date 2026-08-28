@@ -17,7 +17,8 @@ $TestFiles = @(
     "tests/unit/test_frontier_duplicate_consumption.py",
     "tests/unit/test_frontier_claim_lock_order.py",
     "tests/unit/test_frontier_failure_terminalization.py",
-    "tests/unit/test_frontier_failure_transaction.py"
+    "tests/unit/test_frontier_failure_transaction.py",
+    "tests/unit/test_frontier_claim_completion_fencing.py"
 )
 
 Write-Host "[TEST] Durable Resume / Execution / DAG / Frontier targeted regression"
