@@ -1,4 +1,5 @@
 from datetime import datetime
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -26,9 +27,11 @@ class _DB:
 
 @pytest.mark.asyncio
 async def test_failure_terminalization_is_transaction_local(monkeypatch):
-    governance = _Governance(_DB())
+    db = _DB()
+    governance = _Governance(db)
     monkeypatch.setattr(module, "WorkflowGovernanceService", lambda db: governance)
     worker = object.__new__(module.PlannerDrivenDurableFrontierWorkflowWorker)
+    worker._mark_active_sibling_frontiers_failed = AsyncMock()
     execution = WorkflowExecution(
         tenant_id=uuid4(),
         workflow_id=uuid4(),
@@ -42,7 +45,7 @@ async def test_failure_terminalization_is_transaction_local(monkeypatch):
     now = datetime(2026, 8, 27, 12, 0, 0)
 
     await worker._mark_execution_failed_in_transaction(
-        _DB(), execution,
+        db, execution,
         now=now,
         error_code="WORKFLOW_EXECUTION_FAILED",
         error_message="boom",
@@ -55,13 +58,22 @@ async def test_failure_terminalization_is_transaction_local(monkeypatch):
     assert execution.error_code == "WORKFLOW_EXECUTION_FAILED"
     assert len(governance.trace_calls) == 1
     assert len(governance.audit_calls) == 1
+    worker._mark_active_sibling_frontiers_failed.assert_awaited_once_with(
+        db,
+        execution,
+        now=now,
+        error_code="WORKFLOW_EXECUTION_FAILED",
+        error_message="boom",
+    )
 
 
 @pytest.mark.asyncio
 async def test_already_failed_execution_does_not_duplicate_failure_fact(monkeypatch):
-    governance = _Governance(_DB())
+    db = _DB()
+    governance = _Governance(db)
     monkeypatch.setattr(module, "WorkflowGovernanceService", lambda db: governance)
     worker = object.__new__(module.PlannerDrivenDurableFrontierWorkflowWorker)
+    worker._mark_active_sibling_frontiers_failed = AsyncMock()
     execution = WorkflowExecution(
         tenant_id=uuid4(),
         workflow_id=uuid4(),
@@ -70,13 +82,21 @@ async def test_already_failed_execution_does_not_duplicate_failure_fact(monkeypa
         status="failed",
         input_data={},
     )
+    now = datetime(2026, 8, 27, 12, 0, 0)
 
     await worker._mark_execution_failed_in_transaction(
-        _DB(), execution,
-        now=datetime(2026, 8, 27, 12, 0, 0),
+        db, execution,
+        now=now,
         error_code="WORKFLOW_EXECUTION_FAILED",
         error_message="duplicate",
     )
 
     assert governance.trace_calls == []
     assert governance.audit_calls == []
+    worker._mark_active_sibling_frontiers_failed.assert_awaited_once_with(
+        db,
+        execution,
+        now=now,
+        error_code="WORKFLOW_EXECUTION_FAILED",
+        error_message="duplicate",
+    )
