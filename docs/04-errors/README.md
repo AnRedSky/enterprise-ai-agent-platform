@@ -32,6 +32,7 @@
 | ERR-0024 | 2026-08-23 | Backend 模块重构后的测试边界残留 |
 | ERR-0025 | 2026-08-24 | Backend Refactor Closure Gate 将 canonical Service 包入口误判为旧 import |
 | ERR-0026 | 2026-08-26 | Real API Trigger 测试专用事件循环被 pytest 生命周期提前关闭 |
+| ERR-0027 | 2026-08-28 | Frontier completion 当前 lifecycle 与目标 lifecycle 混淆导致 stale Worker fencing 被遮蔽 |
 
 ## 迁移规则
 
