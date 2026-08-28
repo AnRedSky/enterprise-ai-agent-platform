@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前最新代码提交：`a87080c8` — `fix(test): keep B2 mock profile fixture version-consistent`
+- 当前最新代码提交：`5676fff9` — `fix(worker): finalize delegation in active runtime session`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
@@ -24,33 +24,30 @@
 - B2 Worker Execution Bridge 已进入生产代码：已 Claim Execution 通过正式 Delegation Runtime Bridge 显式装配 target Agent version、model profile、input、selected context refs、allowed tools 与 trace identity，并复用现有 Workflow Worker / WorkflowRuntime；
 - B2 synthetic Runtime 已修复与 DAG validator 的 Contract 冲突；
 - B3 Delegation completion/failure 已进入生产代码：以 `worker_execution_id` 作为 Worker generation fencing identity，在当前 generation 仍有效且 Worker Execution 已进入对应终态时收敛 Delegation；
-- 注册用户现在在同一事务中绑定默认 Tenant 对应的 active Organization，保证后续 Governance membership 边界成立。
+- 注册用户现在在同一事务中绑定默认 Tenant 对应的 active Organization，保证后续 Governance membership 边界成立；
+- B2 Real Gate 已进一步暴露 Worker Runtime 的 AsyncSession / Delegation finalize 事务边界问题，并已在生产 Runtime Entry 修复：Delegation finalize 复用当前 Worker AsyncSession，不再创建独立 Session；同时继续使用 commit 前快照的 `worker_execution_id` 防止 `expire_on_commit` 导致隐式异步 IO。
 
 ## 3. 最新本地验收反馈
 
-开发者在 `9d73f833` 本地实际执行 B2 与 B3 Gate：
+开发者在 `f75be2cd` 本地实际执行 B2 Gate：
 
 ```text
 B2 bridge Unit             3 passed
 B2 Backend regression      850 passed, 3 skipped, 46 deselected
 B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
 B2 Real Gate               1 failed, 2 passed
-
-B3 lifecycle Unit           30 passed
-B3 Backend regression       850 passed, 3 skipped, 46 deselected
-B3 Migration/head           0039_workflow_node_execution_tenant_trigger (head)
-B3 Real Gate                1 failed, 2 passed
 ```
 
-第二轮 B2/B3 Real Gate 均失败于 `AgentDelegationRuntimeBridge.load()`：
+本轮 Real Gate 已越过 Model Profile Snapshot Fixture 校验，并真正完成 Target Agent Runtime 与 Worker Execution terminalization；最终失败为：
 
 ```text
-HTTPException: 409: Delegation model profile 与目标 Agent version 不一致
+assert persisted.status == "completed"
+E AssertionError: assert 'running' == 'completed'
 ```
 
-根因是上一轮 Fixture 虽然自动创建了 deterministic Mock Profile，但只修改了 `AgentDelegation.model_profile_id`，没有同步 Target Agent Version 的 `model_profile_id`。RuntimeBridge 的一致性校验正确拒绝了这个非法执行快照。
+B3 使用相同 Worker Runtime completion 路径，因此同样受该问题影响。
 
-本次修复已将 Fixture 调整为在 Claim 前同一事务内同时绑定 Target `AgentVersion.model_profile_id` 与 `AgentDelegation.model_profile_id`，确保进入 RuntimeBridge 的执行快照一致。生产 RuntimeBridge 的 409 校验保持不变。
+根因与修复已记录：`docs/04-errors/2026-08-28-phase-2-8-b2-b3-delegation-finalization-transaction-boundary.md`。
 
 ## 4. B2 当前实现边界
 
@@ -77,6 +74,10 @@ AgentDelegationRuntimeBridge
 Target Agent published version
     ↓
 既有 ModelGateway / Governance / Provider
+    ↓
+Worker Execution terminalization
+    ↓
+同一 AsyncSession 中 Delegation completion/failure
 ```
 
 B2 不创建第二套 Worker、Lease、Retry、Recovery 或 Provider；不修改父 Workflow Version 数据库记录，不复制父 Execution checkpoint、memory 或 credential。
@@ -84,6 +85,8 @@ B2 不创建第二套 Worker、Lease、Retry、Recovery 或 Provider；不修改
 B2 synthetic Runtime 是单 Node 执行对象，不属于持久化 DAG，因此 Definition 不声明 `edges`。
 
 Real Gate 的 Model Provider Fixture 必须由测试自动建立并绑定，不得依赖开发数据库中的默认 Provider/Profile。
+
+Worker generation identity 必须在任何 Runtime commit 前快照；Delegation finalize 必须复用当前 Worker AsyncSession，避免跨 Session 的事务可见性边界。
 
 ## 5. B3 当前实现
 
@@ -143,10 +146,10 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 | B2 Worker Execution Bridge 生产实现 | ✅ |
 | B2 Bridge Unit | ✅ 本地 3 passed |
 | B2 Backend regression | ✅ 本地 850 passed, 3 skipped, 46 deselected |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 第二轮 Fixture 修复后待本地复跑 |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 已修复 finalize Session 边界，待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
 | B3 Unit / Backend regression | ✅ 本地 30 passed / 850 passed |
-| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 第二轮 Fixture 修复后待本地复跑 |
+| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 B2 修复后待本地复跑 |
 | B4 timeout/cancel/parent semantics | ⏳ 尚未进入生产实现 |
 | B5 Audit/Trace 完整闭环 | ⏳ |
 | Delegation Runtime multi-worker acceptance | ⏳ |
@@ -156,13 +159,13 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 ```text
 同步最新 main
     ↓
-修复 B2/B3 Real Gate Model Profile Snapshot Fixture
+修复 B2/B3 Real Gate finalize Session / transaction boundary
     ↓
 B2 Bridge Unit + Backend Regression + Migration
     ↓
-B2 Real HTTP + PostgreSQL + Runtime
+B2 Real HTTP + PostgreSQL + Runtime 本地复验
     ↓
-B3 Delegation completion/failure Gate
+B3 Delegation completion/failure Gate 本地复验
     ↓
 若 Real Gate 有问题 → 立即修复并记录 docs/04-errors/
     ↓
@@ -178,30 +181,3 @@ Delegation 多 Worker + PostgreSQL + Runtime acceptance
 ## 9. 测试规则
 
 开发者本地实际执行结果为唯一测试依据；GitHub Actions 不作为验收依据。
-
-B1 Gate：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\01_delegation_contract_gate.ps1
-```
-
-B2 Gate：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\02_worker_execution_bridge_gate.ps1
-```
-
-B3 Gate：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\03_delegation_completion_gate.ps1
-```
-
-Real API Gate 自动生成临时身份与 Token，不要求开发者手工输入任何信息。
-
-## 10. 当前结论
-
-**第二轮 B2/B3 Real Gate 的实际失败已经定位：测试 Fixture 创建 Mock Profile 后未同步 Target Agent Version，导致 RuntimeBridge 正确触发 profile snapshot consistency 保护。本次修复已提交 `main`；尚未产生修复后的本地实际 Gate 结果，因此当前仍不得标记 B2/B3 Real Gate 通过。下一步先实际复跑 B2，再复跑 B3；两者闭环后立即进入 B4 timeout / cancel / parent semantics。**
