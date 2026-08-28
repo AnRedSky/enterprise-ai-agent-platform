@@ -172,8 +172,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                     "edges": [{"source": "prepare", "target": "provider-call"}],
                 }})
                 assert version.status_code == 201, version.text
-                version_id = version.json()["id"]
-                published_workflow = client.post(f"/workflows/{workflow_id}/versions/{version_id}/publish")
+                published_workflow = client.post(f"/workflows/{workflow_id}/versions/{version.json()['id']}/publish")
                 assert published_workflow.status_code == 200, published_workflow.text
                 execution = client.post(f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "durable-resume-acceptance"}})
                 assert execution.status_code == 201, execution.text
@@ -184,18 +183,15 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
             source = await _wait_for_source_failure(source_id)
             assert source.status == "failed"
 
-            async def verify_source_checkpoint() -> tuple[WorkflowExecutionCheckpoint, list[WorkflowNodeExecution]]:
-                async with SessionLocal() as db:
-                    checkpoints = (await db.execute(select(WorkflowExecutionCheckpoint).where(
-                        WorkflowExecutionCheckpoint.execution_id == source.id
-                    ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
-                    nodes = (await db.execute(select(WorkflowNodeExecution).where(
-                        WorkflowNodeExecution.execution_id == source.id
-                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
-                    assert len(checkpoints) == 1
-                    return checkpoints[0], list(nodes)
-
-            source_checkpoint, source_nodes = await verify_source_checkpoint()
+            async with SessionLocal() as db:
+                checkpoints = (await db.execute(select(WorkflowExecutionCheckpoint).where(
+                    WorkflowExecutionCheckpoint.execution_id == source.id
+                ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
+                source_nodes = (await db.execute(select(WorkflowNodeExecution).where(
+                    WorkflowNodeExecution.execution_id == source.id
+                ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
+            assert len(checkpoints) == 1
+            source_checkpoint = checkpoints[0]
             assert source_checkpoint.sequence == 0
             assert source_checkpoint.node_id == "prepare"
             assert source_checkpoint.node_status == "completed"
@@ -211,17 +207,13 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
             resumed = await _wait_for_execution_status(str(resume.id), "completed")
             assert resumed.status == "completed"
 
-            async def verify_resume_result() -> tuple[list[WorkflowExecutionCheckpoint], list[WorkflowNodeExecution]]:
-                async with SessionLocal() as db:
-                    checkpoints = (await db.execute(select(WorkflowExecutionCheckpoint).where(
-                        WorkflowExecutionCheckpoint.execution_id == resume.id
-                    ).order_by(WorkflowExecutionCheckpoint.sequence.asc())).scalars().all()
-                    nodes = (await db.execute(select(WorkflowNodeExecution).where(
-                        WorkflowNodeExecution.execution_id == resume.id
-                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())).scalars().all()
-                    return list(checkpoints), list(nodes)
-
-            resume_checkpoints, resume_nodes = await verify_resume_result()
+            async with SessionLocal() as db:
+                resume_checkpoints = (await db.execute(select(WorkflowExecutionCheckpoint).where(
+                    WorkflowExecutionCheckpoint.execution_id == resume.id
+                ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
+                resume_nodes = (await db.execute(select(WorkflowNodeExecution).where(
+                    WorkflowNodeExecution.execution_id == resume.id
+                ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
             assert len(resume_checkpoints) == 1
             assert resume_checkpoints[0].sequence == 0
             assert resume_checkpoints[0].node_id == "provider-call"
