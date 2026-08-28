@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码提交：`c1d3f3a1` — `fix(test): decouple B2 mock profile fixture from optional profile`
+- 当前最新代码提交：`a87080c8` — `fix(test): keep B2 mock profile fixture version-consistent`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
@@ -28,25 +28,29 @@
 
 ## 3. 最新本地验收反馈
 
-开发者在提交 `2daeeb62` 对应的本地代码实际执行：
+开发者在 `9d73f833` 本地实际执行 B2 与 B3 Gate：
 
 ```text
 B2 bridge Unit             3 passed
 B2 Backend regression      850 passed, 3 skipped, 46 deselected
 B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
 B2 Real Gate               1 failed, 2 passed
+
+B3 lifecycle Unit           30 passed
+B3 Backend regression       850 passed, 3 skipped, 46 deselected
+B3 Migration/head           0039_workflow_node_execution_tenant_trigger (head)
+B3 Real Gate                1 failed, 2 passed
 ```
 
-失败发生在 `test_b2_worker_execution_bridge_runs_target_agent_version` 的 Real PostgreSQL Fixture 阶段：
+第二轮 B2/B3 Real Gate 均失败于 `AgentDelegationRuntimeBridge.load()`：
 
 ```text
-assert delegation.model_profile_id is not None
-E assert None is not None
+HTTPException: 409: Delegation model profile 与目标 Agent version 不一致
 ```
 
-根因是此前为隔离外部 Provider 增加的测试 Fixture 仍假设 Delegation 在创建后已经带有 `model_profile_id`。当前 Real Gate 创建的 Target Agent 使用 `model_id=mock-model` 但没有显式 Model Profile，因此 Delegation 合法地继承了 `NULL` profile，测试辅助函数却无法从不存在的 profile 推导 Organization。
+根因是上一轮 Fixture 虽然自动创建了 deterministic Mock Profile，但只修改了 `AgentDelegation.model_profile_id`，没有同步 Target Agent Version 的 `model_profile_id`。RuntimeBridge 的一致性校验正确拒绝了这个非法执行快照。
 
-本次修复已改为直接从 Delegation 的 Target Agent version 与 Delegation tenant 查询对应 Organization，再自动创建独立 `provider_type=mock` / `model_name=mock-model` Profile 并绑定 Delegation。该修复仍保持真实 HTTP + PostgreSQL + Worker Runtime 链路，不修改生产 Provider fallback 语义。
+本次修复已将 Fixture 调整为在 Claim 前同一事务内同时绑定 Target `AgentVersion.model_profile_id` 与 `AgentDelegation.model_profile_id`，确保进入 RuntimeBridge 的执行快照一致。生产 RuntimeBridge 的 409 校验保持不变。
 
 ## 4. B2 当前实现边界
 
@@ -139,9 +143,10 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 | B2 Worker Execution Bridge 生产实现 | ✅ |
 | B2 Bridge Unit | ✅ 本地 3 passed |
 | B2 Backend regression | ✅ 本地 850 passed, 3 skipped, 46 deselected |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 Fixture 修复后待本地复跑 |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 第二轮 Fixture 修复后待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
-| B3 Unit / Real Gate | 🔧 B2 修复后待本地复跑 |
+| B3 Unit / Backend regression | ✅ 本地 30 passed / 850 passed |
+| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 第二轮 Fixture 修复后待本地复跑 |
 | B4 timeout/cancel/parent semantics | ⏳ 尚未进入生产实现 |
 | B5 Audit/Trace 完整闭环 | ⏳ |
 | Delegation Runtime multi-worker acceptance | ⏳ |
@@ -151,7 +156,7 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 ```text
 同步最新 main
     ↓
-修复 B2 Real Gate Model Profile Fixture
+修复 B2/B3 Real Gate Model Profile Snapshot Fixture
     ↓
 B2 Bridge Unit + Backend Regression + Migration
     ↓
@@ -161,7 +166,7 @@ B3 Delegation completion/failure Gate
     ↓
 若 Real Gate 有问题 → 立即修复并记录 docs/04-errors/
     ↓
-B3 本地验收闭环
+B2/B3 本地验收闭环
     ↓
 B4 timeout / cancel / parent semantics
     ↓
@@ -199,4 +204,4 @@ Real API Gate 自动生成临时身份与 Token，不要求开发者手工输入
 
 ## 10. 当前结论
 
-**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2/B3 生产实现及此前已知回归均已修复；当前最新本地反馈暴露的是 B2 Real Gate 测试 Fixture 对可选 `model_profile_id` 的错误前置假设。本次代码修复已提交到 `main`，但尚未产生修复后的本地实际测试结果，因此不能标记 B2/B3 Real Gate 通过。下一步必须先由开发者本地实际执行 B2 Gate，再执行 B3 Gate；B2 Real Gate 通过后进入 B3 本地验收闭环，再进入 B4 timeout / cancel / parent semantics。**
+**第二轮 B2/B3 Real Gate 的实际失败已经定位：测试 Fixture 创建 Mock Profile 后未同步 Target Agent Version，导致 RuntimeBridge 正确触发 profile snapshot consistency 保护。本次修复已提交 `main`；尚未产生修复后的本地实际 Gate 结果，因此当前仍不得标记 B2/B3 Real Gate 通过。下一步先实际复跑 B2，再复跑 B3；两者闭环后立即进入 B4 timeout / cancel / parent semantics。**
