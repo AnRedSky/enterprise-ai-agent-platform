@@ -1,7 +1,7 @@
 # Phase 2.7 — Advanced Workflow Orchestration / Conditional Branching
 
 > 状态：**开发中**。
-> 基线：`main`，2026-08-27。
+> 基线：`main`，2026-08-28。
 > 当前交付单元：Phase 2.7-A Durable Recovery Closure。
 > Contract：`docs/02-phases/PHASE_2_7_A_CONTRACT.md`。
 
@@ -60,6 +60,8 @@ Join merged-state recovery guard
 - **Durable Frontier Terminalization Transaction Boundary：终态 Frontier 不再通过会提前 `commit()` 的普通 Execution transition 完成 terminalization；Frontier、`frontier_completed` Checkpoint、Execution `completed` 与 Next Frontier 现在由同一 progression transaction 统一提交或回滚。**
 - **Durable Frontier Terminalization Ownership Recheck：终态 Frontier 在 Execution terminalization 前再次锁定并校验当前 Worker owner / fencing generation，防止 Frontier 已被占有但 Execution owner 已变更时旧 Worker 结束 Execution。**
 - **Durable Frontier Next-frontier Duplicate Consumption Guard：Next Frontier 创建前在同一事务内锁定同一 Execution 的其他活动 Frontier，并拒绝 Node 集合重叠；合法并行 Frontier 仍可存在，但同一 Node 不得被两个活动 Frontier 同时消费。**
+- **Durable Frontier Replay Regression Fixture Closure：Duplicate completion / consumption 回归 fixture 现在显式构造 `status=completed` 的 source Frontier，避免测试 double 因缺失状态契约而提前落入 Execution lifecycle guard，确保 fingerprint / Node-set / duplicate-checkpoint 断言真正覆盖目标 Replay Guard。**
+- **Durable Frontier Claim Lock-order Closure：Claim 不再先锁 Frontier 再锁 Execution；候选 Frontier 先只读选择，随后统一按 `Execution → Frontier` 顺序加 `FOR UPDATE SKIP LOCKED`，与 completion / terminalization 锁序一致，降低同 Execution 并发 Claim 与 terminalization 的死锁风险。**
 
 ## 3. Durable Recovery Closure
 
@@ -239,65 +241,55 @@ Execution E
 
 `complete_frontier_with_checkpoint()` 在创建 Next Frontier 前锁定同一 Execution 的其他活动 Frontier，并执行 Node-set overlap fencing。该规则位于 durable progression transaction 内，因此不会把重复消费判断留给 Runtime 内存状态，也不会通过 NodeExecution 唯一约束被动兜底。
 
-该 Guard 只禁止 Node 集合重叠，不限制合法的 disjoint multi-frontier 并行。Worker Claim 层仍需继续将同一 Execution 的并发 Claim ownership 与该规则收敛为统一事务边界。
+### 3.12 Claim / Completion Lock Order Closure
 
-## 4. 本轮单元测试
-
-新增：
+所有会改变同一 Execution 下 Frontier ownership / lifecycle 的路径必须保持统一锁序：
 
 ```text
-backend/tests/unit/test_frontier_duplicate_consumption.py
+candidate Frontier (read only)
+          ↓
+WorkflowExecution FOR UPDATE SKIP LOCKED
+          ↓
+candidate Frontier FOR UPDATE SKIP LOCKED
+          ↓
+Node-set / ownership fencing
+          ↓
+Frontier state mutation
 ```
 
-覆盖：
+Claim 路径禁止在锁定 Execution 前持有 Frontier 行锁。Completion / terminalization 已经以 Execution 为生命周期权威事实，因此 Claim 若使用反向 `Frontier → Execution` 锁序，在高并发下可能与 completion 形成循环等待。当前实现通过候选 Frontier 的无锁选择 + Execution-first locking 消除该反向锁序。
 
-- Next Frontier 与活动 Frontier Node 集合重叠时必须拒绝创建；
-- Node 集合互斥时允许合法并行 Frontier；
-- duplicate-consumption guard 位于 enqueue 前，不产生第二条 Frontier。
+如果候选 Execution 当前被其他事务锁定，Claim 必须 fail-closed 返回 `None`，不得继续锁 Frontier 或绕过 Execution lifecycle guard；后续调度循环负责再次尝试。
 
-**当前环境无法在本地启动仓库执行 pytest，因此不得记录 Unit Test PASS；仅保留待主线完成后的本地测试执行。**
+## 4. 下一步开发任务
 
-## 5. 当前交付状态
+### 4.1 当前下一任务：Claim / Recovery 并发闭环验证
+
+1. 增加 Claim / Completion 同 Execution 并发回归测试，验证 `Execution → Frontier` 锁序在 PostgreSQL 事务下不会出现死锁。
+2. 增加同 Execution 多 Frontier 的 Claim fairness / head-of-line 行为测试，明确 `SKIP LOCKED` 与 tenant boundary 的预期。
+3. 增加 stale Worker 在 Claim 后失去 Execution lease、随后 completion 的 fencing regression。
+4. 在完成上述单元回归后，再执行本地 PostgreSQL + Redis + API + Scheduler + Worker 手动闭环测试。
+5. 手动闭环通过后，再进入 Phase 2.7-B 的 Conditional Branching / Join 端到端任务，不提前扩展第二套 Runtime / Planner。
+
+## 5. 本阶段测试基线
+
+当前 targeted regression 至少覆盖：
 
 ```text
-Conditional Branching Closure                 ✅
-Durable Frontier Scheduling                   ✅
-Recovery / Resume Checkpoint lineage          ✅
-Multi-frontier Checkpoint boundary            ✅
-Execution fencing generation                  ✅
-Stale Worker Checkpoint late-write guard      ✅
-Node → Checkpoint fencing propagation         ✅
-Checkpoint durable write boundary             ✅
-Multi-frontier Join Recovery                  ✅
-Replay decision convergence                   ✅
-Resume lifecycle idempotency closure          ✅
-Durable Resume Checkpoint continuation         ✅
-Durable Multi-frontier completion boundary     ✅
-Durable Completion Contract Hardening         ✅
-Terminal Execution Frontier Recovery Guard    ✅
-Checkpoint Execution Lifecycle Guard          ✅
-Durable Frontier Identity Canonicalization    ✅
-Terminalization Transaction Boundary          ✅
-Terminalization Ownership Recheck             ✅
-Next-frontier Duplicate Consumption Guard     ✅ 本轮
-
-        ↓
-
-Concurrent multi-frontier Claim / Claim-layer overlap fencing
-        ↓
-Success / Failure terminalization closure
-        ↓
-Replay convergence
-        ↓
-Phase 2.7 主线完成
+test_durable_resume_runtime.py
+test_workflow_execution_idempotency.py
+test_workflow_execution_governance.py
+test_workflow_dag_contract.py
+test_workflow_dag_runtime_initialization.py
+test_frontier_duplicate_completion.py
+test_frontier_duplicate_consumption.py
+test_frontier_claim_lock_order.py
 ```
 
-完整测试与验收在全部主线任务完成后再启动；届时需要按 `DEVELOPMENT.md` 提供并执行可重复的本地自动化脚本、数据库迁移验证、Backend Gate、Frontend Gate、Real API Gate 及需要的 Browser E2E。
+自动化入口：
 
-## 6. 本轮交付说明
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\workflow\01_resume_runtime_regression.ps1
+```
 
-本轮沿 Durable Frontier → Next Frontier → Concurrent multi-frontier 主线继续推进，补上了一个仅依赖 `frontier_key` 唯一约束无法证明的集合级并发边界：不同 identity / fingerprint 的 Frontier 仍可能携带重叠 Node 集合。现在 Next Frontier 创建前会在同一 progression transaction 内锁定同一 Execution 的其他活动 Frontier，并拒绝 Node-set overlap；合法 disjoint parallel frontier 仍然允许。
-
-本轮没有创建第二套 Planner、Runtime、Repository、Execution 状态机或 Provider；新增的是既有 Frontier progression 的并发 Contract 与对应 Unit Test。Worker Claim 层的同一 Execution 并发边界尚未宣称完成，下一轮继续直接收口。
-
-完整 pytest / Regression / E2E / Real API 流程继续暂停，直到全部主线任务开发完成。
+该入口只执行 Unit Regression，不要求启动 PostgreSQL / Redis / API / Scheduler / Worker；完整手动闭环测试必须在 Unit Regression 通过后执行。
