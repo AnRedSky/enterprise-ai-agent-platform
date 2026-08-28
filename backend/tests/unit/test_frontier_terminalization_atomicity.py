@@ -73,9 +73,13 @@ async def test_terminal_frontier_requires_running_execution_before_terminalizati
     execution.status = "completed"
     execution.worker_owner = None
     execution.worker_attempt = 3
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = execution
-    db.execute.return_value = result
+    current_frontier = MagicMock()
+    current_frontier.status = "running"
+    current_result = MagicMock()
+    current_result.scalar_one_or_none.return_value = current_frontier
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    db.execute.side_effect = [current_result, execution_result]
 
     with patch(
         "app.services.workflow.frontier_progression.transition_owned_frontier",
@@ -110,7 +114,9 @@ async def test_non_terminal_frontier_keeps_execution_running_and_uses_worker_fen
     execution_result.scalar_one_or_none.return_value = execution
     current_frontier_result = MagicMock()
     current_frontier_result.scalar_one_or_none.return_value = None
-    db.execute.side_effect = [current_frontier_result, execution_result]
+    active_frontiers_result = MagicMock()
+    active_frontiers_result.scalars.return_value.all.return_value = []
+    db.execute.side_effect = [current_frontier_result, execution_result, active_frontiers_result]
     checkpoint = MagicMock()
     next_frontier = MagicMock()
     next_identity = MagicMock()
