@@ -30,6 +30,30 @@ def _frontier() -> MagicMock:
     return frontier
 
 
+def _execution(frontier: MagicMock, status: str = "running") -> MagicMock:
+    execution = MagicMock()
+    execution.id = frontier.execution_id
+    execution.tenant_id = frontier.tenant_id
+    execution.status = status
+    execution.worker_owner = "worker-a"
+    execution.worker_lease_expires_at = datetime(2026, 8, 27, 9, 0)
+    execution.worker_attempt = 4
+    execution.created_by = uuid4()
+    return execution
+
+
+def _scalar_result(value):
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
+
+
+def _rows_result(rows):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    return result
+
+
 def test_progression_contract_rejects_self_loop_identity() -> None:
     frontier = _frontier()
     next_identity = WorkflowFrontierIdentity(
@@ -109,8 +133,20 @@ def test_progression_contract_allows_node_fact_for_node_checkpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_frontier_with_checkpoint_keeps_execution_checkpoint_free_of_node_fact() -> None:
-    db = AsyncMock()
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[
+        _scalar_result(None),
+        _scalar_result(_execution(_frontier())),
+        _rows_result([]),
+    ])
+    db.commit = AsyncMock()
     frontier = _frontier()
+    execution = _execution(frontier)
+    db.execute.side_effect = [
+        _scalar_result(None),
+        _scalar_result(execution),
+        _rows_result([]),
+    ]
     next_identity = WorkflowFrontierIdentity(
         execution_id=frontier.execution_id,
         workflow_version_id=frontier.workflow_version_id,
@@ -157,7 +193,9 @@ async def test_complete_frontier_with_checkpoint_keeps_execution_checkpoint_free
 
 @pytest.mark.asyncio
 async def test_complete_frontier_with_checkpoint_rejects_cross_execution_next_frontier() -> None:
-    db = AsyncMock()
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
     frontier = _frontier()
     next_identity = WorkflowFrontierIdentity(
         execution_id=uuid4(),
@@ -182,11 +220,19 @@ async def test_complete_frontier_with_checkpoint_rejects_cross_execution_next_fr
 
 @pytest.mark.asyncio
 async def test_complete_terminal_frontier_creates_execution_checkpoint_without_node_fact() -> None:
-    db = AsyncMock()
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
     frontier = _frontier()
+    execution = _execution(frontier)
+    db.execute.side_effect = [
+        _scalar_result(None),
+        _scalar_result(execution),
+        _scalar_result(None),
+    ]
     checkpoint = MagicMock()
 
-    with patch("app.services.workflow.frontier_progression.transition_owned_frontier", new_callable=AsyncMock), patch(
+    with patch("app.services.workflow.frontier_progression.transition_owned_frontier", new_callable=AsyncMock) as transition, patch(
         "app.services.workflow.frontier_progression.WorkflowExecutionCheckpointService.append_next_in_transaction",
         new_callable=AsyncMock,
     ) as append, patch("app.services.workflow.frontier_progression.enqueue_frontier", new_callable=AsyncMock) as enqueue:
@@ -202,6 +248,7 @@ async def test_complete_terminal_frontier_creates_execution_checkpoint_without_n
         )
 
     assert result == (checkpoint, None)
+    transition.assert_awaited_once()
     enqueue.assert_not_awaited()
     assert append.await_args.kwargs["execution_status"] == "completed"
     assert append.await_args.kwargs["node_id"] is None
