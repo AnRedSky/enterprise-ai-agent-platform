@@ -93,33 +93,35 @@ Execution terminal write bypass      ✅
 
 ```text
 uv run pytest -q \
-  tests/unit/test_durable_resume_runtime.py \
-  tests/unit/test_workflow_execution_idempotency.py \
-  tests/unit/test_workflow_execution_governance.py \
-  tests/unit/test_workflow_dag_runtime_initialization.py
+  tests/unit/test_frontier_progression.py \
+  tests/unit/test_frontier_progression_lifecycle.py
 
-3 failed, 17 passed
+3 failed, 8 passed
 ```
 
-本轮 3 个失败均已定位为测试 double / fixture 与当前正式 Contract 不一致，而不是因此放宽生产约束：
+本轮 3 个失败已经定位并形成修复：
 
-- DAG Resume Planner 场景使用 `MagicMock.execute`，但断言调用了不存在的 `assert_not_awaited()`；已改为显式 `AsyncMock`。
-- Durable Resume Retry budget fixture 缺少当前查询链路需要的 `node_id`；已补齐 durable Node fact 字段。
-- DAG 首次执行 fixture 缺少当前 tenant boundary 所需的 `tenant_id`；已补齐租户字段。
+- `test_complete_terminal_frontier_creates_execution_checkpoint_without_node_fact`：测试 double 使用 `MagicMock` 模拟 `AsyncSession`，但 Governance `trace/audit` 真实路径会 `await db.flush()`；已将该 fixture 的 `flush` 配置为 `AsyncMock`。
+- `test_progression_rejects_execution_lifecycle_drift[running-None]`：原测试把 `running + 无 Next Frontier` 当成 lifecycle drift，但当前正式 Contract 中该组合正是合法的 terminal completion 目标；已将负向 fixture 改为 `failed + 无 Next Frontier`，避免通过错误测试约束生产代码。
+- `test_terminal_progression_uses_locked_running_execution_as_lifecycle_source`：同样补齐 `AsyncSession.flush` double，保持测试与正式 Governance 持久化边界一致。
 
-已提交对应测试修复，并新增可重复执行的 targeted regression 入口：
-`backend/scripts/test/workflow/01_resume_runtime_regression.ps1`。
+对应测试修复已直接提交 `main`：
 
-**注意：以上修复提交后的 PASS 状态尚未由本地重新执行确认，必须以开发者下一次实际运行结果为准。**
+- `7bfb87d` `test(workflow): align frontier progression db double with async session`
+- `8789ea6` `test(workflow): correct frontier lifecycle drift fixture`
+
+**注意：上述修复后的 PASS 状态尚未由开发者重新执行确认，当前仍必须以本地实际执行结果为准，不得提前标记为通过。**
 
 ## 下一步
 
 ```text
-本轮 3 个 targeted fixture / mock 修复
+已修复 Frontier targeted regression fixture / Contract drift
   ↓
-重新执行 Durable Resume / Execution / DAG targeted regression
+重新执行 Frontier targeted regression
   ↓
-继续处理下一组 Durable Frontier / Checkpoint / Recovery 回归
+执行 Durable Resume / Execution / DAG / Frontier targeted regression
+  ↓
+处理下一组真实失败与警告
   ↓
 Backend Unit / Default Regression
   ↓
