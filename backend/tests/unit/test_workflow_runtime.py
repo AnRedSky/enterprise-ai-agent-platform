@@ -161,7 +161,7 @@ async def test_initial_dag_context_starts_from_root_and_uses_same_planner_contra
     db = AsyncMock()
     db.execute.return_value = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
     runtime = WorkflowRuntime(db)
-    execution = SimpleNamespace(id=uuid4(), resume_of_execution_id=None)
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), resume_of_execution_id=None)
     definition = {
         "nodes": [
             {"id": "input", "type": "input", "config": {}},
