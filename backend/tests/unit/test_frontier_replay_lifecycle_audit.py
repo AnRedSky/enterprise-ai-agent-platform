@@ -22,6 +22,8 @@ def _frontier() -> MagicMock:
     frontier.tenant_id = uuid4()
     frontier.frontier_key = "frontier-current"
     frontier.attempt = 2
+    frontier.status = "completed"
+    frontier.node_ids = ["node-a"]
     return frontier
 
 
@@ -45,14 +47,9 @@ async def test_replay_does_not_bind_to_ephemeral_worker_owner() -> None:
     db.execute.side_effect = [current_lookup, checkpoint_lookup, execution_lookup]
 
     result = await complete_frontier_with_checkpoint(
-        db,
-        frontier=frontier,
-        worker_owner="worker-new",
-        attempt=2,
-        checkpoint_state={"done": True},
-        checkpoint_reason="frontier_completed",
-        next_identity=None,
-        now=datetime(2026, 8, 27, 8, 0),
+        db, frontier=frontier, worker_owner="worker-new", attempt=2,
+        checkpoint_state={"done": True}, checkpoint_reason="frontier_completed",
+        next_identity=None, now=datetime(2026, 8, 27, 8, 0),
     )
 
     assert result == (checkpoint, None)
@@ -79,12 +76,7 @@ async def test_replay_rejects_checkpoint_execution_lifecycle_drift() -> None:
 
     with pytest.raises(FrontierProgressionContractError, match="lifecycle 不一致"):
         await complete_frontier_with_checkpoint(
-            db,
-            frontier=frontier,
-            worker_owner="worker-new",
-            attempt=2,
-            checkpoint_state={"done": True},
-            checkpoint_reason="frontier_completed",
-            next_identity=None,
-            now=datetime(2026, 8, 27, 8, 0),
+            db, frontier=frontier, worker_owner="worker-new", attempt=2,
+            checkpoint_state={"done": True}, checkpoint_reason="frontier_completed",
+            next_identity=None, now=datetime(2026, 8, 27, 8, 0),
         )
