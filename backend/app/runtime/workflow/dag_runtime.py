@@ -12,7 +12,7 @@ from time import monotonic
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.models.workflow_execution import WorkflowNodeExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.runtime.workflow.runtime import WorkflowRuntime as BaseWorkflowRuntime
 from app.services.workflow.checkpoint.recovery import WorkflowDagContractValidator, WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlanner
@@ -46,17 +46,24 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         Returns:
             当前 Execution 与 Resume Source 的已完成 NodeExecution。
 
-        设计意图：NodeExecution 表没有独立 tenant_id 列，tenant boundary 已由关联的 Execution 身份确定；
-        因此这里必须按 execution_id 收敛事实，不能引用不存在的 NodeExecution.tenant_id 字段。
+        设计意图：NodeExecution 表没有独立 tenant_id 列，tenant boundary 必须通过所属 Execution
+        关系显式验证。这样即使历史或异常数据中的 resume_of_execution_id 指向其他 tenant，也不会把
+        跨 tenant 的 Node fact 带入当前 Resume。
         """
         execution_ids = [execution.id]
         source_execution_id = getattr(execution, "resume_of_execution_id", None)
         if source_execution_id is not None:
             execution_ids.insert(0, source_execution_id)
-        query = select(WorkflowNodeExecution).where(
-            WorkflowNodeExecution.execution_id.in_(execution_ids),
-            WorkflowNodeExecution.status == "completed",
-        ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
+        query = (
+            select(WorkflowNodeExecution)
+            .join(WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id)
+            .where(
+                WorkflowNodeExecution.execution_id.in_(execution_ids),
+                WorkflowExecution.tenant_id == execution.tenant_id,
+                WorkflowNodeExecution.status == "completed",
+            )
+            .order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())
+        )
         return list((await self.db.execute(query)).scalars().all())
 
     async def _record_dag_frontier_decision(self, execution, version_definition: dict, plan, actor_id, trace_link=None) -> None:
@@ -218,42 +225,3 @@ class WorkflowRuntime(BaseWorkflowRuntime):
         if node.get("type") == "join":
             return dict(input_data)
         return await super().execute_node(node, input_data, actor_id, is_admin, session_id, tenant_id, execution=execution)
-
-    async def execute(self, execution, version, actor_id, is_admin: bool = False,
-                      allow_legacy_empty_nodes: bool = False) -> dict:
-        """执行 Workflow，并在 Recovery Resume 场景延续持久化 trace_id。"""
-        if getattr(execution, "resume_of_execution_id", None) is None:
-            return await super().execute(execution, version, actor_id, is_admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
-
-        trace_link = WorkflowRecoveryTraceLinkService(self.db)
-        trace_id = await trace_link.get_trace_id(execution)
-        if trace_id is None:
-            return await super().execute(execution, version, actor_id, is_admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
-        telemetry = WorkflowRecoveryTelemetry()
-        started = monotonic()
-        telemetry.emit(WorkflowRecoveryEvent(
-            event_name="workflow.recovery.runtime.started",
-            execution_id=execution.id,
-            resume_execution_id=execution.id,
-            trace_id=trace_id,
-            phase="runtime",
-        ))
-        outcome = "completed"
-        reason_code = None
-        try:
-            return await super().execute(execution, version, actor_id, is_admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
-        except Exception as exc:
-            outcome = "failed"
-            reason_code = type(exc).__name__
-            raise
-        finally:
-            telemetry.emit(WorkflowRecoveryEvent(
-                event_name="workflow.recovery.runtime.finished",
-                execution_id=execution.id,
-                resume_execution_id=execution.id,
-                trace_id=trace_id,
-                outcome=outcome,
-                reason_code=reason_code,
-                phase="runtime",
-                duration_ms=(monotonic() - started) * 1000,
-            ))
