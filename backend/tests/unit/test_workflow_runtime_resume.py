@@ -55,6 +55,7 @@ def linear_definition() -> dict:
 def _execution(*, resume: bool = True):
     return SimpleNamespace(
         id=uuid4(),
+        tenant_id=uuid4(),
         resume_of_execution_id=uuid4() if resume else None,
         created_by=uuid4(),
         workflow_version_id=uuid4(),
