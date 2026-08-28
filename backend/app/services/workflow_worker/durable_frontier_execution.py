@@ -17,7 +17,7 @@ from sqlalchemy import select, update
 
 from app.infrastructure.db import SessionLocal
 from app.models.workflow import WorkflowVersion
-from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier, WorkflowNodeExecution
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.dag_executor import WorkflowDagMultiFrontierExecutor
@@ -66,32 +66,14 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         )
 
     async def _execute_multi_frontier_without_checkpoint(
-        self,
-        runtime: WorkflowRuntime,
-        service,
-        execution,
-        plan,
-        branch_state_data,
-        actor_id,
-        is_admin,
-        workflow_timeout,
-        max_retries,
-        started,
-        workflow_retry_counter,
+        self, runtime: WorkflowRuntime, service, execution, plan, branch_state_data,
+        actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter,
     ):
         """执行 Multi-frontier，但把 Checkpoint 持久化交给 Durable Frontier progression。"""
         async def execute_branch(node, input_data):
             return await runtime._execute_node_with_policy(
-                service,
-                execution,
-                node,
-                input_data,
-                actor_id,
-                is_admin,
-                workflow_timeout,
-                max_retries,
-                started,
-                workflow_retry_counter,
+                service, execution, node, input_data, actor_id, is_admin,
+                workflow_timeout, max_retries, started, workflow_retry_counter,
             )
 
         async def checkpoint_branch(node_id, output):
@@ -99,20 +81,13 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 raise ValueError(f"DAG frontier Node {node_id} Checkpoint state 必须为对象")
 
         return await WorkflowDagMultiFrontierExecutor.execute(
-            plan,
-            branch_state_data=branch_state_data,
-            executor=execute_branch,
-            checkpoint_writer=checkpoint_branch,
+            plan, branch_state_data=branch_state_data,
+            executor=execute_branch, checkpoint_writer=checkpoint_branch,
         )
 
     async def _mark_active_sibling_frontiers_failed(
-        self,
-        db,
-        execution: WorkflowExecution,
-        *,
-        now: datetime,
-        error_code: str,
-        error_message: str,
+        self, db, execution: WorkflowExecution, *, now: datetime,
+        error_code: str, error_message: str,
     ) -> None:
         """Execution 进入 failed 时，同事务关闭仍可消费的 sibling Frontier。"""
         await db.execute(
@@ -123,23 +98,58 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
             )
             .values(
-                status="failed",
-                completed_at=now,
-                worker_owner=None,
-                worker_lease_expires_at=None,
-                error_code=error_code,
+                status="failed", completed_at=now, worker_owner=None,
+                worker_lease_expires_at=None, error_code=error_code,
                 error_message=error_message,
             )
         )
 
+    async def _persist_failed_node_fact(
+        self, db, execution: WorkflowExecution, frontier: WorkflowFrontier, *,
+        now: datetime, error_code: str, error_message: str,
+    ) -> None:
+        """在 Frontier 失败补偿事务中恢复本次失败 Node 的 Durable Fact。
+
+        Frontier Runtime 的 Node 状态与 Frontier completion 共用一个事务；Runtime 异常会先回滚该事务，
+        若补偿阶段只记录 Frontier/Execution 失败，NodeExecution 的失败事实也会随之丢失，导致 Resume
+        无法识别失败 frontier。单 Node Frontier 可确定唯一失败 Node；Multi-frontier 异常不猜测具体分支，
+        保留由后续 Frontier/Execution fact 收敛，避免把未执行 sibling 错误标记为 failed。
+        """
+        node_ids = tuple(str(node_id) for node_id in (frontier.node_ids or []) if node_id)
+        if len(node_ids) != 1:
+            return
+        node_id = node_ids[0]
+        result = await db.execute(
+            select(WorkflowNodeExecution).where(
+                WorkflowNodeExecution.execution_id == execution.id,
+                WorkflowNodeExecution.tenant_id == execution.tenant_id,
+                WorkflowNodeExecution.node_id == node_id,
+            ).with_for_update()
+        )
+        node = result.scalar_one_or_none()
+        if node is None:
+            node = WorkflowNodeExecution(
+                tenant_id=execution.tenant_id,
+                execution_id=execution.id,
+                node_id=node_id,
+                status="failed",
+                attempt=1,
+                ended_at=now,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            db.add(node)
+            return
+        if node.status in {"completed", "skipped"}:
+            return
+        node.status = "failed"
+        node.ended_at = now
+        node.error_code = error_code
+        node.error_message = error_message
+
     async def _mark_execution_failed_in_transaction(
-        self,
-        db,
-        execution: WorkflowExecution,
-        *,
-        now: datetime,
-        error_code: str,
-        error_message: str,
+        self, db, execution: WorkflowExecution, *, now: datetime,
+        error_code: str, error_message: str, frontier: WorkflowFrontier | None = None,
     ) -> None:
         """在当前 Frontier failure 事务内 terminalize Execution，并关闭其活动 sibling Frontier。"""
         if execution.status in {"completed", "failed", "cancelled"}:
@@ -151,6 +161,11 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             return
         if execution.status not in {"pending", "running"}:
             raise HTTPException(409, f"Execution 当前状态 {execution.status} 不允许 failure terminalization")
+        if frontier is not None:
+            await self._persist_failed_node_fact(
+                db, execution, frontier, now=now,
+                error_code=error_code, error_message=error_message,
+            )
         current = execution.status
         execution.status = "failed"
         execution.ended_at = now
@@ -165,20 +180,12 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         actor_id = execution.created_by
         governance = WorkflowGovernanceService(db)
         await governance.trace(
-            execution,
-            actor_id,
-            "execution.state_changed",
-            "failed",
-            error_code=error_code,
-            error_message=error_message,
+            execution, actor_id, "execution.state_changed", "failed",
+            error_code=error_code, error_message=error_message,
             data={"from": current, "to": "failed", "frontier_id": str(execution.id)},
         )
         await governance.audit(
-            execution,
-            actor_id,
-            "workflow.execution.failed",
-            "failed",
-            error_code=error_code,
+            execution, actor_id, "workflow.execution.failed", "failed", error_code=error_code,
         )
 
     async def _converge_failure(self, frontier: WorkflowFrontier, exc: Exception) -> None:
@@ -228,9 +235,14 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 )
                 if updated_frontier.status == "failed":
                     await self._mark_execution_failed_in_transaction(
-                        db, execution, now=now, error_code=error_code, error_message=error_message,
+                        db, execution, now=now, error_code=error_code,
+                        error_message=error_message, frontier=locked_frontier,
                     )
                 else:
+                    await self._persist_failed_node_fact(
+                        db, execution, locked_frontier, now=now,
+                        error_code=error_code, error_message=error_message,
+                    )
                     execution.worker_owner = None
                     execution.worker_lease_expires_at = None
                     execution.error_code = error_code
@@ -242,7 +254,8 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                 attempt=frontier.attempt, target_status="failed", now=now,
             )
             await self._mark_execution_failed_in_transaction(
-                db, execution, now=now, error_code=error_code, error_message=error_message,
+                db, execution, now=now, error_code=error_code,
+                error_message=error_message, frontier=locked_frontier,
             )
             await db.commit()
 
@@ -250,14 +263,10 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         """在真正进入 Runtime 前重新证明 Frontier 与 Execution 仍属于当前 Worker。
 
         Args:
-            frontier: Claim 阶段取得的 Durable Frontier 快照。
+            frontier: Claim 阶段取得的 Durable Frontier。
 
         Returns:
             ownership、attempt、状态与两层 lease 均有效时返回 True，否则返回 False。
-
-        设计意图：Claim 提交与 Runtime 启动之间存在调度间隙；旧 Worker 可能在此期间失去 ownership。
-        Runtime 必须在执行任何 Node 前再次锁定两层 durable fact，避免 stale task 继续消费已经回收或
-        转移给其他 Worker 的 Frontier。该检查只负责消费资格，不执行状态推进。
         """
         now = datetime.now(UTC).replace(tzinfo=None)
         async with SessionLocal() as db:
@@ -298,16 +307,10 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
         if not await self._verify_frontier_consumption_ownership(frontier):
             return
         runtime_task = asyncio.current_task()
-        heartbeat = asyncio.create_task(
-            self._renew_frontier_forever(frontier.id, frontier.attempt, runtime_task)
-        )
+        heartbeat = asyncio.create_task(self._renew_frontier_forever(frontier.id, frontier.attempt, runtime_task))
         try:
             async with SessionLocal() as db:
                 try:
-                    # 这里只读取 Runtime 所需的 Execution 快照，不提前取得行锁。
-                    # 成功 terminalization 的统一锁顺序是 Frontier → Execution；若这里先锁 Execution，
-                    # 会与 complete_frontier_with_checkpoint()/failure convergence 的反向竞争形成死锁窗口。
-                    # 最终 durable commit 前由 progression primitive 再次锁定并验证 Execution ownership/lease。
                     execution = (
                         await db.execute(
                             select(WorkflowExecution).where(
@@ -320,9 +323,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         await db.rollback()
                         return
                     version = (
-                        await db.execute(
-                            select(WorkflowVersion).where(WorkflowVersion.id == frontier.workflow_version_id)
-                        )
+                        await db.execute(select(WorkflowVersion).where(WorkflowVersion.id == frontier.workflow_version_id))
                     ).scalar_one_or_none()
                     if version is None:
                         await db.rollback()
@@ -396,8 +397,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         for node_id in executable_ids:
                             checkpoint_state = await runtime._execute_node_with_policy(
                                 service, execution, node_by_id[node_id], checkpoint_state,
-                                execution.created_by, False, timeout, max_retries,
-                                started, retry_counter,
+                                execution.created_by, False, timeout, max_retries, started, retry_counter,
                             )
                         completed_after = await runtime._load_completed_resume_nodes(execution)
                         after_ids = {node.node_id for node in completed_after}

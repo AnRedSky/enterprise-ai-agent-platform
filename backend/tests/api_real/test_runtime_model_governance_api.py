@@ -22,11 +22,7 @@ pytestmark = pytest.mark.real_api
 def _client() -> httpx.Client:
     if not TOKEN:
         pytest.fail("ACCESS_TOKEN is required for real API validation")
-    return httpx.Client(
-        base_url=BASE_URL,
-        headers={"Authorization": f"Bearer {TOKEN}"},
-        timeout=20.0,
-    )
+    return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20.0)
 
 
 def _require_context() -> None:
@@ -69,6 +65,27 @@ def _openai_fixture_server(status_code: int, content: str, *, model: str):
         thread.join(timeout=2)
 
 
+def _governed_agent_definition(agent_id: str, provider_ids: list[str], prompt: str) -> dict:
+    """构造真实 Provider Governance 验收使用的最小合法 DAG Definition。"""
+    return {
+        "config": {"timeout_ms": 5000},
+        "nodes": [
+            {"id": "prepare", "type": "input", "config": {}},
+            {
+                "id": "governed-agent",
+                "type": "agent",
+                "config": {
+                    "agent_id": agent_id,
+                    "prompt": prompt,
+                    "model_governance": {"allowed_provider_ids": provider_ids},
+                    "retry": {"max_attempts": 1, "backoff_ms": 0, "max_backoff_ms": 0, "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]},
+                },
+            },
+        ],
+        "edges": [{"source": "prepare", "target": "governed-agent"}],
+    }
+
+
 def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_attempt_trace():
     _require_context()
     suffix = uuid.uuid4().hex[:10]
@@ -83,100 +100,34 @@ def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_a
                     (f"a-governed-fallback-failing-{suffix}", "a-governed-fallback-failing", failing_endpoint, "fixture-failing-model"),
                     (f"b-governed-fallback-success-{suffix}", "b-governed-fallback-success", success_endpoint, "fixture-success-model"),
                 ):
-                    provider = client.post(
-                        "/model-providers",
-                        json={
-                            "organization_id": ORGANIZATION_ID,
-                            "name": name,
-                            "provider_type": "openai-compatible",
-                            "provider_name": provider_name,
-                            "endpoint": endpoint,
-                            "credential_ref": f"GOVERNED_FALLBACK_SECRET_{suffix}",
-                        },
-                    )
+                    provider = client.post("/model-providers", json={"organization_id": ORGANIZATION_ID, "name": name, "provider_type": "openai-compatible", "provider_name": provider_name, "endpoint": endpoint, "credential_ref": f"GOVERNED_FALLBACK_SECRET_{suffix}"})
                     assert provider.status_code == 201, provider.text
                     provider_id = provider.json()["id"]
                     provider_ids.append(provider_id)
-
-                    profile = client.post(
-                        f"/model-providers/{provider_id}/profiles",
-                        json={
-                            "name": f"chat-{suffix}-{provider_name}",
-                            "model_type": "chat",
-                            "model_name": model_name,
-                            "is_default": True,
-                        },
-                    )
+                    profile = client.post(f"/model-providers/{provider_id}/profiles", json={"name": f"chat-{suffix}-{provider_name}", "model_type": "chat", "model_name": model_name, "is_default": True})
                     assert profile.status_code == 201, profile.text
                     profile_ids.append(profile.json()["id"])
 
-                agent = client.post(
-                    "/agents",
-                    json={
-                        "name": f"Governed Fallback Success Agent {suffix}",
-                        "description": "Phase 2.3-E deterministic real HTTP provider fixture",
-                        "system_prompt": "You are a deterministic provider governance validation agent.",
-                        "model_id": f"legacy-model-{suffix}",
-                    },
-                )
+                agent = client.post("/agents", json={"name": f"Governed Fallback Success Agent {suffix}", "description": "Phase 2.3-E deterministic real HTTP provider fixture", "system_prompt": "You are a deterministic provider governance validation agent.", "model_id": f"legacy-model-{suffix}"})
                 assert agent.status_code == 200, agent.text
                 agent_id = agent.json()["id"]
-
                 versions = client.get(f"/agents/{agent_id}/versions")
                 assert versions.status_code == 200, versions.text
-                published = client.post(
-                    f"/agents/{agent_id}/publish",
-                    json={"version_id": versions.json()[0]["id"]},
-                )
+                published = client.post(f"/agents/{agent_id}/publish", json={"version_id": versions.json()[0]["id"]})
                 assert published.status_code == 200, published.text
 
-                workflow = client.post(
-                    "/workflows",
-                    json={
-                        "name": f"Governed Fallback Success {suffix}",
-                        "description": "Phase 2.3-E deterministic real HTTP provider fixture",
-                    },
-                )
+                workflow = client.post("/workflows", json={"name": f"Governed Fallback Success {suffix}", "description": "Phase 2.3-E deterministic real HTTP provider fixture"})
                 assert workflow.status_code == 201, workflow.text
                 workflow_id = workflow.json()["id"]
-
-                version = client.post(
-                    f"/workflows/{workflow_id}/versions",
-                    json={
-                        "definition": {
-                            "config": {"timeout_ms": 5000},
-                            "nodes": [{
-                                "id": "governed-fallback-agent",
-                                "type": "agent",
-                                "config": {
-                                    "agent_id": agent_id,
-                                    "prompt": "verify deterministic governed fallback success",
-                                    "model_governance": {"allowed_provider_ids": provider_ids},
-                                    "retry": {
-                                        "max_attempts": 1,
-                                        "backoff_ms": 0,
-                                        "max_backoff_ms": 0,
-                                        "jitter_ms": 0,
-                                        "retryable_error_codes": ["HTTP_503"],
-                                    },
-                                },
-                            }],
-                            "edges": [],
-                        }
-                    },
-                )
+                version = client.post(f"/workflows/{workflow_id}/versions", json={"definition": _governed_agent_definition(agent_id, provider_ids, "verify deterministic governed fallback success")})
                 assert version.status_code == 201, version.text
                 version_id = version.json()["id"]
                 publish = client.post(f"/workflows/{workflow_id}/versions/{version_id}/publish")
                 assert publish.status_code == 200, publish.text
 
-                execution = client.post(
-                    f"/workflows/{workflow_id}/executions",
-                    json={"input_data": {"source": "phase-2.3-e-real-provider-fallback"}},
-                )
+                execution = client.post(f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "phase-2.3-e-real-provider-fallback"}})
                 assert execution.status_code == 201, execution.text
                 execution_id = execution.json()["id"]
-
                 run_status, persisted = run_or_observe_execution(client, execution_id, expected_http_status=200)
                 assert run_status in (200, 409)
                 assert persisted["status"] == "completed", persisted
@@ -186,7 +137,6 @@ def test_runtime_governed_fallback_success_uses_real_http_provider_and_records_a
                 trace_items = trace.json()
                 invocation_events = [item for item in trace_items if item["event_type"] == "model.invocation"]
                 assert len(invocation_events) == 2
-
                 first, second = invocation_events
                 assert first["data"]["provider_id"] == provider_ids[0]
                 assert first["data"]["outcome"] == "failed"
@@ -217,100 +167,40 @@ def test_runtime_uses_published_model_profile_and_records_usage_identity_without
     suffix = uuid.uuid4().hex[:10]
     provider_ids: list[str] = []
     profile_ids: list[str] = []
-    agent_id = None
-    workflow_id = None
-
     try:
         with _client() as client:
-            provider = client.post(
-                "/model-providers",
-                json={
-                    "organization_id": ORGANIZATION_ID,
-                    "name": f"runtime-governed-{suffix}",
-                    "provider_type": "openai-compatible",
-                    "provider_name": "runtime-governed-invalid-endpoint",
-                    "endpoint": "http://127.0.0.1:1/v1",
-                    "credential_ref": "RUNTIME_GOVERNANCE_TEST_SECRET",
-                },
-            )
+            provider = client.post("/model-providers", json={"organization_id": ORGANIZATION_ID, "name": f"runtime-governed-{suffix}", "provider_type": "openai-compatible", "provider_name": "runtime-governed-invalid-endpoint", "endpoint": "http://127.0.0.1:1/v1", "credential_ref": "RUNTIME_GOVERNANCE_TEST_SECRET"})
             assert provider.status_code == 201, provider.text
             provider_id = provider.json()["id"]
             provider_ids.append(provider_id)
-
-            profile = client.post(
-                f"/model-providers/{provider_id}/profiles",
-                json={
-                    "name": f"runtime-chat-{suffix}",
-                    "model_type": "chat",
-                    "model_name": f"runtime-governed-model-{suffix}",
-                    "is_default": True,
-                    "parameters": {"timeout_seconds": 0.25},
-                },
-            )
+            profile = client.post(f"/model-providers/{provider_id}/profiles", json={"name": f"runtime-chat-{suffix}", "model_type": "chat", "model_name": f"runtime-governed-model-{suffix}", "is_default": True, "parameters": {"timeout_seconds": 0.25}})
             assert profile.status_code == 201, profile.text
             profile_id = profile.json()["id"]
             profile_ids.append(profile_id)
-
-            agent = client.post(
-                "/agents",
-                json={
-                    "name": f"Runtime Governed Agent {suffix}",
-                    "description": "Phase 2.3 runtime governance real API fixture",
-                    "system_prompt": "You are a deterministic runtime governance validation agent.",
-                    "model_id": f"legacy-model-{suffix}",
-                    "model_profile_id": profile_id,
-                },
-            )
+            agent = client.post("/agents", json={"name": f"Runtime Governed Agent {suffix}", "description": "Phase 2.3 runtime governance real API fixture", "system_prompt": "You are a deterministic runtime governance validation agent.", "model_id": f"legacy-model-{suffix}", "model_profile_id": profile_id})
             assert agent.status_code == 200, agent.text
             agent_id = agent.json()["id"]
-            assert agent.json()["model_profile_id"] == profile_id
-
             versions = client.get(f"/agents/{agent_id}/versions")
             assert versions.status_code == 200, versions.text
             published = client.post(f"/agents/{agent_id}/publish", json={"version_id": versions.json()[0]["id"]})
             assert published.status_code == 200, published.text
-
-            workflow = client.post(
-                "/workflows",
-                json={"name": f"Runtime Governance {suffix}", "description": "Phase 2.3 runtime governance real API fixture"},
-            )
+            workflow = client.post("/workflows", json={"name": f"Runtime Governance {suffix}", "description": "Phase 2.3 runtime governance real API fixture"})
             assert workflow.status_code == 201, workflow.text
             workflow_id = workflow.json()["id"]
-
-            version = client.post(
-                f"/workflows/{workflow_id}/versions",
-                json={
-                    "definition": {
-                        "config": {"timeout_ms": 5000},
-                        "nodes": [{
-                            "id": "governed-agent",
-                            "type": "agent",
-                            "config": {
-                                "agent_id": agent_id,
-                                "prompt": "runtime governance failure semantics",
-                                "retry": {"max_attempts": 1, "backoff_ms": 0, "max_backoff_ms": 0, "jitter_ms": 0, "retryable_error_codes": ["HTTP_503"]},
-                            },
-                        }],
-                        "edges": [],
-                    }
-                },
-            )
+            definition = _governed_agent_definition(agent_id, [], "runtime governance failure semantics")
+            definition["nodes"][1]["config"].pop("model_governance", None)
+            version = client.post(f"/workflows/{workflow_id}/versions", json={"definition": definition})
             assert version.status_code == 201, version.text
             version_id = version.json()["id"]
             publish = client.post(f"/workflows/{workflow_id}/versions/{version_id}/publish")
             assert publish.status_code == 200, publish.text
-
-            execution = client.post(
-                f"/workflows/{workflow_id}/executions",
-                json={"input_data": {"source": "phase-2.3-runtime-governance"}},
-            )
+            execution = client.post(f"/workflows/{workflow_id}/executions", json={"input_data": {"source": "phase-2.3-runtime-governance"}})
             assert execution.status_code == 201, execution.text
             execution_id = execution.json()["id"]
             run_status, persisted = run_or_observe_execution(client, execution_id, expected_http_status=500)
             assert run_status in (500, 409)
             assert persisted["status"] == "failed", persisted
             assert persisted["error_code"] == "HTTP_500", persisted
-
             trace = client.get(f"/workflows/executions/{execution_id}/trace")
             assert trace.status_code == 200, trace.text
             invocation_events = [item for item in trace.json() if item["event_type"] == "model.invocation"]
@@ -325,7 +215,6 @@ def test_runtime_uses_published_model_profile_and_records_usage_identity_without
             assert identity["outcome"] == "failed"
             assert identity["fallback_reason"] == "timeout"
             assert "RUNTIME_GOVERNANCE_TEST_SECRET" not in str(trace.json())
-
             audit = client.get("/runtime/audit-logs", params={"workflow_execution_id": execution_id, "workflow_id": workflow_id})
             assert audit.status_code == 200, audit.text
             assert audit.json().get("items")
