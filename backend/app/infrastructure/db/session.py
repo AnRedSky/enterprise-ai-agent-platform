@@ -3,6 +3,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import settings
+from app.models import registry as _model_registry  # noqa: F401
 
 
 engine = create_async_engine(
