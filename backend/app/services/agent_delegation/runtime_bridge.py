@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -33,6 +34,7 @@ class DelegationRuntimeContext:
     allowed_tools: tuple[str, ...]
     trace_id: str
     prompt: str
+    timeout_at: datetime | None
 
 
 class AgentDelegationRuntimeBridge:
@@ -90,6 +92,7 @@ class AgentDelegationRuntimeBridge:
             allowed_tools=tuple(delegation.allowed_tools or []),
             trace_id=delegation.trace_id,
             prompt=cls._resolve_prompt(input_data),
+            timeout_at=delegation.timeout_at,
         )
 
     @staticmethod
