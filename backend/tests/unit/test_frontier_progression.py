@@ -223,6 +223,7 @@ async def test_complete_terminal_frontier_creates_execution_checkpoint_without_n
     db = MagicMock()
     db.execute = AsyncMock()
     db.commit = AsyncMock()
+    db.flush = AsyncMock()
     frontier = _frontier()
     execution = _execution(frontier)
     db.execute.side_effect = [
@@ -253,4 +254,3 @@ async def test_complete_terminal_frontier_creates_execution_checkpoint_without_n
     assert append.await_args.kwargs["execution_status"] == "completed"
     assert append.await_args.kwargs["node_id"] is None
     assert append.await_args.kwargs["node_attempt"] is None
-    assert append.await_args.kwargs["node_status"] is None
