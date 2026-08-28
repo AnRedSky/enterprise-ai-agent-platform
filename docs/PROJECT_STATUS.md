@@ -89,39 +89,39 @@ Execution terminal write bypass      ✅
 
 ## 当前本地回归结果
 
-开发者于 2026-08-28 在 `backend` 实际执行：
+开发者于 2026-08-28 在 `backend` 将此前大回归拆分后实际执行：
 
 ```text
-uv run pytest -q tests/unit
-94 failed, 622 passed, 2 warnings
+uv run pytest -q \
+  tests/unit/test_durable_resume_runtime.py \
+  tests/unit/test_workflow_execution_idempotency.py \
+  tests/unit/test_workflow_execution_governance.py \
+  tests/unit/test_workflow_dag_runtime_initialization.py
+
+3 failed, 17 passed
 ```
 
-另一次 Workflow Retry / Timeout / Runtime 定向回归：
+本轮 3 个失败均已定位为测试 double / fixture 与当前正式 Contract 不一致，而不是因此放宽生产约束：
 
-```text
-5 failed, 14 passed
-```
+- DAG Resume Planner 场景使用 `MagicMock.execute`，但断言调用了不存在的 `assert_not_awaited()`；已改为显式 `AsyncMock`。
+- Durable Resume Retry budget fixture 缺少当前查询链路需要的 `node_id`；已补齐 durable Node fact 字段。
+- DAG 首次执行 fixture 缺少当前 tenant boundary 所需的 `tenant_id`；已补齐租户字段。
 
-已确认并开始修复的生产 Contract 问题：
+已提交对应测试修复，并新增可重复执行的 targeted regression 入口：
+`backend/scripts/test/workflow/01_resume_runtime_regression.ps1`。
 
-- Retry Budget 耗尽缺少 `node.retry.exhausted` / `workflow.node.retry_exhausted` 治理事实；
-- Retry Backoff 跨越 Workflow Deadline 缺少 `workflow_deadline` 治理事实；
-- DAG 单 root 首次执行错误地产生 Branch State。
-
-已在 `docs/04-errors/2026-08-28-phase-2-7-local-regression-retry-governance-and-dag-root-state.md` 记录。
-
-其余失败主要集中在 Durable Frontier、Checkpoint、Resume、Recovery、tenant scope、worker fencing、DAG Contract 等测试 double / fixture 与当前正式 Contract 不一致，后续按当前 Contract 更新测试，不放宽生产约束、不增加兼容垫片。
+**注意：以上修复提交后的 PASS 状态尚未由本地重新执行确认，必须以开发者下一次实际运行结果为准。**
 
 ## 下一步
 
 ```text
-修复已确认生产 Contract 回归
+本轮 3 个 targeted fixture / mock 修复
   ↓
-定向 Workflow Unit Regression
+重新执行 Durable Resume / Execution / DAG targeted regression
+  ↓
+继续处理下一组 Durable Frontier / Checkpoint / Recovery 回归
   ↓
 Backend Unit / Default Regression
-  ↓
-修正剩余测试 double / fixture Contract
   ↓
 Alembic head / migration verification
   ↓
