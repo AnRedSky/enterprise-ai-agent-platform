@@ -33,10 +33,11 @@ async def test_trace_link_stores_checkpoint_lineage_without_runtime_state():
     db.refresh = AsyncMock()
     db.add = MagicMock()
 
-    source = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
+    version_id = uuid4()
+    source = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_version_id=version_id)
     resume = SimpleNamespace(
         id=uuid4(), tenant_id=source.tenant_id, workflow_id=uuid4(),
-        workflow_version_id=uuid4(), resume_of_execution_id=source.id,
+        workflow_version_id=version_id, resume_of_execution_id=source.id,
         resume_checkpoint_sequence=checkpoint_sequence, status="pending",
     )
 
@@ -67,10 +68,11 @@ async def test_trace_link_can_defer_commit_to_outer_recovery_transaction():
     db.refresh = AsyncMock()
     db.add = MagicMock()
 
-    source = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
+    version_id = uuid4()
+    source = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_version_id=version_id)
     resume = SimpleNamespace(
         id=uuid4(), tenant_id=source.tenant_id, workflow_id=uuid4(),
-        workflow_version_id=uuid4(), resume_of_execution_id=source.id,
+        workflow_version_id=version_id, resume_of_execution_id=source.id,
         resume_checkpoint_sequence=8, status="pending",
     )
 
@@ -97,10 +99,11 @@ async def test_trace_link_returns_existing_event_without_duplicate_write():
     )
     db.execute.side_effect = [_ScalarResult(9), _ScalarResult(existing)]
 
-    source = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
+    version_id = uuid4()
+    source = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_version_id=version_id)
     resume = SimpleNamespace(
         id=uuid4(), tenant_id=source.tenant_id, workflow_id=uuid4(),
-        workflow_version_id=uuid4(), resume_of_execution_id=source.id,
+        workflow_version_id=version_id, resume_of_execution_id=source.id,
         resume_checkpoint_sequence=9, status="pending",
     )
     existing.data["source_execution_id"] = str(source.id)
@@ -117,8 +120,12 @@ async def test_trace_link_returns_existing_event_without_duplicate_write():
 
 @pytest.mark.asyncio
 async def test_record_dag_decision_can_defer_commit_to_outer_transaction():
-    db = AsyncMock()
-    db.execute.side_effect = [_ScalarResult([]), _ScalarResult(None)]
+    db = MagicMock()
+    db.execute = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -130,14 +137,8 @@ async def test_record_dag_decision_can_defer_commit_to_outer_transaction():
     service = WorkflowRecoveryTraceLinkService(db)
 
     event = await service.record_dag_decision(
-        execution,
-        "trace-1",
-        uuid4(),
-        "fingerprint-1",
-        ["a"],
-        ["b"],
-        [{"node_id": "b", "predecessor_node_ids": ["a"]}],
-        commit=False,
+        execution, "trace-1", uuid4(), "fingerprint-1", ["a"], ["b"],
+        [{"node_id": "b", "predecessor_node_ids": ["a"]}], commit=False,
     )
 
     assert event is not None
@@ -149,8 +150,12 @@ async def test_record_dag_decision_can_defer_commit_to_outer_transaction():
 
 @pytest.mark.asyncio
 async def test_record_dag_decision_defaults_to_compatibility_commit():
-    db = AsyncMock()
-    db.execute.side_effect = [_ScalarResult([]), _ScalarResult(None)]
+    db = MagicMock()
+    db.execute = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -170,14 +175,16 @@ async def test_record_dag_decision_defaults_to_compatibility_commit():
 
 @pytest.mark.asyncio
 async def test_record_dag_decision_rejects_non_convergent_replay_before_write():
-    db = AsyncMock()
-    historical = {
+    db = MagicMock()
+    db.execute = AsyncMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [{
         "decision_id": "fingerprint-old",
         "completed_node_ids": ["a"],
         "frontier_node_ids": ["b"],
         "selected_predecessors": [{"node_id": "b", "predecessor_node_ids": ["a"]}],
-    }
-    db.execute.return_value = _ScalarResult([historical])
+    }]
+    db.execute.return_value = result
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -189,14 +196,8 @@ async def test_record_dag_decision_rejects_non_convergent_replay_before_write():
 
     with pytest.raises(ValueError, match="同一 durable completed facts 产生了不同 Decision"):
         await WorkflowRecoveryTraceLinkService(db).record_dag_decision(
-            execution,
-            "trace-replay",
-            uuid4(),
-            "fingerprint-new",
-            ["a"],
-            ["b"],
-            [{"node_id": "b", "predecessor_node_ids": ["a"]}],
-            commit=False,
+            execution, "trace-replay", uuid4(), "fingerprint-new", ["a"], ["b"],
+            [{"node_id": "b", "predecessor_node_ids": ["a"]}], commit=False,
         )
 
     db.add.assert_not_called()
