@@ -4,7 +4,8 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前基线：`67e8379f` — `fix(worker): isolate delegation finalization transaction boundary`
+- 当前基线：`cbbb1093` — `docs(errors): record isolated delegation finalization boundary`
+- 当前代码修复：`67e8379f` — `fix(worker): isolate delegation finalization transaction boundary`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
