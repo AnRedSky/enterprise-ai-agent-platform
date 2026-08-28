@@ -134,10 +134,11 @@ class AgentDelegationService:
         admin: bool = False,
     ) -> AgentDelegation:
         """创建 tenant-scoped Delegation，并以数据库唯一约束保证并发幂等。"""
+        # 创建前锁住父 Execution，使活动 Delegation 计数与创建动作形成同一串行化边界；否则两个并发请求可能同时看到相同 active_count，从而突破 max_active_delegations。
         source = (await self.db.execute(select(WorkflowExecution).where(
             WorkflowExecution.id == source_execution_id,
             WorkflowExecution.tenant_id == tenant_id,
-        ))).scalar_one_or_none()
+        ).with_for_update())).scalar_one_or_none()
         if source is None:
             raise HTTPException(404, "Workflow Execution 不存在")
         if source.status in {"completed", "failed", "cancelled"}:
