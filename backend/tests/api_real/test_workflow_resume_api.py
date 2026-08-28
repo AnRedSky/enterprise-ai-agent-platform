@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
-from app.services.workflow import WorkflowExecutionService
+from app.services.workflow.checkpoint.recovery.resume_contract import WorkflowExecutionResumeContractService
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -104,11 +104,13 @@ async def _wait_for_execution_status(execution_id: str, expected: str, timeout_s
 
 
 async def _create_resume_execution(source_id: str) -> WorkflowExecution:
+    """通过正式 Resume Contract 创建 Resume，并在同一事务内完成 Durable Bootstrap。"""
     async with SessionLocal() as db:
         source = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == source_id))).scalar_one_or_none()
         if source is None:
             raise AssertionError(f"Source Execution not found: {source_id}")
-        return await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
+        outcome = await WorkflowExecutionResumeContractService(db).resume_with_outcome(source, source.created_by)
+        return outcome.execution
 
 
 @pytest.mark.asyncio
@@ -216,7 +218,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                     ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
                     nodes = (await db.execute(select(WorkflowNodeExecution).where(
                         WorkflowNodeExecution.execution_id == resume.id
-                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
+                    ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())).scalars().all()
                     return list(checkpoints), list(nodes)
 
             resume_checkpoints, resume_nodes = await verify_resume_result()
@@ -224,7 +226,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
             assert resume_checkpoints[0].sequence == 0
             assert resume_checkpoints[0].node_id == "provider-call"
             assert resume_checkpoints[0].node_status == "completed"
-            assert [(node.node_id, node.status) for node in resume_nodes] == [("provider-call", "completed")]
+            assert [(node.node_id, node.status) for node in resume_nodes] == [("prepare", "completed"), ("provider-call", "completed")]
             with lock:
                 assert state["calls"] == 2
         finally:
