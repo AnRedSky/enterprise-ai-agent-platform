@@ -45,8 +45,8 @@ class _FakeService:
         self.get_calls.append((execution_id, tenant_id, actor_id, admin))
         return _FakeExecution()
 
-    async def resume_from_latest_checkpoint(self, execution, actor_id):
-        self.resume_calls.append((execution, actor_id))
+    async def resume_from_latest_checkpoint(self, execution, actor_id, *, commit=True):
+        self.resume_calls.append((execution, actor_id, commit))
         return _FakeExecution()
 
 
@@ -68,7 +68,7 @@ async def test_resume_execution_delegates_to_domain_service(monkeypatch) -> None
     assert result["resume_of_execution_id"] == _FakeExecution.resume_of_execution_id
     assert result["resume_checkpoint_sequence"] == 2
     assert fake_service.get_calls == [(execution_id, tenant_id, actor_id, False)]
-    assert fake_service.resume_calls[0][1] == actor_id
+    assert fake_service.resume_calls[0] == (_FakeExecution(), actor_id, False)
 
 
 def test_resume_route_uses_post_and_requires_user_or_admin_role() -> None:
