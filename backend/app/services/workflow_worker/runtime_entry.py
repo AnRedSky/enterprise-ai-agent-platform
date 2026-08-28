@@ -33,62 +33,85 @@ from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRun
 
 
 async def _finalize_delegation(
-    db,
+    tenant_id: UUID,
     execution_id: UUID,
     delegation_id: UUID,
     outcome: str,
     reason_code: str | None,
 ) -> None:
-    """按当前 Worker 会话中的已提交 Execution 状态收敛 Delegation 终态。
+    """在独立终态事务中收敛 Delegation，隔离 Runtime Session 的提交边界。
 
     Args:
-        db: 当前 Worker Runtime 使用的异步数据库会话。
+        tenant_id: Worker Execution 所属租户，用于 tenant boundary 校验。
         execution_id: 已 Claim 的 Worker Execution generation 标识。
         delegation_id: 待收敛的 Delegation 标识。
         outcome: Runtime 最终结果，支持 completed、failed、aborted。
         reason_code: Runtime 失败时的稳定原因码。
 
     Returns:
-        None。Delegation 完成或失败事实由 completion Service 在事务中持久化。
+        None。Delegation 完成或失败事实由独立 Session 中的 completion Service 持久化。
 
     Raises:
         HTTPException: Worker Execution 不存在、状态与 outcome 不一致或 generation fencing 失败。
 
-    事务边界：必须复用 Worker Runtime 当前 AsyncSession，而不是重新创建独立 Session。
-    WorkflowRuntime 的状态转换会自行 commit；复用同一 Session 可保证 finalize 读取的是该
-    Worker generation 已提交的 terminal Execution。这样既避免跨 Session 在提交边界上的
-    可见性竞态，也保持 Delegation completion/failure 与当前 Worker generation 的 fencing 语义。
+    事务边界：WorkflowRuntime 与 Worker Execution terminalization 使用 Runtime Session；Delegation
+    terminalization 使用新的 AsyncSession，并在该 Session 中重新读取 Worker Execution 与 Delegation。
+    这样可以避免 Runtime Session 在多次 commit/refresh 后残留的 ORM identity 与 Delegation 终态写入
+    发生边界耦合。tenant_id、execution_id、delegation_id 在进入 Runtime 前快照为不可变 identity，
+    因此不会触发 expired ORM 属性的隐式加载。Delegation completion/failure、AuditLog 与 Trace
+    在独立终态事务中原子提交。
     """
     if outcome == "aborted":
         return
 
-    execution = (
-        await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))
-    ).scalar_one_or_none()
-    if execution is None:
-        raise HTTPException(409, "Worker Execution 不存在，无法收敛 Delegation")
+    async with SessionLocal() as db:
+        execution = (
+            await db.execute(
+                select(WorkflowExecution).where(
+                    WorkflowExecution.id == execution_id,
+                    WorkflowExecution.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if execution is None:
+            raise HTTPException(409, "Worker Execution 不存在或跨 tenant，无法收敛 Delegation")
 
-    if outcome == "completed":
-        await complete_delegation(
+        if outcome == "completed":
+            await complete_delegation(
+                db=db,
+                tenant_id=tenant_id,
+                delegation_id=delegation_id,
+                worker_execution_id=execution_id,
+            )
+            return
+
+        await fail_delegation(
             db=db,
-            tenant_id=execution.tenant_id,
+            tenant_id=tenant_id,
             delegation_id=delegation_id,
             worker_execution_id=execution_id,
+            error_code=reason_code or "RUNTIME_ERROR",
+            error_message=execution.error_message or "Worker Execution 执行失败",
         )
-        return
-
-    await fail_delegation(
-        db=db,
-        tenant_id=execution.tenant_id,
-        delegation_id=delegation_id,
-        worker_execution_id=execution_id,
-        error_code=reason_code or "RUNTIME_ERROR",
-        error_message=execution.error_message or "Worker Execution 执行失败",
-    )
 
 
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
-    """执行已 Claim 的 Execution；Delegation Worker 使用同一 WorkflowRuntime 执行目标 Agent。"""
+    """执行已 Claim 的 Execution；Delegation Worker 使用同一 WorkflowRuntime 执行目标 Agent。
+
+    Args:
+        worker: 当前 Workflow Worker，提供 ownership、lease heartbeat 与 telemetry 能力。
+        execution_id: B1 Claim 创建的 Workflow Execution ID。
+
+    Returns:
+        None。执行结果由既有 WorkflowExecution lifecycle 持久化，并由 Delegation 独立终态事务收敛子任务状态。
+
+    Raises:
+        HTTPException: Runtime、ownership、timeout、circuit breaker 或 Delegation fencing 失败时抛出统一错误。
+
+    事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；Workflow Execution
+    terminalization 复用当前 Runtime Session，Delegation completion/failure 在独立 Session 中提交，
+    两者通过稳定的 Worker generation identity 建立 fencing 关系。
+    """
     async with SessionLocal() as db:
         execution = (
             await db.execute(
@@ -105,8 +128,9 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         # SQLAlchemy AsyncSession 默认 expire_on_commit=True；WorkflowRuntime / lifecycle
         # 会在执行过程中提交事务，使 ORM instance 的属性在 finally 中可能变为 expired。
         # Worker generation 的 identity 是稳定的不可变输入，必须在任何 commit 前快照，
-        # 后续 finalize、telemetry 与 fencing 均只使用这个 UUID，避免隐式 lazy-load。
+        # 后续 finalize、telemetry 与 fencing 均只使用这些 UUID，避免隐式 lazy-load。
         worker_execution_id = execution.id
+        worker_execution_tenant_id = execution.tenant_id
 
         version = (
             await db.execute(select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id))
@@ -224,7 +248,13 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
         finally:
             if delegation_context is not None:
-                await _finalize_delegation(db, worker_execution_id, delegation_context.delegation_id, outcome, reason_code)
+                await _finalize_delegation(
+                    worker_execution_tenant_id,
+                    worker_execution_id,
+                    delegation_context.delegation_id,
+                    outcome,
+                    reason_code,
+                )
             if recovery_trace_id:
                 worker.telemetry.emit(
                     WorkflowRecoveryEvent(
