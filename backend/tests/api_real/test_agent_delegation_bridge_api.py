@@ -17,7 +17,9 @@ from sqlalchemy import select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
+from app.models.core import Agent, AgentVersion
 from app.models.model_provider import ModelProfile, ModelProvider
+from app.models.organization import Organization
 from app.models.workflow_execution import WorkflowExecution
 from app.services.agent_delegation.claim import claim_delegation
 from app.services.agent_delegation.completion import complete_delegation, fail_delegation
@@ -107,7 +109,7 @@ def _create_delegation(client: httpx.Client, suffix: str) -> tuple[str, str, str
 
 
 async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix: str) -> uuid.UUID:
-    """为真实验收 Delegation 创建组织内独立 Mock Profile，避免依赖本地默认 Provider。
+    """为真实验收 Delegation 自动创建并绑定组织内独立 Mock Profile，避免依赖已有 Provider。
 
     Args:
         db: 当前真实 PostgreSQL 异步会话。
@@ -118,19 +120,21 @@ async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix:
         新建的 Mock Model Profile ID。
 
     Raises:
-        AssertionError: 当前 Delegation 未绑定可用于推导组织边界的 Model Profile。
+        AssertionError: Delegation、Target Agent version 或其租户对应 Organization 不存在。
     """
     delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
-    assert delegation.model_profile_id is not None
-    source_profile = (
-        await db.execute(select(ModelProfile).where(ModelProfile.id == delegation.model_profile_id))
+    target_version = (
+        await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))
     ).scalar_one()
-    source_provider = (
-        await db.execute(select(ModelProvider).where(ModelProvider.id == source_profile.provider_id))
-    ).scalar_one()
+    target_agent = (await db.execute(select(Agent).where(Agent.id == target_version.agent_id))).scalar_one()
+    organization = (
+        await db.execute(select(Organization).where(Organization.tenant_id == delegation.tenant_id))
+    ).scalar_one_or_none()
+    assert organization is not None
+    assert target_agent.owner_id is not None
 
     mock_provider = ModelProvider(
-        organization_id=source_provider.organization_id,
+        organization_id=organization.id,
         name=f"phase-28-mock-provider-{suffix}",
         provider_type="mock",
         provider_name="phase-28-real-gate",
@@ -143,9 +147,9 @@ async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix:
     mock_profile = ModelProfile(
         provider_id=mock_provider.id,
         name=f"phase-28-mock-profile-{suffix}",
-        model_type=source_profile.model_type,
+        model_type="chat",
         model_name="mock-model",
-        capabilities=source_profile.capabilities or {},
+        capabilities={},
         parameters={},
         enabled=True,
         is_default=False,

@@ -4,9 +4,9 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码提交：`61c1a482` — `fix(test): align auth contract with default organization binding`
+- 当前代码提交：`2daeeb62` — `docs(errors): record B2 real gate provider coupling`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
-- 当前任务：**B3 Delegation completion / failure + generation fencing**
+- 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -28,23 +28,25 @@
 
 ## 3. 最新本地验收反馈
 
-开发者最新实际反馈基线为 `0f9bdc7f`：
+开发者在当前 `main`（`2daeeb62`）实际执行：
 
 ```text
-B2 Bridge Unit             3 passed
-B2 Backend regression      848 passed, 3 skipped, 46 deselected
-B2 Real Gate               2 failed, 1 passed
-B3 Backend regression      848 passed, 3 skipped, 46 deselected
-B3 Real Gate               2 failed, 1 passed
+B2 bridge Unit             3 passed
+B2 Backend regression      850 passed, 3 skipped, 46 deselected
+B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
+B2 Real Gate               1 failed, 2 passed
 ```
 
-B2/B3 Real Gate 的两个业务/测试问题已经分别完成修复：
+失败发生在 `test_b2_worker_execution_bridge_runs_target_agent_version` 的 Real PostgreSQL Fixture 阶段：
 
-1. `d5d3129a`：注册用户绑定默认 Organization，消除真实 Worker Runtime 的 `403 当前用户没有有效的 Organization membership`；
-2. `2198ef4c`：B3 fencing rollback 后使用独立 UUID，消除 `MissingGreenlet`；
-3. `61c1a482`：同步修复 Backend Contract 测试 FakeDB，使其反映新的默认 Organization 注册契约，并增加 Organization 缺失的 409 Contract 覆盖。
+```text
+assert delegation.model_profile_id is not None
+E assert None is not None
+```
 
-**注意：`61c1a482` 之后的 B2/B3 Gate 尚未由开发者本地重新执行，因此当前不能宣称 B2/B3 Real Gate 通过。**
+根因是此前为隔离外部 Provider 增加的测试 Fixture 仍假设 Delegation 在创建后已经带有 `model_profile_id`。当前 Real Gate 创建的 Target Agent 使用 `model_id=mock-model` 但没有显式 Model Profile，因此 Delegation 合法地继承了 `NULL` profile，测试辅助函数却无法从不存在的 profile 推导 Organization。
+
+本次修复改为直接从 Delegation 的 Target Agent version 与 Delegation tenant 查询对应 Organization，再自动创建独立 `provider_type=mock` / `model_name=mock-model` Profile 并绑定 Delegation。该修复仍保持真实 HTTP + PostgreSQL + Worker Runtime 链路，不修改生产 Provider fallback 语义。
 
 ## 4. B2 当前实现边界
 
@@ -76,6 +78,8 @@ Target Agent published version
 B2 不创建第二套 Worker、Lease、Retry、Recovery 或 Provider；不修改父 Workflow Version 数据库记录，不复制父 Execution checkpoint、memory 或 credential。
 
 B2 synthetic Runtime 是单 Node 执行对象，不属于持久化 DAG，因此 Definition 不声明 `edges`。
+
+Real Gate 的 Model Provider Fixture 必须由测试自动建立并绑定，不得依赖开发数据库中的默认 Provider/Profile。
 
 ## 5. B3 当前实现
 
@@ -109,31 +113,23 @@ B3 明确不允许旧 Worker generation 修改新 generation 的 Delegation 状�
 
 B3 completion/failure 不改变父 Workflow Execution；Target Worker Execution 的生命周期仍由既有 WorkflowExecutionService 管理。
 
-## 6. B3 自动化验收
+## 6. 自动化验收
 
-正式入口：
+B2 正式入口：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\02_worker_execution_bridge_gate.ps1
+```
+
+B3 正式入口：
 
 ```powershell
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\03_delegation_completion_gate.ps1
 ```
 
-Gate 自动完成：
-
-1. Delegation lifecycle Unit；
-2. Backend default regression；
-3. Alembic upgrade/head；
-4. 自动启动 PostgreSQL / Redis；
-5. 自动启动 Backend（未运行时）；
-6. 自动注册临时用户并登录取得 Token；
-7. 真实 HTTP 创建 Orchestrator / Target Agent / Workflow / Delegation；
-8. 真实 PostgreSQL Claim；
-9. 通过现有 Worker Runtime 执行 Target Agent；
-10. 验证 Worker Execution completed 后 Delegation 自动 completed；
-11. 使用随机旧 Worker generation 调用 completion，验证被 fencing 拒绝且 Delegation 保持 running；
-12. 验证 Worker Execution failed 后当前 generation 能将 Delegation 收敛为 failed，并持久化 error code/message。
-
-禁止手工填写 Token、用户名、密码、tenant、ID 或测试数据。
+Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时自动启动、临时用户注册登录、Token 注入、Real HTTP fixture、数据库 migration/head 验证及 Real API 测试；开发者不需要手工填写 Token、用户名、密码、tenant、organization、ID、Provider endpoint 或测试数据，也不需要手工启动服务。
 
 ## 7. 当前未完成
 
@@ -141,10 +137,11 @@ Gate 自动完成：
 |---|---|
 | B1 Atomic Claim | ✅ 本地真实验收通过 |
 | B2 Worker Execution Bridge 生产实现 | ✅ |
-| B2 Bridge Unit | 🔧 修复后待本地复跑 |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 修复后待本地复跑 |
+| B2 Bridge Unit | ✅ 本地 3 passed |
+| B2 Backend regression | ✅ 本地 850 passed, 3 skipped, 46 deselected |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 Fixture 修复后待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
-| B3 Unit / Real Gate | 🔧 修复后待本地复跑 |
+| B3 Unit / Real Gate | 🔧 B2 修复后待本地复跑 |
 | B4 timeout/cancel/parent semantics | ⏳ 尚未进入生产实现 |
 | B5 Audit/Trace 完整闭环 | ⏳ |
 | Delegation Runtime multi-worker acceptance | ⏳ |
@@ -154,9 +151,11 @@ Gate 自动完成：
 ```text
 同步最新 main
     ↓
-Backend Contract regression
+修复 B2 Real Gate Model Profile Fixture
     ↓
-B2 Worker Execution Bridge Gate
+B2 Bridge Unit + Backend Regression + Migration
+    ↓
+B2 Real HTTP + PostgreSQL + Runtime
     ↓
 B3 Delegation completion/failure Gate
     ↓
@@ -200,4 +199,4 @@ Real API Gate 自动生成临时身份与 Token，不要求开发者手工输入
 
 ## 10. 当前结论
 
-**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2/B3 生产实现及其已知回归问题均已修复；最新修复提交为 `61c1a482`。但修复后的 B2/B3 Real Gate 尚未产生新的开发者本地实际结果，因此当前仍处于“修复后待验收”状态。通过后立即进入 B4 timeout / cancel / parent semantics。**
+**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2/B3 生产实现及此前已知回归均已修复；当前最新本地反馈暴露的是 B2 Real Gate 测试 Fixture 对可选 `model_profile_id` 的错误前置假设。本次提交修复该测试隔离问题后，必须重新由开发者本地实际执行 B2 Gate，再执行 B3 Gate；在新的实际结果产生前，不得标记 B2/B3 Real Gate 通过。B2 Real Gate 通过后立即进入 B3 本地验收闭环，再进入 B4 timeout / cancel / parent semantics。**
