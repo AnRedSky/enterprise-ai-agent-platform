@@ -98,7 +98,7 @@ async def complete_delegation(
         HTTPException: generation 失效、Worker Execution 未完成或状态转换非法。
 
     事务边界：Delegation 状态、结果关联、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
-    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并从 UPDATE RETURNING 获取数据库实际写入的实体，避免批量 DML 后继续使用旧 ORM identity。
+    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并使用 PostgreSQL RETURNING 取得终态行；同时要求 ORM Session 使用 fetch 同步并刷新已存在的 identity，避免当前 Session 中旧的 running 对象覆盖或继续代表 terminal state。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -129,7 +129,8 @@ async def complete_delegation(
                 error_code=None,
                 error_message=None,
             )
-            .returning(AgentDelegation)
+            .returning(AgentDelegation),
+            execution_options={"synchronize_session": "fetch", "populate_existing": True},
         )
     ).scalars().all()
     if len(updated) != 1:
@@ -191,7 +192,7 @@ async def fail_delegation(
         HTTPException: generation 失效、Worker Execution 状态不匹配或状态转换非法。
 
     事务边界：Delegation 失败状态、错误字段、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
-    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并从 UPDATE RETURNING 获取数据库实际写入的实体，避免批量 DML 后继续使用旧 ORM identity。
+    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并使用 PostgreSQL RETURNING 取得终态行；同时要求 ORM Session 使用 fetch 同步并刷新已存在的 identity，避免当前 Session 中旧的 running 对象覆盖或继续代表 terminal state。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -227,7 +228,8 @@ async def fail_delegation(
                 error_code=normalized_error_code,
                 error_message=normalized_error_message,
             )
-            .returning(AgentDelegation)
+            .returning(AgentDelegation),
+            execution_options={"synchronize_session": "fetch", "populate_existing": True},
         )
     ).scalars().all()
     if len(updated) != 1:

@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前最新代码提交：本轮 B2/B3 Delegation terminal DML identity 同步修复
+- 当前基线：`d8e89757` — `fix(delegation): use returned terminal entity for fencing write`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
@@ -18,43 +18,47 @@
 - `AgentDelegation` Durable Entity / Repository / Service / API 已完成；
 - tenant / Agent version / permission / idempotency / depth / active-count / timeout / model budget 已实现；
 - lifecycle / Worker fencing 纯规则入口已建立；
-- B1 Atomic Claim 已完成生产实现：PostgreSQL Delegation 行锁、真实 `WorkflowExecution`、Worker owner/lease、`worker_execution_id` 与同事务持久化；
-- B1 Real HTTP + PostgreSQL 双 Worker 并发 Gate 已由开发者本地实际执行并通过；
-- ORM metadata registry 已修复跨模块 ForeignKey 运行时注册问题；
-- B2 Worker Execution Bridge 已进入生产代码：已 Claim Execution 通过正式 Delegation Runtime Bridge 显式装配 target Agent version、model profile、input、selected context refs、allowed tools 与 trace identity，并复用现有 Workflow Worker / WorkflowRuntime；
-- B2 synthetic Runtime 已修复与 DAG validator 的 Contract 冲突；
-- B3 Delegation completion/failure 已进入生产代码：以 `worker_execution_id` 作为 Worker generation fencing identity，在当前 generation 仍有效且 Worker Execution 已进入对应终态时收敛 Delegation；
-- 注册用户现在在同一事务中绑定默认 Tenant 对应的 active Organization，保证后续 Governance membership 边界成立；
-- B2 Real Gate 已暴露 Worker Runtime 的 AsyncSession / Delegation finalize 事务边界问题，并完成两阶段生产修复：Worker Runtime finalize 复用当前 AsyncSession；Delegation completion/failure 使用带 tenant、running 状态和 Worker generation 条件的 SQL fenced update 持久化 terminal state。
+- B1 Atomic Claim 已完成生产实现，并已通过本地真实 HTTP + PostgreSQL 双 Worker 并发 Gate；
+- B2 Worker Execution Bridge 已进入生产代码，复用现有 Workflow Worker / WorkflowRuntime 执行目标 Agent version；
+- B3 Delegation completion/failure 已进入生产代码，以 `worker_execution_id` 作为 Worker generation fencing identity；
+- B2 Runtime Session / Execution terminalization / Model Profile Snapshot 等前置问题已经完成修复；
+- Delegation terminal write 已增加 tenant + running + worker generation fencing，并使用 PostgreSQL `UPDATE ... RETURNING`。
 
 ## 3. 最新本地验收反馈
 
-开发者在 `9565c559` 本地实际执行 B2 Gate：
+开发者在 `d8e89757` 本地实际执行 B2 Gate：
 
 ```text
 B2 bridge Unit             3 passed
-B2 Backend regression      850 passed, 3 skipped, 46 deselected
-B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
+Backend regression         850 passed, 3 skipped, 46 deselected
+Migration/head             0039_workflow_node_execution_tenant_trigger (head)
 B2 Real Gate               1 failed, 2 passed
 ```
 
-本轮已稳定越过：
-
-- Model Profile Snapshot Fixture；
-- Target Agent Runtime Bridge；
-- Worker Execution terminalization；
-- Worker generation context loading。
-
-最终仍失败为：
+失败为：
 
 ```text
 assert persisted.status == "completed"
 E AssertionError: assert 'running' == 'completed'
 ```
 
-随后针对 fenced terminal DML 的第二阶段修复仍未通过开发者本地 Gate，因此 B2/B3 Real Gate 当前继续保持未通过状态。本轮进一步将 completion/failure 的终态 DML 改为 PostgreSQL `UPDATE ... RETURNING AgentDelegation`，以数据库返回实体作为终态状态源。
+该结果确认 Target Agent Runtime、Worker Execution terminalization 与 generation context 均已正常工作，问题进一步收敛到 Delegation terminal DML 与当前 SQLAlchemy identity map 的同步边界。
 
-## 4. B2 当前实现边界
+## 4. 本轮修复
+
+completion/failure 的终态 UPDATE 现在同时使用：
+
+- tenant + `running` + `worker_execution_id` 三重数据库 fencing；
+- PostgreSQL `UPDATE ... RETURNING AgentDelegation`；
+- `synchronize_session="fetch"`；
+- `populate_existing=True`；
+- completion/failure、AuditLog、WorkflowTraceEvent 同一事务提交。
+
+该修复只调整 Delegation terminal persistence 的 ORM synchronization 边界，不新增 Worker、Lease、Retry、Recovery 或 Provider 实现。
+
+对应错误记录：`docs/04-errors/2026-08-28-phase-2-8-b2-b3-delegation-terminal-dml-session-sync.md`。
+
+## 5. B2 当前实现边界
 
 ```text
 B1 Claim
@@ -62,13 +66,6 @@ B1 Claim
 WorkflowExecution.worker_execution_id
     ↓
 AgentDelegationRuntimeBridge
-    ├── target_agent_version_id
-    ├── target_agent_id
-    ├── model_profile_id
-    ├── input_data
-    ├── selected_context_refs
-    ├── allowed_tools
-    └── trace_id
     ↓
 单 Node 内存 Runtime Version
     ↓
@@ -78,24 +75,18 @@ AgentDelegationRuntimeBridge
     ↓
 Target Agent published version
     ↓
-既有 ModelGateway / Governance / Provider
-    ↓
 Worker Execution terminalization
     ↓
 当前 Worker AsyncSession 中 Delegation completion/failure
     ↓
-tenant + running + worker_execution_id fencing UPDATE ... RETURNING
+tenant + running + worker_execution_id fencing
+    ↓
+UPDATE ... RETURNING + Session fetch/populate_existing
 ```
 
 B2 不创建第二套 Worker、Lease、Retry、Recovery 或 Provider；不修改父 Workflow Version 数据库记录，不复制父 Execution checkpoint、memory 或 credential。
 
-B2 synthetic Runtime 是单 Node 执行对象，不属于持久化 DAG，因此 Definition 不声明 `edges`。
-
-Real Gate 的 Model Provider Fixture 必须由测试自动建立并绑定，不得依赖开发数据库中的默认 Provider/Profile。
-
-Worker generation identity 必须在任何 Runtime commit 前快照；Delegation finalize 必须复用当前 Worker AsyncSession，terminal write 同时使用数据库 fencing 条件，并以数据库 `RETURNING` 结果作为终态实体来源。
-
-## 5. B3 当前实现
+## 6. B3 当前实现
 
 ```text
 Worker Runtime
@@ -112,22 +103,17 @@ Worker Runtime
                            ▼
                  validate_worker_fence()
                            │
-                           ├── status == running
-                           ├── worker_execution_id 存在
-                           └── generation == 当前 Worker Execution
-                           │
                            ▼
-                 UPDATE ... RETURNING
+                 fenced UPDATE ... RETURNING
                            │
+                           ├── Session synchronization
                            ├── AuditLog
                            └── WorkflowTraceEvent
 ```
 
-B3 明确不允许旧 Worker generation 修改新 generation 的 Delegation 状态。Worker lease 丢失时不提前收敛 Delegation，保留后续有效 generation 接管的空间。
+B3 不允许旧 Worker generation 修改新 generation 的 Delegation 状态；Worker lease 丢失时不提前收敛 Delegation。
 
-B3 completion/failure 不改变父 Workflow Execution；Target Worker Execution 的生命周期仍由既有 WorkflowExecutionService 管理。
-
-## 6. 自动化验收
+## 7. 自动化验收
 
 B2 正式入口：
 
@@ -145,7 +131,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\03_
 
 Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时自动启动、临时用户注册登录、Token 注入、Real HTTP fixture、数据库 migration/head 验证及 Real API 测试；开发者不需要手工填写 Token、用户名、密码、tenant、organization、ID、Provider endpoint 或测试数据，也不需要手工启动服务。
 
-## 7. 当前未完成
+## 8. 当前未完成
 
 | 能力 | 状态 |
 |---|---|
@@ -153,20 +139,20 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 | B2 Worker Execution Bridge 生产实现 | ✅ |
 | B2 Bridge Unit | ✅ 本地 3 passed |
 | B2 Backend regression | ✅ 本地 850 passed, 3 skipped, 46 deselected |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 terminal DML identity 同步修复，待本地复跑 |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 Session synchronization 修复，待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
 | B3 Unit / Backend regression | ✅ 本地 30 passed / 850 passed |
-| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 B2 新修复后待本地复跑 |
+| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 B2 修复后待本地复跑 |
 | B4 timeout/cancel/parent semantics | ⏳ 尚未进入生产实现 |
 | B5 Audit/Trace 完整闭环 | ⏳ |
 | Delegation Runtime multi-worker acceptance | ⏳ |
 
-## 8. 下一开发顺序
+## 9. 下一开发顺序
 
 ```text
 同步最新 main
     ↓
-修复 Delegation terminal DML identity 同步边界
+修复 Delegation terminal DML Session synchronization 边界
     ↓
 B2 Bridge Unit + Backend Regression + Migration
     ↓
@@ -185,6 +171,6 @@ B5 Audit / Trace
 Delegation 多 Worker + PostgreSQL + Runtime acceptance
 ```
 
-## 9. 测试规则
+## 10. 测试规则
 
-开发者本地实际执行结果为唯一测试依据；GitHub Actions 不作为验收依据。
+开发者本地实际执行结果为唯一测试依据；GitHub Actions 不作为验收依据。当前修复在开发者本地重新执行 B2/B3 Real Gate 前，不标记为通过。
