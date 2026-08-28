@@ -48,7 +48,7 @@ async def test_resume_contract_returns_idempotency_hit_without_creating_new_exec
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
@@ -89,7 +89,7 @@ async def test_resume_contract_rejects_idempotency_hit_with_lineage_drift(monkey
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
@@ -118,7 +118,7 @@ async def test_resume_contract_rejects_non_deterministic_idempotency_key(monkeyp
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
@@ -148,7 +148,7 @@ async def test_resume_contract_bootstraps_frontier_and_commits_atomically(monkey
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
@@ -194,7 +194,7 @@ async def test_resume_contract_can_defer_commit_to_outer_recovery_transaction(mo
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
