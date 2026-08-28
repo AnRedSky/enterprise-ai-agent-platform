@@ -215,7 +215,7 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                 async with SessionLocal() as db:
                     checkpoints = (await db.execute(select(WorkflowExecutionCheckpoint).where(
                         WorkflowExecutionCheckpoint.execution_id == resume.id
-                    ).order_by(WorkflowExecutionCheckpoint.sequence.asc()))).scalars().all()
+                    ).order_by(WorkflowExecutionCheckpoint.sequence.asc())).scalars().all()
                     nodes = (await db.execute(select(WorkflowNodeExecution).where(
                         WorkflowNodeExecution.execution_id == resume.id
                     ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc())).scalars().all()
