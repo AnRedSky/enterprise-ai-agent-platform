@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-from time import monotonic
-
 from fastapi import HTTPException
 from sqlalchemy import select
 
@@ -16,7 +14,6 @@ from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecuti
 from app.runtime.workflow.runtime import WorkflowRuntime as BaseWorkflowRuntime
 from app.services.workflow.checkpoint.recovery import WorkflowDagContractValidator, WorkflowDagResumePlanner
 from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagResumeRuntimePlanner
-from app.services.workflow.checkpoint.recovery.observability import WorkflowRecoveryEvent, WorkflowRecoveryTelemetry
 from app.services.workflow.checkpoint.recovery.trace_link import WorkflowRecoveryTraceLinkService
 
 

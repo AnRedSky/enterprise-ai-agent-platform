@@ -60,7 +60,7 @@ async def test_completed_resume_node_query_is_tenant_scoped():
 
     query = db.execute.call_args.args[0]
     sql = str(query)
-    assert "workflow_node_executions.tenant_id" in sql
+    assert "workflow_executions.tenant_id" in sql
     assert "workflow_node_executions.execution_id IN" in sql
     assert "workflow_node_executions.status" in sql
 
