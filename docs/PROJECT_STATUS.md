@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前基线：`d8e89757` — `fix(delegation): use returned terminal entity for fencing write`
+- 当前基线：`18c54b14` — `fix(delegation): synchronize terminal DML identity`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
