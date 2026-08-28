@@ -89,35 +89,60 @@ Execution terminal write bypass      ✅
 
 ## 当前本地回归结果
 
-开发者于 2026-08-28 在 `backend` 将此前大回归拆分后实际执行：
+开发者于 2026-08-28 在 `backend` 实际执行：
+
+### Durable Resume targeted
+
+```text
+uv run pytest -q \
+  tests/unit/test_workflow_resume_contract.py \
+  tests/unit/test_workflow_resume_contract_tenant_scope.py \
+  tests/unit/test_workflow_resume_reconciliation.py \
+  tests/unit/test_durable_resume_runtime.py
+
+15 passed, 1 failed
+```
+
+失败：`test_resume_contract_reads_checkpoint_with_locked_execution_tenant_scope`。
+原因已定位为测试 checkpoint fixture 缺少正式 Durable Checkpoint 的 `execution_id` lineage 字段。
+
+### Frontier targeted
 
 ```text
 uv run pytest -q \
   tests/unit/test_frontier_progression.py \
-  tests/unit/test_frontier_progression_lifecycle.py
+  tests/unit/test_frontier_progression_lifecycle.py \
+  tests/unit/test_frontier_terminal_replay_lifecycle.py \
+  tests/unit/test_frontier_terminalization_atomicity.py \
+  tests/unit/test_frontier_progression_worker_epoch.py \
+  tests/unit/test_frontier_recovery_contract.py \
+  tests/unit/test_frontier_stale_lease_completion.py \
+  tests/unit/test_frontier_tenant_candidate.py \
+  tests/unit/test_durable_frontier_worker_dispatch.py
 
-3 failed, 8 passed
+37 passed, 6 failed
 ```
 
-本轮 3 个失败已经定位并形成修复：
+失败集中在测试 double / fixture 与当前 Durable Contract 的查询顺序、lifecycle / replay boundary、SQLAlchemy bind parameter 以及 Worker epoch 行为断言不一致，具体记录见 `docs/04-errors/2026-08-28-phase-2-7-resume-frontier-contract-fixture-drift.md`。
 
-- `test_complete_terminal_frontier_creates_execution_checkpoint_without_node_fact`：测试 double 使用 `MagicMock` 模拟 `AsyncSession`，但 Governance `trace/audit` 真实路径会 `await db.flush()`；已将该 fixture 的 `flush` 配置为 `AsyncMock`。
-- `test_progression_rejects_execution_lifecycle_drift[running-None]`：原测试把 `running + 无 Next Frontier` 当成 lifecycle drift，但当前正式 Contract 中该组合正是合法的 terminal completion 目标；已将负向 fixture 改为 `failed + 无 Next Frontier`，避免通过错误测试约束生产代码。
-- `test_terminal_progression_uses_locked_running_execution_as_lifecycle_source`：同样补齐 `AsyncSession.flush` double，保持测试与正式 Governance 持久化边界一致。
+## 本轮已提交修复
 
-对应测试修复已直接提交 `main`：
+- `75d984a` `test(workflow): complete resume tenant checkpoint fixture`
+- `8dacbc3` `test(workflow): align frontier replay lifecycle doubles`
+- `3af27dc` `test(workflow): align frontier terminalization async fixtures`
+- `d7453a2` `test(workflow): assert frontier candidate lifecycle parameters`
+- `6af7ab2` `test(workflow): assert frontier and worker epochs by behavior`
 
-- `7bfb87d` `test(workflow): align frontier progression db double with async session`
-- `8789ea6` `test(workflow): correct frontier lifecycle drift fixture`
+这些提交只修正测试与正式 Contract 的漂移，没有降低生产代码的 lifecycle、tenant、lease、fencing 或 replay 安全约束。
 
-**注意：上述修复后的 PASS 状态尚未由开发者重新执行确认，当前仍必须以本地实际执行结果为准，不得提前标记为通过。**
+**注意：以上修复尚未由开发者重新执行确认，当前不得标记为 PASS。**
 
 ## 下一步
 
 ```text
-已修复 Frontier targeted regression fixture / Contract drift
+重新执行 Resume targeted
   ↓
-重新执行 Frontier targeted regression
+重新执行 Frontier targeted
   ↓
 执行 Durable Resume / Execution / DAG / Frontier targeted regression
   ↓
