@@ -55,11 +55,11 @@ async def _finalize_delegation(
         HTTPException: Worker Execution 不存在、状态与 outcome 不一致或 generation fencing 失败。
 
     事务边界：WorkflowRuntime 与 Worker Execution terminalization 使用 Runtime Session；Delegation
-    terminalization 使用新的 AsyncSession，并在 Runtime Session 完全关闭后执行。这样可以同时隔离
-    未结束的事务、行锁与 SQLAlchemy identity map，避免 Runtime Session 仍存活时对 Delegation
-    terminal state 进行第二条 Session 写入。tenant_id、execution_id、delegation_id 在进入 Runtime
-    前快照为不可变 identity，因此不会触发 expired ORM 属性的隐式加载。Delegation completion/failure、
-    AuditLog 与 Trace 在独立终态事务中原子提交。
+    terminalization 必须在 Runtime Session 所属 `async with` 完全退出后执行。这样可以同时隔离
+    未结束的事务、行锁与 SQLAlchemy identity map，避免 Runtime Session 与 Delegation 终态写入存在
+    隐含生命周期耦合。tenant_id、execution_id、delegation_id 在进入 Runtime 前快照为不可变 identity，
+    因此不会触发 expired ORM 属性的隐式加载。Delegation completion/failure、AuditLog 与 Trace
+    在独立终态事务中原子提交。
     """
     if outcome == "aborted":
         return
@@ -110,8 +110,19 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
 
     事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；Workflow Execution
     terminalization 复用当前 Runtime Session。Delegation completion/failure 必须等 Runtime Session
-    完全关闭后，再使用独立 Session 提交，两者通过稳定的 Worker generation identity 建立 fencing 关系。
+    完全退出其 `async with` 生命周期后，再使用独立 Session 提交，两者通过稳定的 Worker generation
+    identity 建立 fencing 关系。异常需要继续向调用者传播时，先保存结果并在 Session 关闭后完成
+    Delegation 终态收敛，再重新抛出原异常。
     """
+    delegation_context = None
+    worker_execution_id = execution_id
+    worker_execution_tenant_id = None
+    recovery_trace_id = None
+    started = monotonic()
+    outcome = "completed"
+    reason_code = None
+    pending_exception = None
+
     async with SessionLocal() as db:
         execution = (
             await db.execute(
@@ -154,8 +165,6 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         trace_link = WorkflowRecoveryTraceLinkService(db)
         recovery_trace_id = delegation_context.trace_id if delegation_context is not None else await trace_link.get_trace_id(execution)
         started = monotonic()
-        outcome = "completed"
-        reason_code = None
 
         if recovery_trace_id:
             worker.telemetry.emit(
@@ -211,14 +220,15 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             current = await service._lock_execution(execution)
             if current.status == "running":
                 await service.transition(current, "failed", error_code=reason_code, error_message="Circuit Breaker is open", actor_id=current.created_by)
-            raise HTTPException(503, "Circuit Breaker is open")
+            pending_exception = HTTPException(503, "Circuit Breaker is open")
         except asyncio.TimeoutError as exc:
             outcome = "failed"
             reason_code = "WORKER_EXECUTION_TIMEOUT"
             current = await service._lock_execution(execution)
             if current.status == "running":
                 await service.transition(current, "failed", error_code=reason_code, error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
-            raise RuntimeError("Worker Execution 超过受控执行时间") from exc
+            pending_exception = RuntimeError("Worker Execution 超过受控执行时间")
+            pending_exception.__cause__ = exc
         except HTTPException as exc:
             outcome = "failed"
             reason_code = f"HTTP_{exc.status_code}"
@@ -231,45 +241,45 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             current = await service._lock_execution(execution)
             if current.status == "running":
                 await service.transition(current, "failed", error_code=reason_code, error_message=str(exc.detail), actor_id=current.created_by)
-            raise
+            pending_exception = exc
         except (ConnectionError, TimeoutError) as exc:
             outcome = "failed"
             reason_code = "CONNECTION_ERROR" if isinstance(exc, ConnectionError) else "NODE_TIMEOUT"
             current = await service._lock_execution(execution)
             if current.status == "running":
                 await service.transition(current, "failed", error_code=reason_code, error_message=str(exc), actor_id=current.created_by)
-            raise
+            pending_exception = exc
         except Exception as exc:
             outcome = "failed"
             reason_code = "RUNTIME_ERROR"
             current = await service._lock_execution(execution)
             if current.status == "running":
                 await service.transition(current, "failed", error_code=reason_code, error_message=str(exc), actor_id=current.created_by)
-            raise HTTPException(500, "Workflow Runtime 执行失败") from exc
-        finally:
-            if delegation_context is not None:
-                # 关键边界：当前 Runtime Session 不能与 Delegation terminalization Session 同时存活。
-                # Runtime 已完成 Execution terminalization 后先关闭当前 Session，释放未结束事务与行锁，
-                # 再由独立 Session 执行 Delegation completion/failure，避免两个 Session 在同一 generation
-                # 上形成不可见的事务边界耦合。
-                await db.close()
-                await _finalize_delegation(
-                    worker_execution_tenant_id,
-                    worker_execution_id,
-                    delegation_context.delegation_id,
-                    outcome,
-                    reason_code,
-                )
-            if recovery_trace_id:
-                worker.telemetry.emit(
-                    WorkflowRecoveryEvent(
-                        event_name=RECOVERY_WORKER_FINISHED,
-                        execution_id=worker_execution_id,
-                        resume_execution_id=worker_execution_id,
-                        trace_id=recovery_trace_id,
-                        outcome=outcome,
-                        reason_code=reason_code,
-                        phase="worker",
-                        duration_ms=(monotonic() - started) * 1000,
-                    )
-                )
+            pending_exception = HTTPException(500, "Workflow Runtime 执行失败")
+            pending_exception.__cause__ = exc
+
+    if delegation_context is not None:
+        await _finalize_delegation(
+            worker_execution_tenant_id,
+            worker_execution_id,
+            delegation_context.delegation_id,
+            outcome,
+            reason_code,
+        )
+
+    if recovery_trace_id:
+        worker.telemetry.emit(
+            WorkflowRecoveryEvent(
+                event_name=RECOVERY_WORKER_FINISHED,
+                execution_id=worker_execution_id,
+                resume_execution_id=worker_execution_id,
+                trace_id=recovery_trace_id,
+                outcome=outcome,
+                reason_code=reason_code,
+                phase="worker",
+                duration_ms=(monotonic() - started) * 1000,
+            )
+        )
+
+    if pending_exception is not None:
+        raise pending_exception
