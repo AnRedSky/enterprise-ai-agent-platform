@@ -115,6 +115,20 @@ cd backend
 uv run pytest -q
 ```
 
+Backend 完整 Unit + RuntimeWarning Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\workflow\02_full_unit_regression.ps1
+```
+
+Backend Durable Resume / DAG / Frontier targeted regression：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\workflow\01_resume_runtime_regression.ps1
+```
+
 Backend Release / Regression Gate：
 
 ```powershell
@@ -129,30 +143,19 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev\run_manual_test_suite.ps1 -Mode api
 ```
 
-Workflow Retry / Timeout / Runtime 定向回归：
-
-```powershell
-cd backend
-uv run pytest -q tests/unit/test_workflow_retry_budget.py tests/unit/test_workflow_runtime_timeout.py tests/unit/test_workflow_runtime.py
-```
-
 ## 当前真实测试结果
 
 2026-08-28 开发者本地实际反馈：
 
 ```text
-uv run pytest -q tests/unit
-94 failed, 622 passed, 2 warnings
+Durable Resume targeted: 16 passed
+Frontier targeted: 43 passed
+scripts/test/workflow/01_resume_runtime_regression.ps1: 96 passed
+Backend full unit regression: 26 failed, 785 passed, 3 skipped, 41 deselected, 1 warning
 ```
 
-Workflow Retry / Timeout / Runtime 定向测试：
+本轮完整回归失败已分类并记录到 `docs/04-errors/2026-08-28-phase-2-7-regression-contract-drift-round-2.md`。本轮已直接在 `main` 修正测试 double / fixture / 断言与当前 Durable Contract 的漂移，并新增 `02_full_unit_regression.ps1` 将 `RuntimeWarning` 提升为失败。
 
-```text
-5 failed, 14 passed
-```
-
-本轮已修复的生产问题包括 Retry Budget / Workflow Deadline 的耗尽治理事实，以及 DAG 单 root 首次执行不应产生 Branch State。其余失败按当前 Durable Frontier、Checkpoint、Resume、Recovery、tenant boundary、worker fencing 与 DAG Contract 继续收敛测试 double / fixture，不放宽正式生产 Contract。
-
-具体错误记录见 `docs/04-errors/2026-08-28-phase-2-7-local-regression-retry-governance-and-dag-root-state.md`。
+**本轮修复后的完整回归尚未由开发者重新执行，因此不得标记为 PASS。** Real API、Migration、Frontend、Browser/E2E 仍未执行，必须在 Backend Unit / Default Regression 实际通过后按独立 Gate 顺序继续。
 
 未实际执行的 Gate 不得记录为通过。
