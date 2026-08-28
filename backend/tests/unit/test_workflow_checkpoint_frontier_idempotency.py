@@ -15,23 +15,37 @@ import pytest
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
 
+class _Result:
+    def __init__(self, value=None, values=None):
+        self.value = value
+        self.values = [] if values is None else values
+
+    def scalar_one_or_none(self):
+        return self.value
+
+    def scalar_one(self):
+        return self.value
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self.values)
+
+
 @pytest.mark.asyncio
 async def test_frontier_completed_checkpoint_reuses_same_boundary() -> None:
     db = AsyncMock()
+    frontier_id = uuid4()
     execution = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        worker_owner="worker-a",
-        worker_attempt=7,
+        id=uuid4(), tenant_id=uuid4(), worker_owner="worker-a", worker_attempt=7,
+        worker_lease_expires_at=None,
     )
     existing = SimpleNamespace(
-        sequence=4,
-        execution_status="running",
-        state_data={"left": 1, "right": 2},
-        worker_owner="worker-a",
+        sequence=4, execution_status="running", state_data={"left": 1, "right": 2}, worker_owner="worker-a",
     )
-    execution_result = SimpleNamespace(scalar_one_or_none=lambda: execution)
-    boundary_result = SimpleNamespace(scalar_one_or_none=lambda: existing)
+    execution_result = _Result(value=execution)
+    boundary_result = _Result(values=[existing])
     db.execute = AsyncMock(side_effect=[execution_result, boundary_result])
 
     service = WorkflowExecutionCheckpointService(db)
@@ -42,8 +56,9 @@ async def test_frontier_completed_checkpoint_reuses_same_boundary() -> None:
         checkpoint_reason="frontier_completed",
         worker_owner="worker-a",
         tenant_id=execution.tenant_id,
-        expected_worker_owner="worker-a",
-        expected_worker_attempt=7,
+        expected_worker_owner=None,
+        expected_worker_attempt=None,
+        frontier_id=frontier_id,
     )
 
     assert actual is existing
@@ -54,21 +69,17 @@ async def test_frontier_completed_checkpoint_reuses_same_boundary() -> None:
 @pytest.mark.asyncio
 async def test_frontier_completed_checkpoint_does_not_reuse_different_state() -> None:
     db = AsyncMock()
+    frontier_id = uuid4()
     execution = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        worker_owner="worker-a",
-        worker_attempt=7,
+        id=uuid4(), tenant_id=uuid4(), worker_owner="worker-a", worker_attempt=7,
+        worker_lease_expires_at=None,
     )
     existing = SimpleNamespace(
-        sequence=4,
-        execution_status="running",
-        state_data={"left": 1},
-        worker_owner="worker-a",
+        sequence=4, execution_status="running", state_data={"left": 1}, worker_owner="worker-a",
     )
-    execution_result = SimpleNamespace(scalar_one_or_none=lambda: execution)
-    boundary_result = SimpleNamespace(scalar_one_or_none=lambda: existing)
-    sequence_result = SimpleNamespace(scalar_one=lambda: 4)
+    execution_result = _Result(value=execution)
+    boundary_result = _Result(values=[existing])
+    sequence_result = _Result(value=4)
     db.execute = AsyncMock(side_effect=[execution_result, boundary_result, sequence_result])
 
     service = WorkflowExecutionCheckpointService(db)
@@ -79,8 +90,9 @@ async def test_frontier_completed_checkpoint_does_not_reuse_different_state() ->
         checkpoint_reason="frontier_completed",
         worker_owner="worker-a",
         tenant_id=execution.tenant_id,
-        expected_worker_owner="worker-a",
-        expected_worker_attempt=7,
+        expected_worker_owner=None,
+        expected_worker_attempt=None,
+        frontier_id=frontier_id,
     )
 
     assert actual.sequence == 5
