@@ -19,6 +19,7 @@ from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.runtime.workflow import CircuitOpenError
+from app.services.agent_delegation.completion import complete_delegation, fail_delegation
 from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.observability import (
@@ -31,6 +32,50 @@ from app.services.workflow_worker.lease_guard import WorkflowWorkerLeaseGuard, W
 from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRuntime
 
 
+async def _finalize_delegation(execution_id: UUID, delegation_id: UUID, outcome: str, reason_code: str | None) -> None:
+    """按 Worker generation 收敛 Delegation 终态。
+
+    Args:
+        execution_id: 当前 Worker Execution generation 标识。
+        delegation_id: Delegation 标识。
+        outcome: Worker 结果，支持 completed/failed/aborted。
+        reason_code: 失败时使用的稳定错误码。
+
+    Returns:
+        None：完成 Delegation 持久化闭环。
+
+    Raises:
+        HTTPException: Delegation generation 已失效或 Worker Execution 状态与终态闭环不一致。
+
+    设计意图：Delegation 只能由创建它的 Worker Execution generation 收敛；lease 丢失时不写终态，允许后续有效 generation 接管。
+    """
+    if outcome == "aborted":
+        return
+    async with SessionLocal() as db:
+        execution = (
+            await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))
+        ).scalar_one_or_none()
+        if execution is None:
+            raise HTTPException(409, "Worker Execution 不存在，无法收敛 Delegation")
+        if outcome == "completed":
+            await complete_delegation(
+                db=db,
+                tenant_id=execution.tenant_id,
+                delegation_id=delegation_id,
+                worker_execution_id=execution_id,
+                output_data=execution.output_data,
+            )
+            return
+        await fail_delegation(
+            db=db,
+            tenant_id=execution.tenant_id,
+            delegation_id=delegation_id,
+            worker_execution_id=execution_id,
+            error_code=reason_code or "RUNTIME_ERROR",
+            error_message=execution.error_message or "Worker Execution 执行失败",
+        )
+
+
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
     """执行已 Claim 的 Execution；Delegation Worker 使用同一 WorkflowRuntime 执行目标 Agent。
 
@@ -39,12 +84,12 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         execution_id: B1 Claim 创建的 Workflow Execution ID。
 
     Returns:
-        无；执行结果由既有 WorkflowExecution lifecycle 持久化。
+        无；执行结果由既有 WorkflowExecution lifecycle 持久化，并由 Delegation generation fencing 收敛子任务状态。
 
     Raises:
-        HTTPException: Runtime、ownership、timeout 或 circuit breaker 失败时抛出统一错误。
+        HTTPException: Runtime、ownership、timeout、circuit breaker 或 Delegation fencing 失败时抛出统一错误。
 
-    事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；目标 Delegation 与 Worker Execution 仍由 B1 的真实数据库事务负责身份绑定。
+    事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；B3 仅在当前 Worker generation 仍有效时更新 Delegation，并复用现有 Workflow Execution lifecycle。
     """
     async with SessionLocal() as db:
         execution = (
@@ -174,6 +219,7 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 await service.transition(current, "failed", error_code=reason_code, error_message=str(exc), actor_id=current.created_by)
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
         finally:
+            await _finalize_delegation(execution.id, delegation_context.delegation_id, outcome, reason_code) if delegation_context is not None else None
             if recovery_trace_id:
                 worker.telemetry.emit(
                     WorkflowRecoveryEvent(
