@@ -146,22 +146,25 @@ def test_real_api_persists_governed_usage_and_calculated_cost():
                     json={
                         "definition": {
                             "config": {"timeout_ms": 5000},
-                            "nodes": [{
-                                "id": "usage-agent",
-                                "type": "agent",
-                                "config": {
-                                    "agent_id": agent_id,
-                                    "prompt": "account this provider request",
-                                    "retry": {
-                                        "max_attempts": 1,
-                                        "backoff_ms": 0,
-                                        "max_backoff_ms": 0,
-                                        "jitter_ms": 0,
-                                        "retryable_error_codes": ["HTTP_503"],
+                            "nodes": [
+                                {"id": "prepare", "type": "input", "config": {}},
+                                {
+                                    "id": "usage-agent",
+                                    "type": "agent",
+                                    "config": {
+                                        "agent_id": agent_id,
+                                        "prompt": "account this provider request",
+                                        "retry": {
+                                            "max_attempts": 1,
+                                            "backoff_ms": 0,
+                                            "max_backoff_ms": 0,
+                                            "jitter_ms": 0,
+                                            "retryable_error_codes": ["HTTP_503"],
+                                        },
                                     },
                                 },
-                            }],
-                            "edges": [],
+                            ],
+                            "edges": [{"source": "prepare", "target": "usage-agent"}],
                         }
                     },
                 )
