@@ -4,107 +4,79 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- Phase 2.7 Advanced Workflow Orchestration：主线生产代码已完成，当前 Real API / Migration / 人工验收存在阻塞，不能标记最终验收通过。
+- Phase 2.7 Advanced Workflow Orchestration：主线生产代码持续收口；当前 Real API / Runtime 验证仍需开发者本地重新执行，不标记最终验收通过。
 - Phase 2.8-A Multi-Agent Collaboration Contract：已冻结。
-- 当前开发任务：**Phase 2.8 Backend Domain + API Contract**，已完成首版实现并等待本地验证。
-
-## Phase 2.7 已完成主线能力
-
-- Durable Resume / Recovery / Replay / Checkpoint lineage：完成。
-- DAG Conditional Branch / Multi-frontier / Join：完成。
-- Frontier claim / lease / heartbeat / fencing / stale-worker guard：完成。
-- Frontier terminalization / duplicate completion / replay boundary：完成。
-- Scheduler → Worker PostgreSQL durable execution：保持现有架构，不引入第二套可靠性状态机。
+- 当前开发任务：**Phase 2.8 Backend Domain + API Contract**，首版 Delegation Contract 已完成；当前优先修复 Phase 2.7 Real API blocker，再进入 Phase 2.8 Runtime Integration。
 
 ## 2026-08-28 开发者实际反馈
 
-### Backend Unit / Default Regression
+### Unit targeted
 
 ```text
-uv run pytest -q
-811 passed, 3 skipped, 41 deselected
+uv run pytest tests/unit/services/workflow/checkpoint/test_checkpoint_export_fencing.py -q
+2 passed in 0.49s
 ```
 
-该结果来自 `1917a15` 基线，说明上一轮 Unit / Default Regression 已通过。
+### Tenant Safe Real API
 
-### Phase 2.7 Real API Gate
-
-开发者实际执行 tenant-safe Real API Gate：
+开发者实际执行最新 baseline `a26681d`：
 
 ```text
-25 tests executed
-15 failed, 25 total
+9 failed, 32 passed in 193.84s
 ```
 
-主要现象：
+主要问题：
 
-- Runtime Governance fixture 使用 `edges: []`，与当前 DAG validator 的非空 `edges` Contract 漂移；
-- Resume DAG 场景缺少预期 Node / Checkpoint fact；
-- Webhook / Governance 出现 `Node 不允许从 completed 到 failed`；
-- 多个 `/run` 场景出现 409 Worker claim / lifecycle 竞争结果。
+- Runtime Model Governance Real API fixture 仍使用历史 `edges: []` 单节点 Definition，与当前 Durable Frontier 合法 DAG Contract 漂移；
+- Durable Frontier Runtime Node failure 在事务 rollback 后没有重新持久化失败 Node Fact，导致 Resume 场景只看到前序已提交 Node / Checkpoint；
+- Scheduler Real API 仍需在统一的当前 Worker / Scheduler 进程基线下重新验证，当前失败结果不标记 PASS。
 
-以上结果是实际失败，不标记为 PASS。
+## 本轮已提交修复
 
-## 本轮代码变更
+`ec25bb5f4771dae31f79ba6bd55345e2334bd224` — `fix(workflow): persist failed node facts during frontier recovery`
 
-### Phase 2.7 Real API blocker 修复
+包含：
 
-- `WorkflowNodeExecution` 增加 tenant durable identity；
-- 新增 migration `0037_workflow_node_execution_tenant`，历史数据从 Execution tenant 回填；
-- 新增 migration `0039_workflow_node_execution_tenant_trigger`，兼容现有只提供 execution_id 的 Node 写入路径并保持 tenant fail-closed。
-
-### Phase 2.8-A Backend Domain + API Contract
-
-新增：
-
-- `AgentDelegation` Durable Entity；
-- `AgentDelegationRepository`；
-- `AgentDelegationService`；
-- Delegation identity / budget 单一正式计算入口；
-- `POST /workflows/{execution_id}/delegations`；
-- `GET /workflows/{execution_id}/delegations`；
-- `GET /workflows/{execution_id}/delegations/{delegation_id}`；
-- `POST /workflows/{execution_id}/delegations/{delegation_id}/cancel`；
-- migration `0038_agent_delegations`；
-- Multi-Agent 治理默认配置：depth / active-count / timeout / model budget；
-- Delegation Unit / Real API 测试与本地 Gate 脚本。
-
-首版严格保持：tenant/version/permission fail-closed、稳定幂等、显式 context、预算边界、父子 Trace/Audit，不新增第二套 Retry / Recovery 状态机。
+- Durable Frontier failure compensation 新增单 Node Frontier 的 `WorkflowNodeExecution(status=failed)` Durable Fact 恢复；
+- 保持 Multi-frontier 不猜测具体失败 sibling，避免错误写入 Node failure；
+- Runtime Model Governance Real API fixture 改为当前合法最小 DAG：`prepare -> governed-agent`；
+- 新增错误记录：`docs/04-errors/2026-08-28-phase-2-7-real-api-durable-frontier-failure-node-fact.md`。
 
 ## 当前验证状态
 
-本轮新增代码尚未由开发者本地重新执行，因此以下均不得标记 PASS：
+以上修复尚未由开发者本地重新执行，因此以下均不得标记 PASS：
 
-- `uv run pytest -q`（包含本轮代码）；
-- `uv run alembic upgrade head` / `uv run alembic current`，预期新 head 为 `0039_workflow_node_execution_tenant_trigger`；
-- Phase 2.7 tenant-safe Real API Gate；
-- Phase 2.8 Delegation Real API Gate；
-- Worker / Scheduler 生命周期场景。
+- targeted Unit；
+- Runtime Model Governance Real API；
+- Workflow Resume / Resume DAG / Resume Failure Real API；
+- Tenant Safe Real API 全量 Gate；
+- Scheduler / Worker 多实例生命周期验收；
+- Backend Regression / Migration Gate。
 
 ## 下一执行顺序
 
 ```text
-1. 同步最新 main
-2. uv run pytest -q
-3. uv run alembic upgrade head
-4. uv run alembic current
-5. Phase 2.7 tenant-safe Real API Gate
-6. Phase 2.8 Delegation Contract Gate
-7. Worker / Scheduler 实际 Delegation Runtime 集成
-8. Frontend API Types / UI（如需要）
-9. Browser E2E（如需要）
-10. Acceptance / Status / Error 收口
+1. 同步最新 main 到本地
+2. 停止旧 Worker，确保只运行当前 main 代码的 Worker
+3. targeted Unit
+4. Runtime Governance + Resume targeted Real API
+5. Tenant Safe Real API Gate
+6. Backend default regression
+7. Alembic upgrade head / current
+8. Scheduler / Worker 实际生命周期验收
+9. Phase 2.8 Delegation Runtime Integration
+10. 更新 Phase / Acceptance / Status / Error
 ```
 
 ## 本地服务要求
 
-Backend Unit 不需要外部服务。Migration / Real API / Runtime 手动验收需要：
+Unit 不需要外部服务。Real API / Runtime / Scheduler 验收需要开发者单独启动：
 
 - PostgreSQL：`localhost:5432`；
-- Redis：`localhost:6379`（Scheduler / 既有缓存能力依赖）；
+- Redis：`localhost:6379`；
 - API Service：`127.0.0.1:8000`；
-- Scheduler Service：独立进程；
-- Worker Service：至少 1 个独立进程；
-- 若执行真实模型调用，再启动本地 Ollama / 配置真实 Provider。
+- Worker Service：至少 1 个当前 `main` Worker；多 Worker 验收时再按场景启动多个；
+- Scheduler Service：仅执行 Scheduler 相关验收时启动；
+- Real Provider fixture 由 Real API 测试本地启动；使用真实远程 Provider 时再配置未提交 `.env`。
 
-服务必须由开发者单独启动；测试 Gate 不自动管理服务进程。
+测试 Gate 不自动启动或停止服务。
