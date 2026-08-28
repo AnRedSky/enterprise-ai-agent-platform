@@ -11,7 +11,7 @@ from app.services.workflow.frontier_repository import claim_next_frontier, recov
 
 @pytest.mark.asyncio
 async def test_claim_next_frontier_uses_locked_schedulable_query_without_commit() -> None:
-    db = MagicMock(); frontier = MagicMock(); execution_id = uuid4(); tenant_id = uuid4()
+    db = MagicMock(); frontier = MagicMock(); frontier.attempt = 0; execution_id = uuid4(); tenant_id = uuid4()
     candidate = MagicMock(); candidate.scalar_one_or_none.return_value = frontier.id
     identity = MagicMock(); identity.one_or_none.return_value = (execution_id, tenant_id)
     execution = MagicMock(); execution.status = "pending"; execution.worker_owner = None; execution.worker_lease_expires_at = None
