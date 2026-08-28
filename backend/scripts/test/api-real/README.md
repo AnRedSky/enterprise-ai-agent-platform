@@ -17,6 +17,33 @@ Real API Fixture 使用 deterministic Mock Provider，测试不会依赖外部�
 
 Real API Gate 是 Release / Full Regression Gate 的强制前置质量门；不得由其他测试脚本复制其 Bootstrap/Fixture 逻辑。
 
+## Scheduled Trigger 定向 Real API Gate
+
+为避免直接执行 `test_scheduled_trigger_api.py` 时遗漏 `TRIGGER_WORKFLOW_ID` tenant-safe 上下文，提供独立 Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\06_run_scheduled_trigger_real_tests.ps1
+```
+
+该 Gate 自动执行 source baseline、API/Worker/Scheduler 服务基线检查、tenant-safe Bootstrap、Admin fixture，再运行 Scheduled Trigger Real API 测试。它不会启动、停止或重启任何服务。
+
+服务要求：
+
+- PostgreSQL：`localhost:5432`；
+- Redis：`localhost:6379`；
+- API Service：`127.0.0.1:8000`；
+- Worker：当前 `main` 且仅 1 个项目 Worker；
+- Scheduler：当前 `main` 且仅 1 个项目 Scheduler。
+
+因此不再建议直接使用以下命令作为 Scheduled Trigger 验收入口：
+
+```powershell
+uv run pytest tests/api_real/test_scheduled_trigger_api.py -q -m real_api
+```
+
+直接 pytest 需要调用者自行提供 `ACCESS_TOKEN`、`TRIGGER_WORKFLOW_ID` 等上下文；缺失时的 fail-fast 不是产品功能失败。
+
 ## Scheduler 真实服务重启 Acceptance
 
 Scheduler 生产化 Acceptance 使用独立入口：
