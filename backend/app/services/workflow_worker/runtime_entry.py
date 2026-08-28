@@ -33,22 +33,7 @@ from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRun
 
 
 async def _finalize_delegation(execution_id: UUID, delegation_id: UUID, outcome: str, reason_code: str | None) -> None:
-    """按 Worker generation 收敛 Delegation 终态。
-
-    Args:
-        execution_id: 当前 Worker Execution generation 标识。
-        delegation_id: Delegation 标识。
-        outcome: Worker 结果，支持 completed/failed/aborted。
-        reason_code: 失败时使用的稳定错误码。
-
-    Returns:
-        None：完成 Delegation 持久化闭环。
-
-    Raises:
-        HTTPException: Delegation generation 已失效或 Worker Execution 状态与终态闭环不一致。
-
-    设计意图：Delegation 只能由创建它的 Worker Execution generation 收敛；lease 丢失时不写终态，允许后续有效 generation 接管。
-    """
+    """按 Worker generation 收敛 Delegation 终态。"""
     if outcome == "aborted":
         return
     async with SessionLocal() as db:
@@ -76,20 +61,7 @@ async def _finalize_delegation(execution_id: UUID, delegation_id: UUID, outcome:
 
 
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
-    """执行已 Claim 的 Execution；Delegation Worker 使用同一 WorkflowRuntime 执行目标 Agent。
-
-    Args:
-        worker: 当前 Workflow Worker，提供 ownership、lease heartbeat 与 telemetry 能力。
-        execution_id: B1 Claim 创建的 Workflow Execution ID。
-
-    Returns:
-        无；执行结果由既有 WorkflowExecution lifecycle 持久化，并由 Delegation generation fencing 收敛子任务状态。
-
-    Raises:
-        HTTPException: Runtime、ownership、timeout、circuit breaker 或 Delegation fencing 失败时抛出统一错误。
-
-    事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；B3 仅在当前 Worker generation 仍有效时更新 Delegation，并复用现有 Workflow Execution lifecycle。
-    """
+    """执行已 Claim 的 Execution；Delegation Worker 使用同一 WorkflowRuntime 执行目标 Agent。"""
     async with SessionLocal() as db:
         execution = (
             await db.execute(
@@ -102,6 +74,12 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         ).scalar_one_or_none()
         if execution is None:
             return
+
+        # SQLAlchemy AsyncSession 默认 expire_on_commit=True；WorkflowRuntime / lifecycle
+        # 会在执行过程中提交事务，使 ORM instance 的属性在 finally 中可能变为 expired。
+        # Worker generation 的 identity 是稳定的不可变输入，必须在任何 commit 前快照，
+        # 后续 finalize、telemetry 与 fencing 均只使用这个 UUID，避免隐式 lazy-load。
+        worker_execution_id = execution.id
 
         version = (
             await db.execute(select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id))
@@ -132,8 +110,8 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             worker.telemetry.emit(
                 WorkflowRecoveryEvent(
                     event_name=RECOVERY_WORKER_STARTED,
-                    execution_id=execution.id,
-                    resume_execution_id=execution.id,
+                    execution_id=worker_execution_id,
+                    resume_execution_id=worker_execution_id,
                     trace_id=recovery_trace_id,
                     phase="worker",
                 )
@@ -167,7 +145,7 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         if renew_lease is None:
             renew_lease = worker._renew_lease_once
         guard = WorkflowWorkerLeaseGuard(
-            renew_lease=lambda: renew_lease(execution.id),
+            renew_lease=lambda: renew_lease(worker_execution_id),
             interval_seconds=max(0.1, worker.lease_seconds / 3),
         )
         try:
@@ -219,13 +197,13 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
         finally:
             if delegation_context is not None:
-                await _finalize_delegation(execution.id, delegation_context.delegation_id, outcome, reason_code)
+                await _finalize_delegation(worker_execution_id, delegation_context.delegation_id, outcome, reason_code)
             if recovery_trace_id:
                 worker.telemetry.emit(
                     WorkflowRecoveryEvent(
                         event_name=RECOVERY_WORKER_FINISHED,
-                        execution_id=execution.id,
-                        resume_execution_id=execution.id,
+                        execution_id=worker_execution_id,
+                        resume_execution_id=worker_execution_id,
                         trace_id=recovery_trace_id,
                         outcome=outcome,
                         reason_code=reason_code,
