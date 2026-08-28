@@ -82,7 +82,6 @@ async def complete_delegation(
     tenant_id: UUID,
     delegation_id: UUID,
     worker_execution_id: UUID,
-    output_data: dict | None = None,
 ) -> AgentDelegation:
     """以当前 Worker generation 原子完成 Delegation。
 
@@ -91,7 +90,6 @@ async def complete_delegation(
         tenant_id: Delegation 所属租户。
         delegation_id: Delegation 标识。
         worker_execution_id: 完成请求所属的 Worker Execution generation。
-        output_data: Target Agent Runtime 的最终输出，可为空。
 
     Returns:
         AgentDelegation: 已进入 completed 的持久化 Delegation。
@@ -99,7 +97,7 @@ async def complete_delegation(
     Raises:
         HTTPException: generation 失效、Worker Execution 未完成或状态转换非法。
 
-    事务边界：Delegation 状态、结果字段、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
+    事务边界：Delegation 状态、结果关联、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -190,10 +188,14 @@ async def fail_delegation(
         raise HTTPException(409, str(exc)) from exc
 
     now = utcnow_naive()
+    normalized_error_code = error_code.strip()[:100]
+    normalized_error_message = error_message.strip()[:2000]
+    if not normalized_error_code or not normalized_error_message:
+        raise HTTPException(422, "Delegation 失败收敛必须提供 error_code 与 error_message")
     delegation.status = "failed"
     delegation.ended_at = now
-    delegation.error_code = error_code[:100]
-    delegation.error_message = error_message[:2000]
+    delegation.error_code = normalized_error_code
+    delegation.error_message = normalized_error_message
 
     db.add(AuditLog(
         actor_id=execution.created_by,
@@ -206,7 +208,7 @@ async def fail_delegation(
         resource_id=str(delegation.id),
         trace_id=delegation.trace_id,
         status="failed",
-        metadata_json={"worker_execution_id": str(worker_execution_id), "error_code": error_code[:100]},
+        metadata_json={"worker_execution_id": str(worker_execution_id), "error_code": normalized_error_code},
     ))
     db.add(WorkflowTraceEvent(
         tenant_id=tenant_id,
@@ -220,7 +222,7 @@ async def fail_delegation(
         data={
             "delegation_id": str(delegation.id),
             "worker_execution_id": str(worker_execution_id),
-            "error_code": error_code[:100],
+            "error_code": normalized_error_code,
         },
     ))
     await db.commit()
