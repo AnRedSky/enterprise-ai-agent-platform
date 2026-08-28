@@ -9,34 +9,41 @@ from unittest.mock import AsyncMock
 from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
 
 
+class _Result:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+    def scalar_one(self):
+        return self.value
+
+
 @pytest.mark.asyncio
 async def test_append_persists_immutable_checkpoint() -> None:
     """追加 Checkpoint 时必须保存完整状态快照并提交事务。"""
-    db = SimpleNamespace(
-        add=SimpleNamespace(),
-        commit=AsyncMock(),
-        refresh=AsyncMock(),
-    )
-    db.add = lambda value: setattr(db, "added", value)
-    service = WorkflowExecutionCheckpointService(db)
     execution_id = uuid4()
+    execution = SimpleNamespace(
+        id=execution_id, tenant_id=uuid4(), status="running", worker_owner="worker:test",
+        worker_attempt=2, worker_lease_expires_at=None,
+    )
+    db = SimpleNamespace(
+        add=lambda value: setattr(db, "added", value), commit=AsyncMock(), refresh=AsyncMock(),
+        execute=AsyncMock(side_effect=[_Result(execution), _Result(None)]),
+    )
+    service = WorkflowExecutionCheckpointService(db)
 
     checkpoint = await service.append(
-        execution_id=execution_id,
-        sequence=3,
-        execution_status="running",
-        node_id="agent-1",
-        node_attempt=2,
-        node_status="completed",
+        execution_id=execution_id, sequence=0, execution_status="running", node_id="agent-1",
+        node_attempt=2, node_status="completed",
         state_data={"cursor": "agent-2", "messages": [{"role": "assistant", "content": "ok"}]},
-        input_data={"prompt": "hello"},
-        output_data={"text": "ok"},
-        checkpoint_reason="node.completed",
-        worker_owner="worker:test",
+        input_data={"prompt": "hello"}, output_data={"text": "ok"}, checkpoint_reason="node.completed",
+        worker_owner="worker:test", tenant_id=execution.tenant_id,
     )
 
     assert checkpoint.execution_id == execution_id
-    assert checkpoint.sequence == 3
+    assert checkpoint.sequence == 0
     assert checkpoint.node_id == "agent-1"
     assert checkpoint.node_attempt == 2
     assert checkpoint.execution_status == "running"
@@ -55,22 +62,10 @@ async def test_append_rejects_invalid_sequence_and_reason() -> None:
     service = WorkflowExecutionCheckpointService(db)
 
     with pytest.raises(ValueError, match="sequence"):
-        await service.append(
-            execution_id=uuid4(),
-            sequence=-1,
-            execution_status="running",
-            state_data={},
-            checkpoint_reason="test",
-        )
+        await service.append(execution_id=uuid4(), sequence=-1, execution_status="running", state_data={}, checkpoint_reason="test")
 
     with pytest.raises(ValueError, match="reason"):
-        await service.append(
-            execution_id=uuid4(),
-            sequence=0,
-            execution_status="running",
-            state_data={},
-            checkpoint_reason="   ",
-        )
+        await service.append(execution_id=uuid4(), sequence=0, execution_status="running", state_data={}, checkpoint_reason="   ")
 
 
 @pytest.mark.asyncio
