@@ -63,7 +63,6 @@ async def _finalize_delegation(execution_id: UUID, delegation_id: UUID, outcome:
                 tenant_id=execution.tenant_id,
                 delegation_id=delegation_id,
                 worker_execution_id=execution_id,
-                output_data=execution.output_data,
             )
             return
         await fail_delegation(
@@ -219,7 +218,8 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 await service.transition(current, "failed", error_code=reason_code, error_message=str(exc), actor_id=current.created_by)
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
         finally:
-            await _finalize_delegation(execution.id, delegation_context.delegation_id, outcome, reason_code) if delegation_context is not None else None
+            if delegation_context is not None:
+                await _finalize_delegation(execution.id, delegation_context.delegation_id, outcome, reason_code)
             if recovery_trace_id:
                 worker.telemetry.emit(
                     WorkflowRecoveryEvent(
