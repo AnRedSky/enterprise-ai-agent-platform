@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码提交：`423b5ed` — `fix(test): cleanup B2 gate process and environment on failure`
+- 当前代码提交：`61c1a482` — `fix(test): align auth contract with default organization binding`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B3 Delegation completion / failure + generation fencing**
 
@@ -23,28 +23,28 @@
 - ORM metadata registry 已修复跨模块 ForeignKey 运行时注册问题；
 - B2 Worker Execution Bridge 已进入生产代码：已 Claim Execution 通过正式 Delegation Runtime Bridge 显式装配 target Agent version、model profile、input、selected context refs、allowed tools 与 trace identity，并复用现有 Workflow Worker / WorkflowRuntime；
 - B2 synthetic Runtime 已修复与 DAG validator 的 Contract 冲突；
-- B3 Delegation completion/failure 已进入生产代码：以 `worker_execution_id` 作为 Worker generation fencing identity，在当前 generation 仍有效且 Worker Execution 已进入对应终态时收敛 Delegation。
+- B3 Delegation completion/failure 已进入生产代码：以 `worker_execution_id` 作为 Worker generation fencing identity，在当前 generation 仍有效且 Worker Execution 已进入对应终态时收敛 Delegation；
+- 注册用户现在在同一事务中绑定默认 Tenant 对应的 active Organization，保证后续 Governance membership 边界成立。
 
-## 3. 已确认的本地验收事实
+## 3. 最新本地验收反馈
 
-开发者此前本地实际执行并通过 B1：
-
-```text
-Model registry Unit       2 passed
-Delegation targeted Unit 30 passed
-Backend regression        846 passed, 3 skipped, 43 deselected
-Migration                 0039_workflow_node_execution_tenant_trigger (head)
-Real Delegation Contract  1 passed
-B1 PostgreSQL race        1 passed
-```
-
-最终输出：
+开发者最新实际反馈基线为 `0f9bdc7f`：
 
 ```text
-[PASS] Phase 2.8 Delegation + B1 Atomic Claim gate completed.
+B2 Bridge Unit             3 passed
+B2 Backend regression      848 passed, 3 skipped, 46 deselected
+B2 Real Gate               2 failed, 1 passed
+B3 Backend regression      848 passed, 3 skipped, 46 deselected
+B3 Real Gate               2 failed, 1 passed
 ```
 
-B2 修复前的本地事实：Unit、Backend Regression、Migration 均通过，但 Real Runtime 因 synthetic Definition 带 `edges: []` 被 DAG validator 拒绝。该错误已经修复，但修复后的 B2 Real Gate 尚未由开发者重新执行，因此不能记录为本地通过。
+B2/B3 Real Gate 的两个业务/测试问题已经分别完成修复：
+
+1. `d5d3129a`：注册用户绑定默认 Organization，消除真实 Worker Runtime 的 `403 当前用户没有有效的 Organization membership`；
+2. `2198ef4c`：B3 fencing rollback 后使用独立 UUID，消除 `MissingGreenlet`；
+3. `61c1a482`：同步修复 Backend Contract 测试 FakeDB，使其反映新的默认 Organization 注册契约，并增加 Organization 缺失的 409 Contract 覆盖。
+
+**注意：`61c1a482` 之后的 B2/B3 Gate 尚未由开发者本地重新执行，因此当前不能宣称 B2/B3 Real Gate 通过。**
 
 ## 4. B2 当前实现边界
 
@@ -141,11 +141,11 @@ Gate 自动完成：
 |---|---|
 | B1 Atomic Claim | ✅ 本地真实验收通过 |
 | B2 Worker Execution Bridge 生产实现 | ✅ |
-| B2 Bridge Unit | 🔧 已修复，待本地复跑 |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 已修复，待本地复跑 |
+| B2 Bridge Unit | 🔧 修复后待本地复跑 |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 修复后待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
-| B3 Unit / Real Gate | 🔧 已实现，待本地复跑 |
-| B4 timeout/cancel/parent semantics | ⏳ |
+| B3 Unit / Real Gate | 🔧 修复后待本地复跑 |
+| B4 timeout/cancel/parent semantics | ⏳ 尚未进入生产实现 |
 | B5 Audit/Trace 完整闭环 | ⏳ |
 | Delegation Runtime multi-worker acceptance | ⏳ |
 
@@ -153,6 +153,8 @@ Gate 自动完成：
 
 ```text
 同步最新 main
+    ↓
+Backend Contract regression
     ↓
 B2 Worker Execution Bridge Gate
     ↓
@@ -198,4 +200,4 @@ Real API Gate 自动生成临时身份与 Token，不要求开发者手工输入
 
 ## 10. 当前结论
 
-**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2 生产 Bridge 已完成并修复 synthetic Runtime 的 DAG Contract 问题，但修复后的 Real Gate 尚未由开发者重新执行。B3 completion/failure + generation fencing 已完成生产实现、失败闭环、自动化 Gate 与测试覆盖，当前等待本地实际 Gate 结果；在此之前不宣称 B2/B3 Real Gate 通过。**
+**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2/B3 生产实现及其已知回归问题均已修复；最新修复提交为 `61c1a482`。但修复后的 B2/B3 Real Gate 尚未产生新的开发者本地实际结果，因此当前仍处于“修复后待验收”状态。通过后立即进入 B4 timeout / cancel / parent semantics。**
