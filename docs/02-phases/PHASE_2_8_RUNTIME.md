@@ -2,9 +2,9 @@
 
 ## 1. 当前状态
 
-Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现。当前进入 Runtime Integration：把 `AgentDelegation` 接入现有 Workflow Worker / lease / fencing 体系，不创建第二套 Worker、Retry 或 Recovery 状态机。
+Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现。B1 Atomic Delegation Claim 已由开发者本地真实 PostgreSQL Gate 验收通过，当前进入 **B2 Workflow Worker Execution Bridge**。
 
-当前代码已进入 **B1 Atomic Delegation Claim**，并完成第一版生产实现与自动化验收测试实现。
+目标仍然是复用现有 Workflow Worker / Execution / lease / fencing / Runtime，不创建第二套 Worker、Retry 或 Recovery 状态机。
 
 ## 2. 已完成
 
@@ -16,14 +16,13 @@ Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现�
 - Audit / Trace 基础事件；
 - active budget creation 的父 Execution 行锁序列化；
 - `0038_agent_delegations` Migration；
-- `lifecycle.py` 纯生命周期与 Worker fencing 规则入口；
-- Service 内重复 lifecycle 规则已删除并统一调用 `lifecycle.validate_transition()`；
-- B1 Atomic Claim：PostgreSQL Delegation 行锁、唯一 `worker_execution_id`、复用 `WorkflowExecution` 的既有 Worker owner/lease 字段，并在同一事务中完成 Claim 与 Worker Execution 持久化；
-- B1 Real API / PostgreSQL 双 Worker 并发验收测试实现；
-- Phase 2.8 Gate 已纳入 B1 lifecycle Unit、Backend regression、Migration、Delegation Real API 与 PostgreSQL 两 Worker race；
-- B1 Real Gate 已改为自动注册随机临时测试用户并自动取得 Token，不再要求开发者手工填写 `ACCESS_TOKEN`。
+- `lifecycle.py` 生命周期与 Worker fencing 规则入口；
+- B1 Atomic Claim：PostgreSQL Delegation 行锁、唯一 `worker_execution_id`、真实 `WorkflowExecution`、既有 Worker owner/lease 与同事务持久化；
+- B1 Real HTTP / PostgreSQL 双 Worker 并发验收，并由开发者本地实际执行通过；
+- ORM metadata registry，解决跨模块 ForeignKey 目标表未注册导致的 `NoReferencedTableError`；
+- B2 `AgentDelegationRuntimeBridge`，把已 Claim Delegation 显式装配到现有 Worker Runtime。
 
-`0039_workflow_node_execution_tenant_trigger` 当前为数据库 head；它依赖 `0038_agent_delegations`，因此 Phase 2.8 的数据结构基础已经存在。
+`0039_workflow_node_execution_tenant_trigger` 当前为数据库 head。
 
 ## 3. Lifecycle Contract
 
@@ -35,113 +34,158 @@ Worker completion → running + 当前 worker_execution_id generation 必须一�
 timeout → now >= timeout_at
 ```
 
-`backend/tests/unit/test_agent_delegation_lifecycle.py` 已覆盖状态转换、终态封闭、stale generation、缺失 owner 与 timeout 边界。
+B3 将统一补齐结果写回时的 generation fencing；B2 不提前复制第二套 completion 状态机。
 
 ## 4. B1 Atomic Delegation Claim
-
-B1 已进入代码实现：
 
 ```text
 pending Delegation
       │
       │ SELECT ... FOR UPDATE
       ▼
-唯一数据库 ownership boundary
+tenant / timeout / lifecycle
       │
-      ├── tenant scope
-      ├── timeout / status fail-closed
-      ├── 创建既有 WorkflowExecution Worker record
-      ├── worker_owner = 当前 Worker
-      ├── worker_lease_expires_at = Delegation timeout
-      └── delegation.worker_execution_id = Worker Execution.id
       ▼
-running Delegation
+创建真实 WorkflowExecution
+      ├── worker_owner
+      ├── worker_lease_expires_at
+      └── worker_execution_id
       │
-      ├── Audit
-      └── Trace
+      ▼
+Delegation = running
+      │
+      ▼
+Audit + Trace
       │
       ▼
 同一事务提交
 ```
 
-关键约束：
+开发者本地最新实际结果：
 
-1. Claim 必须带 tenant boundary；
-2. 只有 pending 可以 Claim；
-3. timeout 到期直接拒绝，不偷偷放宽 lifecycle；
-4. Delegation 行锁保证同一时刻只有一个 Worker 获得 ownership；
-5. `worker_execution_id` 使用真实 `WorkflowExecution.id`，不生成脱离数据库的伪 identity；
-6. Worker lease 复用 `WorkflowExecution.worker_owner / worker_lease_expires_at`，不创建第二套 lease；
-7. Delegation 状态和 Worker Execution 创建在同一事务提交，避免半完成 Claim；
-8. B1 不执行 target Agent Runtime，执行桥接留给 B2。
+```text
+Model registry Unit       2 passed
+Delegation targeted Unit 30 passed
+Backend regression        846 passed, 3 skipped, 43 deselected
+Migration                 0039_workflow_node_execution_tenant_trigger (head)
+Real Delegation Contract  1 passed
+B1 PostgreSQL race        1 passed
+```
 
-## 5. B1 自动化验收实现
+最终：
+
+```text
+[PASS] Phase 2.8 Delegation + B1 Atomic Claim gate completed.
+```
+
+## 5. B2 Workflow Worker Execution Bridge
+
+B2 的正式桥接路径：
+
+```text
+B1 Claim
+    ↓
+WorkflowExecution.worker_execution_id
+    ↓
+AgentDelegationRuntimeBridge
+    ├── target_agent_version_id
+    ├── target_agent_id
+    ├── model_profile_id
+    ├── input_data
+    ├── selected_context_refs
+    ├── allowed_tools
+    └── trace_id
+    ↓
+内存 Runtime Version
+    ↓
+DurableResumeWorkflowRuntime
+    ↓
+唯一 WorkflowRuntime
+    ↓
+Target Agent published version
+    ↓
+ModelGateway / Governance / Provider
+```
+
+### 5.1 设计边界
+
+1. B2 不新增 Worker；
+2. B2 不新增 Lease；
+3. B2 不新增 Retry / Recovery；
+4. B2 不写回父 Workflow Version；
+5. B2 不复制父 Execution checkpoint、memory 或 credential；
+6. target Agent version 必须仍是 tenant 内 published version；
+7. `model_profile_id` 必须与 target Agent version 一致；
+8. `input_data` 只来自 Delegation 显式输入；
+9. `selected_context_refs` / `allowed_tools` 作为显式受治理 Runtime context 装配，不复制 Tool Runtime；
+10. `trace_id` 沿 Delegation → Worker Execution 保持一致；
+11. 目标 Agent 执行通过现有 ModelGateway / Runtime Governance，不绕过 Provider 治理。
+
+### 5.2 Runtime Version
+
+B2 不创建新的数据库 `WorkflowVersion`。`AgentDelegationRuntimeBridge` 仅在 Worker Runtime 入口构造内存 Runtime Version：
+
+- 保留父 Workflow Runtime timeout / retry / circuit 配置；
+- 将单一目标 Agent 作为当前 Worker 的 Runtime Node；
+- Node `agent_id` 指向目标 Agent；
+- target Agent 的 published version 必须等于 Delegation `target_agent_version_id`；
+- Delegation context 只存在本次 Runtime 调用内，不污染父 Workflow Definition。
+
+## 6. B2 自动化验收
 
 新增：
 
 ```text
-backend/tests/api_real/test_agent_delegation_claim_api.py
+backend/app/services/agent_delegation/runtime_bridge.py
+backend/tests/unit/test_agent_delegation_runtime_bridge.py
+backend/tests/api_real/test_agent_delegation_bridge_api.py
+backend/scripts/test/phase-2.8/02_worker_execution_bridge_gate.ps1
 ```
 
-该测试通过真实 HTTP 创建 Delegation，然后使用两个独立 PostgreSQL `AsyncSession` 并发竞争同一个 Delegation，验证：
-
-- 恰好一个 Worker Claim 成功；
-- Delegation 最终为 `running`；
-- `worker_execution_id` 指向唯一真实 `WorkflowExecution`；
-- Worker owner 与成功 Claim 对应；
-- tenant identity 一致；
-- 第二次 Claim 被拒绝。
-
-Phase 2.8 Gate：
+B2 Gate 自动执行：
 
 ```text
-Unit lifecycle / identity
+B2 Bridge Unit
     ↓
 Backend default regression
     ↓
-Alembic upgrade head / current
+Alembic upgrade / current
     ↓
-Delegation Real HTTP + PostgreSQL
+自动 PostgreSQL + Redis
     ↓
-B1 PostgreSQL two-worker race
+自动 Backend health / uvicorn
+    ↓
+自动临时用户注册 + 登录
+    ↓
+真实 HTTP 创建 Agent / Workflow / Delegation
+    ↓
+真实 PostgreSQL Claim
+    ↓
+现有 Worker Runtime Entry
+    ↓
+Target Agent Runtime
+    ↓
+真实 PostgreSQL 验证 Worker Execution
 ```
 
-当前测试实现只能证明“已具备自动化验证入口”，不能代替开发者实际本地执行结果。
+正式入口：
 
-## 6. 当前运行时缺口
-
-```text
-API create
-    ↓
-pending Delegation
-    ↓
-B1 Atomic Claim
-    │
-    ├─ 已实现
-    └─ Real PostgreSQL acceptance 必须通过 Gate 实际验证
-    ↓
-running + worker_execution_id
-    ↓
-B2 Existing Worker Execution bridge
-    ↓
-Agent Runtime
-    ↓
-B3 generation-fenced completion/failure
-    ↓
-B4 timeout / cancel / parent semantics
-    ↓
-B5 Audit / Trace closure
-    ↓
-Real API + PostgreSQL + multi-worker acceptance
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\02_worker_execution_bridge_gate.ps1
 ```
 
-### B2 — Workflow Worker Execution Bridge
+禁止手工填写 Token、用户名、密码、tenant、ID 或测试数据。
 
-继续复用现有 Workflow Worker / Execution / lease / fencing，将 target Agent version、model profile、`input_data`、`selected_context_refs`、`allowed_tools` 与 delegation trace identity 显式装配到 Worker execution。不得复制父 Execution 全量 checkpoint、memory 或 credential。
+## 7. B3/B4/B5
 
-### B3/B4 — Completion / Failure / Timeout / Cancel
+### B3 — Completion / Failure + generation fencing
 
-所有结果写回必须经过统一 lifecycle rule，并在事务内重新确认 `worker_execution_id`。stale Worker、已取消 Delegation、已超时 Delegation 均必须 fail-closed。Delegation 自身失败不直接终止父 Execution。
+所有结果写回必须重新锁定 Delegation 并验证 `worker_execution_id` generation。stale Worker、已取消、已超时 Delegation 必须 fail-closed。
+
+### B4 — Timeout / Cancel / Parent semantics
+
+统一复用 Delegation lifecycle；Delegation 自身失败不直接终止父 Execution。
 
 ### B5 — Audit / Trace
 
@@ -153,72 +197,38 @@ source execution
         └── worker execution / trace
 ```
 
-要求支持父子反查，且 metadata 不得包含 Secret / credential 原文。
+要求支持父子反查，metadata 不包含 Secret / credential 原文。
 
-## 7. 验收矩阵
+## 8. 验收矩阵
 
 | 场景 | 必须证明 |
 |---|---|
 | 合法 Claim | pending → running + 唯一 worker generation |
 | 并发 Claim | 2+ Worker 竞争仅一个 owner |
+| Worker execution | target Agent version 按治理配置真实执行 |
+| Context isolation | 只传显式 input/context/tool refs |
 | stale completion | 旧 generation 不覆盖当前状态 |
 | completed fencing | 终态后 completion 被拒绝 |
 | cancel fencing | cancel 后迟到 Worker 不得写回 |
 | timeout fencing | timeout 后迟到 Worker 不得写回 |
-| Worker execution | target Agent version 按治理配置真实执行 |
-| Context isolation | 只传显式 input/context/tool refs |
 | Parent semantics | Worker failure 不绕过父 Workflow terminalization |
 | Audit / Trace | 子任务可反查父 Execution |
 | PostgreSQL | 状态与 generation 在真实数据库中一致 |
 
-## 8. 本地测试入口
-
-### B1 一键 Gate
-
-测试脚本会自动完成：
-
-1. 检查 Docker；
-2. 自动启动项目 `docker-compose.yml` 中的 PostgreSQL 与 Redis；
-3. 执行 Alembic migration；
-4. 检查 `http://127.0.0.1:8000/health`；
-5. 若 Backend 未启动，自动启动本地 Uvicorn；
-6. 自动生成随机临时测试用户；
-7. 自动调用 `/auth/register` + `/auth/login` 获取短生命周期测试 Token；
-8. 自动执行 Real HTTP Delegation Contract；
-9. 自动执行 PostgreSQL 双 Worker Atomic Claim race；
-10. 如果 Backend 由脚本启动，Gate 结束后自动停止该进程。
-
-开发者无需手工填写 Token、用户名、密码或测试数据。
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\01_delegation_contract_gate.ps1
-```
-
-### B1 Unit / Backend / Migration，不执行 Real API
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\01_delegation_contract_gate.ps1 -SkipRealApi
-```
-
-### B1 Real API + PostgreSQL + 双 Worker
-
-不再要求手工设置 `ACCESS_TOKEN`。
-
-基础设施：
+## 9. 当前下一步
 
 ```text
-Docker Engine
-  ├── PostgreSQL / pgvector : 5432
-  └── Redis                  : 6379
-
-Backend API
-  └── Uvicorn : 127.0.0.1:8000
+B2 Unit / Real PostgreSQL Runtime Gate
+    ↓
+若发现 Runtime / tenant / model profile / context assembly 问题，立即修复
+    ↓
+B2 验收闭环
+    ↓
+B3 generation-fenced completion/failure
+    ↓
+B4 timeout / cancel / parent semantics
+    ↓
+B5 Audit / Trace
+    ↓
+Delegation 多 Worker + PostgreSQL + Runtime acceptance
 ```
-
-如果 PostgreSQL / Redis 已运行，脚本直接复用；如果 Backend 已运行，脚本也直接复用。只有未运行的 Backend 会由 Gate 自动启动。
-
-若需要单独运行某一个 Real API 测试，必须显式覆盖 pytest 的默认 `not real_api` 过滤，并让脚本自动提供 Token；推荐直接使用一键 Gate，而不是手工设置环境变量。
-
-验收必须看到 B1 两 Worker race 测试实际执行成功；若 PostgreSQL、HTTP 服务或测试任一步失败，只记录实际失败原因，不得记录为 Passed。

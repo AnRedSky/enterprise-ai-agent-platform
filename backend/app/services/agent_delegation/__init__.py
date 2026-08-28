@@ -2,6 +2,13 @@
 
 from app.services.agent_delegation.claim import claim_delegation
 from app.services.agent_delegation.repository import AgentDelegationRepository
+from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge, DelegationRuntimeContext
 from app.services.agent_delegation.service import AgentDelegationService
 
-__all__ = ["AgentDelegationRepository", "AgentDelegationService", "claim_delegation"]
+__all__ = [
+    "AgentDelegationRepository",
+    "AgentDelegationRuntimeBridge",
+    "AgentDelegationService",
+    "DelegationRuntimeContext",
+    "claim_delegation",
+]

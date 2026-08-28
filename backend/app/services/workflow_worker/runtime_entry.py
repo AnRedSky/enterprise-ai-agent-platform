@@ -1,8 +1,9 @@
 """Durable Frontier Runtime Entry Contract。
 
 职责：为 Durable Frontier Worker 提供统一的 Execution Runtime 入口适配层。
-边界：不实现新的 Node Runtime；复用 WorkflowRuntime、WorkflowExecutionService.transition、Checkpoint
-fencing 与现有 Worker resume preparation。支持 pending 新 Execution 与 running + same owner 后继 Frontier。
+边界：不实现新的 Node Runtime；复用 WorkflowRuntime、WorkflowExecutionService、Checkpoint
+fencing 与现有 Worker resume preparation。Delegation Worker Execution 通过正式 Bridge
+装配目标 Agent version、model profile、显式输入、context/tool refs 与 trace identity。
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from app.infrastructure.db import SessionLocal
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.runtime.workflow import CircuitOpenError
+from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.observability import (
     RECOVERY_WORKER_FINISHED,
@@ -30,7 +32,20 @@ from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRun
 
 
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
-    """执行已 Claim 的 Execution；允许 pending start 与 running same-owner continuation。"""
+    """执行已 Claim 的 Execution；Delegation Worker 使用同一 WorkflowRuntime 执行目标 Agent。
+
+    Args:
+        worker: 当前 Workflow Worker，提供 ownership、lease heartbeat 与 telemetry 能力。
+        execution_id: B1 Claim 创建的 Workflow Execution ID。
+
+    Returns:
+        无；执行结果由既有 WorkflowExecution lifecycle 持久化。
+
+    Raises:
+        HTTPException: Runtime、ownership、timeout 或 circuit breaker 失败时抛出统一错误。
+
+    事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；目标 Delegation 与 Worker Execution 仍由 B1 的真实数据库事务负责身份绑定。
+    """
     async with SessionLocal() as db:
         execution = (
             await db.execute(
@@ -53,12 +68,18 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         if version is None or workflow is None:
             raise RuntimeError("Worker Execution 关联的 Workflow/Version 不存在")
 
-        allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {})
-        runtime_config = version.definition.get("config") if isinstance(version.definition, dict) else {}
+        delegation_context = await AgentDelegationRuntimeBridge.load(db, execution)
+        runtime_version = (
+            AgentDelegationRuntimeBridge.build_runtime_version(version, delegation_context)
+            if delegation_context is not None
+            else version
+        )
+        allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {}) and delegation_context is None
+        runtime_config = runtime_version.definition.get("config") if isinstance(runtime_version.definition, dict) else {}
         execution_timeout = DurableResumeWorkflowRuntime.resolve_timeout_ms(runtime_config or {}) / 1000 + worker.EXECUTION_TIMEOUT_GRACE_SECONDS
         service = WorkflowExecutionService(db)
         trace_link = WorkflowRecoveryTraceLinkService(db)
-        recovery_trace_id = await trace_link.get_trace_id(execution)
+        recovery_trace_id = delegation_context.trace_id if delegation_context is not None else await trace_link.get_trace_id(execution)
         started = monotonic()
         outcome = "completed"
         reason_code = None
@@ -74,8 +95,9 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 )
             )
 
-        await worker._recover_orphaned_running_nodes(execution, service)
-        execution, runtime_version = await worker._prepare_resume_runtime(db, execution, version)
+        if delegation_context is None:
+            await worker._recover_orphaned_running_nodes(execution, service)
+            execution, runtime_version = await worker._prepare_resume_runtime(db, execution, version)
 
         if execution.status == "pending":
             await service.transition(execution, "running", actor_id=execution.created_by)
