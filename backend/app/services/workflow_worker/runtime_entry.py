@@ -136,10 +136,6 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         if execution is None:
             return
 
-        # SQLAlchemy AsyncSession 默认 expire_on_commit=True；WorkflowRuntime / lifecycle
-        # 会在执行过程中提交事务，使 ORM instance 的属性在 finally 中可能变为 expired。
-        # Worker generation 的 identity 是稳定的不可变输入，必须在任何 commit 前快照，
-        # 后续 finalize、telemetry 与 fencing 均只使用这些 UUID，避免隐式 lazy-load。
         worker_execution_id = execution.id
         worker_execution_tenant_id = execution.tenant_id
 
@@ -211,9 +207,34 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         try:
             await guard.run(_run_runtime())
         except WorkflowWorkerLeaseLost:
-            outcome = "aborted"
-            reason_code = "WORKER_LEASE_LOST"
-            return
+            # Runtime terminalization 与 heartbeat 可能在同一时间窗口完成：Runtime 已将 Execution
+            # 写成 completed/failed 并清理 ownership 后，heartbeat 再执行一次 fencing UPDATE 会得到
+            # False。此时不能把“lease 已失效”机械等价为“Runtime 未完成”，否则会留下
+            # WorkflowExecution=completed、Delegation=running 的永久悬挂状态。重新读取 durable fact，
+            # 仅当 Execution 仍处于非终态时才真正放弃 Delegation 收敛。
+            async with SessionLocal() as recovery_db:
+                latest = (
+                    await recovery_db.execute(
+                        select(WorkflowExecution).where(
+                            WorkflowExecution.id == worker_execution_id,
+                            WorkflowExecution.tenant_id == worker_execution_tenant_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if latest is None:
+                outcome = "aborted"
+                reason_code = "WORKER_EXECUTION_MISSING"
+                return
+            if latest.status == "completed":
+                outcome = "completed"
+                reason_code = None
+            elif latest.status == "failed":
+                outcome = "failed"
+                reason_code = latest.error_code or "RUNTIME_ERROR"
+            else:
+                outcome = "aborted"
+                reason_code = "WORKER_LEASE_LOST"
+                return
         except CircuitOpenError:
             outcome = "failed"
             reason_code = "CIRCUIT_OPEN"
