@@ -11,15 +11,19 @@ from app.services.workflow.checkpoint import WorkflowExecutionResumeAssessment
 from app.services.workflow.execution import WorkflowExecutionService
 
 
+class _NestedTransaction:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 @pytest.fixture
 def resume_service() -> WorkflowExecutionService:
     db = SimpleNamespace(
-        add=Mock(),
-        flush=AsyncMock(),
-        commit=AsyncMock(),
-        refresh=AsyncMock(),
-        rollback=AsyncMock(),
-        execute=AsyncMock(),
+        add=Mock(), flush=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock(), rollback=AsyncMock(),
+        execute=AsyncMock(), begin_nested=Mock(return_value=_NestedTransaction()),
     )
     service = WorkflowExecutionService(db)  # type: ignore[arg-type]
     service.governance.audit = AsyncMock()
@@ -29,43 +33,26 @@ def resume_service() -> WorkflowExecutionService:
 
 def _source_execution(*, status: str = "failed", worker_owner: str | None = None):
     return SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        created_by=uuid4(),
-        status=status,
-        worker_owner=worker_owner,
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), created_by=uuid4(),
+        status=status, worker_owner=worker_owner, worker_attempt=0, worker_lease_expires_at=None,
         input_data={"original": True},
     )
 
 
 def _checkpoint(source):
     return SimpleNamespace(
-        id=uuid4(),
-        sequence=3,
-        checkpoint_reason="node.completed",
-        execution_status="running",
-        node_status="completed",
-        node_id="agent-1",
-        state_data={"answer": "checkpoint-state"},
-        input_data={"source": "node-input"},
-        output_data={"answer": "checkpoint-state"},
-        execution_id=source.id,
+        id=uuid4(), sequence=3, checkpoint_reason="node.completed", execution_status="running",
+        node_status="completed", node_id="agent-1", state_data={"answer": "checkpoint-state"},
+        input_data={"source": "node-input"}, output_data={"answer": "checkpoint-state"}, execution_id=source.id,
     )
 
 
 def _assessment(source, checkpoint):
     return WorkflowExecutionResumeAssessment(
-        eligible=True,
-        reason_code="eligible",
-        execution_id=source.id,
-        workflow_version_id=source.workflow_version_id,
-        checkpoint_id=checkpoint.id,
-        checkpoint_sequence=checkpoint.sequence,
-        node_id=checkpoint.node_id,
-        state_data=dict(checkpoint.state_data),
-        input_data=dict(checkpoint.input_data),
+        eligible=True, reason_code="eligible", execution_id=source.id,
+        workflow_version_id=source.workflow_version_id, checkpoint_id=checkpoint.id,
+        checkpoint_sequence=checkpoint.sequence, node_id=checkpoint.node_id,
+        state_data=dict(checkpoint.state_data), input_data=dict(checkpoint.input_data),
         output_data=dict(checkpoint.output_data),
         resume_idempotency_key=f"resume:{source.id}:checkpoint:{checkpoint.sequence}",
     )
@@ -80,12 +67,10 @@ async def test_resume_creates_pending_execution_with_fixed_version_and_checkpoin
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=checkpoint)
     resume_service.checkpoint_recovery.assess = Mock(return_value=_assessment(source, checkpoint))
-    resume_service.db.execute = AsyncMock(
-        side_effect=[
-            SimpleNamespace(scalar_one_or_none=lambda: version),
-            SimpleNamespace(scalar_one_or_none=lambda: None),
-        ]
-    )
+    resume_service.db.execute = AsyncMock(side_effect=[
+        SimpleNamespace(scalar_one_or_none=lambda: version),
+        SimpleNamespace(scalar_one_or_none=lambda: None),
+    ])
 
     result = await resume_service.resume_from_latest_checkpoint(source, actor_id)
 
@@ -106,21 +91,17 @@ async def test_resume_is_idempotent_for_same_source_and_checkpoint(resume_servic
     source = _source_execution()
     checkpoint = _checkpoint(source)
     existing = SimpleNamespace(
-        id=uuid4(),
-        resume_of_execution_id=source.id,
-        resume_checkpoint_sequence=checkpoint.sequence,
-        status="pending",
+        id=uuid4(), resume_of_execution_id=source.id,
+        resume_checkpoint_sequence=checkpoint.sequence, status="pending",
     )
     version = SimpleNamespace(id=source.workflow_version_id, definition={"config": {}, "nodes": []})
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=checkpoint)
     resume_service.checkpoint_recovery.assess = Mock(return_value=_assessment(source, checkpoint))
-    resume_service.db.execute = AsyncMock(
-        side_effect=[
-            SimpleNamespace(scalar_one_or_none=lambda: version),
-            SimpleNamespace(scalar_one_or_none=lambda: existing),
-        ]
-    )
+    resume_service.db.execute = AsyncMock(side_effect=[
+        SimpleNamespace(scalar_one_or_none=lambda: version),
+        SimpleNamespace(scalar_one_or_none=lambda: existing),
+    ])
 
     result = await resume_service.resume_from_latest_checkpoint(source, uuid4())
 
@@ -135,9 +116,7 @@ async def test_resume_rejects_live_worker_ownership(resume_service):
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=None)
     resume_service.checkpoint_recovery.assess = Mock(return_value=WorkflowExecutionResumeAssessment(
-        eligible=False,
-        reason_code="worker_ownership_active",
-        execution_id=source.id,
+        eligible=False, reason_code="worker_ownership_active", execution_id=source.id,
         workflow_version_id=source.workflow_version_id,
     ))
 
@@ -155,9 +134,7 @@ async def test_resume_rejects_missing_or_invalid_checkpoint(resume_service):
     resume_service._lock_execution = AsyncMock(return_value=source)
     resume_service.checkpoint.latest = AsyncMock(return_value=None)
     resume_service.checkpoint_recovery.assess = Mock(return_value=WorkflowExecutionResumeAssessment(
-        eligible=False,
-        reason_code="checkpoint_missing",
-        execution_id=source.id,
+        eligible=False, reason_code="checkpoint_missing", execution_id=source.id,
         workflow_version_id=source.workflow_version_id,
     ))
 
