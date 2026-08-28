@@ -51,7 +51,7 @@ def _scalar_result(value):
     ("execution_status", "next_identity"),
     [
         ("completed", MagicMock()),
-        ("running", None),
+        ("failed", None),
     ],
 )
 async def test_progression_rejects_execution_lifecycle_drift(
@@ -101,6 +101,7 @@ async def test_terminal_progression_uses_locked_running_execution_as_lifecycle_s
     db = MagicMock()
     db.execute = AsyncMock()
     db.commit = AsyncMock()
+    db.flush = AsyncMock()
     frontier = _frontier()
     execution = _execution(frontier, "running")
     current_lookup = _scalar_result(None)
