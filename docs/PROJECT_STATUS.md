@@ -4,13 +4,13 @@
 
 - Repository: `AnRedSky/enterprise-ai-agent-platform`
 - Branch: `main`
-- 当前阶段：**Phase 2.7 Advanced Workflow Orchestration 主线生产开发已完成，进入本地测试、回归修复与验收准备阶段。**
+- 当前阶段：**Phase 2.7 Advanced Workflow Orchestration 主线生产开发已完成；本地 Backend Unit / Default Regression 已通过，进入 Migration、Real API、Frontend / E2E 验收收口，同时启动 Phase 2.8-A Multi-Agent Collaboration Contract 冻结。**
 - Phase 2.2 Retrieval Production Quality：已正式关闭。
 - Phase 2.3 Model Provider Governance：已正式关闭。
-- Phase 2.4 Durable Scheduler：生产实现继续收口；Persistence、Runtime、Scheduler API Contract、tenant isolation / misfire、API/Scheduler 进程解耦及双循环生命周期监督均已实现。
+- Phase 2.4 Durable Scheduler：生产实现已完成并收口。
 - Phase 2.5 Scheduler → Worker Execution Decoupling：已正式关闭。
-- Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；DAG 分支 Resume / 多-frontier Runtime 已完成本阶段主线收口。
-- Phase 2.7 Conditional Branching、Durable Frontier Scheduling、Recovery / Replay Closure：**主线生产开发已完成；已开始基于真实本地结果进行回归修复。**
+- Phase 2.6 Durable Execution Checkpoint Foundation：生产代码实现已完成；DAG 分支 Resume / 多-frontier Runtime 已完成主线收口。
+- Phase 2.7 Conditional Branching、Durable Frontier Scheduling、Recovery / Replay Closure：**主线生产开发已完成；本轮本地回归修复已验证通过。**
 
 ## Phase 2.7 主线完成清单
 
@@ -62,7 +62,7 @@
 - Replay Execution lock boundary：✅
 - Generic Execution `completed/failed` terminalization Frontier bypass：✅
 
-## Phase 2.7 最终代码级审计
+## 当前代码级不变量
 
 ```text
 Success terminalization              ✅
@@ -87,82 +87,107 @@ Execution terminal write bypass      ✅
 - Success / Failure terminalization 统一遵循 Frontier → Execution 锁序；
 - Execution 通用 `completed/failed` 入口不得绕过活动 Frontier guard。
 
-## 当前本地回归结果
+## 2026-08-28 本地回归结果
 
-开发者于 2026-08-28 在 `backend` 实际执行：
+以下结果来自开发者实际本地执行，不是预填结果：
 
-### Durable Resume targeted
-
-```text
-uv run pytest -q \
-  tests/unit/test_workflow_resume_contract.py \
-  tests/unit/test_workflow_resume_contract_tenant_scope.py \
-  tests/unit/test_workflow_resume_reconciliation.py \
-  tests/unit/test_durable_resume_runtime.py
-
-15 passed, 1 failed
-```
-
-失败：`test_resume_contract_reads_checkpoint_with_locked_execution_tenant_scope`。
-原因已定位为测试 checkpoint fixture 缺少正式 Durable Checkpoint 的 `execution_id` lineage 字段。
-
-### Frontier targeted
+### Phase 2.7 受影响测试 targeted
 
 ```text
 uv run pytest -q \
-  tests/unit/test_frontier_progression.py \
-  tests/unit/test_frontier_progression_lifecycle.py \
-  tests/unit/test_frontier_terminal_replay_lifecycle.py \
-  tests/unit/test_frontier_terminalization_atomicity.py \
-  tests/unit/test_frontier_progression_worker_epoch.py \
-  tests/unit/test_frontier_recovery_contract.py \
-  tests/unit/test_frontier_stale_lease_completion.py \
-  tests/unit/test_frontier_tenant_candidate.py \
-  tests/unit/test_durable_frontier_worker_dispatch.py
+  tests/unit/test_workflow_automatic_recovery_service.py \
+  tests/unit/test_workflow_checkpoint_frontier_idempotency.py \
+  tests/unit/test_workflow_dag_decision_trace_idempotency.py \
+  tests/unit/test_workflow_frontier_repository.py \
+  tests/unit/test_workflow_recovery_lifecycle_closure.py \
+  tests/unit/test_workflow_recovery_scheduler.py \
+  tests/unit/test_workflow_resume_api_contract.py
 
-37 passed, 6 failed
+27 passed in 1.23s
 ```
 
-失败集中在测试 double / fixture 与当前 Durable Contract 的查询顺序、lifecycle / replay boundary、SQLAlchemy bind parameter 以及 Worker epoch 行为断言不一致，具体记录见 `docs/04-errors/2026-08-28-phase-2-7-resume-frontier-contract-fixture-drift.md`。
-
-## 本轮已提交修复
-
-- `75d984a` `test(workflow): complete resume tenant checkpoint fixture`
-- `8dacbc3` `test(workflow): align frontier replay lifecycle doubles`
-- `3af27dc` `test(workflow): align frontier terminalization async fixtures`
-- `d7453a2` `test(workflow): assert frontier candidate lifecycle parameters`
-- `6af7ab2` `test(workflow): assert frontier and worker epochs by behavior`
-
-这些提交只修正测试与正式 Contract 的漂移，没有降低生产代码的 lifecycle、tenant、lease、fencing 或 replay 安全约束。
-
-**注意：以上修复尚未由开发者重新执行确认，当前不得标记为 PASS。**
-
-## 下一步
+### Durable Resume / Execution / DAG / Frontier targeted regression
 
 ```text
-重新执行 Resume targeted
-  ↓
-重新执行 Frontier targeted
-  ↓
-执行 Durable Resume / Execution / DAG / Frontier targeted regression
-  ↓
-处理下一组真实失败与警告
-  ↓
-Backend Unit / Default Regression
-  ↓
-Alembic head / migration verification
-  ↓
-Real HTTP API Gate
-  ↓
+scripts/test/workflow/01_resume_runtime_regression.ps1
+
+96 passed in 2.06s
+```
+
+### Backend full unit regression + RuntimeWarning gate
+
+```text
+scripts/test/workflow/02_full_unit_regression.ps1
+
+811 passed, 3 skipped, 41 deselected in 36.54s
+[PASS] Backend full unit regression completed successfully without RuntimeWarning.
+```
+
+### Backend default regression
+
+```text
+uv run pytest -q
+
+811 passed, 3 skipped, 41 deselected in 33.55s
+```
+
+因此，前一轮 7 个失败已经全部收口；没有残留 RuntimeWarning。3 个 skipped 与 41 个 deselected 属于当前测试选择规则，不计为失败。
+
+## 已修复的上一轮真实问题
+
+- Recovery automatic service 的 async double 与实际 coroutine contract 对齐；
+- Frontier completion mismatch fixture 改为验证 fail-closed，而不是伪造幂等成功；
+- DAG decision trace fixture 改用连续 `execute()` 返回序列；
+- Frontier claim fixture 补齐 overlap query 与 `attempt=0` 初始状态；
+- Incomplete Resume reconcile fixture 对齐事务边界；
+- Recovery Scheduler fixture 对齐真实 session 生命周期与结构化日志；
+- Resume API route double 补齐 `refresh()`。
+
+以上问题均通过后续本地回归验证，不降低生产代码的 tenant、lease、fencing、replay 或 lifecycle 安全约束。
+
+## 当前验收顺序
+
+```text
+Backend Unit / Default Regression       ✅
+        ↓
+Migration / DB verification              ← 下一步
+        ↓
+Real HTTP API Gate                       ← 紧随其后
+        ↓
 Frontend Gate
-  ↓
+        ↓
 Browser / Frontend-Backend E2E（如范围需要）
-  ↓
+        ↓
 本地手动场景
-  ↓
-根据真实失败结果形成修复提交
-  ↓
-更新 Acceptance / PROJECT_STATUS
+        ↓
+Phase 2.7 Acceptance / Status / Error 收口
+        ↓
+Phase 2.8-A Multi-Agent Contract 冻结
+        ↓
+Phase 2.8 Backend Domain + API 实现
 ```
 
-测试结果只能来自实际本地执行；未执行不得标记 PASS。
+## Phase 2.8-A 下一任务
+
+已新增 `docs/02-phases/PHASE_2_8_A_CONTRACT.md`，冻结 Multi-Agent Collaboration 首版边界：
+
+- 受治理 Agent Delegation；
+- tenant / agent version / permission guard；
+- delegation idempotency；
+- context isolation；
+- depth / active-count / timeout / model budget；
+- Worker completion fencing；
+- Audit / Trace 父子链路；
+- 不引入第二套 Workflow Retry / Recovery 状态机。
+
+**Contract 通过前不创建 Multi-Agent Migration 或生产 Service / Runtime，避免先写代码再返工数据模型和权限边界。**
+
+## 当前未执行 Gate
+
+以下均必须以开发者本地实际执行结果为准，目前不标记 PASS：
+
+- `uv run alembic upgrade head` / migration head verification；
+- Real HTTP API Gate；
+- Frontend Vitest / production build；
+- Browser / Frontend-Backend E2E；
+- Phase 2.7 最终人工场景验收。
