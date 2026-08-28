@@ -4,6 +4,7 @@ $ErrorActionPreference = "Stop"
 $Backend = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 $Repository = Split-Path -Parent $Backend
 Set-Location $Backend
+$script:ApiProcess = $null
 
 function Assert-ExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }
@@ -64,34 +65,38 @@ function Get-AutomatedAccessToken([string]$ApiUrl) {
     return $login.access_token
 }
 
-Write-Host "============================================================"
-Write-Host "Enterprise AI Agent Platform - Phase 2.8 B2 Worker Bridge Gate"
-Write-Host "============================================================"
+try {
+    Write-Host "============================================================"
+    Write-Host "Enterprise AI Agent Platform - Phase 2.8 B2 Worker Bridge Gate"
+    Write-Host "============================================================"
 
-Write-Host "[1/4] B2 bridge Unit"
-uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py
-Assert-ExitCode "B2 bridge unit gate failed."
+    Write-Host "[1/4] B2 bridge Unit"
+    uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py
+    Assert-ExitCode "B2 bridge unit gate failed."
 
-Write-Host "[2/4] Backend default regression"
-uv run pytest -q
-Assert-ExitCode "Backend default regression failed."
+    Write-Host "[2/4] Backend default regression"
+    uv run pytest -q
+    Assert-ExitCode "Backend default regression failed."
 
-Write-Host "[3/4] Migration/head verification"
-uv run alembic upgrade head
-Assert-ExitCode "Alembic upgrade head failed."
-uv run alembic current
-Assert-ExitCode "Alembic current failed."
+    Write-Host "[3/4] Migration/head verification"
+    uv run alembic upgrade head
+    Assert-ExitCode "Alembic upgrade head failed."
+    uv run alembic current
+    Assert-ExitCode "Alembic current failed."
 
-Write-Host "[4/4] Real HTTP + PostgreSQL B2 Worker Execution Bridge"
-Ensure-Infrastructure
-$ApiBaseUrl = Ensure-ApiService
-$env:API_BASE_URL = $ApiBaseUrl
-$env:ACCESS_TOKEN = Get-AutomatedAccessToken $ApiBaseUrl
-uv run pytest -q -o "addopts=" -m real_api tests/api_real/test_agent_delegation_bridge_api.py
-Assert-ExitCode "B2 Worker Execution Bridge real acceptance failed."
+    Write-Host "[4/4] Real HTTP + PostgreSQL B2 Worker Execution Bridge"
+    Ensure-Infrastructure
+    $ApiBaseUrl = Ensure-ApiService
+    $env:API_BASE_URL = $ApiBaseUrl
+    $env:ACCESS_TOKEN = Get-AutomatedAccessToken $ApiBaseUrl
+    uv run pytest -q -o "addopts=" -m real_api tests/api_real/test_agent_delegation_bridge_api.py
+    Assert-ExitCode "B2 Worker Execution Bridge real acceptance failed."
 
-Write-Host "[PASS] Phase 2.8 B2 Worker Execution Bridge gate completed."
-
-if ($script:ApiProcess) {
-    Stop-Process -Id $script:ApiProcess.Id -Force -ErrorAction SilentlyContinue
+    Write-Host "[PASS] Phase 2.8 B2 Worker Execution Bridge gate completed."
+} finally {
+    Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue
+    Remove-Item Env:API_BASE_URL -ErrorAction SilentlyContinue
+    if ($script:ApiProcess) {
+        Stop-Process -Id $script:ApiProcess.Id -Force -ErrorAction SilentlyContinue
+    }
 }
