@@ -1,8 +1,4 @@
-"""DAG Frontier progression 单元测试。
-
-职责：验证 Multi-frontier 完成事实经过唯一 Planner 后能够生成确定性 Next Frontier identity。
-边界：不连接数据库，不执行 Worker，不验证真实 HTTP。
-"""
+"""DAG Frontier progression 单元测试。"""
 
 from uuid import uuid4
 
@@ -14,11 +10,9 @@ from app.services.workflow.checkpoint.recovery.dag_runtime import WorkflowDagRes
 
 def _plan(*frontier: str) -> WorkflowDagResumeRuntimePlan:
     return WorkflowDagResumeRuntimePlan(
-        completed_node_ids=("root",),
-        frontier_node_ids=frontier,
+        completed_node_ids=("root",), frontier_node_ids=frontier,
         nodes=tuple({"id": node, "type": "agent", "config": {}} for node in frontier),
-        state_data={"value": 1},
-        decision_fingerprint="current-decision",
+        state_data={"value": 1}, decision_fingerprint="current-decision",
     )
 
 
@@ -31,21 +25,12 @@ def test_plan_next_frontier_recomputes_identity_from_completed_facts() -> None:
             {"id": "a", "type": "agent", "config": {}},
             {"id": "b", "type": "agent", "config": {}},
         ],
-        "edges": [
-            {"source": "root", "target": "a"},
-            {"source": "root", "target": "b"},
-        ],
+        "edges": [{"source": "root", "target": "a"}, {"source": "root", "target": "b"}],
     }
-
     result = WorkflowDagFrontierProgressionService.plan_next_frontier(
-        definition=definition,
-        execution_id=execution_id,
-        workflow_version_id=version_id,
-        current_plan=_plan("root"),
-        completed_node_ids={"root"},
-        state_data_by_node={"root": {"value": 1}},
+        definition=definition, execution_id=execution_id, workflow_version_id=version_id,
+        current_plan=_plan("root"), completed_node_ids={"root"}, state_data_by_node={"root": {"value": 1}},
     )
-
     assert result.resume_plan.frontier_node_ids == ("a", "b")
     assert result.identity is not None
     assert result.identity.execution_id == execution_id
@@ -58,38 +43,31 @@ def test_plan_next_frontier_returns_terminal_without_identity() -> None:
     definition = {
         "nodes": [
             {"id": "root", "type": "input", "config": {}},
+            {"id": "output", "type": "output", "config": {}},
         ],
-        "edges": [],
+        "edges": [{"source": "root", "target": "output"}],
     }
-
     result = WorkflowDagFrontierProgressionService.plan_next_frontier(
-        definition=definition,
-        execution_id=uuid4(),
-        workflow_version_id=uuid4(),
-        current_plan=_plan("root"),
-        completed_node_ids={"root"},
-        state_data_by_node={"root": {"value": 1}},
+        definition=definition, execution_id=uuid4(), workflow_version_id=uuid4(),
+        current_plan=WorkflowDagResumeRuntimePlan(
+            completed_node_ids=("root", "output"), frontier_node_ids=("output",),
+            nodes=({"id": "output", "type": "output", "config": {}},),
+            state_data={"value": 1}, decision_fingerprint="terminal-decision",
+        ),
+        completed_node_ids={"root", "output"},
+        state_data_by_node={"root": {"value": 1}, "output": {"value": 2}},
     )
-
     assert result.resume_plan.frontier_node_ids == ()
     assert result.identity is None
 
 
 def test_plan_next_frontier_rejects_incomplete_current_frontier() -> None:
     definition = {
-        "nodes": [
-            {"id": "root", "type": "input", "config": {}},
-            {"id": "a", "type": "agent", "config": {}},
-        ],
+        "nodes": [{"id": "root", "type": "input", "config": {}}, {"id": "a", "type": "agent", "config": {}}],
         "edges": [{"source": "root", "target": "a"}],
     }
-
     with pytest.raises(ValueError, match="尚未全部形成 completed durable facts"):
         WorkflowDagFrontierProgressionService.plan_next_frontier(
-            definition=definition,
-            execution_id=uuid4(),
-            workflow_version_id=uuid4(),
-            current_plan=_plan("a"),
-            completed_node_ids={"root"},
-            state_data_by_node={"root": {"value": 1}},
+            definition=definition, execution_id=uuid4(), workflow_version_id=uuid4(),
+            current_plan=_plan("a"), completed_node_ids={"root"}, state_data_by_node={"root": {"value": 1}},
         )
