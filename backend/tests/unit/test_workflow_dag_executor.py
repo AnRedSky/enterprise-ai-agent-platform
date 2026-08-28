@@ -13,7 +13,7 @@ def _plan():
         nodes=(
             {"id": "branch-a", "type": "input", "config": {}},
             {"id": "branch-b", "type": "input", "config": {}},
-        ), state_data={},
+        ), state_data={"merged": True},
     )
 
 
@@ -25,8 +25,7 @@ async def test_multi_frontier_executes_each_branch_with_isolated_state_and_requi
         state[node["id"]] = "completed"
         return state
     result = await WorkflowDagMultiFrontierExecutor.execute(
-        SimpleNamespace(**_plan().__dict__, state_data={"merged": True}),
-        branch_state_data={"branch-a": {"a": 1}, "branch-b": {"b": 2}}, executor=executor,
+        _plan(), branch_state_data={"branch-a": {"a": 1}, "branch-b": {"b": 2}}, executor=executor,
     )
     assert [item[0] for item in seen] == ["branch-a", "branch-b"]
     assert seen[0][1] == {"a": 1}
