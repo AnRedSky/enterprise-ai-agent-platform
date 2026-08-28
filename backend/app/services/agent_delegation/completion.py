@@ -98,7 +98,7 @@ async def complete_delegation(
         HTTPException: generation 失效、Worker Execution 未完成或状态转换非法。
 
     事务边界：Delegation 状态、结果关联、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
-    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，确保 terminal state 的 durable write 与 fencing 条件保持同一数据库边界。
+    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并从 UPDATE RETURNING 获取数据库实际写入的实体，避免批量 DML 后继续使用旧 ORM identity。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -114,23 +114,27 @@ async def complete_delegation(
         raise HTTPException(409, str(exc)) from exc
 
     now = utcnow_naive()
-    result = await db.execute(
-        update(AgentDelegation)
-        .where(
-            AgentDelegation.id == delegation_id,
-            AgentDelegation.tenant_id == tenant_id,
-            AgentDelegation.status == "running",
-            AgentDelegation.worker_execution_id == worker_execution_id,
+    updated = (
+        await db.execute(
+            update(AgentDelegation)
+            .where(
+                AgentDelegation.id == delegation_id,
+                AgentDelegation.tenant_id == tenant_id,
+                AgentDelegation.status == "running",
+                AgentDelegation.worker_execution_id == worker_execution_id,
+            )
+            .values(
+                status="completed",
+                ended_at=now,
+                error_code=None,
+                error_message=None,
+            )
+            .returning(AgentDelegation)
         )
-        .values(
-            status="completed",
-            ended_at=now,
-            error_code=None,
-            error_message=None,
-        )
-    )
-    if result.rowcount != 1:
+    ).scalars().all()
+    if len(updated) != 1:
         raise HTTPException(409, "Delegation Worker generation 已失效，完成写入被拒绝")
+    delegation = updated[0]
 
     db.add(AuditLog(
         actor_id=execution.created_by,
@@ -187,7 +191,7 @@ async def fail_delegation(
         HTTPException: generation 失效、Worker Execution 状态不匹配或状态转换非法。
 
     事务边界：Delegation 失败状态、错误字段、AuditLog 与 Trace 在同一事务提交；父 Workflow Execution 不在本函数中改变。
-    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，确保 terminal state 的 durable write 与 fencing 条件保持同一数据库边界。
+    状态写入使用带 tenant、running 状态和 Worker generation 条件的 SQL UPDATE，并从 UPDATE RETURNING 获取数据库实际写入的实体，避免批量 DML 后继续使用旧 ORM identity。
     """
     delegation, execution = await _lock_delegation(
         db,
@@ -208,23 +212,27 @@ async def fail_delegation(
     if not normalized_error_code or not normalized_error_message:
         raise HTTPException(422, "Delegation 失败收敛必须提供 error_code 与 error_message")
 
-    result = await db.execute(
-        update(AgentDelegation)
-        .where(
-            AgentDelegation.id == delegation_id,
-            AgentDelegation.tenant_id == tenant_id,
-            AgentDelegation.status == "running",
-            AgentDelegation.worker_execution_id == worker_execution_id,
+    updated = (
+        await db.execute(
+            update(AgentDelegation)
+            .where(
+                AgentDelegation.id == delegation_id,
+                AgentDelegation.tenant_id == tenant_id,
+                AgentDelegation.status == "running",
+                AgentDelegation.worker_execution_id == worker_execution_id,
+            )
+            .values(
+                status="failed",
+                ended_at=now,
+                error_code=normalized_error_code,
+                error_message=normalized_error_message,
+            )
+            .returning(AgentDelegation)
         )
-        .values(
-            status="failed",
-            ended_at=now,
-            error_code=normalized_error_code,
-            error_message=normalized_error_message,
-        )
-    )
-    if result.rowcount != 1:
+    ).scalars().all()
+    if len(updated) != 1:
         raise HTTPException(409, "Delegation Worker generation 已失效，失败写入被拒绝")
+    delegation = updated[0]
 
     db.add(AuditLog(
         actor_id=execution.created_by,

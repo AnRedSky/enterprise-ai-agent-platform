@@ -45,7 +45,7 @@ WorkflowExecution.status == "completed"
 AgentDelegation.status == "running"
 ```
 
-因此 Delegation completion/failure Service 进一步强化为**带完整 fencing 条件的数据库终态写入**：
+因此 Delegation completion/failure Service 进一步强化为带完整 fencing 条件的数据库终态写入：
 
 ```text
 UPDATE agent_delegations
@@ -59,19 +59,42 @@ WHERE id = delegation_id
   AND worker_execution_id = current_worker_execution_id
 ```
 
-并要求 `rowcount == 1`；否则立即返回 409，拒绝把 stale Worker generation 当作成功完成。AuditLog、WorkflowTraceEvent 与该状态写入继续在同一事务提交。
+并要求恰好更新一行；否则立即返回 409，拒绝把 stale Worker generation 当作成功完成。AuditLog、WorkflowTraceEvent 与该状态写入继续在同一事务提交。
 
-这样将“状态校验”和“终态 durable write”绑定到同一数据库条件，避免仅依赖 ORM identity state 承载最终 fencing 写入。
+## 6. 第三阶段本地反馈与修复方向
 
-## 6. 修复提交
+开发者在 `9565c559` 本地实际执行 B2 Gate 后，第二阶段 fenced UPDATE 仍未使独立 Session 观察到 `AgentDelegation.status == completed`：
+
+```text
+B2 bridge Unit             3 passed
+B2 Backend regression      850 passed, 3 skipped, 46 deselected
+B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
+B2 Real Gate               1 failed, 2 passed
+
+AssertionError: assert 'running' == 'completed'
+```
+
+该反馈说明问题已经进一步收敛到 **Delegation completion Service 的 ORM identity / DML 状态同步边界**，而不是 Target Agent Runtime、Model Profile Snapshot、Worker Execution terminalization 或 generation fence 本身。
+
+本轮修复将 completion/failure 的终态 DML 改为 PostgreSQL `UPDATE ... RETURNING AgentDelegation`，并以数据库实际返回的终态实体继续完成 AuditLog、Trace 与事务提交。这样不再依赖批量 DML 执行后 Session identity map 对原 ORM 实例的隐式同步行为。
+
+本修复仍保持：
+
+- tenant + `running` + `worker_execution_id` 三重数据库 fencing；
+- `SELECT ... FOR UPDATE` 的 Delegation 行锁；
+- Worker Runtime 当前 AsyncSession；
+- completion/failure、AuditLog、Trace 同一事务；
+- stale Worker generation 不能写入终态；
+- 不新增 Worker、Lease、Retry、Recovery 或 Provider 实现。
+
+## 7. 修复提交
 
 - `796c29ad` — `fix(worker): finalize delegation in active runtime session`
 - `5676fff` — `fix(worker): finalize delegation in active runtime session`
 - `036868ac` — `fix(delegation): persist terminal state with fenced update`
+- 下一修复提交：`UPDATE ... RETURNING` 明确采用数据库返回实体作为 terminal state 权威来源。
 
-其中前两个提交解决 Worker Runtime Session / SQLAlchemy 查询问题；`036868ac` 进一步将 Delegation terminal state 写入收敛为带 tenant + running status + Worker generation 的 SQL fencing update。
-
-## 7. 验证要求
+## 8. 验证要求
 
 必须由开发者本地实际执行，不以 GitHub Actions 结果替代：
 

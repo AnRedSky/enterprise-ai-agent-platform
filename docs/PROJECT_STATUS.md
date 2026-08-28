@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前最新代码提交：`036868ac` — `fix(delegation): persist terminal state with fenced update`
+- 当前最新代码提交：本轮 B2/B3 Delegation terminal DML identity 同步修复
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
@@ -25,11 +25,11 @@
 - B2 synthetic Runtime 已修复与 DAG validator 的 Contract 冲突；
 - B3 Delegation completion/failure 已进入生产代码：以 `worker_execution_id` 作为 Worker generation fencing identity，在当前 generation 仍有效且 Worker Execution 已进入对应终态时收敛 Delegation；
 - 注册用户现在在同一事务中绑定默认 Tenant 对应的 active Organization，保证后续 Governance membership 边界成立；
-- B2 Real Gate 已暴露 Worker Runtime 的 AsyncSession / Delegation finalize 事务边界问题，并完成两阶段生产修复：Worker Runtime finalize 复用当前 AsyncSession；Delegation completion/failure 进一步使用带 tenant、running 状态和 Worker generation 条件的 SQL fenced update 持久化 terminal state。
+- B2 Real Gate 已暴露 Worker Runtime 的 AsyncSession / Delegation finalize 事务边界问题，并完成两阶段生产修复：Worker Runtime finalize 复用当前 AsyncSession；Delegation completion/failure 使用带 tenant、running 状态和 Worker generation 条件的 SQL fenced update 持久化 terminal state。
 
 ## 3. 最新本地验收反馈
 
-开发者在 `a10511a0` 本地实际执行 B2 Gate：
+开发者在 `9565c559` 本地实际执行 B2 Gate：
 
 ```text
 B2 bridge Unit             3 passed
@@ -38,14 +38,21 @@ B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
 B2 Real Gate               1 failed, 2 passed
 ```
 
-本轮 Real Gate 已越过 Model Profile Snapshot Fixture 校验，并真正完成 Target Agent Runtime 与 Worker Execution terminalization；最终仍失败为：
+本轮已稳定越过：
+
+- Model Profile Snapshot Fixture；
+- Target Agent Runtime Bridge；
+- Worker Execution terminalization；
+- Worker generation context loading。
+
+最终仍失败为：
 
 ```text
 assert persisted.status == "completed"
 E AssertionError: assert 'running' == 'completed'
 ```
 
-随后已进一步修改 Delegation completion/failure 的 terminal durable write，尚未获得该新提交的本地 Gate 实际结果，因此当前仍不得标记 B2/B3 Real Gate 通过。
+随后针对 fenced terminal DML 的第二阶段修复仍未通过开发者本地 Gate，因此 B2/B3 Real Gate 当前继续保持未通过状态。本轮进一步将 completion/failure 的终态 DML 改为 PostgreSQL `UPDATE ... RETURNING AgentDelegation`，以数据库返回实体作为终态状态源。
 
 ## 4. B2 当前实现边界
 
@@ -77,7 +84,7 @@ Worker Execution terminalization
     ↓
 当前 Worker AsyncSession 中 Delegation completion/failure
     ↓
-带 tenant + running + worker_execution_id fencing 的 terminal UPDATE
+tenant + running + worker_execution_id fencing UPDATE ... RETURNING
 ```
 
 B2 不创建第二套 Worker、Lease、Retry、Recovery 或 Provider；不修改父 Workflow Version 数据库记录，不复制父 Execution checkpoint、memory 或 credential。
@@ -86,7 +93,7 @@ B2 synthetic Runtime 是单 Node 执行对象，不属于持久化 DAG，因此 
 
 Real Gate 的 Model Provider Fixture 必须由测试自动建立并绑定，不得依赖开发数据库中的默认 Provider/Profile。
 
-Worker generation identity 必须在任何 Runtime commit 前快照；Delegation finalize 必须复用当前 Worker AsyncSession，terminal write 同时使用数据库 fencing 条件。
+Worker generation identity 必须在任何 Runtime commit 前快照；Delegation finalize 必须复用当前 Worker AsyncSession，terminal write 同时使用数据库 fencing 条件，并以数据库 `RETURNING` 结果作为终态实体来源。
 
 ## 5. B3 当前实现
 
@@ -110,7 +117,7 @@ Worker Runtime
                            └── generation == 当前 Worker Execution
                            │
                            ▼
-                 fenced terminal UPDATE
+                 UPDATE ... RETURNING
                            │
                            ├── AuditLog
                            └── WorkflowTraceEvent
@@ -146,7 +153,7 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 | B2 Worker Execution Bridge 生产实现 | ✅ |
 | B2 Bridge Unit | ✅ 本地 3 passed |
 | B2 Backend regression | ✅ 本地 850 passed, 3 skipped, 46 deselected |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 第二阶段 terminal fenced write 修复，待本地复跑 |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 terminal DML identity 同步修复，待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
 | B3 Unit / Backend regression | ✅ 本地 30 passed / 850 passed |
 | B3 Real HTTP + PostgreSQL completion/fencing | 🔧 B2 新修复后待本地复跑 |
@@ -159,7 +166,7 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 ```text
 同步最新 main
     ↓
-验证 Delegation terminal fenced write 修复
+修复 Delegation terminal DML identity 同步边界
     ↓
 B2 Bridge Unit + Backend Regression + Migration
     ↓
