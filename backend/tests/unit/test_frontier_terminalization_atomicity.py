@@ -37,6 +37,7 @@ async def test_terminal_frontier_rejects_execution_owner_mismatch_before_checkpo
     execution.status = "running"
     execution.worker_owner = "other-worker"
     execution.worker_attempt = 3
+    execution.worker_lease_expires_at = datetime(2026, 8, 27, 9, 0)
     result = MagicMock()
     result.scalar_one_or_none.return_value = execution
     db.execute.return_value = result
@@ -48,7 +49,7 @@ async def test_terminal_frontier_rejects_execution_owner_mismatch_before_checkpo
         "app.services.workflow.frontier_progression.WorkflowExecutionCheckpointService.append_next_in_transaction",
         new_callable=AsyncMock,
     ) as append:
-        with pytest.raises(FrontierProgressionContractError, match="Worker ownership 或 fencing generation 已失效"):
+        with pytest.raises(FrontierProgressionContractError, match="Execution Worker ownership 已失效"):
             await complete_frontier_with_checkpoint(
                 db,
                 frontier=frontier,
@@ -59,7 +60,7 @@ async def test_terminal_frontier_rejects_execution_owner_mismatch_before_checkpo
                 now=datetime(2026, 8, 27, 8, 0),
             )
 
-    transition.assert_awaited_once()
+    transition.assert_not_awaited()
     append.assert_not_awaited()
     db.commit.assert_not_awaited()
 
@@ -80,7 +81,7 @@ async def test_terminal_frontier_requires_running_execution_before_terminalizati
         "app.services.workflow.frontier_progression.transition_owned_frontier",
         new_callable=AsyncMock,
     ) as transition:
-        with pytest.raises(FrontierProgressionContractError, match="只能从 running Execution 收敛"):
+        with pytest.raises(FrontierProgressionContractError, match="当前 lifecycle 不允许 completion"):
             await complete_frontier_with_checkpoint(
                 db,
                 frontier=frontier,
@@ -91,7 +92,7 @@ async def test_terminal_frontier_requires_running_execution_before_terminalizati
                 now=datetime(2026, 8, 27, 8, 0),
             )
 
-    transition.assert_awaited_once()
+    transition.assert_not_awaited()
     db.commit.assert_not_awaited()
 
 
@@ -99,6 +100,17 @@ async def test_terminal_frontier_requires_running_execution_before_terminalizati
 async def test_non_terminal_frontier_keeps_execution_running_and_uses_worker_fencing_for_checkpoint() -> None:
     db = AsyncMock()
     frontier = _frontier()
+    execution = MagicMock()
+    execution.status = "running"
+    execution.worker_owner = "worker-a"
+    execution.worker_attempt = 3
+    execution.worker_lease_expires_at = datetime(2026, 8, 27, 9, 0)
+    execution.created_by = uuid4()
+    execution_result = MagicMock()
+    execution_result.scalar_one_or_none.return_value = execution
+    current_frontier_result = MagicMock()
+    current_frontier_result.scalar_one_or_none.return_value = None
+    db.execute.side_effect = [current_frontier_result, execution_result]
     checkpoint = MagicMock()
     next_frontier = MagicMock()
     next_identity = MagicMock()

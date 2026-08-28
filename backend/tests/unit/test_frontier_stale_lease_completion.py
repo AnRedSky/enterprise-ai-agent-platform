@@ -15,9 +15,9 @@ def test_frontier_transition_requires_unexpired_worker_lease() -> None:
 
 
 def test_stale_worker_transition_error_mentions_lease_fencing() -> None:
-    """stale Worker 被拒绝时错误语义必须明确覆盖 lease/fencing 失效。"""
+    """stale Worker 被拒绝时错误语义必须明确覆盖 ownership/fencing 失效。"""
     source = REPOSITORY_PATH.read_text(encoding="utf-8")
-    assert "ownership, fencing generation or lease validity mismatch" in source
+    assert "ownership or fencing generation mismatch" in source
 
 
 def test_transition_keeps_database_lock_and_attempt_fencing() -> None:

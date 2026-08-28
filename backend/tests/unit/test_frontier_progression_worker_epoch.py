@@ -12,7 +12,7 @@ def _source() -> str:
 
 def test_progression_distinguishes_frontier_attempt_from_execution_worker_epoch() -> None:
     source = _source()
-    assert "`attempt` 只代表当前 Frontier consumption attempt" in source
+    assert "`attempt` 只代表 Frontier consumption attempt" in source
     assert "Execution 的 `worker_attempt` 是独立的" in source
 
 

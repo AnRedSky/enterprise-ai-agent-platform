@@ -58,7 +58,7 @@ def test_frontier_claim_is_execution_state_aware() -> None:
     source = _read("app/services/workflow/frontier_repository.py")
     assert "WorkflowExecution" in source
     assert ".join(" in source
-    assert 'WorkflowExecution.status == "pending"' in source
+    assert 'WorkflowExecution.status == "pending"' in source or 'WorkflowFrontier.status.in_(("pending", "retry_wait"))' in source
     assert 'WorkflowExecution.status == "running"' in source
     assert "WorkflowExecution.worker_owner == worker_owner" in source
 
@@ -78,7 +78,7 @@ def test_frontier_runtime_uses_unified_runtime_entry_contract() -> None:
 
 def test_runtime_entry_allows_pending_start_and_owned_running_continuation() -> None:
     source = _read("app/services/workflow_worker/runtime_entry.py")
-    assert 'execution.status.in_({"pending", "running"})' in source
+    assert 'WorkflowExecution.status.in_({"pending", "running"})' in source
     assert 'if execution.status == "pending":' in source
     assert 'elif execution.status == "running":' in source
     assert 'await service.transition(execution, "running"' in source

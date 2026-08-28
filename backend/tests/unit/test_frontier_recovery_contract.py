@@ -58,7 +58,7 @@ async def test_recovery_query_excludes_terminal_execution_frontiers():
     )
 
     sql = str(db.statement.compile(dialect=postgresql.dialect()))
-    assert "workflow_execution.status IN" in sql
+    assert "workflow_executions.status IN" in sql
     assert recovered == [frontier]
     assert frontier.status == "retry_wait"
     assert frontier.worker_owner is None
@@ -69,7 +69,6 @@ async def test_recovery_query_excludes_terminal_execution_frontiers():
 
 def test_recovery_limit_must_be_positive():
     with pytest.raises(ValueError, match="limit must be positive"):
-        # 使用最小假的 Session，验证参数边界时不会进入数据库路径。
         import asyncio
 
         asyncio.run(

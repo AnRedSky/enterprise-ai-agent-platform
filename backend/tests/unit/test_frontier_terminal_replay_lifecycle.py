@@ -33,15 +33,19 @@ def _checkpoint(execution_status: str) -> MagicMock:
     return checkpoint
 
 
+def _checkpoint_result(execution_status: str) -> MagicMock:
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [_checkpoint(execution_status)]
+    return result
+
+
 @pytest.mark.asyncio
 async def test_running_completion_replay_requires_next_frontier_identity() -> None:
     db = AsyncMock()
     frontier = _frontier()
     current_lookup = MagicMock()
     current_lookup.scalar_one_or_none.return_value = frontier
-    checkpoint_lookup = MagicMock()
-    checkpoint_lookup.scalar_one_or_none.return_value = _checkpoint("running")
-    db.execute.side_effect = [current_lookup, checkpoint_lookup]
+    db.execute.side_effect = [current_lookup, _checkpoint_result("running")]
 
     with pytest.raises(FrontierProgressionContractError, match="Replay 必须提供原始 Next Frontier identity"):
         await complete_frontier_with_checkpoint(
@@ -62,9 +66,7 @@ async def test_completed_terminal_replay_rejects_next_frontier_identity() -> Non
     frontier = _frontier()
     current_lookup = MagicMock()
     current_lookup.scalar_one_or_none.return_value = frontier
-    checkpoint_lookup = MagicMock()
-    checkpoint_lookup.scalar_one_or_none.return_value = _checkpoint("completed")
-    db.execute.side_effect = [current_lookup, checkpoint_lookup]
+    db.execute.side_effect = [current_lookup, _checkpoint_result("completed")]
 
     next_identity = MagicMock()
     next_identity.key.return_value = "frontier-next"
