@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.models.workflow_execution import WorkflowNodeExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
 from app.runtime.workflow import WorkflowRuntime
 
 
@@ -33,9 +33,11 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
         `attempt - 1` 是跨 Worker Recovery 后仍然有效的 Retry 消耗量。
         """
         result = await self.db.execute(
-            select(WorkflowNodeExecution).where(
+            select(WorkflowNodeExecution)
+            .join(WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id)
+            .where(
                 WorkflowNodeExecution.execution_id == execution.id,
-                WorkflowNodeExecution.tenant_id == execution.tenant_id,
+                WorkflowExecution.tenant_id == execution.tenant_id,
             )
         )
         return sum(max(0, int(node.attempt or 1) - 1) for node in result.scalars().all())
@@ -65,9 +67,11 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
         """
         policy = self.resolve_retry_policy(node["config"])
         result = await self.db.execute(
-            select(WorkflowNodeExecution).where(
+            select(WorkflowNodeExecution)
+            .join(WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id)
+            .where(
                 WorkflowNodeExecution.execution_id == execution.id,
-                WorkflowNodeExecution.tenant_id == execution.tenant_id,
+                WorkflowExecution.tenant_id == execution.tenant_id,
                 WorkflowNodeExecution.node_id == node["id"],
             )
         )
@@ -149,9 +153,10 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
 
         result = await self.db.execute(
             select(WorkflowNodeExecution)
+            .join(WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id)
             .where(
                 WorkflowNodeExecution.execution_id == execution.id,
-                WorkflowNodeExecution.tenant_id == execution.tenant_id,
+                WorkflowExecution.tenant_id == execution.tenant_id,
                 WorkflowNodeExecution.status == "completed",
             )
         )
@@ -183,9 +188,10 @@ class DurableResumeWorkflowRuntime(WorkflowRuntime):
             return False
         result = await self.db.execute(
             select(WorkflowNodeExecution)
+            .join(WorkflowExecution, WorkflowExecution.id == WorkflowNodeExecution.execution_id)
             .where(
                 WorkflowNodeExecution.execution_id == execution.id,
-                WorkflowNodeExecution.tenant_id == execution.tenant_id,
+                WorkflowExecution.tenant_id == execution.tenant_id,
                 WorkflowNodeExecution.status == "completed",
             )
             .order_by(WorkflowNodeExecution.created_at.desc(), WorkflowNodeExecution.id.desc())
