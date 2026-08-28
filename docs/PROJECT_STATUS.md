@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码基线：`1418baf` — `fix(db): register complete ORM metadata before runtime claims`
+- 当前代码提交：`91bc472` — `fix(phase-2.8): harden B2 worker lease callback`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Workflow Worker Execution Bridge**
 
@@ -49,7 +49,7 @@ B1 PostgreSQL race        1 passed
 ```text
 B1 Claim
     ↓
-WorkflowExecution(worker_execution_id)
+WorkflowExecution.worker_execution_id
     ↓
 AgentDelegationRuntimeBridge
     ├── target_agent_version_id
