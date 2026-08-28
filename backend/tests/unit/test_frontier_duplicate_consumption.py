@@ -49,6 +49,8 @@ def _completed_checkpoint() -> MagicMock:
 
 
 def _completed_frontier_lookup(frontier: MagicMock) -> MagicMock:
+    """构造已完成 Frontier 查询结果，确保 Replay fixture 与生产状态契约一致。"""
+    frontier.status = "completed"
     result = MagicMock()
     result.scalar_one_or_none.return_value = frontier
     return result
