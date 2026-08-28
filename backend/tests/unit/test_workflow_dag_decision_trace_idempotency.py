@@ -1,4 +1,4 @@
-"""Unit coverage for idempotent durable DAG decision trace persistence."""
+"""Durable DAG Decision Trace 幂等与 Replay 收敛测试。"""
 
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -18,17 +18,18 @@ def _execution():
     return execution
 
 
+def _query_result(*rows):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = list(rows)
+    return result
+
+
 @pytest.mark.asyncio
 async def test_record_dag_decision_requires_trace_identity():
     service = WorkflowRecoveryTraceLinkService(MagicMock())
     result = await service.record_dag_decision(
-        execution=_execution(),
-        trace_id=None,
-        actor_id=None,
-        decision_id="decision-1",
-        completed_node_ids=[],
-        frontier_node_ids=["root"],
-        selected_predecessors=[],
+        execution=_execution(), trace_id=None, actor_id=None, decision_id="decision-1",
+        completed_node_ids=[], frontier_node_ids=["root"], selected_predecessors=[],
     )
     assert result is None
 
@@ -37,22 +38,18 @@ async def test_record_dag_decision_requires_trace_identity():
 async def test_record_dag_decision_is_idempotent_for_same_decision():
     db = MagicMock()
     db.execute = AsyncMock()
+    db.execute.side_effect = [_query_result(), _scalar_result := MagicMock()]
     existing = MagicMock()
     existing.data = {
-        "decision_id": "decision-1",
-        "completed_node_ids": ["source"],
+        "decision_id": "decision-1", "completed_node_ids": ["source"],
         "frontier_node_ids": ["target"],
         "selected_predecessors": [{"node_id": "target", "predecessor_node_ids": ["source"]}],
     }
-    db.execute.return_value.scalar_one_or_none.return_value = existing
+    _scalar_result.scalar_one_or_none.return_value = existing
     service = WorkflowRecoveryTraceLinkService(db)
     result = await service.record_dag_decision(
-        execution=_execution(),
-        trace_id="trace-1",
-        actor_id=None,
-        decision_id="decision-1",
-        completed_node_ids=["source"],
-        frontier_node_ids=["target"],
+        execution=_execution(), trace_id="trace-1", actor_id=None, decision_id="decision-1",
+        completed_node_ids=["source"], frontier_node_ids=["target"],
         selected_predecessors=[{"node_id": "target", "predecessor_node_ids": ["source"]}],
     )
     assert result is existing
@@ -65,23 +62,22 @@ async def test_record_dag_decision_rejects_existing_payload_drift():
     db.execute = AsyncMock()
     existing = MagicMock()
     existing.data = {
-        "decision_id": "decision-1",
-        "completed_node_ids": ["source"],
-        "frontier_node_ids": ["wrong-target"],
-        "selected_predecessors": [],
+        "decision_id": "decision-1", "completed_node_ids": ["source"],
+        "frontier_node_ids": ["wrong-target"], "selected_predecessors": [],
     }
-    db.execute.return_value.scalar_one_or_none.return_value = existing
+    db.execute.return_value = _query_result({"decision_id": "decision-1", "completed_node_ids": ["source"],
+                                               "frontier_node_ids": ["wrong-target"], "selected_predecessors": []})
+    db.execute.side_effect = None
+    # Replay consistency 查询必须返回历史 payload；随后幂等查询返回已有事件。
+    history_result = _query_result(existing.data)
+    lookup_result = MagicMock()
+    lookup_result.scalar_one_or_none.return_value = existing
+    db.execute.side_effect = [history_result, lookup_result]
     service = WorkflowRecoveryTraceLinkService(db)
-
-    with pytest.raises(ValueError, match="frontier_node_ids"):
+    with pytest.raises(ValueError, match="frontier 不一致"):
         await service.record_dag_decision(
-            execution=_execution(),
-            trace_id="trace-1",
-            actor_id=None,
-            decision_id="decision-1",
-            completed_node_ids=["source"],
-            frontier_node_ids=["target"],
-            selected_predecessors=[],
+            execution=_execution(), trace_id="trace-1", actor_id=None, decision_id="decision-1",
+            completed_node_ids=["source"], frontier_node_ids=["target"], selected_predecessors=[],
         )
     db.add.assert_not_called()
 
@@ -90,7 +86,8 @@ async def test_record_dag_decision_rejects_existing_payload_drift():
 async def test_record_dag_decision_persists_new_decision_without_business_state():
     db = MagicMock()
     db.execute = AsyncMock()
-    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.execute.side_effect = [_query_result(), MagicMock()]
+    db.execute.side_effect[1].scalar_one_or_none.return_value = None
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
@@ -98,12 +95,8 @@ async def test_record_dag_decision_persists_new_decision_without_business_state(
     execution = _execution()
 
     await service.record_dag_decision(
-        execution=execution,
-        trace_id="trace-1",
-        actor_id=None,
-        decision_id="decision-1",
-        completed_node_ids=["source"],
-        frontier_node_ids=["target"],
+        execution=execution, trace_id="trace-1", actor_id=None, decision_id="decision-1",
+        completed_node_ids=["source"], frontier_node_ids=["target"],
         selected_predecessors=[{"node_id": "target", "predecessor_node_ids": ["source"]}],
     )
 
