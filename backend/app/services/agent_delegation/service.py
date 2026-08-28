@@ -52,7 +52,7 @@ class AgentDelegationService:
             dict(settings.multi_agent_model_budget),
         )
 
-    async def _source_agent_version(self, execution: WorkflowExecution, actor_id: UUID) -> AgentVersion:
+    async def _source_agent_version(self, execution: WorkflowExecution, actor_id: UUID, admin: bool = False) -> AgentVersion:
         """从当前 Execution 的 Workflow Definition 确定 Orchestrator Agent version。"""
         version = (await self.db.execute(select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id))).scalar_one_or_none()
         if version is None:
@@ -79,7 +79,7 @@ class AgentDelegationService:
         source_version = result.scalar_one_or_none()
         if source_version is None:
             raise HTTPException(409, "Orchestrator Agent 尚未发布可运行版本")
-        if not (actor_id == execution.created_by or actor_id == UUID(str(execution.created_by))):
+        if not admin and actor_id != execution.created_by:
             raise HTTPException(403, "无权从当前 Workflow Execution 委派 Agent 子任务")
         return source_version
 
@@ -131,6 +131,7 @@ class AgentDelegationService:
         max_active_delegations: int | None = None,
         timeout_seconds: int | None = None,
         model_budget: dict | None = None,
+        admin: bool = False,
     ) -> AgentDelegation:
         """创建 tenant-scoped Delegation，并以数据库唯一约束保证并发幂等。"""
         source = (await self.db.execute(select(WorkflowExecution).where(
@@ -141,29 +142,31 @@ class AgentDelegationService:
             raise HTTPException(404, "Workflow Execution 不存在")
         if source.status in {"completed", "failed", "cancelled"}:
             raise HTTPException(409, "终态 Execution 不允许创建 Delegation")
-        if actor_id != source.created_by:
+        if not admin and actor_id != source.created_by:
             raise HTTPException(403, "无权从当前 Workflow Execution 创建 Delegation")
 
         defaults = self._defaults()
-        budget = validate_budget(
+        max_depth, max_active, timeout, normalized_model_budget = validate_budget(
             max_delegation_depth=defaults[0] if max_delegation_depth is None else max_delegation_depth,
             max_active_delegations=defaults[1] if max_active_delegations is None else max_active_delegations,
             timeout_seconds=defaults[2] if timeout_seconds is None else timeout_seconds,
             model_budget=defaults[3] if model_budget is None else model_budget,
         )
-        max_depth, max_active, timeout, normalized_model_budget = budget
-        if len(input_data) > 100:
-            raise HTTPException(422, "input_data 字段数量过多")
+        if not isinstance(input_data, dict) or len(input_data) > 100:
+            raise HTTPException(422, "input_data 必须为对象且字段数量不超过 100")
         if any(not isinstance(item, str) or not item or len(item) > 256 for item in selected_context_refs):
             raise HTTPException(422, "selected_context_refs 包含无效引用")
         if any(not isinstance(item, str) or not item or len(item) > 128 for item in allowed_tools):
             raise HTTPException(422, "allowed_tools 包含无效工具标识")
-        delegation_identity_key(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_key=delegation_key)
+        normalized_key = delegation_key.strip()
+        delegation_identity_key(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_key=normalized_key)
 
-        existing = await self.repository.get_by_key(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_key=delegation_key.strip())
+        existing = await self.repository.get_by_key(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_key=normalized_key)
         if existing is not None:
+            if existing.target_agent_version_id != target_agent_version_id:
+                raise HTTPException(409, "delegation_key 已绑定其他 target Agent version")
             return existing
-        source_version = await self._source_agent_version(source, actor_id)
+        source_version = await self._source_agent_version(source, actor_id, admin=admin)
         target_version = await self._target_version(tenant_id=tenant_id, target_agent_version_id=target_agent_version_id)
         depth = await self._delegation_depth(tenant_id=tenant_id, source_execution_id=source_execution_id)
         if depth > max_depth:
@@ -178,7 +181,7 @@ class AgentDelegationService:
             source_execution_id=source_execution_id,
             source_agent_version_id=source_version.id,
             target_agent_version_id=target_version.id,
-            delegation_key=delegation_key.strip(),
+            delegation_key=normalized_key,
             status="pending",
             input_data=dict(input_data),
             selected_context_refs=list(selected_context_refs),
@@ -197,9 +200,11 @@ class AgentDelegationService:
             await self.db.flush()
         except IntegrityError:
             await self.db.rollback()
-            existing = await self.repository.get_by_key(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_key=delegation_key.strip())
+            existing = await self.repository.get_by_key(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_key=normalized_key)
             if existing is None:
                 raise
+            if existing.target_agent_version_id != target_agent_version_id:
+                raise HTTPException(409, "delegation_key 已绑定其他 target Agent version")
             return existing
         self.db.add(AuditLog(
             actor_id=actor_id, tenant_id=tenant_id, workflow_id=source.workflow_id, workflow_version_id=source.workflow_version_id,

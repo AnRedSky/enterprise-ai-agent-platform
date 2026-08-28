@@ -72,12 +72,7 @@ def _response(item):
 
 
 @router.post("/{execution_id}/delegations", status_code=201)
-async def create_delegation(
-    execution_id: UUID,
-    payload: DelegationCreate,
-    claims=Depends(require_roles("user", "admin")),
-    db: AsyncSession = Depends(get_db),
-):
+async def create_delegation(execution_id: UUID, payload: DelegationCreate, claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
     """创建受治理 Delegation；重复业务 key 收敛到已有 Durable fact。"""
     item = await AgentDelegationService(db).create(
         tenant_id=_tenant_id(claims),
@@ -92,57 +87,27 @@ async def create_delegation(
         max_active_delegations=payload.max_active_delegations,
         timeout_seconds=payload.timeout_seconds,
         model_budget=payload.model_budget,
+        admin="admin" in claims.get("roles", []),
     )
     return _response(item)
 
 
 @router.get("/{execution_id}/delegations")
-async def list_delegations(
-    execution_id: UUID,
-    claims=Depends(current_claims),
-    db: AsyncSession = Depends(get_db),
-):
+async def list_delegations(execution_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     """查询指定 Execution 的全部 Delegation。"""
-    items = await AgentDelegationService(db).list(
-        tenant_id=_tenant_id(claims),
-        source_execution_id=execution_id,
-        actor_id=UUID(claims["sub"]),
-        admin="admin" in claims.get("roles", []),
-    )
+    items = await AgentDelegationService(db).list(tenant_id=_tenant_id(claims), source_execution_id=execution_id, actor_id=UUID(claims["sub"]), admin="admin" in claims.get("roles", []))
     return [_response(item) for item in items]
 
 
 @router.get("/{execution_id}/delegations/{delegation_id}")
-async def get_delegation(
-    execution_id: UUID,
-    delegation_id: UUID,
-    claims=Depends(current_claims),
-    db: AsyncSession = Depends(get_db),
-):
+async def get_delegation(execution_id: UUID, delegation_id: UUID, claims=Depends(current_claims), db: AsyncSession = Depends(get_db)):
     """查询单个 Delegation。"""
-    item = await AgentDelegationService(db).get(
-        tenant_id=_tenant_id(claims),
-        source_execution_id=execution_id,
-        delegation_id=delegation_id,
-        actor_id=UUID(claims["sub"]),
-        admin="admin" in claims.get("roles", []),
-    )
+    item = await AgentDelegationService(db).get(tenant_id=_tenant_id(claims), source_execution_id=execution_id, delegation_id=delegation_id, actor_id=UUID(claims["sub"]), admin="admin" in claims.get("roles", []))
     return _response(item)
 
 
 @router.post("/{execution_id}/delegations/{delegation_id}/cancel")
-async def cancel_delegation(
-    execution_id: UUID,
-    delegation_id: UUID,
-    claims=Depends(require_roles("user", "admin")),
-    db: AsyncSession = Depends(get_db),
-):
+async def cancel_delegation(execution_id: UUID, delegation_id: UUID, claims=Depends(require_roles("user", "admin")), db: AsyncSession = Depends(get_db)):
     """取消仍处于活动态的 Delegation，不改变父 Execution terminal 状态。"""
-    item = await AgentDelegationService(db).cancel(
-        tenant_id=_tenant_id(claims),
-        source_execution_id=execution_id,
-        delegation_id=delegation_id,
-        actor_id=UUID(claims["sub"]),
-        admin="admin" in claims.get("roles", []),
-    )
+    item = await AgentDelegationService(db).cancel(tenant_id=_tenant_id(claims), source_execution_id=execution_id, delegation_id=delegation_id, actor_id=UUID(claims["sub"]), admin="admin" in claims.get("roles", []))
     return _response(item)
