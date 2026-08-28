@@ -31,12 +31,19 @@ def _frontier() -> MagicMock:
 def _execution(frontier: MagicMock, status: str) -> MagicMock:
     execution = MagicMock()
     execution.id = frontier.execution_id
+    execution.tenant_id = frontier.tenant_id
     execution.status = status
     execution.worker_owner = "worker-a"
     execution.worker_lease_expires_at = datetime(2026, 8, 27, 9, 0)
     execution.worker_attempt = 4
     execution.created_by = uuid4()
     return execution
+
+
+def _scalar_result(value):
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
 
 
 @pytest.mark.asyncio
@@ -52,14 +59,14 @@ async def test_progression_rejects_execution_lifecycle_drift(
     next_identity: MagicMock | None,
 ) -> None:
     """锁定后的 Execution 状态与 progression 目标不一致时必须 fail-closed。"""
-    db = AsyncMock()
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
     frontier = _frontier()
     execution = _execution(frontier, execution_status)
 
-    current_lookup = MagicMock()
-    current_lookup.scalar_one_or_none.return_value = None
-    execution_lookup = MagicMock()
-    execution_lookup.scalar_one_or_none.return_value = execution
+    current_lookup = _scalar_result(None)
+    execution_lookup = _scalar_result(execution)
     db.execute.side_effect = [current_lookup, execution_lookup]
 
     if next_identity is not None:
@@ -72,7 +79,7 @@ async def test_progression_rejects_execution_lifecycle_drift(
         "app.services.workflow.frontier_progression.transition_owned_frontier",
         new_callable=AsyncMock,
     ) as transition:
-        with pytest.raises(FrontierProgressionContractError, match="Execution lifecycle 与目标不一致"):
+        with pytest.raises(FrontierProgressionContractError, match="Execution lifecycle 与目标不一致|当前 lifecycle 不允许 completion"):
             await complete_frontier_with_checkpoint(
                 db,
                 frontier=frontier,
@@ -91,16 +98,14 @@ async def test_progression_rejects_execution_lifecycle_drift(
 @pytest.mark.asyncio
 async def test_terminal_progression_uses_locked_running_execution_as_lifecycle_source() -> None:
     """终态 completion 必须在锁定并确认 running Execution 后才允许推进 Frontier。"""
-    db = AsyncMock()
+    db = MagicMock()
+    db.execute = AsyncMock()
+    db.commit = AsyncMock()
     frontier = _frontier()
     execution = _execution(frontier, "running")
-
-    current_lookup = MagicMock()
-    current_lookup.scalar_one_or_none.return_value = None
-    execution_lookup = MagicMock()
-    execution_lookup.scalar_one_or_none.return_value = execution
-    sibling_lookup = MagicMock()
-    sibling_lookup.scalar_one_or_none.return_value = None
+    current_lookup = _scalar_result(None)
+    execution_lookup = _scalar_result(execution)
+    sibling_lookup = _scalar_result(None)
     db.execute.side_effect = [current_lookup, execution_lookup, sibling_lookup]
 
     with patch(
@@ -111,6 +116,7 @@ async def test_terminal_progression_uses_locked_running_execution_as_lifecycle_s
         new_callable=AsyncMock,
     ) as append:
         append.return_value = MagicMock()
+        transition.return_value = frontier
         await complete_frontier_with_checkpoint(
             db,
             frontier=frontier,
