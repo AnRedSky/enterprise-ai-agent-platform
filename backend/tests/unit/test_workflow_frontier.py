@@ -20,13 +20,14 @@ def test_frontier_identity_is_deterministic_for_same_ordered_nodes() -> None:
     assert first.key() == second.key()
 
 
-def test_frontier_identity_preserves_planner_node_order() -> None:
+def test_frontier_identity_canonicalizes_node_order() -> None:
     execution_id = uuid4()
     version_id = uuid4()
     first = WorkflowFrontierIdentity(execution_id, version_id, "decision-a", ("node-a", "node-b"))
     second = WorkflowFrontierIdentity(execution_id, version_id, "decision-a", ("node-b", "node-a"))
 
-    assert first.key() != second.key()
+    # Frontier identity 表示并行 Node 集合而非执行顺序；执行顺序仍由 node_ids 原值交给 Executor。
+    assert first.key() == second.key()
 
 
 def test_frontier_lifecycle_allows_claim_run_complete() -> None:
