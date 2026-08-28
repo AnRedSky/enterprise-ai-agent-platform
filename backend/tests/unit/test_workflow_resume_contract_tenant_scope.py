@@ -12,6 +12,7 @@ async def test_resume_contract_reads_checkpoint_with_locked_execution_tenant_sco
     tenant_id = uuid4()
     execution_id = uuid4()
     version_id = uuid4()
+    actor_id = uuid4()
     checkpoint = SimpleNamespace(
         id=uuid4(), execution_id=execution_id, sequence=3, checkpoint_reason="frontier_completed",
         execution_status="running", node_status=None, node_id=None,
@@ -42,7 +43,7 @@ async def test_resume_contract_reads_checkpoint_with_locked_execution_tenant_sco
     original = execution_module.WorkflowExecutionService
     execution_module.WorkflowExecutionService = lambda db: execution_service
     try:
-        result = await service.resume_with_outcome(source_execution, uuid4(), commit=False)
+        result = await service.resume_with_outcome(source_execution, actor_id, commit=False)
     finally:
         execution_module.WorkflowExecutionService = original
 
@@ -54,11 +55,11 @@ async def test_resume_contract_reads_checkpoint_with_locked_execution_tenant_sco
     assert "workflow_executions.tenant_id" in sql
     execution_service.resume_from_latest_checkpoint.assert_awaited_once_with(
         source_execution,
-        pytest.approx(result.execution.created_by) if hasattr(result.execution, "created_by") else pytest.ANY,
+        actor_id,
         commit=False,
     )
     service.bootstrap.bootstrap.assert_awaited_once_with(
         source_execution=source_execution,
         resume_execution=resume_execution,
-        actor_id=pytest.ANY,
+        actor_id=actor_id,
     )
