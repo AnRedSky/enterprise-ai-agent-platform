@@ -8,21 +8,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _env_files() -> tuple[str, ...]:
-    """Return environment files from lowest to highest file precedence.
-
-    `.env.example` is the lowest-precedence fallback so a fresh checkout can
-    start without creating a local `.env`. It is intentionally a safe,
-    non-secret configuration template. Real `.env` files and environment-
-    specific overrides take precedence, and process environment variables
-    always have the highest precedence.
-
-    `APP_ENV` may be supplied by the process environment to select an
-    environment-specific file; otherwise development is used as the default.
-    `ENV_FILE` can explicitly add a deployment-specific file without changing
-    the application code. Absolute explicit paths are preserved verbatim so
-    Unix container paths such as `/run/secrets/agent.env` remain portable when
-    configuration selection is tested on Windows.
-    """
+    """返回按优先级排列的环境配置文件。"""
     app_env = os.getenv("APP_ENV", "development").strip().lower() or "development"
     files = [
         ".env.example",
@@ -34,15 +20,8 @@ def _env_files() -> tuple[str, ...]:
     explicit = os.getenv("ENV_FILE")
     if explicit:
         explicit_path = Path(explicit)
-        files.append(
-            explicit
-            if os.path.isabs(explicit)
-            else str(BACKEND_ROOT / explicit_path)
-        )
-    return tuple(
-        path if os.path.isabs(path) else str(BACKEND_ROOT / path)
-        for path in files
-    )
+        files.append(explicit if os.path.isabs(explicit) else str(BACKEND_ROOT / explicit_path))
+    return tuple(path if os.path.isabs(path) else str(BACKEND_ROOT / path) for path in files)
 
 
 class Settings(BaseSettings):
@@ -59,23 +38,15 @@ class Settings(BaseSettings):
     model_timeout_seconds: float = 60.0
     model_fallback_to_mock: bool = False
 
-    # `mock` is a deterministic offline fixture for local retrieval validation;
-    # it does not represent real model semantic quality.
     embedding_provider: str = "none"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
     embedding_model: str | None = None
     embedding_timeout_seconds: float = 30.0
-    # The default development profile uses the installed nomic-embed-text model.
-    # The value is a provider/schema contract, not a request-time transformation.
     embedding_dimension: int = 768
     embedding_batch_size: int = 32
-    # Some OpenAI-compatible local providers accept an explicit output dimension.
-    # Keep this opt-in because the provider must actually honor the parameter.
     embedding_dimensions_parameter_enabled: bool = False
 
-    # Vector retrieval is provider-neutral. Keep `none` until PostgreSQL + pgvector
-    # is enabled locally; the in-memory implementation remains test-only.
     vector_provider: str = "none"
     vector_db_url: str | None = None
     vector_db_collection: str = "knowledge_chunks"
@@ -84,8 +55,13 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/agent_platform"
     redis_url: str = "redis://localhost:6379/0"
-
     scheduler_poll_interval_seconds: float = 5.0
+
+    # Multi-Agent Collaboration 企业治理默认值；生产环境必须通过环境配置显式复核。
+    multi_agent_max_delegation_depth: int = 3
+    multi_agent_max_active_delegations: int = 4
+    multi_agent_timeout_seconds: int = 300
+    multi_agent_model_budget: dict = {}
 
     jwt_secret_key: str = "change-me-in-local-env"
     jwt_algorithm: str = "HS256"
