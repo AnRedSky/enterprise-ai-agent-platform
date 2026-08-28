@@ -196,12 +196,13 @@ async def complete_frontier_with_checkpoint(
     if execution is None:
         raise FrontierProgressionContractError("Frontier 对应的 Workflow Execution 不存在")
 
-    # 设计意图：Execution 是 Frontier progression 的生命周期权威事实；必须在锁定 Execution 后
-    # 再验证当前 lifecycle，避免 terminal Execution 被旧 Frontier 写入 running completion，或在
-    # 非-running Execution 上完成 Frontier。只有状态与本次 progression 目标一致时才允许继续。
-    if execution.status != execution_status:
+    # 设计意图：Frontier completion 的请求目标可能是 completed，但在真正完成当前 Frontier 之前，
+    # Execution 仍必须处于 running。必须先锁定并确认当前 lifecycle，再校验 Worker ownership/lease，
+    # 最后才允许 Frontier transition 与 Execution terminalization。这样 stale Worker 不会因为
+    # terminal target 与当前状态不同而提前得到错误的 lifecycle 失败，并且不会绕过 ownership fencing。
+    if execution.status != "running":
         raise FrontierProgressionContractError(
-            f"Frontier progression 的 Execution lifecycle 与目标不一致: 当前={execution.status}, 目标={execution_status}"
+            f"Frontier progression 的 Execution 当前 lifecycle 不允许 completion: 当前={execution.status}"
         )
     execution_worker_attempt = int(execution.worker_attempt or 0)
     if execution.worker_owner != worker_owner:
