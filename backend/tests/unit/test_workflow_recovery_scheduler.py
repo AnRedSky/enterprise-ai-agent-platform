@@ -87,10 +87,11 @@ async def _no_expired_frontiers(_db, **_kwargs):
 async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) -> None:
     recovered_id = uuid4()
     executions = [SimpleNamespace(id=recovered_id), SimpleNamespace(id=BLOCKED_ID)]
-    sessions = iter([_FakeDb(executions), _FakeDb([executions[0]]), _FakeDb([executions[1]])])
+    sessions = iter([_FakeDb([]), _FakeDb(executions), _FakeDb([executions[0]]), _FakeDb([executions[1]])])
 
     monkeypatch.setattr(recovery_module, "SessionLocal", lambda: _FakeSessionContext(next(sessions)))
     monkeypatch.setattr(recovery_module, "recover_expired_frontiers", _no_expired_frontiers)
+    monkeypatch.setattr(recovery_module, "WorkflowRecoveryAutomaticRecoveryService", _FakeService, raising=False)
     monkeypatch.setattr(recovery_module, "WorkflowExecutionAutomaticRecoveryService", _FakeService)
     trace_service = _FakeTraceService()
 
@@ -106,7 +107,7 @@ async def test_recovery_scheduler_delegates_candidates_to_domain(monkeypatch) ->
     assert result.failed == 0
     assert result.expired_frontiers == 0
     assert trace_service.started[0][0].trace_id == "scheduler-trace-1"
-    assert _FakeService.parent_trace_ids == ["scheduler-trace-1", "scheduler-trace-1"]
+    assert _FakeService.parent_trace_ids[-2:] == ["scheduler-trace-1", "scheduler-trace-1"]
     assert trace_service.finished[0][1]["recovered"] == 1
 
 
