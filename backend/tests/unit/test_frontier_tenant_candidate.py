@@ -37,7 +37,12 @@ async def test_frontier_tenant_candidate_selects_only_execution_eligible_work() 
     assert "workflow_executions" in sql
     assert "worker_owner" in sql
     assert "worker_lease_expires_at" in sql
-    bound_values = set(statement.compile().params.values())
+    bound_values = set()
+    for value in statement.compile().params.values():
+        if isinstance(value, (list, tuple, set, frozenset)):
+            bound_values.update(value)
+        else:
+            bound_values.add(value)
     assert {"pending", "running", "retry_wait"}.issubset(bound_values)
 
 
