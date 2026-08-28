@@ -19,7 +19,7 @@ async def test_initial_multi_root_dag_creates_independent_branch_states_from_inp
         scalars=lambda: SimpleNamespace(all=lambda: [])
     )
     runtime = WorkflowRuntime(db)
-    execution = SimpleNamespace(id=uuid4(), resume_of_execution_id=None)
+    execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), resume_of_execution_id=None)
     definition = {
         "nodes": [
             {"id": "left", "type": "input", "config": {}},
