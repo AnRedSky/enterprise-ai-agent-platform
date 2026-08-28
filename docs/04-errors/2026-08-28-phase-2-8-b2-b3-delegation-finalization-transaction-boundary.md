@@ -28,52 +28,48 @@ Delegation model profile 与目标 Agent version 不一致
 
 不再是本轮故障原因。
 
-## 4. 根因分析
+## 4. 第一阶段根因与修复
 
 `execute_claimed_execution()` 原先在 Worker Runtime 的 `finally` 阶段调用 `_finalize_delegation()`，而 `_finalize_delegation()` 又重新创建独立的 `SessionLocal()`。
 
 Worker Runtime 使用的 `WorkflowExecutionService.transition()` 会在 Execution terminalization 时提交当前 Worker Session 的事务。Delegation completion/failure 却通过另一个数据库 Session 读取 Worker Execution，并在 Runtime 事务生命周期交界处执行。
 
-这种设计使 Delegation finalize 与 Worker Runtime 的提交边界发生不必要的 Session 解耦：Delegation 终态收敛依赖另一个 Session 观察当前 generation 的 terminal Execution，而 Worker 本身已经拥有完成该状态机所需的正式 AsyncSession。
+第一阶段已将 `_finalize_delegation()` 改为复用 Worker Runtime 当前 `AsyncSession`，并继续使用 commit 前快照的 `worker_execution_id` 防止 `expire_on_commit` 导致隐式异步 IO。
 
-此前为解决 AsyncSession `expire_on_commit` 引入的 generation identity snapshot 只能避免 expired ORM 属性的隐式 IO，不能解决 finalize 与 Runtime 使用独立 Session 带来的事务可见性边界问题。
+## 5. 第二阶段修复
 
-## 5. 修复方案
-
-将 `_finalize_delegation()` 改为接收并复用 `execute_claimed_execution()` 当前的 `AsyncSession`：
+本地反馈表明第一阶段修复后仍出现：
 
 ```text
-Worker Runtime Session
-        │
-        ├── WorkflowExecution terminal transition
-        │       └── commit
-        │
-        └── Delegation finalize
-                ├── SELECT current Worker Execution
-                ├── generation fencing
-                ├── completed / failed
-                ├── AuditLog
-                └── WorkflowTraceEvent
+WorkflowExecution.status == "completed"
+AgentDelegation.status == "running"
 ```
 
-同时继续使用提前快照的 `worker_execution_id` 作为不可变 generation identity，避免 Runtime 内 commit 后访问 expired ORM identity。
+因此 Delegation completion/failure Service 进一步强化为**带完整 fencing 条件的数据库终态写入**：
 
-修复保持以下边界不变：
+```text
+UPDATE agent_delegations
+SET status = completed / failed,
+    ended_at = ...,
+    error_code = ...,
+    error_message = ...
+WHERE id = delegation_id
+  AND tenant_id = tenant_id
+  AND status = running
+  AND worker_execution_id = current_worker_execution_id
+```
 
-- 不新增 Worker Runtime；
-- 不新增 Lease / Retry / Recovery 实现；
-- 不绕过 `validate_worker_fence()`；
-- 不修改父 Workflow Execution；
-- 不削弱 Target Agent Version / Model Profile snapshot 校验；
-- Delegation completion/failure 仍由正式 completion Service 执行；
-- AuditLog 与 WorkflowTraceEvent 仍在 Delegation completion/failure 事务中持久化。
+并要求 `rowcount == 1`；否则立即返回 409，拒绝把 stale Worker generation 当作成功完成。AuditLog、WorkflowTraceEvent 与该状态写入继续在同一事务提交。
+
+这样将“状态校验”和“终态 durable write”绑定到同一数据库条件，避免仅依赖 ORM identity state 承载最终 fencing 写入。
 
 ## 6. 修复提交
 
 - `796c29ad` — `fix(worker): finalize delegation in active runtime session`
 - `5676fff` — `fix(worker): finalize delegation in active runtime session`
+- `036868ac` — `fix(delegation): persist terminal state with fenced update`
 
-其中 `5676fff` 仅修正首次代码提交中的 SQLAlchemy 查询括号问题，最终 `main` 应以该提交后的代码为准。
+其中前两个提交解决 Worker Runtime Session / SQLAlchemy 查询问题；`036868ac` 进一步将 Delegation terminal state 写入收敛为带 tenant + running status + Worker generation 的 SQL fencing update。
 
 ## 7. 验证要求
 

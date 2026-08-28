@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前最新代码提交：`5676fff9` — `fix(worker): finalize delegation in active runtime session`
+- 当前最新代码提交：`036868ac` — `fix(delegation): persist terminal state with fenced update`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
@@ -25,11 +25,11 @@
 - B2 synthetic Runtime 已修复与 DAG validator 的 Contract 冲突；
 - B3 Delegation completion/failure 已进入生产代码：以 `worker_execution_id` 作为 Worker generation fencing identity，在当前 generation 仍有效且 Worker Execution 已进入对应终态时收敛 Delegation；
 - 注册用户现在在同一事务中绑定默认 Tenant 对应的 active Organization，保证后续 Governance membership 边界成立；
-- B2 Real Gate 已进一步暴露 Worker Runtime 的 AsyncSession / Delegation finalize 事务边界问题，并已在生产 Runtime Entry 修复：Delegation finalize 复用当前 Worker AsyncSession，不再创建独立 Session；同时继续使用 commit 前快照的 `worker_execution_id` 防止 `expire_on_commit` 导致隐式异步 IO。
+- B2 Real Gate 已暴露 Worker Runtime 的 AsyncSession / Delegation finalize 事务边界问题，并完成两阶段生产修复：Worker Runtime finalize 复用当前 AsyncSession；Delegation completion/failure 进一步使用带 tenant、running 状态和 Worker generation 条件的 SQL fenced update 持久化 terminal state。
 
 ## 3. 最新本地验收反馈
 
-开发者在 `f75be2cd` 本地实际执行 B2 Gate：
+开发者在 `a10511a0` 本地实际执行 B2 Gate：
 
 ```text
 B2 bridge Unit             3 passed
@@ -38,16 +38,14 @@ B2 Migration/head          0039_workflow_node_execution_tenant_trigger (head)
 B2 Real Gate               1 failed, 2 passed
 ```
 
-本轮 Real Gate 已越过 Model Profile Snapshot Fixture 校验，并真正完成 Target Agent Runtime 与 Worker Execution terminalization；最终失败为：
+本轮 Real Gate 已越过 Model Profile Snapshot Fixture 校验，并真正完成 Target Agent Runtime 与 Worker Execution terminalization；最终仍失败为：
 
 ```text
 assert persisted.status == "completed"
 E AssertionError: assert 'running' == 'completed'
 ```
 
-B3 使用相同 Worker Runtime completion 路径，因此同样受该问题影响。
-
-根因与修复已记录：`docs/04-errors/2026-08-28-phase-2-8-b2-b3-delegation-finalization-transaction-boundary.md`。
+随后已进一步修改 Delegation completion/failure 的 terminal durable write，尚未获得该新提交的本地 Gate 实际结果，因此当前仍不得标记 B2/B3 Real Gate 通过。
 
 ## 4. B2 当前实现边界
 
@@ -77,7 +75,9 @@ Target Agent published version
     ↓
 Worker Execution terminalization
     ↓
-同一 AsyncSession 中 Delegation completion/failure
+当前 Worker AsyncSession 中 Delegation completion/failure
+    ↓
+带 tenant + running + worker_execution_id fencing 的 terminal UPDATE
 ```
 
 B2 不创建第二套 Worker、Lease、Retry、Recovery 或 Provider；不修改父 Workflow Version 数据库记录，不复制父 Execution checkpoint、memory 或 credential。
@@ -86,7 +86,7 @@ B2 synthetic Runtime 是单 Node 执行对象，不属于持久化 DAG，因此 
 
 Real Gate 的 Model Provider Fixture 必须由测试自动建立并绑定，不得依赖开发数据库中的默认 Provider/Profile。
 
-Worker generation identity 必须在任何 Runtime commit 前快照；Delegation finalize 必须复用当前 Worker AsyncSession，避免跨 Session 的事务可见性边界。
+Worker generation identity 必须在任何 Runtime commit 前快照；Delegation finalize 必须复用当前 Worker AsyncSession，terminal write 同时使用数据库 fencing 条件。
 
 ## 5. B3 当前实现
 
@@ -110,7 +110,7 @@ Worker Runtime
                            └── generation == 当前 Worker Execution
                            │
                            ▼
-                 Delegation terminal state
+                 fenced terminal UPDATE
                            │
                            ├── AuditLog
                            └── WorkflowTraceEvent
@@ -146,10 +146,10 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 | B2 Worker Execution Bridge 生产实现 | ✅ |
 | B2 Bridge Unit | ✅ 本地 3 passed |
 | B2 Backend regression | ✅ 本地 850 passed, 3 skipped, 46 deselected |
-| B2 Real HTTP + PostgreSQL + Runtime | 🔧 已修复 finalize Session 边界，待本地复跑 |
+| B2 Real HTTP + PostgreSQL + Runtime | 🔧 第二阶段 terminal fenced write 修复，待本地复跑 |
 | B3 completion/failure + generation fencing 生产实现 | ✅ |
 | B3 Unit / Backend regression | ✅ 本地 30 passed / 850 passed |
-| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 B2 修复后待本地复跑 |
+| B3 Real HTTP + PostgreSQL completion/fencing | 🔧 B2 新修复后待本地复跑 |
 | B4 timeout/cancel/parent semantics | ⏳ 尚未进入生产实现 |
 | B5 Audit/Trace 完整闭环 | ⏳ |
 | Delegation Runtime multi-worker acceptance | ⏳ |
@@ -159,7 +159,7 @@ Gate 自动完成 PostgreSQL / Redis 启动、Backend 健康检查与必要时�
 ```text
 同步最新 main
     ↓
-修复 B2/B3 Real Gate finalize Session / transaction boundary
+验证 Delegation terminal fenced write 修复
     ↓
 B2 Bridge Unit + Backend Regression + Migration
     ↓
