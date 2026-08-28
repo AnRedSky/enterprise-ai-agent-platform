@@ -37,8 +37,8 @@ async def test_frontier_tenant_candidate_selects_only_execution_eligible_work() 
     assert "workflow_executions" in sql
     assert "worker_owner" in sql
     assert "worker_lease_expires_at" in sql
-    assert "pending" in sql
-    assert "running" in sql
+    bound_values = set(statement.compile().params.values())
+    assert {"pending", "running", "retry_wait"}.issubset(bound_values)
 
 
 @pytest.mark.asyncio
