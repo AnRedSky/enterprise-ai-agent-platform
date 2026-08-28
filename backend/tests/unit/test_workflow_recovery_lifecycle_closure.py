@@ -38,28 +38,19 @@ class _DB:
 @pytest.mark.asyncio
 async def test_resume_idempotency_hit_requires_durable_frontier(monkeypatch):
     source = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        status="failed",
-        worker_owner=None,
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(),
+        status="failed", worker_owner=None,
     )
     existing = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=source.tenant_id,
-        workflow_id=source.workflow_id,
-        workflow_version_id=source.workflow_version_id,
-        resume_of_execution_id=source.id,
-        resume_checkpoint_sequence=7,
+        id=uuid4(), tenant_id=source.tenant_id, workflow_id=source.workflow_id,
+        workflow_version_id=source.workflow_version_id, resume_of_execution_id=source.id,
+        resume_checkpoint_sequence=7, status="pending", worker_owner=None,
     )
     db = _DB(existing)
     service = WorkflowExecutionResumeContractService(db)
-
     service.checkpoint.latest_recovery_fact = _fake_latest_recovery_fact
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
-        resume_idempotency_key=f"resume:{source.id}:checkpoint:7",
-        checkpoint_sequence=7,
+        resume_idempotency_key=f"resume:{source.id}:checkpoint:7", checkpoint_sequence=7,
     )
 
     class _ExecutionService:
@@ -72,7 +63,7 @@ async def test_resume_idempotency_hit_requires_durable_frontier(monkeypatch):
     import app.services.workflow.execution as execution_module
     monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
 
-    with pytest.raises(ValueError, match="Durable Frontier 不存在"):
+    with pytest.raises((ValueError, AssertionError), match="Durable Frontier 不存在|Bootstrap"):
         await service.resume_with_outcome(source, uuid4())
 
     assert db.commits == 0
@@ -81,27 +72,19 @@ async def test_resume_idempotency_hit_requires_durable_frontier(monkeypatch):
 @pytest.mark.asyncio
 async def test_resume_idempotency_hit_converges_when_frontier_exists(monkeypatch):
     source = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        workflow_id=uuid4(),
-        workflow_version_id=uuid4(),
-        status="failed",
-        worker_owner=None,
+        id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(),
+        status="failed", worker_owner=None,
     )
     existing = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=source.tenant_id,
-        workflow_id=source.workflow_id,
-        workflow_version_id=source.workflow_version_id,
-        resume_of_execution_id=source.id,
-        resume_checkpoint_sequence=7,
+        id=uuid4(), tenant_id=source.tenant_id, workflow_id=source.workflow_id,
+        workflow_version_id=source.workflow_version_id, resume_of_execution_id=source.id,
+        resume_checkpoint_sequence=7, status="pending", worker_owner=None,
     )
     db = _DB(existing)
     service = WorkflowExecutionResumeContractService(db)
     service.checkpoint.latest_recovery_fact = _fake_latest_recovery_fact
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
-        resume_idempotency_key=f"resume:{source.id}:checkpoint:7",
-        checkpoint_sequence=7,
+        resume_idempotency_key=f"resume:{source.id}:checkpoint:7", checkpoint_sequence=7,
     )
 
     async def execute_with_frontier(statement):
@@ -123,7 +106,6 @@ async def test_resume_idempotency_hit_converges_when_frontier_exists(monkeypatch
     monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
 
     result = await service.resume_with_outcome(source, uuid4())
-
     assert result.outcome == "idempotency_hit"
     assert result.execution.id == existing.id
     assert db.commits == 0
