@@ -29,6 +29,7 @@ async def test_linear_resume_filters_completed_nodes():
 async def test_dag_resume_keeps_definition_for_planner():
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
     db = MagicMock()
+    db.execute = AsyncMock()
     runtime = DurableResumeWorkflowRuntime(db)
     version = SimpleNamespace(definition={"nodes": [], "edges": [{"source": "a", "target": "b"}]})
     resumed = await runtime._resume_version(execution, version)
@@ -127,7 +128,7 @@ async def test_persisted_node_attempt_exhaustion_does_not_replay_node():
 @pytest.mark.asyncio
 async def test_persisted_workflow_retry_budget_is_reduced_on_resume():
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4())
-    node = SimpleNamespace(attempt=2)
+    node = SimpleNamespace(node_id="node-1", attempt=2)
     result = MagicMock()
     result.scalars.return_value.all.return_value = [node]
     db = MagicMock()
