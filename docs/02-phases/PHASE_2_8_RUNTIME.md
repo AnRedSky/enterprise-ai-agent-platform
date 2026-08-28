@@ -20,7 +20,8 @@ Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现�
 - Service 内重复 lifecycle 规则已删除并统一调用 `lifecycle.validate_transition()`；
 - B1 Atomic Claim：PostgreSQL Delegation 行锁、唯一 `worker_execution_id`、复用 `WorkflowExecution` 的既有 Worker owner/lease 字段，并在同一事务中完成 Claim 与 Worker Execution 持久化；
 - B1 Real API / PostgreSQL 双 Worker 并发验收测试实现；
-- Phase 2.8 Gate 已纳入 B1 lifecycle Unit、Backend regression、Migration、Delegation Real API 与 PostgreSQL 两 Worker race。
+- Phase 2.8 Gate 已纳入 B1 lifecycle Unit、Backend regression、Migration、Delegation Real API 与 PostgreSQL 两 Worker race；
+- B1 Real Gate 已改为自动注册随机临时测试用户并自动取得 Token，不再要求开发者手工填写 `ACCESS_TOKEN`。
 
 `0039_workflow_node_execution_tenant_trigger` 当前为数据库 head；它依赖 `0038_agent_delegations`，因此 Phase 2.8 的数据结构基础已经存在。
 
@@ -117,7 +118,7 @@ pending Delegation
 B1 Atomic Claim
     │
     ├─ 已实现
-    └─ 待开发者本地 PostgreSQL 验证
+    └─ Real PostgreSQL acceptance 必须通过 Gate 实际验证
     ↓
 running + worker_execution_id
     ↓
@@ -174,6 +175,21 @@ source execution
 
 ### B1 一键 Gate
 
+测试脚本会自动完成：
+
+1. 检查 Docker；
+2. 自动启动项目 `docker-compose.yml` 中的 PostgreSQL 与 Redis；
+3. 执行 Alembic migration；
+4. 检查 `http://127.0.0.1:8000/health`；
+5. 若 Backend 未启动，自动启动本地 Uvicorn；
+6. 自动生成随机临时测试用户；
+7. 自动调用 `/auth/register` + `/auth/login` 获取短生命周期测试 Token；
+8. 自动执行 Real HTTP Delegation Contract；
+9. 自动执行 PostgreSQL 双 Worker Atomic Claim race；
+10. 如果 Backend 由脚本启动，Gate 结束后自动停止该进程。
+
+开发者无需手工填写 Token、用户名、密码或测试数据。
+
 ```powershell
 cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\01_delegation_contract_gate.ps1
@@ -188,49 +204,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\01_
 
 ### B1 Real API + PostgreSQL + 双 Worker
 
-前置条件：
+不再要求手工设置 `ACCESS_TOKEN`。
 
-1. PostgreSQL 已启动；
-2. Backend 已安装依赖；
-3. `backend/.env` 或 `.env.local` 已配置本地数据库；
-4. 数据库已执行到 Alembic head；
-5. Backend HTTP 服务已启动；
-6. 使用开发者本地有效 Token，不提交 Token。
-
-PowerShell：
-
-```powershell
-cd backend
-$env:ACCESS_TOKEN = "<开发者本地有效 Token>"
-$env:API_BASE_URL = "http://127.0.0.1:8000/api/v1"
-
-uv run alembic upgrade head
-uv run alembic current
-
-uv run pytest -q tests/api_real/test_agent_delegation_api.py
-uv run pytest -q tests/api_real/test_agent_delegation_claim_api.py
-```
-
-完整 Gate：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\01_delegation_contract_gate.ps1
-```
-
-验收必须看到 B1 两 Worker race 测试实际执行成功；若 PostgreSQL、Token、HTTP 服务或测试任一步失败，只记录实际失败原因，不得记录为 Passed。
-
-## 9. 下一交付单元
-
-B1 自动化测试入口已经完成。待开发者本地真实 PostgreSQL Gate 验证后，下一生产代码交付直接进入：
+基础设施：
 
 ```text
-B1 本地验证 / 并发问题修复
-    ↓
-B1 验收闭环
-    ↓
-B2 Workflow Worker Execution Bridge
-    ↓
-B3 completion / failure + generation fencing
+Docker Engine
+  ├── PostgreSQL / pgvector : 5432
+  └── Redis                  : 6379
+
+Backend API
+  └── Uvicorn : 127.0.0.1:8000
 ```
 
-B1 完成前不扩展 Delegation 前端 UI，也不创建与现有 Worker Runtime 平行的可靠性抽象。
+如果 PostgreSQL / Redis 已运行，脚本直接复用；如果 Backend 已运行，脚本也直接复用。只有未运行的 Backend 会由 Gate 自动启动。
+
+若需要单独运行某一个 Real API 测试，必须显式覆盖 pytest 的默认 `not real_api` 过滤，并让脚本自动提供 Token；推荐直接使用一键 Gate，而不是手工设置环境变量。
+
+验收必须看到 B1 两 Worker race 测试实际执行成功；若 PostgreSQL、HTTP 服务或测试任一步失败，只记录实际失败原因，不得记录为 Passed。
