@@ -47,7 +47,7 @@ async def test_incomplete_pending_resume_is_reconciled(monkeypatch):
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
@@ -100,7 +100,7 @@ async def test_incomplete_resume_with_worker_ownership_is_rejected(monkeypatch):
     service = WorkflowExecutionResumeContractService(db)
 
     async def fake_latest(_execution_id, tenant_id=None):
-        return SimpleNamespace(id=uuid4())
+        return SimpleNamespace(id=uuid4(), node_id=None)
 
     service.checkpoint.latest = fake_latest
     service.checkpoint_recovery.assess = lambda **_: SimpleNamespace(
