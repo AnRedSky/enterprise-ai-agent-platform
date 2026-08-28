@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import create_token, hash_password, verify_password
 from app.dependencies.db import get_db
 from app.models.core import DEFAULT_TENANT_ID, Role, Tenant, User, UserRole
+from app.models.organization import Organization, OrganizationMembership
 
 router = APIRouter()
 
@@ -33,13 +34,18 @@ async def register(p: RegisterRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(409, "用户名已存在")
 
     try:
-        # Keep registration self-healing for legacy/local databases where the
-        # canonical tenant seed row was not present when the schema was created.
+        # 注册用户必须同时进入当前默认 Tenant 对应的 Organization，避免认证成功后因缺少 membership 无法访问受治理能力。
         tenant = (await db.execute(select(Tenant).where(Tenant.id == DEFAULT_TENANT_ID))).scalar_one_or_none()
         if tenant is None:
             tenant = Tenant(id=DEFAULT_TENANT_ID, name="Default Tenant", status="active")
             db.add(tenant)
             await db.flush()
+
+        organization = (await db.execute(select(Organization).where(Organization.tenant_id == DEFAULT_TENANT_ID))).scalar_one_or_none()
+        if organization is None:
+            raise HTTPException(409, "默认 Tenant 尚未初始化 Organization")
+        if organization.status != "active":
+            raise HTTPException(409, "默认 Organization 当前不可用")
 
         role = (await db.execute(select(Role).where(Role.name == "user"))).scalar_one_or_none()
         if role is None:
@@ -51,13 +57,22 @@ async def register(p: RegisterRequest, db: AsyncSession = Depends(get_db)):
         db.add(user)
         await db.flush()
         db.add(UserRole(user_id=user.id, role_id=role.id))
+        db.add(
+            OrganizationMembership(
+                organization_id=organization.id,
+                user_id=user.id,
+                status="active",
+                role="member",
+            )
+        )
         await db.commit()
         await db.refresh(user)
+    except HTTPException:
+        await db.rollback()
+        raise
     except IntegrityError as exc:
         await db.rollback()
-        # A concurrent registration or legacy data inconsistency must not leak
-        # as an opaque HTTP 500. The pre-check remains the normal fast path;
-        # this branch closes the database race at the transaction boundary.
+        # 并发注册或历史数据不一致必须转换为稳定的业务冲突，而不是泄漏为 HTTP 500。
         raise HTTPException(409, "用户注册发生数据冲突，请重试") from exc
 
     return {"user_id": user.id, "username": user.username, "tenant_id": user.tenant_id, "roles": ["user"]}
