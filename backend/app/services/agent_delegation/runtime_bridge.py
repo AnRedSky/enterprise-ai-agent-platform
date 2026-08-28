@@ -49,18 +49,7 @@ class AgentDelegationRuntimeBridge:
 
     @classmethod
     async def load(cls, db: AsyncSession, execution) -> DelegationRuntimeContext | None:
-        """从 Worker Execution 反查已 Claim Delegation，并校验 tenant 与发布版本边界。
-
-        Args:
-            db: 当前 Worker Runtime 数据库会话。
-            execution: 已完成 B1 Claim 的 Workflow Execution。
-
-        Returns:
-            DelegationRuntimeContext | None: 普通 Workflow Execution 返回 None；Delegation Worker Execution 返回显式执行上下文。
-
-        Raises:
-            HTTPException: Delegation 状态、tenant、目标 Agent version 或 model profile 不满足执行边界。
-        """
+        """从 Worker Execution 反查已 Claim Delegation，并校验 tenant 与发布版本边界。"""
         delegation = (
             await db.execute(
                 select(AgentDelegation).where(
@@ -105,17 +94,7 @@ class AgentDelegationRuntimeBridge:
 
     @staticmethod
     def build_runtime_version(parent_version, context: DelegationRuntimeContext):
-        """构造仅用于本次 Worker 执行的内存 Runtime Version。
-
-        Args:
-            parent_version: B1 创建 Worker Execution 时继承的父 Workflow Version。
-            context: 已校验的 Delegation Runtime 上下文。
-
-        Returns:
-            SimpleNamespace: 复用父 Workflow Runtime 配置、但只执行目标 Agent 的内存版本。
-
-        说明：该对象不会写回 WorkflowVersion 数据库表，因此不会污染父 Workflow Definition；目标 Agent version 的精确身份由 context 校验并固定到其已发布版本。
-        """
+        """构造仅用于本次 Worker 执行的内存 Runtime Version。"""
         definition = parent_version.definition if isinstance(parent_version.definition, dict) else {}
         runtime_config = dict(definition.get("config") or {})
         runtime_config["delegation_context"] = {
@@ -135,11 +114,14 @@ class AgentDelegationRuntimeBridge:
                 "delegation_context": runtime_config["delegation_context"],
             },
         }
+        # Delegation produces a single synthetic agent node, not a persisted DAG.
+        # Omit ``edges`` because the DAG validator requires non-empty edges whenever
+        # the key exists; adding a synthetic edge would alter execution semantics.
         return SimpleNamespace(
             id=parent_version.id,
             workflow_id=parent_version.workflow_id,
             version=parent_version.version,
-            definition={"config": runtime_config, "nodes": [node], "edges": []},
+            definition={"config": runtime_config, "nodes": [node]},
             status=parent_version.status,
             created_by=parent_version.created_by,
         )
