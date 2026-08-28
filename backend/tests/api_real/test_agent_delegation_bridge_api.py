@@ -109,7 +109,11 @@ def _create_delegation(client: httpx.Client, suffix: str) -> tuple[str, str, str
 
 
 async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix: str) -> uuid.UUID:
-    """为真实验收 Delegation 自动创建并绑定组织内独立 Mock Profile，避免依赖已有 Provider。
+    """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。
+
+    Real Gate 必须验证 RuntimeBridge 的版本快照一致性，因此测试 Fixture 不能只改 Delegation。
+    由于 Profile 创建接口不是本 Gate 的验收目标，Fixture 在 Claim 前直接完成数据库装配：
+    Target Agent version 与 Delegation 同时绑定同一个新建 Mock Profile，然后再进入真实 Claim/Worker 链路。
 
     Args:
         db: 当前真实 PostgreSQL 异步会话。
@@ -156,6 +160,10 @@ async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix:
     )
     db.add(mock_profile)
     await db.flush()
+
+    # RuntimeBridge treats the published AgentVersion + Delegation profile as one
+    # immutable execution snapshot. Keep both references identical in the fixture.
+    target_version.model_profile_id = mock_profile.id
     delegation.model_profile_id = mock_profile.id
     await db.commit()
     return mock_profile.id
