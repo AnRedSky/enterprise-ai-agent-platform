@@ -1,7 +1,7 @@
 """Agent Delegation B2/B3 Worker Runtime Real API 验收测试。
 
-职责：通过真实 HTTP + PostgreSQL 验证 B1 Claim、B2 target Agent Runtime 与 B3 Delegation completion generation fencing。
-边界：不验证 B4 timeout/cancel/parent semantics；失败路径由独立 B3 测试继续扩展。
+职责：通过真实 HTTP + PostgreSQL 验证 B1 Claim、B2 target Agent Runtime 与 B3 Delegation completion/failure generation fencing。
+边界：不验证 B4 timeout/cancel/parent semantics；失败场景仅验证 Worker Execution 已持久化失败后的 Delegation 收敛。
 关键依赖：真实 Backend HTTP、PostgreSQL、Mock Model Provider、现有 Workflow Worker Runtime。
 """
 
@@ -19,7 +19,7 @@ from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
 from app.models.workflow_execution import WorkflowExecution
 from app.services.agent_delegation.claim import claim_delegation
-from app.services.agent_delegation.completion import complete_delegation
+from app.services.agent_delegation.completion import complete_delegation, fail_delegation
 from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
 from app.services.workflow_worker import WorkflowWorker
 from app.services.workflow_worker.runtime_entry import execute_claimed_execution
@@ -177,10 +177,45 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
                 tenant_id=delegation_row.tenant_id,
                 delegation_id=delegation_row.id,
                 worker_execution_id=stale_worker_execution_id,
-                output_data={"stale": True},
             )
         assert exc_info.value.status_code == 409
         await db.rollback()
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_row.id))).scalar_one()
         assert persisted.status == "running"
         assert persisted.worker_execution_id == claimed.worker_execution_id
+
+
+@pytest.mark.asyncio
+async def test_b3_failed_worker_execution_closes_delegation():
+    """验证 Worker Execution 已持久化失败后，当前 generation 能收敛 Delegation failed。"""
+    suffix = uuid.uuid4().hex[:10]
+    with _client() as client:
+        delegation_id, _, _, _, _ = _create_delegation(client, f"b3-failure-{suffix}")
+
+    async with SessionLocal() as db:
+        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
+        claimed = await claim_delegation(
+            db=db,
+            tenant_id=delegation_row.tenant_id,
+            delegation_id=delegation_row.id,
+            worker_owner=f"b3-failure-worker-{suffix}",
+        )
+        assert claimed.worker_execution_id is not None
+        worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == claimed.worker_execution_id))).scalar_one()
+        worker_execution.status = "failed"
+        worker_execution.error_code = "FIXTURE_FAILURE"
+        worker_execution.error_message = "B3 failure fixture"
+        await db.commit()
+
+        finalized = await fail_delegation(
+            db=db,
+            tenant_id=delegation_row.tenant_id,
+            delegation_id=delegation_row.id,
+            worker_execution_id=claimed.worker_execution_id,
+            error_code=worker_execution.error_code,
+            error_message=worker_execution.error_message,
+        )
+        assert finalized.status == "failed"
+        assert finalized.error_code == "FIXTURE_FAILURE"
+        assert finalized.error_message == "B3 failure fixture"
+        assert finalized.ended_at is not None
