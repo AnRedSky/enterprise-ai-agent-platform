@@ -14,7 +14,7 @@ async def test_resume_contract_reads_checkpoint_with_locked_execution_tenant_sco
     version_id = uuid4()
     checkpoint = SimpleNamespace(
         id=uuid4(), execution_id=execution_id, sequence=3, checkpoint_reason="frontier_completed",
-        execution_status="failed", node_status=None, node_id=None,
+        execution_status="running", node_status=None, node_id=None,
         state_data={}, input_data={}, output_data={},
     )
     execution = SimpleNamespace(
