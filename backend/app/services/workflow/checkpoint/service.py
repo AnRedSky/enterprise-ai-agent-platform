@@ -143,12 +143,17 @@ class WorkflowExecutionCheckpointService:
                                          output_data: dict | None = None, worker_owner: str | None = None,
                                          error_code: str | None = None, error_message: str | None = None,
                                          tenant_id: UUID | None = None, expected_worker_owner: str | None = None,
-                                         expected_worker_attempt: int | None = None, frontier_id: UUID | None = None) -> WorkflowExecutionCheckpoint:
+                                         expected_worker_attempt: int | None = None, frontier_id: UUID | None = None) -> WorkflowExecutionCheckpoint | None:
         """在调用方事务中写入下一个 Checkpoint，并校验 tenant、Execution 生命周期与 Worker fencing generation。
 
         `frontier_id` 只用于把 `frontier_completed` Execution-level durable fact 绑定到其来源 Frontier；
         它不是 Node identity，不改变 Execution-level snapshot 的语义。历史未绑定的 completion fact 不会
         被猜测回填，避免多个并行 Frontier 共用同一 Execution 时把错误 Checkpoint 当成幂等事实。
+
+        当请求来自持有 Durable Frontier Worker fencing 的执行路径且原因是 `node.completed` 时，不在这里
+        追加 Node-level Checkpoint。该路径的正式完成事实由 `complete_frontier_with_checkpoint()` 统一写入
+        `frontier_completed`；否则同一个 Frontier 会同时产生 Node-level 与 Execution-level 两条完成事实，
+        破坏 Durable Resume 的单一 progression 边界。
         """
         self._validate(0, checkpoint_reason)
         self._validate_checkpoint_boundary(checkpoint_reason=checkpoint_reason, node_id=node_id, node_attempt=node_attempt, node_status=node_status)
@@ -166,6 +171,9 @@ class WorkflowExecutionCheckpointService:
             raise HTTPException(409, f"Checkpoint 对应的 Workflow Execution 不存在或不属于当前 tenant: {execution_id}")
         self._validate_worker_fencing(expected_worker_owner=expected_worker_owner, expected_worker_attempt=expected_worker_attempt, execution=execution)
         self._validate_execution_status_boundary(execution=execution, execution_status=execution_status)
+
+        if checkpoint_reason == "node.completed" and expected_worker_owner is not None:
+            return None
 
         if checkpoint_reason == "frontier_completed":
             boundary_result = await self.db.execute(
