@@ -68,9 +68,36 @@ class WorkflowExecutionAutomaticRecoveryService:
     async def evaluate(self, execution: WorkflowExecution, *, now: datetime | None = None) -> WorkflowExecutionAutomaticRecoveryResult:
         """评估一个 failed Execution 是否满足自动 Resume 策略；不会创建 Resume。
 
-        使用 latest_recovery_fact() 而不是普通 latest()，确保带 Node 的最新 Checkpoint
-        在生成 Recovery Candidate 前已经与同一 Execution 的 Durable Node Fact 完整对齐。
+        Args:
+            execution: 待评估的 Workflow Execution。
+            now: 策略评估使用的当前时间。
+
+        Returns:
+            WorkflowExecutionAutomaticRecoveryResult: 包含 eligibility、原因与历史恢复次数的评估结果。
+
+        设计意图：active Worker 是恢复资格的硬拒绝条件，必须在读取 Checkpoint 前短路，避免无效的自动恢复扫描访问不完整的 Durable 状态。
         """
+        if execution.status != "failed":
+            decision = self.policy.evaluate(
+                execution_status=execution.status,
+                worker_owner=execution.worker_owner,
+                checkpoint_eligible=False,
+                resume_attempt_count=0,
+                ended_at=execution.ended_at,
+                now=now,
+            )
+            return WorkflowExecutionAutomaticRecoveryResult(decision=decision)
+        if execution.worker_owner is not None:
+            decision = self.policy.evaluate(
+                execution_status=execution.status,
+                worker_owner=execution.worker_owner,
+                checkpoint_eligible=False,
+                resume_attempt_count=0,
+                ended_at=execution.ended_at,
+                now=now,
+            )
+            return WorkflowExecutionAutomaticRecoveryResult(decision=decision)
+
         checkpoint = await self.checkpoint.latest_recovery_fact(
             execution.id,
             tenant_id=execution.tenant_id,
