@@ -1,6 +1,6 @@
 """Agent Delegation Worker 完成闭环。
 
-职责：在当前 Worker Execution generation 仍有效时，将 Delegation 原子收敛为 completed 或 failed，并记录审计与 Trace。
+职责：在当前 Worker Execution generation 仍有效时，将 Delegation 原子收敛为 completed、failed 或 timed_out，并记录审计与 Trace。
 边界：不执行 Runtime、不创建 Worker、不改变父 Workflow Execution；Worker generation 由 worker_execution_id 唯一标识。
 关键依赖：AgentDelegation、WorkflowExecution、Delegation lifecycle、AuditLog、WorkflowTraceEvent。
 """
@@ -233,6 +233,80 @@ async def fail_delegation(
             "worker_execution_id": str(worker_execution_id),
             "error_code": normalized_error_code,
         },
+    ))
+    await db.commit()
+    await db.refresh(delegation)
+    return delegation
+
+
+async def timeout_delegation(
+    *,
+    db: AsyncSession,
+    tenant_id: UUID,
+    delegation_id: UUID,
+    worker_execution_id: UUID,
+) -> AgentDelegation:
+    """以当前 Worker generation 原子收敛 Delegation timed_out。
+
+    Args:
+        db: 当前异步数据库会话。
+        tenant_id: Delegation 所属租户。
+        delegation_id: Delegation 标识。
+        worker_execution_id: 触发 Delegation timeout 的当前 Worker generation。
+
+    Returns:
+        AgentDelegation: 已进入 timed_out 的持久化 Delegation。
+
+    Raises:
+        HTTPException: generation 失效、Worker 已经终态化或状态转换非法。
+
+    设计意图：Delegation timeout 只结束子任务 Delegation，不直接修改父 Workflow Execution。
+    Worker Execution 可以随后由既有 Runtime cancellation / terminalization 语义收敛；任何迟到的
+    completion/failure 都会因为 Delegation 已进入终态而被 generation fencing 拒绝。
+    """
+    delegation, execution = await _lock_delegation(
+        db,
+        tenant_id=tenant_id,
+        delegation_id=delegation_id,
+        worker_execution_id=worker_execution_id,
+    )
+    if execution.status not in {"pending", "running"}:
+        raise HTTPException(409, f"Worker Execution 当前状态为 {execution.status}，不能超时 Delegation")
+    try:
+        validate_transition(delegation.status, "timed_out")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    now = utcnow_naive()
+    delegation.status = "timed_out"
+    delegation.ended_at = now
+    delegation.error_code = "DELEGATION_TIMEOUT"
+    delegation.error_message = "Delegation 超过治理 timeout_seconds"
+    await db.flush()
+
+    db.add(AuditLog(
+        actor_id=execution.created_by,
+        tenant_id=tenant_id,
+        workflow_id=execution.workflow_id,
+        workflow_version_id=execution.workflow_version_id,
+        workflow_execution_id=delegation.source_execution_id,
+        action="workflow.delegation.timed_out",
+        resource_type="agent_delegation",
+        resource_id=str(delegation.id),
+        trace_id=delegation.trace_id,
+        status="timed_out",
+        metadata_json={"worker_execution_id": str(worker_execution_id)},
+    ))
+    db.add(WorkflowTraceEvent(
+        tenant_id=tenant_id,
+        execution_id=delegation.source_execution_id,
+        workflow_id=execution.workflow_id,
+        workflow_version_id=execution.workflow_version_id,
+        event_type="agent.delegation.timed_out",
+        status="timed_out",
+        trace_id=delegation.trace_id,
+        actor_id=execution.created_by,
+        data={"delegation_id": str(delegation.id), "worker_execution_id": str(worker_execution_id)},
     ))
     await db.commit()
     await db.refresh(delegation)
