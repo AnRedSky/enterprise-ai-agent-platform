@@ -38,6 +38,7 @@ def test_delegation_runtime_bridge_builds_isolated_target_version():
     assert runtime_version.definition["config"]["delegation_context"]["model_profile_id"] == str(context.model_profile_id)
     assert runtime_version.definition["config"]["delegation_context"]["selected_context_refs"] == ["input:task"]
     assert runtime_version.definition["config"]["delegation_context"]["allowed_tools"] == ["tool:read"]
+    assert "edges" not in runtime_version.definition
     assert parent.definition == parent_definition
 
 
