@@ -97,8 +97,8 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                     WorkflowExecution.worker_owner == worker.owner,
                     WorkflowExecution.status.in_({"pending", "running"}),
                 )
-            ).scalar_one_or_none()
-        )
+            )
+        ).scalar_one_or_none()
         if execution is None:
             return
 
