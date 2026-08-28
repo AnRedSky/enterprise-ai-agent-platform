@@ -32,32 +32,59 @@ from app.services.workflow_worker.lease_guard import WorkflowWorkerLeaseGuard, W
 from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRuntime
 
 
-async def _finalize_delegation(execution_id: UUID, delegation_id: UUID, outcome: str, reason_code: str | None) -> None:
-    """按 Worker generation 收敛 Delegation 终态。"""
+async def _finalize_delegation(
+    db,
+    execution_id: UUID,
+    delegation_id: UUID,
+    outcome: str,
+    reason_code: str | None,
+) -> None:
+    """按当前 Worker 会话中的已提交 Execution 状态收敛 Delegation 终态。
+
+    Args:
+        db: 当前 Worker Runtime 使用的异步数据库会话。
+        execution_id: 已 Claim 的 Worker Execution generation 标识。
+        delegation_id: 待收敛的 Delegation 标识。
+        outcome: Runtime 最终结果，支持 completed、failed、aborted。
+        reason_code: Runtime 失败时的稳定原因码。
+
+    Returns:
+        None。Delegation 完成或失败事实由 completion Service 在事务中持久化。
+
+    Raises:
+        HTTPException: Worker Execution 不存在、状态与 outcome 不一致或 generation fencing 失败。
+
+    事务边界：必须复用 Worker Runtime 当前 AsyncSession，而不是重新创建独立 Session。
+    WorkflowRuntime 的状态转换会自行 commit；复用同一 Session 可保证 finalize 读取的是该
+    Worker generation 已提交的 terminal Execution。这样既避免跨 Session 在提交边界上的
+    可见性竞态，也保持 Delegation completion/failure 与当前 Worker generation 的 fencing 语义。
+    """
     if outcome == "aborted":
         return
-    async with SessionLocal() as db:
-        execution = (
-            await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))
-        ).scalar_one_or_none()
-        if execution is None:
-            raise HTTPException(409, "Worker Execution 不存在，无法收敛 Delegation")
-        if outcome == "completed":
-            await complete_delegation(
-                db=db,
-                tenant_id=execution.tenant_id,
-                delegation_id=delegation_id,
-                worker_execution_id=execution_id,
-            )
-            return
-        await fail_delegation(
+
+    execution = (
+        await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))
+    ).scalar_one_or_none()
+    if execution is None:
+        raise HTTPException(409, "Worker Execution 不存在，无法收敛 Delegation")
+
+    if outcome == "completed":
+        await complete_delegation(
             db=db,
             tenant_id=execution.tenant_id,
             delegation_id=delegation_id,
             worker_execution_id=execution_id,
-            error_code=reason_code or "RUNTIME_ERROR",
-            error_message=execution.error_message or "Worker Execution 执行失败",
         )
+        return
+
+    await fail_delegation(
+        db=db,
+        tenant_id=execution.tenant_id,
+        delegation_id=delegation_id,
+        worker_execution_id=execution_id,
+        error_code=reason_code or "RUNTIME_ERROR",
+        error_message=execution.error_message or "Worker Execution 执行失败",
+    )
 
 
 async def execute_claimed_execution(worker, execution_id: UUID) -> None:
@@ -70,8 +97,8 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                     WorkflowExecution.worker_owner == worker.owner,
                     WorkflowExecution.status.in_({"pending", "running"}),
                 )
-            )
-        ).scalar_one_or_none()
+            ).scalar_one_or_none()
+        )
         if execution is None:
             return
 
@@ -197,7 +224,7 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
         finally:
             if delegation_context is not None:
-                await _finalize_delegation(worker_execution_id, delegation_context.delegation_id, outcome, reason_code)
+                await _finalize_delegation(db, worker_execution_id, delegation_context.delegation_id, outcome, reason_code)
             if recovery_trace_id:
                 worker.telemetry.emit(
                     WorkflowRecoveryEvent(
