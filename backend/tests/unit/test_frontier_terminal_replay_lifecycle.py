@@ -22,6 +22,7 @@ def _frontier() -> MagicMock:
     frontier.tenant_id = uuid4()
     frontier.frontier_key = "frontier-current"
     frontier.attempt = 1
+    frontier.status = "completed"
     return frontier
 
 
