@@ -4,7 +4,7 @@
 
 Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现。当前进入 Runtime Integration：把 `AgentDelegation` 接入现有 Workflow Worker / lease / fencing 体系，不创建第二套 Worker、Retry 或 Recovery 状态机。
 
-最新 `main`：`f080ff53d1f5b5f5352ad36fc0be1d8e6d08e9e7`。
+最新代码基线正在推进 **B1 Atomic Delegation Claim**。
 
 ## 2. 已完成
 
@@ -16,7 +16,9 @@ Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现�
 - Audit / Trace 基础事件；
 - active budget creation 的父 Execution 行锁序列化；
 - `0038_agent_delegations` Migration；
-- `lifecycle.py` 纯生命周期与 Worker fencing 规则入口。
+- `lifecycle.py` 纯生命周期与 Worker fencing 规则入口；
+- Service 内重复 lifecycle 规则已删除并统一调用 `lifecycle.validate_transition()`；
+- B1 Atomic Claim 初版：PostgreSQL Delegation 行锁、唯一 `worker_execution_id`、复用 `WorkflowExecution` 的既有 Worker owner/lease 字段，并在同一事务中完成 Claim 与 Worker Execution 持久化。
 
 `0039_workflow_node_execution_tenant_trigger` 当前为数据库 head；它依赖 `0038_agent_delegations`，因此 Phase 2.8 的数据结构基础已经存在。
 
@@ -30,13 +32,37 @@ Worker completion → running + 当前 worker_execution_id generation 必须一�
 timeout → now >= timeout_at
 ```
 
-`backend/tests/unit/test_agent_delegation_lifecycle.py` 已覆盖状态转换、终态封闭、stale generation、缺失 owner 与 timeout 边界，但 `37061ab` 之后尚无新的开发者本地执行结果，因此保持“待验证”。
+`backend/tests/unit/test_agent_delegation_lifecycle.py` 已覆盖状态转换、终态封闭、stale generation、缺失 owner 与 timeout 边界。新增 B1 代码尚未获得开发者本地执行结果，因此不得标记为 Passed。
 
-## 4. 深度核查发现
+## 4. B1 Atomic Delegation Claim
 
-`lifecycle.py` 已作为正式生命周期规则入口，但 `AgentDelegationService` 仍复制 `TERMINAL_STATES` / `TRANSITIONS`，`cancel()` 直接使用副本。当前两套规则内容一致，但形成重复业务规则入口，违反单一规则入口原则。
+B1 已进入代码实现：
 
-**B1 开发前必须先删除 Service 内重复规则并统一调用 `lifecycle.validate_transition()`；该问题已记录到 `docs/04-errors/`。**
+```text
+pending Delegation
+      │
+      │ SELECT ... FOR UPDATE
+      ▼
+唯一数据库 ownership boundary
+      │
+      ├── timeout / status fail-closed
+      ├── 创建既有 WorkflowExecution Worker record
+      ├── worker_owner = 当前 Worker
+      ├── worker_lease_expires_at = Delegation timeout
+      └── delegation.worker_execution_id = Worker Execution.id
+      ▼
+running Delegation
+```
+
+关键约束：
+
+1. Claim 必须带 tenant boundary；
+2. 只有 pending 可以 Claim；
+3. timeout 到期直接拒绝，不偷偷放宽 lifecycle；
+4. Delegation 行锁保证同一时刻只有一个 Worker 获得 ownership；
+5. `worker_execution_id` 使用真实 `WorkflowExecution.id`，不生成脱离数据库的伪 identity；
+6. Worker lease 复用 `WorkflowExecution.worker_owner / worker_lease_expires_at`，不创建第二套 lease；
+7. Delegation 状态和 Worker Execution 创建在同一事务提交，避免半完成 Claim。
 
 ## 5. 当前运行时缺口
 
@@ -44,7 +70,7 @@ timeout → now >= timeout_at
 API create
     ↓
 pending Delegation
-    ↓  ← B1 Atomic Claim
+    ↓  ← B1 已实现，待 PostgreSQL 并发验证
 running + worker_execution_id
     ↓  ← B2 Existing Worker Execution bridge
 Agent Runtime
@@ -56,13 +82,9 @@ B5 Audit / Trace closure
 Real API + PostgreSQL + multi-worker acceptance
 ```
 
-### B1 — Atomic Delegation Claim
-
-仅 `pending` 可 Claim；使用 PostgreSQL 条件更新或行锁形成唯一 ownership boundary；生成唯一 `worker_execution_id`；2+ Worker 并发竞争只能一个 generation 成功；timeout/cancel/terminal 状态必须 fail-closed；不新增独立 Worker lease。
-
 ### B2 — Workflow Worker Execution Bridge
 
-复用既有 Workflow Worker / Execution / lease / fencing，将 target Agent version、model profile、`input_data`、`selected_context_refs`、`allowed_tools` 与 delegation trace identity 显式装配到 Worker execution。不得复制父 Execution 全量 checkpoint、memory 或 credential。
+继续复用现有 Workflow Worker / Execution / lease / fencing，将 target Agent version、model profile、`input_data`、`selected_context_refs`、`allowed_tools` 与 delegation trace identity 显式装配到 Worker execution。不得复制父 Execution 全量 checkpoint、memory 或 credential。
 
 ### B3/B4 — Completion / Failure / Timeout / Cancel
 
@@ -120,10 +142,33 @@ uv run alembic upgrade head
 uv run alembic current
 ```
 
+### B1 PostgreSQL Integration
+
+B1 必须补充真实 PostgreSQL Integration，至少覆盖：
+
+- 单 Worker Claim；
+- 两个并发 Worker Claim 同一 Delegation；
+- 已 running / cancelled / terminal Delegation 拒绝；
+- timeout 边界拒绝；
+- Claim 失败时 Delegation 与 Worker Execution 不产生半完成提交；
+- `worker_execution_id` 指向真实 `WorkflowExecution`，且 tenant 一致。
+
 ### Real API
 
 B1-B5 完成后增加 Delegation Runtime 专项 Real API Gate，必须覆盖真实 HTTP、PostgreSQL、2+ Worker 并发、stale completion、timeout/cancel 与 Audit/Trace；不得以 Mock 或 Unit 替代。
 
 ## 8. 下一交付单元
 
-下一次代码交付以 **“唯一 lifecycle 入口修正 + B1 Atomic Delegation Claim + Unit/Integration”** 为最小完整交付单元。B1 完成前不扩展 Delegation 前端 UI，也不创建与现有 Worker Runtime 平行的可靠性抽象。
+当前代码交付已经进入 **B1 Atomic Delegation Claim**。下一步不是前端，而是：
+
+```text
+B1 targeted Unit
+    ↓
+B1 PostgreSQL Integration / 2+ Worker concurrency
+    ↓
+修复真实并发问题
+    ↓
+B2 Workflow Worker Execution Bridge
+```
+
+B1 完成前不扩展 Delegation 前端 UI，也不创建与现有 Worker Runtime 平行的可靠性抽象。
