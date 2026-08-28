@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 
 
 class _Result:
-    def __init__(self, value=None, values=None):
-        self.value = value; self.values = [] if values is None else values
+    def __init__(self, value=None, values=None): self.value = value; self.values = [] if values is None else values
     def scalar_one_or_none(self): return self.value
     def scalar_one(self): return self.value
     def scalars(self): return self
@@ -26,31 +26,16 @@ def _execution():
 
 @pytest.mark.asyncio
 async def test_frontier_completed_checkpoint_reuses_same_boundary() -> None:
-    db = MagicMock(); frontier_id = uuid4(); execution = _execution()
-    existing = SimpleNamespace(sequence=4, execution_status="running", state_data={"left": 1, "right": 2}, worker_owner="worker-a")
-    db.execute = AsyncMock(side_effect=[_Result(value=execution), _Result(values=[existing])])
-    db.flush = AsyncMock()
-    service = WorkflowExecutionCheckpointService(db)
-    actual = await service.append_next_in_transaction(
-        execution_id=execution.id, execution_status="running", state_data={"left": 1, "right": 2},
-        checkpoint_reason="frontier_completed", worker_owner="worker-a", tenant_id=execution.tenant_id,
-        expected_worker_owner=None, expected_worker_attempt=None, frontier_id=frontier_id,
-    )
-    assert actual is existing
-    db.add.assert_not_called(); db.flush.assert_not_awaited()
+    db = MagicMock(); frontier_id = uuid4(); execution = _execution(); existing = SimpleNamespace(sequence=4, execution_status="running", state_data={"left":1,"right":2}, worker_owner="worker-a")
+    db.execute = AsyncMock(side_effect=[_Result(value=execution), _Result(values=[existing])]); db.flush = AsyncMock()
+    actual = await WorkflowExecutionCheckpointService(db).append_next_in_transaction(execution_id=execution.id, execution_status="running", state_data={"left":1,"right":2}, checkpoint_reason="frontier_completed", worker_owner="worker-a", tenant_id=execution.tenant_id, expected_worker_owner=None, expected_worker_attempt=None, frontier_id=frontier_id)
+    assert actual is existing; db.add.assert_not_called(); db.flush.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_frontier_completed_checkpoint_does_not_reuse_different_state() -> None:
-    db = MagicMock(); frontier_id = uuid4(); execution = _execution()
-    existing = SimpleNamespace(sequence=4, execution_status="running", state_data={"left": 1}, worker_owner="worker-a")
-    db.execute = AsyncMock(side_effect=[_Result(value=execution), _Result(values=[existing]), _Result(value=4)])
-    db.add = MagicMock(); db.flush = AsyncMock()
-    service = WorkflowExecutionCheckpointService(db)
-    actual = await service.append_next_in_transaction(
-        execution_id=execution.id, execution_status="running", state_data={"left": 2},
-        checkpoint_reason="frontier_completed", worker_owner="worker-a", tenant_id=execution.tenant_id,
-        expected_worker_owner=None, expected_worker_attempt=None, frontier_id=frontier_id,
-    )
-    assert actual.sequence == 5
-    db.add.assert_called_once(); db.flush.assert_awaited_once()
+async def test_frontier_completed_checkpoint_rejects_different_state() -> None:
+    db = MagicMock(); frontier_id = uuid4(); execution = _execution(); existing = SimpleNamespace(sequence=4, execution_status="running", state_data={"left":1}, worker_owner="worker-a")
+    db.execute = AsyncMock(side_effect=[_Result(value=execution), _Result(values=[existing])]); db.add = MagicMock(); db.flush = AsyncMock()
+    with pytest.raises(HTTPException, match="payload 与本次写入不一致"):
+        await WorkflowExecutionCheckpointService(db).append_next_in_transaction(execution_id=execution.id, execution_status="running", state_data={"left":2}, checkpoint_reason="frontier_completed", worker_owner="worker-a", tenant_id=execution.tenant_id, expected_worker_owner=None, expected_worker_attempt=None, frontier_id=frontier_id)
+    db.add.assert_not_called(); db.flush.assert_not_awaited()

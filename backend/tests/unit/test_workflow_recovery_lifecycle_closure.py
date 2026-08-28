@@ -32,18 +32,13 @@ async def test_resume_idempotency_hit_reconciles_incomplete_durable_frontier(mon
     bootstrapped = []
     async def bootstrap(**kwargs): bootstrapped.append(kwargs)
     service.bootstrap.bootstrap = bootstrap
-
     class _ExecutionService:
         async def _lock_execution(self, execution): return execution
         async def resume_from_latest_checkpoint(self, *_args, **_kwargs): raise AssertionError("不完整幂等 Resume 不应创建第二个 Execution")
     import app.services.workflow.execution as execution_module
     monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
-
-    result = await service.resume_with_outcome(source, uuid4())
-    assert result.outcome == "reconciled"
-    assert result.execution.id == existing.id
-    assert len(bootstrapped) == 1
-    assert db.commits == 0
+    result = await service.resume_with_outcome(source, uuid4(), commit=False)
+    assert result.outcome == "reconciled"; assert result.execution.id == existing.id; assert len(bootstrapped) == 1; assert db.commits == 0
 
 
 @pytest.mark.asyncio
@@ -57,16 +52,13 @@ async def test_resume_idempotency_hit_converges_when_frontier_exists(monkeypatch
         db.execute_calls += 1
         return _Result(existing if db.execute_calls == 1 else uuid4())
     db.execute = execute_with_frontier
-
     class _ExecutionService:
         async def _lock_execution(self, execution): return execution
         async def resume_from_latest_checkpoint(self, *_args, **_kwargs): raise AssertionError("有效幂等命中不应创建 Resume")
     import app.services.workflow.execution as execution_module
     monkeypatch.setattr(execution_module, "WorkflowExecutionService", lambda _db: _ExecutionService())
     result = await service.resume_with_outcome(source, uuid4())
-    assert result.outcome == "idempotency_hit"
-    assert result.execution.id == existing.id
-    assert db.commits == 0
+    assert result.outcome == "idempotency_hit"; assert result.execution.id == existing.id; assert db.commits == 0
 
 
 async def _fake_latest_recovery_fact(_execution_id, tenant_id=None):

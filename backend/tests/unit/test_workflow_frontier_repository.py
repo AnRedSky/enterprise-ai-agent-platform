@@ -17,7 +17,8 @@ async def test_claim_next_frontier_uses_locked_schedulable_query_without_commit(
     execution = MagicMock(); execution.status = "pending"; execution.worker_owner = None; execution.worker_lease_expires_at = None
     execution_result = MagicMock(); execution_result.scalar_one_or_none.return_value = execution
     frontier_result = MagicMock(); frontier_result.scalar_one_or_none.return_value = frontier
-    db.execute = AsyncMock(side_effect=[candidate, identity, execution_result, frontier_result])
+    overlap_result = MagicMock(); overlap_result.scalars.return_value.all.return_value = []
+    db.execute = AsyncMock(side_effect=[candidate, identity, execution_result, frontier_result, overlap_result])
     db.flush = AsyncMock(); db.commit = AsyncMock()
     now = datetime(2026, 8, 27, 8, 0, 0)
     claimed = await claim_next_frontier(db, tenant_id=tenant_id, worker_owner="worker-a", lease_expires_at=now + timedelta(minutes=5), now=now)

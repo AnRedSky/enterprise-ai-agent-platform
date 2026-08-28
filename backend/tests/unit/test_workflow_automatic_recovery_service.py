@@ -107,8 +107,9 @@ async def test_recover_emits_idempotency_hit_attempt_event(monkeypatch) -> None:
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_version_id=uuid4(), status="failed", worker_owner=None, ended_at=datetime(2026, 8, 26, 11, 0), resume_of_execution_id=None, created_by=uuid4())
     checkpoint = _checkpoint(execution.id)
     async def fake_latest(_execution_id, *, tenant_id=None): return checkpoint
+    async def fake_count(_execution): return 0
     monkeypatch.setattr(service.checkpoint, "latest_recovery_fact", fake_latest)
-    monkeypatch.setattr(service, "_count_resume_ancestors", lambda _execution: 0)
+    monkeypatch.setattr(service, "_count_resume_ancestors", fake_count)
     existing_resume = SimpleNamespace(id=uuid4())
     async def fake_resume(_execution, _actor, *, commit=True):
         assert commit is False
