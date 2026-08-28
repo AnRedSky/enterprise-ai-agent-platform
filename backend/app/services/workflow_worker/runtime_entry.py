@@ -119,8 +119,11 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 timeout=execution_timeout,
             )
 
+        renew_lease = getattr(worker, "_renew_with_abort_signal", None)
+        if renew_lease is None:
+            renew_lease = worker._renew_lease_once
         guard = WorkflowWorkerLeaseGuard(
-            renew_lease=lambda: worker._renew_with_abort_signal(execution.id),
+            renew_lease=lambda: renew_lease(execution.id),
             interval_seconds=max(0.1, worker.lease_seconds / 3),
         )
         try:
