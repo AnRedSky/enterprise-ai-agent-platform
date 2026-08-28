@@ -216,8 +216,10 @@ async def test_real_worker_executes_durable_resume_from_checkpoint():
                 ).order_by(WorkflowNodeExecution.created_at.asc(), WorkflowNodeExecution.id.asc()))).scalars().all()
             assert len(resume_checkpoints) == 1
             assert resume_checkpoints[0].sequence == 0
-            assert resume_checkpoints[0].node_id == "provider-call"
-            assert resume_checkpoints[0].node_status == "completed"
+            assert resume_checkpoints[0].checkpoint_reason == "frontier_completed"
+            assert resume_checkpoints[0].frontier_id is not None
+            assert resume_checkpoints[0].node_id is None
+            assert resume_checkpoints[0].node_status is None
             assert [(node.node_id, node.status) for node in resume_nodes] == [("prepare", "completed"), ("provider-call", "completed")]
             with lock:
                 assert state["calls"] == 2
