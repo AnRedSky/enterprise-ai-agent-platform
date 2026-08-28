@@ -1,7 +1,7 @@
 # Phase 2.8-A Multi-Agent Collaboration Contract
 
 > 本文件冻结 Phase 2.8 Multi-Agent Collaboration 的产品与 Backend Contract。
-> Contract 未完成验收前，不创建 Multi-Agent 专用 Migration、Service、Runtime 或 API 实现。
+> Contract 已通过设计冻结，后续生产实现必须严格遵循本文件，不得重新定义已冻结的 tenant、版本、权限、幂等、预算、生命周期与 fencing 语义。
 
 ## 1. 目标
 
@@ -236,13 +236,15 @@ Migration 必须在 Contract 通过后独立设计，并补充 tenant、幂等�
 ```text
 Phase 2.8-A Contract 冻结
         ↓
-Backend Domain + API Contract
+Backend Domain + API Contract        ✅ 已实现
         ↓
-Alembic Migration
+Alembic Migration                    ✅ 已实现
         ↓
-Unit / Integration / API Contract
+Unit / Integration / API Contract   🟡 基础测试已存在，Runtime 新增部分待本地验证
         ↓
-Real API Gate
+Runtime Integration                  ← 当前阶段
+        ↓
+Real API Gate                        ← Runtime 完成后
         ↓
 Backend Regression
         ↓
@@ -255,6 +257,18 @@ Acceptance
 
 ## 9. 当前决策
 
-Phase 2.7 已完成主线生产实现并进入验收；本地 Backend Unit / Default Regression 已由开发者实际通过后，允许启动 Phase 2.8-A Contract 冻结。
+Phase 2.8-A Contract 已冻结并已经进入生产实现阶段。当前不再重复讨论基础 Delegation 数据模型或 API 边界；下一阶段只围绕现有 Contract 完成 Worker Runtime 接入。
 
-Phase 2.8-A 未完成 Contract 验收前，不进入 Agent Delegation 生产实现，避免提前固化错误的数据模型、递归语义和权限边界。
+当前实现状态：
+
+- Delegation Durable Entity / Repository / Service：已实现；
+- create/list/get/cancel API：已实现；
+- tenant/version/permission/idempotency/budget：已实现；
+- lifecycle / Worker completion fencing 纯规则：已实现；
+- Atomic Worker Claim：待实现；
+- Worker Execution bridge：待实现；
+- generation-fenced completion persistence：待实现；
+- timeout/cancel runtime：待实现；
+- PostgreSQL Integration / Real API Runtime acceptance：待实现。
+
+后续实现必须复用既有 Workflow Worker / lease / fencing / retry / recovery 能力，不创建第二套可靠性状态机。
