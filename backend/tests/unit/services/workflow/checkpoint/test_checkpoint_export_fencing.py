@@ -1,7 +1,7 @@
 import pytest
 
 from app.services.workflow.checkpoint import WorkflowExecutionCheckpointService
-from app.services.workflow.checkpoint import _WorkflowExecutionCheckpointService
+from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService as BaseCheckpointService
 
 
 @pytest.mark.asyncio
@@ -12,11 +12,7 @@ async def test_manual_checkpoint_write_does_not_pass_default_worker_attempt(monk
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        _WorkflowExecutionCheckpointService,
-        "append_next_in_transaction",
-        fake_append,
-    )
+    monkeypatch.setattr(BaseCheckpointService, "append_next_in_transaction", fake_append)
 
     service = WorkflowExecutionCheckpointService(None)
     result = await service.append_next_in_transaction(
@@ -44,11 +40,7 @@ async def test_worker_checkpoint_fencing_generation_is_preserved(monkeypatch):
         captured.update(kwargs)
         return object()
 
-    monkeypatch.setattr(
-        _WorkflowExecutionCheckpointService,
-        "append_next_in_transaction",
-        fake_append,
-    )
+    monkeypatch.setattr(BaseCheckpointService, "append_next_in_transaction", fake_append)
 
     service = WorkflowExecutionCheckpointService(None)
     await service.append_next_in_transaction(
