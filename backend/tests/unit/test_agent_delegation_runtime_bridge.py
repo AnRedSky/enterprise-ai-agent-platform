@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge, DelegationRuntimeContext
-from app.services.workflow.checkpoint.recovery.dag_contract import WorkflowDagContractValidator
+from app.services.workflow_worker.resume_runtime import DurableResumeWorkflowRuntime
 
 
 def _context():
@@ -21,17 +21,22 @@ def _context():
     )
 
 
-def test_delegation_runtime_bridge_builds_isolated_target_version():
-    """桥接必须只创建内存目标 Node，不修改父 Workflow Definition。"""
-    parent_definition = {
-        "config": {"timeout_ms": 30000},
-        "nodes": [{"id": "parent", "type": "agent", "config": {"agent_id": str(uuid4()), "prompt": "parent"}}],
-        "edges": [],
-    }
-    parent = SimpleNamespace(
-        id=uuid4(), workflow_id=uuid4(), version=1, definition=parent_definition,
+def _parent():
+    return SimpleNamespace(
+        id=uuid4(), workflow_id=uuid4(), version=1,
+        definition={
+            "config": {"timeout_ms": 30000},
+            "nodes": [{"id": "parent", "type": "agent", "config": {"agent_id": str(uuid4()), "prompt": "parent"}}],
+            "edges": [],
+        },
         status="published", created_by=uuid4(),
     )
+
+
+def test_delegation_runtime_bridge_builds_isolated_target_version():
+    """桥接必须只创建内存目标 Node，不修改父 Workflow Definition。"""
+    parent = _parent()
+    parent_definition = parent.definition
     context = _context()
 
     runtime_version = AgentDelegationRuntimeBridge.build_runtime_version(parent, context)
@@ -47,19 +52,14 @@ def test_delegation_runtime_bridge_builds_isolated_target_version():
     assert parent.definition == parent_definition
 
 
-def test_delegation_runtime_bridge_output_is_valid_for_single_node_runtime():
-    """桥接输出必须由基础 Runtime 接受，同时不能伪造一个无意义的 DAG edge。"""
-    parent = SimpleNamespace(
-        id=uuid4(), workflow_id=uuid4(), version=1,
-        definition={"config": {"timeout_ms": 30000}, "nodes": [{"id": "parent", "type": "agent", "config": {}}], "edges": []},
-        status="published", created_by=uuid4(),
-    )
-    runtime_version = AgentDelegationRuntimeBridge.build_runtime_version(parent, _context())
+def test_delegation_runtime_bridge_output_passes_worker_definition_validation():
+    """单 Node Delegation Runtime 必须由 Worker Runtime 接受，且不能伪造 DAG edge。"""
+    runtime_version = AgentDelegationRuntimeBridge.build_runtime_version(_parent(), _context())
 
-    assert runtime_version.definition["nodes"]
+    nodes = DurableResumeWorkflowRuntime.validate_definition(runtime_version.definition)
+
+    assert [node["id"] for node in nodes] == ["delegation.target"]
     assert "edges" not in runtime_version.definition
-    # DAG 校验器只在存在 edges 时介入；单 Node Delegation Runtime 不属于持久化 DAG。
-    assert "edges" not in runtime_version.definition or WorkflowDagContractValidator is not None
 
 
 def test_delegation_runtime_bridge_resolves_structured_input_without_parent_state():
