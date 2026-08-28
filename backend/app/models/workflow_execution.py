@@ -10,7 +10,7 @@ from app.models.core import Base, utcnow_naive
 
 
 class WorkflowExecution(Base):
-    """Workflow 执行持久化模型，包含独立 Worker 的 ownership 租约与 Durable Resume 关联。"""
+    """Workflow 执行持久化模型，包含 Worker ownership 与 Durable Resume 关联。"""
 
     __tablename__ = "workflow_executions"
     __table_args__ = (
@@ -26,12 +26,8 @@ class WorkflowExecution(Base):
     workflow_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflows.id", ondelete="RESTRICT"), index=True)
     workflow_version_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflow_versions.id", ondelete="RESTRICT"), index=True)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
-    retry_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True
-    )
-    resume_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True
-    )
+    retry_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True)
+    resume_of_execution_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("workflow_executions.id", ondelete="SET NULL"), index=True, nullable=True)
     resume_checkpoint_sequence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
@@ -49,15 +45,17 @@ class WorkflowExecution(Base):
 
 
 class WorkflowNodeExecution(Base):
-    """Workflow 节点执行持久化模型。"""
+    """Workflow 节点执行持久化模型，明确携带 tenant identity 供真实查询做隔离。"""
 
     __tablename__ = "workflow_node_executions"
     __table_args__ = (
         UniqueConstraint("execution_id", "node_id", name="uq_workflow_node_execution"),
         Index("ix_workflow_node_execution_execution_created", "execution_id", "created_at"),
+        Index("ix_workflow_node_execution_tenant_execution", "tenant_id", "execution_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="RESTRICT"), index=True)
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("workflow_executions.id", ondelete="CASCADE"), index=True)
     node_id: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)

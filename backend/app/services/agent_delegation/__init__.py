@@ -1,0 +1,6 @@
+"""Agent Delegation 领域服务入口。"""
+
+from app.services.agent_delegation.repository import AgentDelegationRepository
+from app.services.agent_delegation.service import AgentDelegationService
+
+__all__ = ["AgentDelegationRepository", "AgentDelegationService"]

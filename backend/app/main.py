@@ -1,8 +1,7 @@
 """FastAPI API Service 应用入口。
 
 职责：注册 HTTP 路由、中间件以及 API Service 的 HTTP 生命周期。
-边界：不再启动 Scheduler；调度循环属于独立 Scheduler Service 进程，避免 API 多实例各自创建后台
-Scheduler 导致重复消费、lease contention 与资源隔离问题。
+边界：不启动 Scheduler；调度循环属于独立 Scheduler Service 进程。
 关键依赖：FastAPI、项目配置以及各 API Router。
 """
 
@@ -21,6 +20,7 @@ from app.api.v1.runtime.router import router as runtime_router
 from app.api.v1.tools.router import router as tools_router
 from app.api.v1.usage.router import router as usage_router
 from app.api.v1.webhooks.router import router as webhooks_router
+from app.api.v1.workflows.delegations import router as workflow_delegations_router
 from app.api.v1.workflows.executions import router as workflow_executions_router
 from app.api.v1.workflows.router import router as workflows_router
 from app.core.config import settings
@@ -46,6 +46,7 @@ app.include_router(model_providers_router, prefix="/api/v1/model-providers", tag
 app.include_router(organizations_router, prefix="/api/v1/organizations", tags=["organizations"])
 app.include_router(usage_router, prefix="/api/v1/usage", tags=["usage"])
 app.include_router(workflows_router, prefix="/api/v1/workflows", tags=["workflows"])
+app.include_router(workflow_delegations_router, prefix="/api/v1/workflows", tags=["workflow-delegations"])
 app.include_router(workflow_executions_router, prefix="/api/v1/workflows", tags=["workflow-executions"])
 app.include_router(webhooks_router, prefix="/api/v1/webhooks", tags=["webhooks"])
 
