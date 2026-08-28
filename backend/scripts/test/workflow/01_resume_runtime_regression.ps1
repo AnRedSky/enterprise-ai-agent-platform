@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-# 职责：执行 Durable Resume Runtime 当前回归单元测试。
+# 职责：执行 Durable Resume / DAG / Frontier 当前回归单元测试。
 # 边界：只运行 Backend Unit Regression，不启动 PostgreSQL、Redis、API、Scheduler 或 Worker。
 # 失败语义：pytest 非零退出码即脚本失败；脚本未执行到 pytest 时直接终止。
 
@@ -11,9 +11,11 @@ $TestFiles = @(
     "tests/unit/test_durable_resume_runtime.py",
     "tests/unit/test_workflow_execution_idempotency.py",
     "tests/unit/test_workflow_execution_governance.py",
+    "tests/unit/test_workflow_dag_contract.py",
     "tests/unit/test_workflow_dag_runtime_initialization.py",
     "tests/unit/test_frontier_duplicate_completion.py",
-    "tests/unit/test_frontier_duplicate_consumption.py"
+    "tests/unit/test_frontier_duplicate_consumption.py",
+    "tests/unit/test_frontier_claim_lock_order.py"
 )
 
 Write-Host "[TEST] Durable Resume / Execution / DAG / Frontier targeted regression"
