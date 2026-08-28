@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -14,38 +13,16 @@ from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpoint
 @pytest.mark.asyncio
 async def test_frontier_completion_idempotency_does_not_depend_on_worker_owner() -> None:
     """同一 Durable completion fact 被新 Worker Replay 时，不得因历史 owner 不同而追加事实。"""
-    db = AsyncMock()
-    service = WorkflowExecutionCheckpointService(db)
-    execution_id = uuid4()
-    tenant_id = uuid4()
-
-    execution = MagicMock()
-    execution.id = execution_id
-    execution.tenant_id = tenant_id
-    execution.status = "running"
-
-    existing = MagicMock()
-    existing.execution_status = "running"
-    existing.state_data = {"done": True}
-    existing.worker_owner = "worker-old"
-
-    execution_lookup = MagicMock()
-    execution_lookup.scalar_one_or_none.return_value = execution
-    boundary_lookup = MagicMock()
-    boundary_lookup.scalar_one_or_none.return_value = existing
-    db.execute.side_effect = [execution_lookup, boundary_lookup]
-
+    db = MagicMock(); service = WorkflowExecutionCheckpointService(db)
+    execution_id = uuid4(); tenant_id = uuid4(); frontier_id = uuid4()
+    execution = MagicMock(); execution.id = execution_id; execution.tenant_id = tenant_id; execution.status = "running"; execution.worker_owner = "worker-new"; execution.worker_attempt = 2; execution.worker_lease_expires_at = None
+    existing = MagicMock(); existing.execution_status = "running"; existing.state_data = {"done": True}; existing.worker_owner = "worker-old"
+    execution_lookup = MagicMock(); execution_lookup.scalar_one_or_none.return_value = execution
+    boundary_lookup = MagicMock(); boundary_lookup.scalars.return_value.all.return_value = [existing]
+    db.execute = AsyncMock(side_effect=[execution_lookup, boundary_lookup]); db.add = MagicMock(); db.flush = AsyncMock()
     result = await service.append_next_in_transaction(
-        execution_id=execution_id,
-        execution_status="running",
-        state_data={"done": True},
-        checkpoint_reason="frontier_completed",
-        worker_owner="worker-new",
-        tenant_id=tenant_id,
-        frontier_id=uuid4(),
+        execution_id=execution_id, execution_status="running", state_data={"done": True}, checkpoint_reason="frontier_completed",
+        worker_owner="worker-new", tenant_id=tenant_id, frontier_id=frontier_id,
     )
-
     assert result is existing
-    db.add.assert_not_called()
-    db.flush.assert_not_awaited()
-
+    db.add.assert_not_called(); db.flush.assert_not_awaited()
