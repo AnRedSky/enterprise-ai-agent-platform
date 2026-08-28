@@ -1,7 +1,7 @@
-"""Agent Delegation B2 Worker Execution Bridge Real API 验收测试。
+"""Agent Delegation B2/B3 Worker Runtime Real API 验收测试。
 
-职责：通过真实 HTTP + PostgreSQL 完成 B1 Claim 后，调用现有 Worker Runtime Entry，验证目标 Agent version 被真正执行。
-边界：不验证 B3 completion generation fencing；只验证 B2 的 target version、model profile、显式输入、context/tool refs 与 trace bridge。
+职责：通过真实 HTTP + PostgreSQL 验证 B1 Claim、B2 target Agent Runtime 与 B3 Delegation completion generation fencing。
+边界：不验证 B4 timeout/cancel/parent semantics；失败路径由独立 B3 测试继续扩展。
 关键依赖：真实 Backend HTTP、PostgreSQL、Mock Model Provider、现有 Workflow Worker Runtime。
 """
 
@@ -12,12 +12,14 @@ import uuid
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
 from app.models.workflow_execution import WorkflowExecution
 from app.services.agent_delegation.claim import claim_delegation
+from app.services.agent_delegation.completion import complete_delegation
 from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
 from app.services.workflow_worker import WorkflowWorker
 from app.services.workflow_worker.runtime_entry import execute_claimed_execution
@@ -55,58 +57,60 @@ def _publish_agent(client: httpx.Client, name: str) -> tuple[str, str]:
     return agent_id, version_id
 
 
+def _create_delegation(client: httpx.Client, suffix: str) -> tuple[str, str, str, str, str]:
+    """创建真实 Workflow/Execution/Delegation Fixture，并返回关键标识。"""
+    orchestrator_id, _ = _publish_agent(client, f"phase-28-b2-orchestrator-{suffix}")
+    target_agent_id, target_version_id = _publish_agent(client, f"phase-28-b2-worker-{suffix}")
+    workflow = client.post(
+        "/workflows",
+        json={"name": f"phase-28-b2-{suffix}", "description": "B2 worker bridge real API fixture"},
+    )
+    assert workflow.status_code == 201, workflow.text
+    workflow_id = workflow.json()["id"]
+    version = client.post(
+        f"/workflows/{workflow_id}/versions",
+        json={
+            "definition": {
+                "config": {"timeout_ms": 60000},
+                "nodes": [
+                    {"id": "orchestrator", "type": "agent", "config": {"agent_id": orchestrator_id, "prompt": "parent workflow must not run"}},
+                    {"id": "output", "type": "output", "config": {}},
+                ],
+                "edges": [{"source": "orchestrator", "target": "output"}],
+            }
+        },
+    )
+    assert version.status_code == 201, version.text
+    workflow_version_id = version.json()["id"]
+    published = client.post(f"/workflows/{workflow_id}/versions/{workflow_version_id}/publish")
+    assert published.status_code == 200, published.text
+    execution = client.post(
+        f"/workflows/{workflow_id}/executions",
+        json={"input_data": {"fixture": "b2-bridge"}},
+    )
+    assert execution.status_code == 201, execution.text
+    execution_id = execution.json()["id"]
+    delegation = client.post(
+        f"/workflows/{execution_id}/delegations",
+        json={
+            "target_agent_version_id": target_version_id,
+            "delegation_key": f"b2-{suffix}",
+            "input_data": {"prompt": "B2 target execution", "task_id": suffix},
+            "selected_context_refs": ["input:task_id"],
+            "allowed_tools": ["tool:fixture.read"],
+            "timeout_seconds": 60,
+        },
+    )
+    assert delegation.status_code == 201, delegation.text
+    return delegation.json()["id"], target_agent_id, target_version_id, workflow_version_id, execution_id
+
+
 @pytest.mark.asyncio
 async def test_b2_worker_execution_bridge_runs_target_agent_version():
-    """验证 B1 Claim 后现有 Worker Runtime 真正执行 Delegation target Agent。"""
+    """验证 B1 Claim 后现有 Worker Runtime 真正执行 Delegation target Agent，并完成 Delegation。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        orchestrator_id, _ = _publish_agent(client, f"phase-28-b2-orchestrator-{suffix}")
-        target_agent_id, target_version_id = _publish_agent(client, f"phase-28-b2-worker-{suffix}")
-
-        workflow = client.post(
-            "/workflows",
-            json={"name": f"phase-28-b2-{suffix}", "description": "B2 worker bridge real API fixture"},
-        )
-        assert workflow.status_code == 201, workflow.text
-        workflow_id = workflow.json()["id"]
-        version = client.post(
-            f"/workflows/{workflow_id}/versions",
-            json={
-                "definition": {
-                    "config": {"timeout_ms": 60000},
-                    "nodes": [
-                        {"id": "orchestrator", "type": "agent", "config": {"agent_id": orchestrator_id, "prompt": "parent workflow must not run"}},
-                        {"id": "output", "type": "output", "config": {}},
-                    ],
-                    "edges": [{"source": "orchestrator", "target": "output"}],
-                }
-            },
-        )
-        assert version.status_code == 201, version.text
-        workflow_version_id = version.json()["id"]
-        published = client.post(f"/workflows/{workflow_id}/versions/{workflow_version_id}/publish")
-        assert published.status_code == 200, published.text
-
-        execution = client.post(
-            f"/workflows/{workflow_id}/executions",
-            json={"input_data": {"fixture": "b2-bridge"}},
-        )
-        assert execution.status_code == 201, execution.text
-        execution_id = execution.json()["id"]
-
-        delegation = client.post(
-            f"/workflows/{execution_id}/delegations",
-            json={
-                "target_agent_version_id": target_version_id,
-                "delegation_key": f"b2-{suffix}",
-                "input_data": {"prompt": "B2 target execution", "task_id": suffix},
-                "selected_context_refs": ["input:task_id"],
-                "allowed_tools": ["tool:fixture.read"],
-                "timeout_seconds": 60,
-            },
-        )
-        assert delegation.status_code == 201, delegation.text
-        delegation_id = delegation.json()["id"]
+        delegation_id, target_agent_id, target_version_id, workflow_version_id, _ = _create_delegation(client, suffix)
 
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
@@ -146,4 +150,37 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         assert worker_execution.output_data is not None
         assert worker_execution.output_data["agent_id"] == target_agent_id
         assert worker_execution.output_data["agent_version"] is not None
+        assert persisted.status == "completed"
+        assert persisted.ended_at is not None
+
+
+@pytest.mark.asyncio
+async def test_b3_stale_worker_generation_cannot_complete_delegation():
+    """验证旧 Worker generation 不能提前收敛当前 Delegation。"""
+    suffix = uuid.uuid4().hex[:10]
+    with _client() as client:
+        delegation_id, _, _, _, _ = _create_delegation(client, f"b3-{suffix}")
+
+    async with SessionLocal() as db:
+        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
+        claimed = await claim_delegation(
+            db=db,
+            tenant_id=delegation_row.tenant_id,
+            delegation_id=delegation_row.id,
+            worker_owner=f"b3-worker-{suffix}",
+        )
+        assert claimed.worker_execution_id is not None
+        stale_worker_execution_id = uuid.uuid4()
+        with pytest.raises(HTTPException) as exc_info:
+            await complete_delegation(
+                db=db,
+                tenant_id=delegation_row.tenant_id,
+                delegation_id=delegation_row.id,
+                worker_execution_id=stale_worker_execution_id,
+                output_data={"stale": True},
+            )
+        assert exc_info.value.status_code == 409
+        await db.rollback()
+        persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_row.id))).scalar_one()
         assert persisted.status == "running"
+        assert persisted.worker_execution_id == claimed.worker_execution_id
