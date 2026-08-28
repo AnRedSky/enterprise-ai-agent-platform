@@ -22,21 +22,12 @@ from app.models.workflow import WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.services.agent_delegation.identity import delegation_identity_key, validate_budget
+from app.services.agent_delegation.lifecycle import validate_transition
 from app.services.agent_delegation.repository import AgentDelegationRepository
 
 
 class AgentDelegationService:
     """Agent Delegation 的唯一领域服务入口。"""
-
-    TERMINAL_STATES = {"completed", "failed", "timed_out", "cancelled"}
-    TRANSITIONS = {
-        "pending": {"running", "cancelled"},
-        "running": {"completed", "failed", "timed_out", "cancelled"},
-        "completed": set(),
-        "failed": set(),
-        "timed_out": set(),
-        "cancelled": set(),
-    }
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -243,8 +234,10 @@ class AgentDelegationService:
     async def cancel(self, *, tenant_id: UUID, source_execution_id: UUID, delegation_id: UUID, actor_id: UUID, admin: bool) -> AgentDelegation:
         """取消 pending/running Delegation；取消只改变 Delegation 自身，不直接终止父 Execution。"""
         item = await self.get(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_id=delegation_id, actor_id=actor_id, admin=admin)
-        if "cancelled" not in self.TRANSITIONS[item.status]:
-            raise HTTPException(409, f"Delegation 不允许从 {item.status} 转换到 cancelled")
+        try:
+            validate_transition(item.status, "cancelled")
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         item.status = "cancelled"
         item.ended_at = utcnow_naive()
         await self.db.commit()
