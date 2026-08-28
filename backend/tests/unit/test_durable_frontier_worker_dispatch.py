@@ -27,6 +27,14 @@ def test_frontier_worker_claims_execution_in_same_transaction() -> None:
     assert "await db.commit()" in source
 
 
+def test_frontier_worker_starts_claimed_pending_execution_in_same_transaction() -> None:
+    source = _read("app/services/workflow_worker/frontier_runtime.py")
+    assert 'if execution.status == "pending":' in source
+    assert 'execution.status = "running"' in source
+    assert "execution.started_at = now_naive" in source
+    assert '"execution.state_changed"' in source
+
+
 def test_frontier_worker_preserves_fencing_generation() -> None:
     source = _read("app/services/workflow_worker/frontier_runtime.py")
     assert "attempt=frontier.attempt" in source

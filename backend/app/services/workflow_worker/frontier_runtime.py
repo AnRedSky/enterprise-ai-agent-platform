@@ -17,6 +17,7 @@ from app.infrastructure.db import SessionLocal
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow.frontier_lease_repository import renew_owned_frontier_lease
 from app.services.workflow.frontier_repository import claim_next_frontier, transition_owned_frontier
+from app.services.workflow.governance import WorkflowGovernanceService
 from app.services.workflow_worker.lease_runtime import LeaseAwareWorkflowWorker
 from app.services.workflow_worker.runtime_entry import execute_claimed_execution
 
@@ -80,6 +81,17 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             else:
                 await db.rollback()
                 return None
+            if execution.status == "pending":
+                execution.status = "running"
+                if execution.started_at is None:
+                    execution.started_at = now_naive
+                await WorkflowGovernanceService(db).trace(
+                    execution,
+                    execution.created_by,
+                    "execution.state_changed",
+                    "running",
+                    data={"from": "pending", "to": "running", "worker_attempt": int(execution.worker_attempt or 0)},
+                )
             frontier.status = "running"
             await db.commit()
             return frontier
