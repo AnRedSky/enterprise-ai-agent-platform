@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from app.services.workflow.execution import WorkflowExecutionService
+
+
+class _Result:
+    def scalar_one_or_none(self):
+        return None
 
 
 class _FakeDb:
@@ -16,6 +22,7 @@ class _FakeDb:
     def __init__(self) -> None:
         self.commits = 0
         self.refreshes = 0
+        self.execute = AsyncMock(return_value=_Result())
 
     async def commit(self) -> None:
         self.commits += 1
@@ -46,28 +53,16 @@ async def test_terminal_transition_atomically_clears_worker_ownership(target_sta
     service = WorkflowExecutionService.__new__(WorkflowExecutionService)
     service.db = db
     service.governance = _FakeGovernance()
-
+    tenant_id = uuid4()
     execution = SimpleNamespace(
-        id=uuid4(),
-        status="running",
-        created_by=uuid4(),
-        worker_owner="worker:stale",
-        worker_lease_expires_at=SimpleNamespace(),
-        ended_at=None,
-        current_node_id="node-1",
-        output_data=None,
-        error_code=None,
-        error_message=None,
-        started_at=None,
+        id=uuid4(), tenant_id=tenant_id, status="running", created_by=uuid4(),
+        worker_owner="worker:stale", worker_attempt=1, worker_lease_expires_at=SimpleNamespace(),
+        ended_at=None, current_node_id="node-1", output_data=None, error_code=None,
+        error_message=None, started_at=None,
     )
     service._lock_execution = lambda value: _completed(value)  # type: ignore[method-assign]
 
-    result = await service.transition(
-        execution,
-        target_status,
-        error_code="TEST_ERROR" if target_status == "failed" else None,
-    )
-
+    result = await service.transition(execution, target_status, error_code="TEST_ERROR" if target_status == "failed" else None)
     assert result.status == target_status
     assert result.worker_owner is None
     assert result.worker_lease_expires_at is None
