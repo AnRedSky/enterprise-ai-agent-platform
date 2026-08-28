@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
+from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.workflow_execution import WorkflowExecution
 from app.services.agent_delegation.claim import claim_delegation
 from app.services.agent_delegation.completion import complete_delegation, fail_delegation
@@ -105,6 +106,57 @@ def _create_delegation(client: httpx.Client, suffix: str) -> tuple[str, str, str
     return delegation.json()["id"], target_agent_id, target_version_id, workflow_version_id, execution_id
 
 
+async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix: str) -> uuid.UUID:
+    """为真实验收 Delegation 创建组织内独立 Mock Profile，避免依赖本地默认 Provider。
+
+    Args:
+        db: 当前真实 PostgreSQL 异步会话。
+        delegation_id: 待执行 Delegation ID。
+        suffix: 测试唯一后缀，用于避免 Provider/Profile 名称冲突。
+
+    Returns:
+        新建的 Mock Model Profile ID。
+
+    Raises:
+        AssertionError: 当前 Delegation 未绑定可用于推导组织边界的 Model Profile。
+    """
+    delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
+    assert delegation.model_profile_id is not None
+    source_profile = (
+        await db.execute(select(ModelProfile).where(ModelProfile.id == delegation.model_profile_id))
+    ).scalar_one()
+    source_provider = (
+        await db.execute(select(ModelProvider).where(ModelProvider.id == source_profile.provider_id))
+    ).scalar_one()
+
+    mock_provider = ModelProvider(
+        organization_id=source_provider.organization_id,
+        name=f"phase-28-mock-provider-{suffix}",
+        provider_type="mock",
+        provider_name="phase-28-real-gate",
+        enabled=True,
+        metadata_json={"purpose": "phase-2.8-real-gate"},
+    )
+    db.add(mock_provider)
+    await db.flush()
+
+    mock_profile = ModelProfile(
+        provider_id=mock_provider.id,
+        name=f"phase-28-mock-profile-{suffix}",
+        model_type=source_profile.model_type,
+        model_name="mock-model",
+        capabilities=source_profile.capabilities or {},
+        parameters={},
+        enabled=True,
+        is_default=False,
+    )
+    db.add(mock_profile)
+    await db.flush()
+    delegation.model_profile_id = mock_profile.id
+    await db.commit()
+    return mock_profile.id
+
+
 @pytest.mark.asyncio
 async def test_b2_worker_execution_bridge_runs_target_agent_version():
     """验证 B1 Claim 后现有 Worker Runtime 真正执行 Delegation target Agent，并完成 Delegation。"""
@@ -113,7 +165,9 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         delegation_id, target_agent_id, target_version_id, workflow_version_id, _ = _create_delegation(client, suffix)
 
     async with SessionLocal() as db:
-        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
+        delegation_uuid = uuid.UUID(delegation_id)
+        await _bind_deterministic_mock_profile(db, delegation_uuid, suffix)
+        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         tenant_id = delegation_row.tenant_id
         claimed = await claim_delegation(
             db=db,
