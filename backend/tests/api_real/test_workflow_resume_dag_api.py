@@ -2,7 +2,7 @@
 
 职责：在既有真实 Resume acceptance 基础上验证三节点线性 DAG 的完整 Definition 不被 Worker 裁剪，恢复后从单一 frontier 连续执行到尾节点，并覆盖 frontier 成功后后续节点再次失败的边界。
 边界：只使用真实 HTTP、真实 PostgreSQL 与人工启动的独立 Worker；不启动、停止或重启服务。
-关键依赖：既有 Resume Real API 测试辅助函数、WorkflowExecutionService、PostgreSQL Checkpoint 与独立 Worker。
+关键依赖：既有 Resume Real API 测试辅助函数、Durable Resume Contract、PostgreSQL Checkpoint 与独立 Worker。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
-from app.services.workflow import WorkflowExecutionService
+from app.services.workflow.checkpoint.recovery.resume_contract import WorkflowExecutionResumeContractService
 from tests.api_real.test_workflow_resume_api import _client, _resume_fixture_server, _require_context
 
 pytestmark = pytest.mark.real_api
@@ -49,6 +49,16 @@ async def _wait_for_status(execution_id: str, expected: str, timeout_seconds: fl
                 return execution
         await asyncio.sleep(0.2)
     raise AssertionError(f"Execution did not reach {expected}: {execution_id}")
+
+
+async def _resume(source_id: str) -> WorkflowExecution:
+    """通过正式 Resume Contract 创建 Resume，并在同一事务内完成 Durable Bootstrap。"""
+    async with SessionLocal() as db:
+        source = (
+            await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == source_id))
+        ).scalar_one()
+        outcome = await WorkflowExecutionResumeContractService(db).resume_with_outcome(source, source.created_by)
+        return outcome.execution
 
 
 @pytest.mark.asyncio
@@ -185,12 +195,7 @@ async def test_real_worker_executes_full_linear_dag_after_resume():
             assert len(checkpoints) == 1
             assert checkpoints[0].node_id == "prepare"
 
-            async with SessionLocal() as db:
-                source = (
-                    await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == source_id))
-                ).scalar_one()
-                resume = await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
-
+            resume = await _resume(source_id)
             resumed = await _wait_for_status(str(resume.id), "completed")
             assert resumed.status == "completed"
             assert resumed.workflow_version_id == source.workflow_version_id
@@ -215,6 +220,7 @@ async def test_real_worker_executes_full_linear_dag_after_resume():
                 ).scalars().all()
 
             assert [(node.node_id, node.status) for node in resume_nodes] == [
+                ("prepare", "completed"),
                 ("provider-call", "completed"),
                 ("finish", "completed"),
             ]
@@ -235,17 +241,7 @@ async def test_real_worker_executes_full_linear_dag_after_resume():
 
 @pytest.mark.asyncio
 async def test_real_worker_resume_dag_failure_after_frontier_preserves_checkpoint_and_lease():
-    """验证 Resume frontier 成功后后续 Node 再次失败时，Resume Checkpoint、lineage 与 Worker ownership 仍保持一致。
-
-    Args:
-        无。
-
-    Returns:
-        无；通过真实 PostgreSQL 持久化断言验证失败边界。
-
-    Raises:
-        AssertionError: Resume 未按预期形成 checkpoint、Node 终态或 ownership 边界。
-    """
+    """验证 Resume frontier 成功后后续 Node 再次失败时，Resume Checkpoint、lineage 与 Worker ownership 仍保持一致。"""
     _require_context()
 
     suffix = uuid.uuid4().hex[:10]
@@ -396,12 +392,7 @@ async def test_real_worker_resume_dag_failure_after_frontier_preserves_checkpoin
                 (0, "prepare", "completed"),
             ]
 
-            async with SessionLocal() as db:
-                source = (
-                    await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == source_id))
-                ).scalar_one()
-                resume = await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
-
+            resume = await _resume(source_id)
             resumed = await _wait_for_status(str(resume.id), "failed")
             assert resumed.status == "failed"
             assert resumed.worker_owner is None
@@ -428,15 +419,16 @@ async def test_real_worker_resume_dag_failure_after_frontier_preserves_checkpoin
                     await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == source.id))
                 ).scalar_one()
 
-            assert source_after.status == "failed"
-            assert source_after.worker_owner is None
             assert [(node.node_id, node.status) for node in resume_nodes] == [
+                ("prepare", "completed"),
                 ("provider-call", "completed"),
                 ("broken-after-resume", "failed"),
             ]
             assert [(checkpoint.sequence, checkpoint.node_id, checkpoint.node_status) for checkpoint in resume_checkpoints] == [
                 (0, "provider-call", "completed"),
             ]
+            assert source_after.status == "failed"
+            assert source_after.worker_owner is None
             with lock:
                 assert state["calls"] == 2
         finally:
