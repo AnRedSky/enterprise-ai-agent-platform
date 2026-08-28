@@ -44,6 +44,12 @@ def _lookup(value) -> MagicMock:
     return result
 
 
+def _identity_lookup(execution_id, tenant_id) -> MagicMock:
+    result = MagicMock()
+    result.one_or_none.return_value = (execution_id, tenant_id)
+    return result
+
+
 def _active_lookup(frontiers: list[MagicMock]) -> MagicMock:
     result = MagicMock()
     result.scalars.return_value.all.return_value = frontiers
@@ -58,8 +64,10 @@ async def test_claim_rejects_overlap_with_active_frontier() -> None:
     execution = _execution(candidate)
     active = _frontier(execution_id=execution_id, node_ids=["node-b", "node-c"])
     db.execute.side_effect = [
-        _lookup(candidate),
+        _lookup(candidate.id),
+        _identity_lookup(candidate.execution_id, candidate.tenant_id),
         _lookup(execution),
+        _lookup(candidate),
         _active_lookup([active]),
     ]
 
@@ -84,8 +92,10 @@ async def test_claim_allows_disjoint_frontier_in_same_execution() -> None:
     execution = _execution(candidate)
     active = _frontier(execution_id=execution_id, node_ids=["node-c", "node-d"])
     db.execute.side_effect = [
-        _lookup(candidate),
+        _lookup(candidate.id),
+        _identity_lookup(candidate.execution_id, candidate.tenant_id),
         _lookup(execution),
+        _lookup(candidate),
         _active_lookup([active]),
     ]
 
@@ -109,7 +119,11 @@ async def test_claim_allows_disjoint_frontier_in_same_execution() -> None:
 async def test_claim_does_not_consume_when_execution_lock_is_unavailable() -> None:
     db = AsyncMock()
     candidate = _frontier()
-    db.execute.side_effect = [_lookup(candidate), _lookup(None)]
+    db.execute.side_effect = [
+        _lookup(candidate.id),
+        _identity_lookup(candidate.execution_id, candidate.tenant_id),
+        _lookup(None),
+    ]
 
     result = await claim_next_frontier(
         db,
