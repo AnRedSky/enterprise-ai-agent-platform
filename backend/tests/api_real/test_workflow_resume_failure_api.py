@@ -2,7 +2,7 @@
 
 职责：通过真实 HTTP、真实 PostgreSQL 与独立 Worker 验证 Resume 再次失败时的 lineage、终态、Checkpoint 与 ownership 边界。
 边界：不启动、停止或重启 API、Scheduler、Worker；测试前置服务由开发者管理。
-关键依赖：独立 API Service、独立 Worker、PostgreSQL 与正式 WorkflowExecutionService。
+关键依赖：独立 API Service、独立 Worker、PostgreSQL 与正式 Durable Resume Contract。
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from sqlalchemy import select
 from app.infrastructure.db import SessionLocal
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.models.workflow_execution import WorkflowExecution, WorkflowNodeExecution
-from app.services.workflow import WorkflowExecutionService
+from app.services.workflow.checkpoint.recovery.resume_contract import WorkflowExecutionResumeContractService
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -54,14 +54,15 @@ async def _wait_for_terminal(execution_id: str, expected: str, timeout_seconds: 
 
 
 async def _resume(source_id: str) -> WorkflowExecution:
-    """通过正式 WorkflowExecutionService 创建 Resume Execution。"""
+    """通过正式 Resume Contract 创建 Resume，并在同一事务内完成 Durable Bootstrap。"""
     async with SessionLocal() as db:
         source = (
             await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == source_id))
         ).scalar_one_or_none()
         if source is None:
             raise AssertionError(f"Source Execution not found: {source_id}")
-        return await WorkflowExecutionService(db).resume_from_latest_checkpoint(source, source.created_by)
+        outcome = await WorkflowExecutionResumeContractService(db).resume_with_outcome(source, source.created_by)
+        return outcome.execution
 
 
 @pytest.mark.asyncio
@@ -187,7 +188,9 @@ async def test_real_worker_resume_failure_preserves_lineage_and_source_terminal_
         ).scalars().all()
 
     assert source_after.status == "failed"
-    assert source_after.resume_of_execution_id is None
-    assert source_after.workflow_version_id == resume.workflow_version_id
+    assert source_after.worker_owner is None
+    assert [(node.node_id, node.status) for node in resume_nodes] == [
+        ("prepare", "completed"),
+        ("broken-agent", "failed"),
+    ]
     assert resume_checkpoints == []
-    assert [(node.node_id, node.status) for node in resume_nodes] == [("broken-agent", "failed")]
