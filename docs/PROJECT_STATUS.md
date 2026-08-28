@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码提交：`aebbe42` — `test(phase-2.8): add automated B3 completion gate`
+- 当前代码提交：`423b5ed` — `fix(test): cleanup B2 gate process and environment on failure`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B3 Delegation completion / failure + generation fencing**
 
@@ -130,7 +130,8 @@ Gate 自动完成：
 8. 真实 PostgreSQL Claim；
 9. 通过现有 Worker Runtime 执行 Target Agent；
 10. 验证 Worker Execution completed 后 Delegation 自动 completed；
-11. 使用随机旧 Worker generation 调用 completion，验证被 fencing 拒绝且 Delegation 保持 running。
+11. 使用随机旧 Worker generation 调用 completion，验证被 fencing 拒绝且 Delegation 保持 running；
+12. 验证 Worker Execution failed 后当前 generation 能将 Delegation 收敛为 failed，并持久化 error code/message。
 
 禁止手工填写 Token、用户名、密码、tenant、ID 或测试数据。
 
@@ -197,4 +198,4 @@ Real API Gate 自动生成临时身份与 Token，不要求开发者手工输入
 
 ## 10. 当前结论
 
-**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2 生产 Bridge 已完成并修复 synthetic Runtime 的 DAG Contract 问题，但修复后的 Real Gate 尚未由开发者重新执行。B3 completion/failure + generation fencing 已完成生产实现与自动化验收入口，当前等待本地实际 Gate 结果；在此之前不宣称 B2/B3 Real Gate 通过。**
+**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2 生产 Bridge 已完成并修复 synthetic Runtime 的 DAG Contract 问题，但修复后的 Real Gate 尚未由开发者重新执行。B3 completion/failure + generation fencing 已完成生产实现、失败闭环、自动化 Gate 与测试覆盖，当前等待本地实际 Gate 结果；在此之前不宣称 B2/B3 Real Gate 通过。**
