@@ -16,11 +16,13 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
+from app.models.core import utcnow_naive
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.runtime.workflow import CircuitOpenError
-from app.services.agent_delegation.completion import complete_delegation, fail_delegation
+from app.services.agent_delegation.completion import complete_delegation, fail_delegation, timeout_delegation
 from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
+from app.services.agent_delegation.timeout import effective_runtime_timeout_seconds
 from app.services.workflow import WorkflowExecutionService
 from app.services.workflow.checkpoint.recovery.observability import (
     RECOVERY_WORKER_FINISHED,
@@ -45,11 +47,11 @@ async def _finalize_delegation(
         tenant_id: Worker Execution 所属租户，用于 tenant boundary 校验。
         execution_id: 已 Claim 的 Worker Execution generation 标识。
         delegation_id: 待收敛的 Delegation 标识。
-        outcome: Runtime 最终结果，支持 completed、failed、aborted。
-        reason_code: Runtime 失败时的稳定原因码。
+        outcome: Runtime 最终结果，支持 completed、failed、timed_out、aborted。
+        reason_code: Runtime 失败或超时时的稳定原因码。
 
     Returns:
-        None。Delegation 完成或失败事实由独立 Session 中的 completion Service 持久化。
+        None。Delegation 终态事实由独立 Session 中的 completion Service 持久化。
 
     Raises:
         HTTPException: Worker Execution 不存在、状态与 outcome 不一致或 generation fencing 失败。
@@ -58,8 +60,8 @@ async def _finalize_delegation(
     terminalization 必须在 Runtime Session 所属 `async with` 完全退出后执行。这样可以同时隔离
     未结束的事务、行锁与 SQLAlchemy identity map，避免 Runtime Session 与 Delegation 终态写入存在
     隐含生命周期耦合。tenant_id、execution_id、delegation_id 在进入 Runtime 前快照为不可变 identity，
-    因此不会触发 expired ORM 属性的隐式加载。Delegation completion/failure、AuditLog 与 Trace
-    在独立终态事务中原子提交。
+    因此不会触发 expired ORM 属性的隐式加载。Delegation completion/failure/timeout、AuditLog 与
+    Trace 在独立终态事务中原子提交。
     """
     if outcome == "aborted":
         return
@@ -78,6 +80,14 @@ async def _finalize_delegation(
 
         if outcome == "completed":
             await complete_delegation(
+                db=db,
+                tenant_id=tenant_id,
+                delegation_id=delegation_id,
+                worker_execution_id=execution_id,
+            )
+            return
+        if outcome == "timed_out":
+            await timeout_delegation(
                 db=db,
                 tenant_id=tenant_id,
                 delegation_id=delegation_id,
@@ -109,10 +119,9 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         HTTPException: Runtime、ownership、timeout、circuit breaker 或 Delegation fencing 失败时抛出统一错误。
 
     事务边界：B2 Bridge 只构造内存 Runtime Version，不写入父 Workflow Version；Workflow Execution
-    terminalization 复用当前 Runtime Session。Delegation completion/failure 必须等 Runtime Session
-    完全退出其 `async with` 生命周期后，再使用独立 Session 提交，两者通过稳定的 Worker generation
-    identity 建立 fencing 关系。异常需要继续向调用者传播时，先保存结果并在 Session 关闭后完成
-    Delegation 终态收敛，再重新抛出原异常。
+    terminalization 复用当前 Runtime Session。Delegation completion/failure/timeout 必须等 Runtime
+    Session 完全退出其 `async with` 生命周期后，再使用独立 Session 提交，两者通过稳定的 Worker generation
+    identity 建立 fencing 关系。Delegation timeout 只终止子任务，不直接修改父 Workflow Execution。
     """
     delegation_context = None
     worker_execution_id = execution_id
@@ -156,7 +165,19 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
         )
         allow_legacy_empty_nodes = "scheduled_slot" in (execution.input_data or {}) and delegation_context is None
         runtime_config = runtime_version.definition.get("config") if isinstance(runtime_version.definition, dict) else {}
-        execution_timeout = DurableResumeWorkflowRuntime.resolve_timeout_ms(runtime_config or {}) / 1000 + worker.EXECUTION_TIMEOUT_GRACE_SECONDS
+        workflow_timeout = DurableResumeWorkflowRuntime.resolve_timeout_ms(runtime_config or {}) / 1000
+        delegation_timeout_bound = False
+        if delegation_context is not None:
+            execution_timeout, delegation_timeout_bound = effective_runtime_timeout_seconds(
+                workflow_timeout,
+                delegation_context.timeout_at,
+                now=utcnow_naive(),
+            )
+            if not delegation_timeout_bound:
+                execution_timeout += worker.EXECUTION_TIMEOUT_GRACE_SECONDS
+        else:
+            execution_timeout = workflow_timeout + worker.EXECUTION_TIMEOUT_GRACE_SECONDS
+
         service = WorkflowExecutionService(db)
         trace_link = WorkflowRecoveryTraceLinkService(db)
         recovery_trace_id = delegation_context.trace_id if delegation_context is not None else await trace_link.get_trace_id(execution)
@@ -243,12 +264,28 @@ async def execute_claimed_execution(worker, execution_id: UUID) -> None:
                 await service.transition(current, "failed", error_code=reason_code, error_message="Circuit Breaker is open", actor_id=current.created_by)
             pending_exception = HTTPException(503, "Circuit Breaker is open")
         except asyncio.TimeoutError as exc:
-            outcome = "failed"
-            reason_code = "WORKER_EXECUTION_TIMEOUT"
-            current = await service._lock_execution(execution)
-            if current.status == "running":
-                await service.transition(current, "failed", error_code=reason_code, error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
-            pending_exception = RuntimeError("Worker Execution 超过受控执行时间")
+            if delegation_context is not None and delegation_timeout_bound:
+                outcome = "timed_out"
+                reason_code = "DELEGATION_TIMEOUT"
+                current = await service._lock_execution(execution)
+                if current.status == "running":
+                    # Delegation timeout 不修改父 Execution；这里只结束当前子 Worker Execution，避免
+                    # timeout 后继续占用 Worker lease。Delegation 自身在 Runtime Session 关闭后再独立收敛。
+                    await service.transition(
+                        current,
+                        "cancelled",
+                        error_code=reason_code,
+                        error_message="Delegation 超过治理 timeout_seconds",
+                        actor_id=current.created_by,
+                    )
+                pending_exception = RuntimeError("Delegation 超过治理 timeout_seconds")
+            else:
+                outcome = "failed"
+                reason_code = "WORKER_EXECUTION_TIMEOUT"
+                current = await service._lock_execution(execution)
+                if current.status == "running":
+                    await service.transition(current, "failed", error_code=reason_code, error_message="Worker Execution 超过受控执行时间", actor_id=current.created_by)
+                pending_exception = RuntimeError("Worker Execution 超过受控执行时间")
             pending_exception.__cause__ = exc
         except HTTPException as exc:
             outcome = "failed"
