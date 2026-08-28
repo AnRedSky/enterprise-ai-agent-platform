@@ -4,148 +4,129 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码基线：`5ecf427a` — `fix(worker): reconcile terminal execution after lease race`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
-- 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
+- 当前任务：**B4 Timeout / Cancel / Parent Semantics**
+- B2/B3 已由开发者本地实际验收通过；下一主线任务按 Roadmap 进入 B4。
 
 开发严格基于远端 `main`，不创建功能分支。
 
 ## 2. 已完成能力
 
-- Phase 2.7 Advanced Workflow 主线生产能力已完成；
-- Durable Workflow / Resume / Frontier / Scheduler 基础设施已完成；
+- Phase 2.7 Advanced Workflow 主线生产能力完成；
+- Durable Workflow / Resume / Frontier / Scheduler 基础设施完成；
 - Phase 2.8-A Delegation Contract 已冻结；
 - `AgentDelegation` Durable Entity / Repository / Service / API 已完成；
 - tenant / Agent version / permission / idempotency / depth / active-count / timeout / model budget 已实现；
-- lifecycle / Worker fencing 纯规则入口已建立；
-- B1 Atomic Claim 已完成生产实现，并已通过本地真实 HTTP + PostgreSQL 双 Worker 并发 Gate；
-- B2 Worker Execution Bridge 已进入生产代码，复用现有 Workflow Worker / WorkflowRuntime 执行目标 Agent version；
-- B3 Delegation completion/failure 已进入生产代码，以 `worker_execution_id` 作为 Worker generation fencing identity；
-- Runtime Session / Execution terminalization / Model Profile Snapshot 前置问题已完成修复；
-- Delegation terminal write 已完成 tenant + running + worker generation fencing 与 ORM bulk DML 边界整改。
+- B1 Atomic Claim 已完成并通过本地真实 HTTP + PostgreSQL 双 Worker 并发 Gate；
+- B2 Worker Execution Bridge 已完成，复用既有 Workflow Worker / WorkflowRuntime；
+- B3 Delegation completion/failure generation fencing 已完成；
+- Runtime Session / Execution terminalization / Model Profile Snapshot / Frontier heartbeat 锁序问题已完成修复；
+- Scheduler 对单节点顺序 Workflow 的空 `edges` 语义已与 DAG Runtime 对齐。
 
-## 3. 最新本地验收反馈
+## 3. 最新本地验收证据
 
-开发者在 `5d1963d3` 基线执行 B2 Gate：
+开发者在 `79d68c58` 基线执行：
 
 ```text
 B2 bridge Unit             3 passed
-Backend regression         850 passed, 3 skipped, 46 deselected
+Backend regression         853 passed, 3 skipped, 46 deselected
 Migration/head             0039_workflow_node_execution_tenant_trigger (head)
-B2 Real Gate               1 failed, 2 passed
+B2 Real Gate               3 passed
+
+B3 Delegation lifecycle    30 passed
+Backend regression         853 passed, 3 skipped, 46 deselected
+Migration/head             0039_workflow_node_execution_tenant_trigger (head)
+B3 Real Gate               3 passed
+
+Workflow DAG contract      2 passed
 ```
 
-失败仍为：
+因此此前反复出现的 `AgentDelegation.status == running`、Worker lease race、Frontier lock inversion 已不再是当前阻塞项。
+
+## 4. B4 实现
+
+### 4.1 Delegation timeout
+
+新增正式 timeout 运行时边界：
+
+- `timeout_at` 继续作为 Delegation 生命周期的唯一持久化时间边界；
+- Worker Runtime 使用 `min(Workflow Runtime timeout, Delegation remaining timeout)`；
+- Delegation timeout 触发时，子 Worker Execution 通过既有 Execution lifecycle 进入 `cancelled`；
+- Runtime Session 完整退出后，再使用独立 Session 将 Delegation 原子收敛为 `timed_out`；
+- timeout 不直接修改父 Workflow Execution；
+- 迟到 Worker completion/failure 因 Delegation 已进入终态而被 generation fencing 拒绝。
+
+### 4.2 Cancel
+
+现有 `POST /workflows/{execution_id}/delegations/{delegation_id}/cancel` 继续复用 Delegation lifecycle：
 
 ```text
-assert persisted.status == "completed"
-E AssertionError: assert 'running' == 'completed'
+pending → cancelled
+running → cancelled
 ```
 
-同时真实 Worker Service 日志出现 PostgreSQL `DeadlockDetectedError`，调用点为 Durable Frontier `renew_owned_frontier_lease()` 更新 `workflow_executions.worker_lease_expires_at`。
+取消只结束 Delegation，不直接把父 Workflow Execution 推入 terminal 状态；重复取消 fail-closed。
 
-## 4. 本轮修复
+### 4.3 Parent semantics
 
-### 4.1 B2 Lease Lost / Runtime terminalization 竞态
-
-`execute_claimed_execution()` 不再在捕获 `WorkflowWorkerLeaseLost` 后无条件 `return`。该异常可能发生在 Runtime 已经把 Workflow Execution 持久化为 `completed/failed`、随后 heartbeat 执行 ownership fencing UPDATE 并观察到 `rowcount=0` 的竞态窗口。
-
-现在捕获 Lease Lost 后使用独立 Session 重新读取 durable Execution：
-
-- `completed`：恢复 completed outcome，继续 Delegation finalization；
-- `failed`：恢复 failed outcome 与持久化错误码，继续 Delegation finalization；
-- `pending/running`：确认 Runtime 尚未终态化，才保持 `WORKER_LEASE_LOST` 并放弃本 generation；
-- 不存在：安全放弃，不伪造完成事实。
-
-这直接消除了此前形成 `WorkflowExecution=completed / AgentDelegation=running` 的竞态窗口。
-
-### 4.2 Durable Frontier heartbeat 反向锁序
-
-`renew_owned_frontier_lease()` 原来为 `Frontier → Execution`，而 `claim_next_frontier()` 已采用 `Execution → Frontier`。本轮将 heartbeat 改为统一的：
+B4 明确保持：
 
 ```text
-读取 Frontier execution_id
+Worker completed / failed / timed_out / cancelled
         ↓
-Execution UPDATE
+Delegation 自身终态
         ↓
-Frontier UPDATE
+父 Workflow Execution 继续由既有 Workflow / Execution / Retry / Recovery Contract 决定
 ```
 
-任一层 ownership / attempt / status / lease 校验失败都会 rollback 两层续租，避免半续租状态，并消除 heartbeat 与 Claim/terminalization 的反向锁序。
+禁止为 Multi-Agent 创建第二套父流程 Retry / Recovery 状态机。
 
-## 5. B2 当前运行链路
+## 5. B4 自动化验收
 
-```text
-B1 Claim
-    ↓
-WorkflowExecution.worker_execution_id
-    ↓
-AgentDelegationRuntimeBridge
-    ↓
-单 Node 内存 Runtime Version
-    ↓
-既有 DurableResumeWorkflowRuntime
-    ↓
-既有 WorkflowRuntime
-    ↓
-Workflow Execution terminalization
-    ↓
-Runtime Session async with 完整退出
-    ↓
-Lease Lost race reconciliation（仅在 heartbeat 与 terminalization 同时发生时）
-    ↓
-独立 Delegation finalization Session
-    ↓
-tenant + worker_execution_id fencing
-    ↓
-Delegation completed / failed + AuditLog + WorkflowTraceEvent
-```
-
-## 6. B3 当前实现
-
-B3 不允许旧 Worker generation 修改新 generation 的 Delegation 状态。completion/failure 仍要求当前 Worker Execution generation 匹配；Lease Lost 只有在 durable Execution 尚未进入终态时才提前放弃。
-
-## 7. 自动化验收
-
-B2 正式入口：
+正式入口：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\02_worker_execution_bridge_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\04_delegation_timeout_cancel_gate.ps1
 ```
 
-Gate 只验证本地前置服务，不自动启动、重启或停止服务；测试用户、密码、Access Token 与测试数据均由 Gate 自动生成，不要求手工填写测试信息。
+Gate 不启动、重启或停止任何服务，只验证前置环境。测试用户、密码、Access Token、tenant、ID 与测试数据均由脚本自动生成。
 
-要求的前置服务：
-
-- PostgreSQL：Docker Compose `postgres`；
-- Redis：Docker Compose `redis`；
-- Backend HTTP API：`http://127.0.0.1:8000/health` 可访问。
-
-Gate 内部顺序：
+Gate 顺序：
 
 ```text
 [0] prerequisite service verification
     ↓
-[1] B2 bridge Unit
+[1] Delegation timeout Unit
     ↓
 [2] Backend default regression
     ↓
 [3] Alembic upgrade/head verification
     ↓
-[4] Real HTTP + PostgreSQL B2/B3 Gate
+[4] Real HTTP + PostgreSQL B4 timeout/cancel/parent semantics
 ```
 
-## 8. 当前验证状态
+B4 Real API 必须实际证明：
 
-本轮代码已经针对最新失败的真实并发根因完成修复，但当前环境无法替代开发者本地 PostgreSQL/Worker Service 实际运行，因此**不得预填 B2 已通过**。
+1. cancel → Delegation `cancelled`；
+2. duplicate cancel → 409；
+3. timeout → Worker Execution `cancelled` + Delegation `timed_out`；
+4. timeout/cancel 均不终止父 Workflow Execution；
+5. timeout 后 stale completion 不得覆盖终态；
+6. PostgreSQL 持久化状态与 generation identity 一致。
 
-下一步必须由开发者重新执行 B2 Gate，并在真实 Worker Service 持续运行条件下观察 heartbeat。只有以下条件全部满足后，B2 才能标记完成：
+## 6. 下一主线任务
 
-1. B2 Real Gate 通过，`AgentDelegation.status == completed`；
-2. B3 stale generation fencing 继续通过；
-3. Worker heartbeat 不再出现该 `Frontier → Execution` 反向锁序导致的 deadlock；
-4. Backend Regression 无新增失败；
-5. Migration head 保持 `0039_workflow_node_execution_tenant_trigger`。
+B4 验收通过后继续：
 
-对应错误记录：`docs/04-errors/2026-08-28-b2-delegation-finalization-session-lifetime.md`。
+```text
+B5 Audit / Trace closure
+    ↓
+Delegation multi-worker + PostgreSQL + Runtime acceptance
+    ↓
+Phase 2.8 closure
+    ↓
+Phase 2.9 Enterprise Integration / Event Infrastructure Contract
+```
+
+未执行的 B4 测试不得标记 Passed；Migration head 必须保持 `0039_workflow_node_execution_tenant_trigger`。
