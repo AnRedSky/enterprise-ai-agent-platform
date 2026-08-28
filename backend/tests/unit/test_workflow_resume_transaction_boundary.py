@@ -43,7 +43,11 @@ class _DB:
 
     async def execute(self, _statement):
         self.execute_calls += 1
-        value = self.version if self.execute_calls == 1 else self.existing
+        # 第一次查询读取 WorkflowVersion；第二次查询表示预检时尚不存在幂等记录；
+        # 第三次查询模拟并发事务已经提交的同 key Resume Execution。
+        value = self.version if self.execute_calls == 1 else None
+        if self.execute_calls >= 3:
+            value = self.existing
         return _Result(value)
 
     async def rollback(self):
