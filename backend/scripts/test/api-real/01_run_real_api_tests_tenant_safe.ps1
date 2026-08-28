@@ -5,8 +5,8 @@ Write-Host 'Enterprise AI Agent Platform - Real API Test Gate (Tenant Safe)'
 Write-Host '============================================================'
 
 # 本 Gate 只执行测试，不负责启动或停止任何 API / Worker / Scheduler 服务。
-# API 与 Worker 必须由开发者提前手动启动；这样不会抢占或污染开发者已有进程。
-# Worker 数量不构成失败条件：只要至少有一个 Worker，测试即可运行并覆盖并发 claim/lease 语义。
+# API、Worker 与 Scheduler 必须由开发者提前手动启动；Gate 不抢占或污染开发者已有进程。
+# Worker / Scheduler 数量不构成失败条件：只要至少有一个实例，测试即可运行并覆盖并发 claim/lease/slot 语义。
 if (-not $env:API_BASE_URL) {
     $env:API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
 }
@@ -40,6 +40,20 @@ function Assert-WorkerAvailable {
     Write-Host '[PASS] Multiple Worker processes are allowed; real API tests must remain valid under concurrent Worker execution.'
 }
 
+function Assert-SchedulerAvailable {
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+        $_.CommandLine -and $_.CommandLine -match 'run_scheduler\.py'
+    })
+    if ($processes.Count -eq 0) {
+        throw 'Required Scheduler Service is not running. Start it manually before running this gate: uv run python run_scheduler.py'
+    }
+    Write-Host "[PASS] Scheduler Service is available: $($processes.Count) Scheduler process(es) detected."
+    $processes | ForEach-Object {
+        Write-Host "[INFO] Scheduler PID=$($_.ProcessId) CommandLine=$($_.CommandLine)"
+    }
+    Write-Host '[PASS] Multiple Scheduler processes are allowed; scheduled slot claim/idempotency tests exercise concurrent Scheduler execution.'
+}
+
 Push-Location $backendRoot
 try {
     Write-Host '[0/4] Verify Real API source baseline'
@@ -51,6 +65,7 @@ try {
     Write-Host '[1/4] Verify required external services (no service is started by this gate)'
     Assert-ApiAvailable
     Assert-WorkerAvailable
+    Assert-SchedulerAvailable
 
     Write-Host '[2/4] Prepare tenant-safe real API test context'
     & uv run python (Join-Path $backendRoot 'scripts/test/api-real/00_bootstrap_real_api_tenant_safe.py')
