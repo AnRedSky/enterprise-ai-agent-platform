@@ -1,14 +1,13 @@
 # 企业级 AI Agent Platform 产品能力基线
 
-> 基线：远端 `main` 当前规划基线 `3d902ca2db35b8c62ce297e7e370924888219269`
-> 评估日期：2026-08-22
-> 文档性质：产品能力与工程实现基线；Phase 1.9 已关闭，Phase 2.1 已立项。
+> 基线：远端 `main`，评估日期：2026-08-28
+> 文档性质：产品能力与工程实现基线；实际完成度必须以仓库代码、Phase 文档及 Acceptance 证据为准。
 
 ## 1. 产品定位
 
-Enterprise AI Agent Platform 是面向企业应用的 AI Agent 平台。当前技术实现采用 FastAPI + Vue 3 + PostgreSQL + Redis 单体边界，通过版本化 API 提供 Agent、Runtime、Model、Tool、Knowledge、Memory、Workflow、Trigger、Observability 与 Governance 能力。
+Enterprise AI Agent Platform 面向企业应用场景，当前采用 FastAPI + Vue 3 + PostgreSQL + Redis 单体边界，通过版本化 API 提供 Agent、Runtime、Model、Tool、Knowledge、Memory、Workflow、Trigger、Observability 与 Governance 能力。
 
-长期目标包括高可用、高并发、可维护、可扩展、多 Agent 协作、企业级安全、可观测和可治理；实际完成度必须以仓库代码、Phase 文档及 Acceptance 证据为准。
+长期目标包括高可用、高并发、可维护、可扩展、多 Agent 协作、企业级安全、可观测和可治理。
 
 ## 2. 当前产品架构
 
@@ -17,20 +16,19 @@ User / Enterprise App
         ↓
 FastAPI API
         ↓
-Auth / RBAC / Tenant Governance
+Auth / RBAC / Tenant / Organization Governance
         ↓
 Agent / Workflow Services
         ↓
 Agent Runtime / Workflow Runtime
  ├── Context / Session / Message
- ├── Model Gateway
- ├── Tool Registry / Tool Runtime
+ ├── Model Gateway / Provider Governance
+ ├── Tool Runtime
  ├── Knowledge / RAG
  ├── Memory
- ├── Trigger / Scheduler / Webhook
+ ├── Trigger / Durable Scheduler / Webhook
+ ├── Durable Frontier / Resume / Recovery
  └── Observability / Audit / Trace
-        ↓
-Repository
         ↓
 PostgreSQL / Redis
 
@@ -39,137 +37,83 @@ Vue 3 Management / Debug UI
 Versioned Backend API Contract
 ```
 
-当前系统分层原则为 API → Service → Runtime → Gateway / Tool / Memory / Knowledge → Repository → PostgreSQL / Redis。前端只负责管理端交互和调试体验，不承载核心领域规则。
-
 ## 3. 产品能力全景
 
-| 能力域 | 当前工程状态 | 当前验收结论 | 主要边界 / 下一动作 |
+| 能力域 | 当前工程状态 | 当前验收结论 | 下一动作 |
 |---|---|---|---|
-| Identity / Auth | 已实现 | Phase 1.x 已验收当前范围 | Phase 2.1 扩展 Organization / Membership；不等同完整 SSO/SCIM IAM |
-| Agent | 已实现 | 当前范围已验收 | Marketplace / 发布生态为 Phase 2.8 候选 |
-| Agent Runtime | 已实现 | Phase 1.9 Reliability Gate 已通过 | 保持可靠性基线 |
-| Model Gateway | 已实现 | 当前范围已验收 | Provider 路由/Fallback/成本治理为 Phase 2.3 候选 |
-| Tool Runtime | 已实现 | 当前范围已验收 | 禁止任意代码执行 |
-| Memory | 已实现 | 当前范围已验收 | 向量记忆/自动摘要需独立需求 |
-| Observability | 已实现 | 当前范围已验收 | 不等同完整分布式 Observability 平台 |
-| Knowledge | 已实现 | Phase 1.4 当前范围完成 | 真实 Provider 语义质量进入 Phase 2.2 |
-| Retrieval | 已实现工程链路 | Phase 1.4 当前范围完成 | 生产语义质量需真实 Provider + 数据集 + 指标 |
-| Workflow | 已实现 | Phase 1.5 正式关闭 | 复杂 DAG/Saga/Designer 为 Phase 2.5 候选 |
-| Workflow Governance | 已实现 | Phase 1.5/1.9 已验收 | Organization scope 进入 Phase 2.1 |
-| Circuit Breaker | 已实现 | Phase 1.9 Real API 已验收 | 只因新需求或回归继续扩展 |
-| Manual Trigger | 已实现 | Phase 1.6 已关闭 | 保持 |
-| Scheduled Trigger | 已实现 | Phase 1.7/1.9 已验收 | Durable Scheduler 为 Phase 2.4 候选 |
-| Webhook Trigger | 已实现 | Phase 1.8/1.9 Browser 已验收 | 通用 Event Infrastructure 为 Phase 2.6 候选 |
-| Frontend Governance | 已实现 | Frontend Regression / Build / Browser Gate 已通过 | Phase 2.1 增加 Organization 管理 UI |
-| Browser E2E | 已实现 | Phase 1.9 已验收 | 新功能必须新增独立 E2E |
+| Identity / Auth / Organization | 已实现 | 2.1 已关闭 | 仅回归 |
+| Agent / Agent Version | 已实现 | 当前范围已验收 | 继续承载 Agent Governance |
+| Agent Runtime | 已实现 | 历史 Reliability Gate 已验收 | 保持可靠性基线 |
+| Model Gateway / Provider Governance | 已实现 | 2.2 / 2.3 已关闭 | 继续作为 Worker model governance |
+| Tool Runtime | 已实现 | 当前范围已验收 | 保持安全边界 |
+| Memory / Knowledge / RAG | 已实现 | 当前范围已验收 | 后续按需求演进 |
+| Workflow / Execution | 已实现 | 2.7 主线生产实现完成 | 继续作为 Delegation Runtime 基础 |
+| Durable Scheduler | 已实现 | 已完成主线收口 | 仅回归 |
+| Durable Resume / Recovery | 已实现 | 2.7 主线已收口并有实际 Backend / Real API 证据 | 保持回归 |
+| Observability / Audit / Trace | 已实现 | 已验收当前范围 | 承载 Delegation trace |
+| Frontend / Browser E2E | 已实现 | 历史范围已验收 | 新 UI 再扩展 |
+| Multi-Agent Collaboration | Domain/API/Migration 已实现；lifecycle pure rules 已实现 | Runtime 未验收 | B1-B5 Runtime Integration |
 
-## 4. 当前核心业务闭环
+## 4. 当前核心闭环
 
-### Agent Runtime
-
-```text
-Authentication
- → Authorization
- → Session Load
- → Context Assembly
- → Agent Runtime
- → Model / Tool / Knowledge
- → Result Validation
- → Memory Update
- → Output
- → Observability / Audit
-```
-
-### Knowledge / RAG
-
-```text
-Document
- → Parser / Cleaner
- → Deterministic Chunk
- → Embedding Provider
- → Vector / Lexical / Hybrid Retrieval
- → Context Builder
- → Runtime
- → Citation / Debug / Trace
-```
-
-线上 Retrieval 的业务数据来源必须是数据库；评测 JSON 仅为评测产物，不得作为线上业务数据源。
-
-### Workflow / Trigger
+### Workflow
 
 ```text
 Workflow Definition
- → Version
- → Publish
+ → Version / Publish
  → Trigger
- → Execution State Machine
- → Runtime
+ → Execution
+ → Frontier / Worker
+ → Checkpoint / Resume / Recovery
  → Audit / Trace
 ```
 
-Manual、Scheduled、Webhook 共用 Trigger / Execution 治理边界，但入口保持独立。
+### Multi-Agent Delegation（当前正在建设）
 
-## 5. 企业产品化缺口与路线
+```text
+Orchestrator Execution
+ → Delegation(pending)
+ → Atomic Claim
+ → Worker Execution
+ → Agent Runtime
+ → fenced completion / failure
+ → timeout / cancel
+ → Audit / Trace
+```
 
-按真实企业使用价值排序：
+## 5. 当前正式路线
 
-1. **Phase 2.1 — Organization & Access Governance（P0）**：解决组织、成员、角色和资源边界。
-2. **Phase 2.2 — Retrieval Production Quality（P0）**：解决真实 Embedding Provider、质量数据集和可量化指标。
-3. **Phase 2.3 — Model Provider Governance（P1）**：解决模型路由、Fallback、白名单和成本/用量治理。
-4. **Phase 2.4 — Durable Scheduler（P1）**：解决 `next_run_at`、lease、misfire 和多实例恢复语义。
-5. **Phase 2.5 — Advanced Workflow Orchestration（P1）**：解决复杂 DAG、并行/条件、补偿等真实流程需求。
-6. **Phase 2.6 — Enterprise Event Infrastructure（P2）**：只有真实业务证明 Webhook 不足时再引入 MQ/Event Bus。
-7. **Phase 2.7 — Multi-Agent Collaboration（P2）**：先定义业务协作场景、权限、状态和成本边界。
-8. **Phase 2.8 — Agent Asset / Marketplace（P2）**：形成企业 Agent 资产复用、发布和治理。
+1. Phase 2.1 — Organization & Access Governance：已关闭。
+2. Phase 2.2 — Retrieval Production Quality + Model Provider/Profile：已关闭。
+3. Phase 2.3 — Model Provider Governance：已关闭。
+4. Phase 2.4 — Durable Scheduler：已完成主线收口。
+5. Phase 2.5 — Scheduler → Worker Execution Decoupling：已关闭。
+6. Phase 2.6 — Durable Execution Checkpoint Foundation：已关闭。
+7. Phase 2.7 — Advanced Workflow Orchestration：主线生产实现完成，Backend / Migration / Tenant Safe Real API 已有实际证据。
+8. **Phase 2.8 — Multi-Agent Collaboration：当前正式开发阶段。**
+9. Phase 2.9 — Enterprise Integration / Event Infrastructure：候选。
+10. Phase 2.10 — Agent Asset / Marketplace：候选。
 
-完整路线见 `docs/PRODUCT_ROADMAP.md`。
+## 6. Phase 2.8 当前边界
 
-## 6. 安全与治理基线
+首版只支持一次 Workflow Execution 内受治理的 Agent Delegation。必须绑定 tenant、source/target Agent version、稳定 delegation identity，显式声明 input/context/tool refs，限制 depth / active count / timeout / model budget，并复用既有 RBAC、Model Governance、Workflow Worker / lease / fencing / Retry / Recovery。
 
-- Tenant / Organization scope 必须由认证上下文和后端 Service 决定，客户端不得自行决定授权范围。
-- Owner / Admin 权限必须由 Backend Contract 执行，前端只展示结果。
-- Tool Runtime 禁止任意 Python / Shell / 系统命令执行。
-- HTTP Tool 必须执行协议、DNS 解析后的 IP、超时、响应大小等安全检查。
-- Webhook Secret 只写入，不从 response 返回，持久化只保存 hash。
-- 真实 Provider endpoint、API key、model 等敏感配置只能存在未提交的 `backend/.env`。
-- 已验证的 Runtime Reliability 边界不能无原因回退。
+不提前引入 MQ/Kafka、Marketplace、跨 tenant 调用、无限 spawning 或第二套可靠性状态机。
 
-## 7. 当前可靠性基线
+当前 B1-B5：
 
-Phase 1.9 已记录的本地证据：
+```text
+B1 Atomic Delegation Claim
+B2 Existing Worker Execution bridge
+B3 generation-fenced completion / failure
+B4 timeout / cancel / parent semantics
+B5 Audit / Trace closure
+```
 
-- Backend：264 passed，23 deselected。
-- Migration：`0022_workflow_trigger` 为 head。
-- Real API：23 passed。
-- Frontend：13 test files / 52 tests passed，production build passed。
-- Browser：Desktop Chrome 3 passed。
+## 7. 当前工程发现
 
-上述结果是历史 Acceptance 证据，不代表本次规划更新重新执行。
+`backend/app/services/agent_delegation/lifecycle.py` 已成为 lifecycle/fencing 的正式规则入口，但 `AgentDelegationService` 仍保留同内容的 `TRANSITIONS` / `TERMINAL_STATES` 副本。该问题不改变当前行为，但违反单一业务规则入口原则，已记录错误并要求在 B1 前修正。
 
-## 8. 当前阶段
+## 8. 验收纪律
 
-**Phase 1.9 已正式关闭。Phase 2.1 已正式立项，当前仅执行 2.1-A Product / Backend Contract。**
-
-2.1-A 必须先冻结：
-
-- Organization ↔ Tenant 关系；
-- Membership 生命周期；
-- Owner/Admin/Member 权限矩阵；
-- 多组织归属策略；
-- User/Tenant/Role 兼容迁移策略；
-- API schema / error / pagination / idempotency；
-- Resource scope 与 Audit 规则。
-
-未冻结前不得直接实现 Migration / Service / UI。
-
-## 9. 明确不自动转化为任务的边界
-
-- MQ / Kafka / 通用 Event Bus。
-- Temporal / Airflow 等分布式 Workflow Engine。
-- 复杂 DAG、Saga、复杂 Policy DSL。
-- Multi-Agent orchestration。
-- 可视化拖拽 Workflow Designer。
-- 任意代码执行平台。
-- SSO / OIDC / SAML / SCIM 等完整企业 IAM。
-
-这些只有进入正式 Phase 后才成为开发任务。
+未实际执行的测试不得标记 Passed。Real API 必须证明真实 HTTP + PostgreSQL 持久化；Runtime 生命周期必须实际验证 Worker / Scheduler；所有 Phase 完成、延期、阻塞或范围变更必须同步更新 Phase、Acceptance、Project Status 与 Error 记录。

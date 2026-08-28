@@ -2,78 +2,55 @@
 
 ## 1. 验收范围
 
-本文件记录 Phase 2.7 的**生产主线代码验收结论**。它不把尚未执行的本地测试、Regression、Real API 或 E2E 标记为通过。
+本文件记录 Phase 2.7 的生产主线代码与当前已获得的本地验收证据。未实际执行的 Gate 保持未验收，不使用 GitHub Actions 替代本地证据。
 
-范围：
-
-- Durable Frontier Claim / overlap fencing；
-- Runtime consumption ownership；
-- Checkpoint Durable write boundary；
-- Success / Failure terminalization；
-- Retry exhaustion；
-- Recovery / Replay convergence；
-- stale Worker / lease-loss fencing；
-- completion fact uniqueness；
-- Execution terminalization 通用入口旁路。
+范围：Durable Frontier Claim / overlap fencing、Runtime ownership、Checkpoint durable write boundary、Success / Failure terminalization、Retry exhaustion、Recovery / Replay、stale Worker / lease-loss fencing、completion fact uniqueness、Execution terminalization 旁路防护。
 
 ## 2. 代码级验收结论
-
-### Durable ownership
 
 - Execution worker epoch 与 Frontier attempt 分离；
 - Frontier / Execution lease 在最终 transition 前重新验证；
 - lease loss 不进入普通业务 failure convergence；
-- stale Worker 不得产生新的 terminal durable fact。
-
-### Terminalization
-
-- Success 使用 Frontier → Execution 统一锁序；
-- Failure / retry exhaustion 收口到统一 Failure lifecycle；
+- stale Worker 不得产生新的 terminal durable fact；
+- Success / Failure / retry exhaustion 收口到统一 terminalization lifecycle；
 - sibling Frontier 在 terminalization 时关闭；
-- 通用 `WorkflowExecutionService.transition()` 的 `completed/failed` 入口禁止绕过活动 Frontier guard；
-- terminal Execution 不满足 Claim / Recovery 的可消费条件。
+- 通用 Execution transition 不得绕过活动 Frontier guard；
+- completion fact 绑定 source Frontier，Replay 对 Execution / Version / fingerprint / Node-set / payload / lifecycle / Next Frontier identity 做一致性校验；
+- legacy checkpoint append 已进入统一 durable boundary，sequence uniqueness 由数据库约束保护。
 
-### Replay
+## 3. 实际验证证据
 
-- completion fact 绑定 source Frontier；
-- Execution / Version / fingerprint / Node-set / payload / lifecycle / Next Frontier identity 必须一致；
-- 多 completion fact fail-closed；
-- lifecycle / payload drift fail-closed；
-- Replay 不依赖历史 Worker owner。
-
-### Checkpoint writer
-
-- legacy `append()` 已进入统一 Durable boundary；
-- `frontier_completed` 必须使用 `append_next_in_transaction()`；
-- sequence uniqueness 已有数据库约束；
-- 不重复创建 migration。
-
-## 3. 验收状态
+开发者已反馈以下本地结果，基线为 `b5e3c44484f9ffa231fb1f368cfc14afe0d99dea`：
 
 ```text
-生产主线代码：完成
-Unit Test 实现：完成
-Unit Test 执行：未执行
-Backend Regression：未执行
-Migration verification：未执行
-Real API：未执行
-Frontend Gate：未执行
-Browser E2E：未执行
-本地手动测试：未执行
+uv run pytest -q
+824 passed, 3 skipped, 42 deselected in 34.22s
+
+Tenant Safe Real API Gate
+41 passed in 81.83s
+[PASS] Tenant-safe Real API gate completed.
+
+uv run alembic upgrade head
+uv run alembic current
+0039_workflow_node_execution_tenant_trigger (head)
 ```
 
-因此本文件的“完成”仅表示**主线生产实现已经收口**，不表示运行时质量验收已经通过。
+这些结果证明 Phase 2.7 主线在该基线已经获得 Backend Regression、Tenant Safe Real API 与 Migration 的实际证据。后续 `37061ab` / `f080ff5` 仅涉及 Phase 2.8 lifecycle 与状态文档，不应把新 Phase 2.8 Unit 结果冒充为已执行。
 
-## 4. 下一阶段
+## 4. 当前验收状态
 
-按 `docs/01-governance/DEVELOPMENT.md` 进入本地测试与验收阶段：
+| Gate | 状态 | 说明 |
+|---|---|---|
+| 生产主线代码 | ✅ 完成 | Phase 2.7 代码已收口 |
+| Backend Unit / Regression | ✅ 有实际证据 | 824 passed / 3 skipped / 42 deselected |
+| Migration | ✅ 有实际证据 | head = 0039 |
+| Tenant Safe Real API | ✅ 有实际证据 | 41 passed |
+| Frontend Gate | 🟡 未在本轮重新执行 | 不借用历史结果 |
+| Browser E2E | 🟡 未在本轮重新执行 | 不借用历史结果 |
+| 本地手动场景 | 🟡 未在本轮重新执行 | 如发布范围需要再执行 |
 
-1. 环境与依赖检查；
-2. Unit / Backend default regression；
-3. Database migration/head verification；
-4. Real HTTP API Gate；
-5. Frontend Gate；
-6. Browser / Frontend-Backend E2E（如范围需要）；
-7. 本地手动场景；
-8. 根据真实失败结果形成新的修复提交；
-9. 更新本 Acceptance 与 `PROJECT_STATUS.md`。
+因此 Phase 2.7 **主线生产实现已完成，Backend / Migration / Tenant Safe Real API 已有实际证据；Frontend / Browser 等未重新执行部分不宣称最终全栈验收通过**。
+
+## 5. 下一阶段
+
+Phase 2.7 不再是当前开发 blocker。后续开发主线进入 Phase 2.8 Runtime Integration；若最终发布要求完整前端/E2E验收，再独立补齐对应 Gate。
