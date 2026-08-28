@@ -13,6 +13,8 @@ $TestFiles = @(
     "tests/unit/test_workflow_execution_governance.py",
     "tests/unit/test_workflow_dag_contract.py",
     "tests/unit/test_workflow_dag_runtime_initialization.py",
+    "tests/unit/test_frontier_progression.py",
+    "tests/unit/test_frontier_progression_lifecycle.py",
     "tests/unit/test_frontier_duplicate_completion.py",
     "tests/unit/test_frontier_duplicate_consumption.py",
     "tests/unit/test_frontier_claim_lock_order.py",
