@@ -4,7 +4,7 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前代码提交：`2daeeb62` — `docs(errors): record B2 real gate provider coupling`
+- 当前代码提交：`c1d3f3a1` — `fix(test): decouple B2 mock profile fixture from optional profile`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
 - 当前任务：**B2 Worker Execution Bridge Real Gate 修复与本地验收**
 
@@ -28,7 +28,7 @@
 
 ## 3. 最新本地验收反馈
 
-开发者在当前 `main`（`2daeeb62`）实际执行：
+开发者在提交 `2daeeb62` 对应的本地代码实际执行：
 
 ```text
 B2 bridge Unit             3 passed
@@ -46,7 +46,7 @@ E assert None is not None
 
 根因是此前为隔离外部 Provider 增加的测试 Fixture 仍假设 Delegation 在创建后已经带有 `model_profile_id`。当前 Real Gate 创建的 Target Agent 使用 `model_id=mock-model` 但没有显式 Model Profile，因此 Delegation 合法地继承了 `NULL` profile，测试辅助函数却无法从不存在的 profile 推导 Organization。
 
-本次修复改为直接从 Delegation 的 Target Agent version 与 Delegation tenant 查询对应 Organization，再自动创建独立 `provider_type=mock` / `model_name=mock-model` Profile 并绑定 Delegation。该修复仍保持真实 HTTP + PostgreSQL + Worker Runtime 链路，不修改生产 Provider fallback 语义。
+本次修复已改为直接从 Delegation 的 Target Agent version 与 Delegation tenant 查询对应 Organization，再自动创建独立 `provider_type=mock` / `model_name=mock-model` Profile 并绑定 Delegation。该修复仍保持真实 HTTP + PostgreSQL + Worker Runtime 链路，不修改生产 Provider fallback 语义。
 
 ## 4. B2 当前实现边界
 
@@ -199,4 +199,4 @@ Real API Gate 自动生成临时身份与 Token，不要求开发者手工输入
 
 ## 10. 当前结论
 
-**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2/B3 生产实现及此前已知回归均已修复；当前最新本地反馈暴露的是 B2 Real Gate 测试 Fixture 对可选 `model_profile_id` 的错误前置假设。本次提交修复该测试隔离问题后，必须重新由开发者本地实际执行 B2 Gate，再执行 B3 Gate；在新的实际结果产生前，不得标记 B2/B3 Real Gate 通过。B2 Real Gate 通过后立即进入 B3 本地验收闭环，再进入 B4 timeout / cancel / parent semantics。**
+**B1 已本地真实 PostgreSQL 双 Worker Gate 验收通过。B2/B3 生产实现及此前已知回归均已修复；当前最新本地反馈暴露的是 B2 Real Gate 测试 Fixture 对可选 `model_profile_id` 的错误前置假设。本次代码修复已提交到 `main`，但尚未产生修复后的本地实际测试结果，因此不能标记 B2/B3 Real Gate 通过。下一步必须先由开发者本地实际执行 B2 Gate，再执行 B3 Gate；B2 Real Gate 通过后进入 B3 本地验收闭环，再进入 B4 timeout / cancel / parent semantics。**
