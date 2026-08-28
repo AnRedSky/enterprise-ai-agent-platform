@@ -90,7 +90,7 @@ def test_logical_operators_support_short_circuit_evaluation() -> None:
     invalid_runtime_contains = {"op": "contains", "path": "value", "value": 1}
     assert evaluate(
         {"op": "and", "conditions": [
-            {"op": "eq", "path": "enabled", "value": False},
+            {"op": "eq", "path": "enabled", "value": True},
             invalid_runtime_contains,
         ]},
         {"enabled": False, "value": "text"},
