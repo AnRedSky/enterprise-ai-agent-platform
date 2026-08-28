@@ -68,7 +68,11 @@ async def test_resume_execution_delegates_to_domain_service(monkeypatch) -> None
     assert result["resume_of_execution_id"] == _FakeExecution.resume_of_execution_id
     assert result["resume_checkpoint_sequence"] == 2
     assert fake_service.get_calls == [(execution_id, tenant_id, actor_id, False)]
-    assert fake_service.resume_calls[0] == (_FakeExecution(), actor_id, False)
+    assert len(fake_service.resume_calls) == 1
+    resumed_execution, resumed_actor, commit = fake_service.resume_calls[0]
+    assert isinstance(resumed_execution, _FakeExecution)
+    assert resumed_actor == actor_id
+    assert commit is False
 
 
 def test_resume_route_uses_post_and_requires_user_or_admin_role() -> None:
