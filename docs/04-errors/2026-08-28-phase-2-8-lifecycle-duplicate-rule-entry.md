@@ -3,7 +3,7 @@
 - 日期：2026-08-28
 - Phase：2.8 Multi-Agent Collaboration
 - 类型：代码一致性 / Domain Rule Duplication
-- 状态：待修正
+- 状态：已修正，待本地验证
 
 ## 1. 发现
 
@@ -17,18 +17,17 @@
 
 `37061ab` 将生命周期与 fencing 抽取为独立纯领域入口时，只新增了 `lifecycle.py`，未同步删除 Service 内已有的重复状态常量及其调用。
 
-## 4. 修复要求
+## 4. 修复
 
-在 Phase 2.8-B1 开发前：
+已在 `main` 完成：
 
 1. 删除 `AgentDelegationService.TERMINAL_STATES` 与 `TRANSITIONS` 重复定义；
 2. `cancel()` 改为调用 `lifecycle.validate_transition()`；
-3. 全仓检索 Delegation 状态转换规则，确保不存在第三套正式实现；
-4. 增加 targeted Unit / module-refactor 检查，防止重复入口回归。
+3. `AgentDelegationService` 通过正式 lifecycle 模块复用状态转换规则。
 
-## 5. 验收
+全仓检索与 targeted tests 仍需在本地执行后，才能将本错误记录最终标记为已验收。
 
-修复完成后至少执行：
+## 5. 待执行验收
 
 ```powershell
 cd backend
