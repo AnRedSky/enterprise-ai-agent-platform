@@ -1,8 +1,7 @@
 """Knowledge 词法检索领域服务。
 
-职责：负责基于已持久化 Chunk 执行确定性的词法召回、相关度计算、权限过滤与结果去重。
+职责：负责基于已持久化 Chunk 执行确定性的词法召回、相关度计算、权限过滤与结果去重，并可将检索业务事实写入统一 Integration Event。
 边界：只实现 Knowledge 领域的本地词法检索，不承担向量检索、Embedding、Provider 适配或 API 协议转换。
-关键依赖：SQLAlchemy AsyncSession 与 app.models.knowledge 中的知识领域持久化模型。
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentChunk, KnowledgeDocumentVersion
+from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 
 
 class KnowledgeRetrievalService:
@@ -24,8 +24,9 @@ class KnowledgeRetrievalService:
     DEFAULT_MIN_SCORE = 0.0
     MAX_CANDIDATES = 5000
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, integration_publisher: RuntimeIntegrationEventPublisher | None = None):
         self.db = db
+        self.integration_publisher = integration_publisher
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
@@ -55,12 +56,36 @@ class KnowledgeRetrievalService:
     def _score(cls, query: str, content: str) -> float:
         return cls._score_details(query, content)[0]
 
-    async def retrieve(self, query: str, top_k: int, owner_id: UUID, is_admin: bool = False, knowledge_base_id: UUID | None = None, document_id: UUID | None = None, min_score: float = DEFAULT_MIN_SCORE, dedupe: bool = True) -> list[dict]:
+    async def _publish_fact(self, *, tenant_id: UUID | None, execution_id, agent_id, knowledge_base_id, status: str, result_count: int | None, request_id: str | None, trace_id: str | None) -> None:
+        if self.integration_publisher is None or tenant_id is None:
+            return
+        await self.integration_publisher.publish_agent_retrieval(
+            tenant_id=tenant_id,
+            execution_id=execution_id,
+            agent_id=agent_id,
+            knowledge_source_id=knowledge_base_id,
+            status=status,
+            result_count=result_count,
+            request_id=request_id,
+            trace_id=trace_id,
+        )
+
+    async def retrieve(
+        self, query: str, top_k: int, owner_id: UUID, is_admin: bool = False,
+        knowledge_base_id: UUID | None = None, document_id: UUID | None = None,
+        min_score: float = DEFAULT_MIN_SCORE, dedupe: bool = True,
+        *, tenant_id: UUID | None = None, execution_id=None, agent_id=None,
+        request_id: str | None = None, trace_id: str | None = None,
+    ) -> list[dict]:
         if not query.strip():
             raise HTTPException(status_code=422, detail="query 不能为空")
         if not 0 <= min_score <= 1:
             raise HTTPException(status_code=422, detail="min_score 必须在 0 到 1 之间")
-        stmt = (select(KnowledgeDocumentChunk, KnowledgeDocument, KnowledgeDocumentVersion, KnowledgeBase).join(KnowledgeDocumentVersion, KnowledgeDocumentVersion.id == KnowledgeDocumentChunk.document_version_id).join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeDocumentVersion.document_id).join(KnowledgeBase, KnowledgeBase.id == KnowledgeDocument.knowledge_base_id).where(KnowledgeDocument.status == "active", KnowledgeDocumentVersion.ingestion_status == "ready", KnowledgeDocumentVersion.status == "ready"))
+        stmt = (select(KnowledgeDocumentChunk, KnowledgeDocument, KnowledgeDocumentVersion, KnowledgeBase)
+            .join(KnowledgeDocumentVersion, KnowledgeDocumentVersion.id == KnowledgeDocumentChunk.document_version_id)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeDocumentVersion.document_id)
+            .join(KnowledgeBase, KnowledgeBase.id == KnowledgeDocument.knowledge_base_id)
+            .where(KnowledgeDocument.status == "active", KnowledgeDocumentVersion.ingestion_status == "ready", KnowledgeDocumentVersion.status == "ready"))
         if knowledge_base_id:
             stmt = stmt.where(KnowledgeBase.id == knowledge_base_id)
         if document_id:
@@ -80,4 +105,5 @@ class KnowledgeRetrievalService:
             seen_content.add(content_key)
             scored.append({"document_id": document.id, "document_version_id": version.id, "chunk_id": chunk.id, "chunk_index": chunk.chunk_index, "source_document": document.title, "source_uri": document.source_uri or version.source_uri, "relevance_score": score, "citation": f"{document.title}#{chunk.chunk_index}", "content": chunk.content, "matched_terms": matched_terms, "retrieval_mode": self.RETRIEVAL_MODE})
         scored.sort(key=lambda item: (-item["relevance_score"], str(item["document_id"]), item["chunk_index"], str(item["chunk_id"])))
+        await self._publish_fact(tenant_id=tenant_id, execution_id=execution_id, agent_id=agent_id, knowledge_base_id=knowledge_base_id or (rows[0][3].id if rows else UUID(int=0)), status="succeeded", result_count=len(scored[:top_k]), request_id=request_id, trace_id=trace_id)
         return scored[:top_k]
