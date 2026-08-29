@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import uuid
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +40,8 @@ class WebhookIntegrationService:
             enabled=True,
         )
         self.db.add(item)
-        await self.db.flush()
+        await self.db.commit()
+        await self.db.refresh(item)
         return item
 
     async def list_destinations(self, tenant_id: uuid.UUID) -> list[WebhookDestination]:
@@ -75,7 +77,8 @@ class WebhookIntegrationService:
             filter_config=filter_config or {},
         )
         self.db.add(item)
-        await self.db.flush()
+        await self.db.commit()
+        await self.db.refresh(item)
         return item
 
     async def list_subscriptions(self, tenant_id: uuid.UUID) -> list[WebhookSubscription]:
@@ -127,10 +130,8 @@ class WebhookIntegrationService:
         statement = (
             pg_insert(WebhookDelivery)
             .values(values)
-            .on_conflict_do_nothing(
-                constraint="uq_webhook_delivery_event_destination"
-            )
+            .on_conflict_do_nothing(constraint="uq_webhook_delivery_event_destination")
         )
         result = await self.db.execute(statement)
-        await self.db.flush()
+        await self.db.commit()
         return int(result.rowcount or 0)
