@@ -97,7 +97,8 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
                 )
             ).scalar_one()
             assert execution.status == "completed"
-            assert execution.worker_owner in {worker_a.owner, worker_b.owner}
+            # Terminalization 会原子释放 Execution lease；owner 在 running 阶段由 Frontier/Execution fencing 保证一致。
+            assert execution.worker_owner is None
             assert execution.output_data is not None
 
             frontier = (
@@ -109,7 +110,8 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
                 )
             ).scalar_one()
             assert frontier.status == "completed"
-            assert frontier.worker_owner == execution.worker_owner
+            # Frontier terminalization 同样释放 lease；attempt=1 证明该 Delegation 没有被第二个 Worker 重复消费。
+            assert frontier.worker_owner is None
             assert frontier.node_ids == ["delegation.target"]
             assert frontier.attempt == 1
 
