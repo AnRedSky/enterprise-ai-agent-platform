@@ -45,10 +45,7 @@ class RuntimeIntegrationEventPublisher:
         occurred_at: datetime | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> IntegrationEventRecord:
-        """在当前事务中幂等写入一个 Runtime Integration Event。
-
-        调用方负责最终 commit/rollback；事件不会自行提交业务事务。
-        """
+        """在当前事务中幂等写入一个 Runtime Integration Event。"""
         event = IntegrationEvent(
             tenant_id=tenant_id,
             event_type=event_type,
@@ -66,8 +63,6 @@ class RuntimeIntegrationEventPublisher:
                 record = await self.repository.create(self.db, event)
             return record
         except IntegrityError:
-            # 唯一约束冲突只能代表同一租户/来源/事件类型/幂等键已被生产。
-            # 使用 savepoint 后查询不会破坏外层业务事务。
             result = await self.db.execute(
                 select(IntegrationEventRecord).where(
                     IntegrationEventRecord.tenant_id == tenant_id,
@@ -80,6 +75,81 @@ class RuntimeIntegrationEventPublisher:
             if existing is None:
                 raise
             return existing
+
+    async def publish_agent_tool(
+        self, *, tenant_id: uuid.UUID, execution_id: Any, agent_id: Any, tool_id: Any,
+        status: str, request_id: str | None = None, trace_id: str | None = None,
+        error_code: str | None = None, metadata: dict[str, Any] | None = None,
+    ) -> IntegrationEventRecord:
+        """发布 Agent Tool 执行事实；不写入工具参数/结果等敏感业务数据。"""
+        event_type = f"agent.tool.{status}"
+        payload = {"execution_id": str(execution_id) if execution_id is not None else None,
+                   "agent_id": str(agent_id), "tool_id": str(tool_id)}
+        if error_code:
+            payload["error_code"] = error_code
+        return await self.publish(
+            tenant_id=tenant_id, event_type=event_type, source=self.SOURCE_AGENT,
+            subject=f"tool:{tool_id}", idempotency_key=f"tool:{execution_id}:{tool_id}:{status}",
+            payload=payload, request_id=request_id, trace_id=trace_id, metadata=metadata,
+        )
+
+    async def publish_agent_retrieval(
+        self, *, tenant_id: uuid.UUID, execution_id: Any, agent_id: Any,
+        knowledge_source_id: Any, status: str, result_count: int | None = None,
+        request_id: str | None = None, trace_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> IntegrationEventRecord:
+        """发布 Agent Retrieval 事实，只记录来源和计数，不泄漏检索内容。"""
+        payload = {"execution_id": str(execution_id) if execution_id is not None else None,
+                   "agent_id": str(agent_id), "knowledge_source_id": str(knowledge_source_id)}
+        if result_count is not None:
+            payload["result_count"] = result_count
+        return await self.publish(
+            tenant_id=tenant_id, event_type=f"agent.retrieval.{status}", source=self.SOURCE_AGENT,
+            subject=f"knowledge:{knowledge_source_id}", idempotency_key=f"retrieval:{execution_id}:{knowledge_source_id}:{status}",
+            payload=payload, request_id=request_id, trace_id=trace_id, metadata=metadata,
+        )
+
+    async def publish_agent_model(
+        self, *, tenant_id: uuid.UUID, execution_id: Any, agent_id: Any,
+        provider_id: Any, profile_id: Any | None, status: str,
+        model_name: str | None = None, request_id: str | None = None,
+        trace_id: str | None = None, error_code: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> IntegrationEventRecord:
+        """发布 Model Provider 调用事实，避免把 prompt/completion 写入集成事件。"""
+        payload = {"execution_id": str(execution_id) if execution_id is not None else None,
+                   "agent_id": str(agent_id), "provider_id": str(provider_id),
+                   "profile_id": str(profile_id) if profile_id is not None else None}
+        if model_name:
+            payload["model_name"] = model_name
+        if error_code:
+            payload["error_code"] = error_code
+        return await self.publish(
+            tenant_id=tenant_id, event_type=f"agent.model.{status}", source=self.SOURCE_AGENT,
+            subject=f"model:{profile_id or provider_id}", idempotency_key=f"model:{execution_id}:{profile_id or provider_id}:{status}",
+            payload=payload, request_id=request_id, trace_id=trace_id, metadata=metadata,
+        )
+
+    async def publish_scheduler(
+        self, *, tenant_id: uuid.UUID, trigger_id: Any, status: str,
+        schedule_id: Any | None = None, execution_id: Any | None = None,
+        slot_key: str | None = None, request_id: str | None = None,
+        trace_id: str | None = None, payload: dict[str, Any] | None = None,
+    ) -> IntegrationEventRecord:
+        """发布 Scheduler lease/竞争/misfire/recovery/dispatched/failure 事实。"""
+        body = {"trigger_id": str(trigger_id),
+                "schedule_id": str(schedule_id) if schedule_id is not None else None,
+                "execution_id": str(execution_id) if execution_id is not None else None}
+        if slot_key is not None:
+            body["slot_key"] = slot_key
+        if payload:
+            body.update(payload)
+        return await self.publish(
+            tenant_id=tenant_id, event_type=f"scheduler.{status}", source=self.SOURCE_SCHEDULER,
+            subject=f"trigger:{trigger_id}", idempotency_key=f"scheduler:{trigger_id}:{slot_key or schedule_id}:{status}",
+            payload=body, request_id=request_id, trace_id=trace_id,
+        )
 
 
 __all__ = ["RuntimeIntegrationEventPublisher"]
