@@ -21,20 +21,12 @@ class WebhookDeliveryRepository:
             raise ValueError("owner 不能为空")
         if lease_seconds <= 0 or max_attempts <= 0:
             raise ValueError("lease_seconds 和 max_attempts 必须大于 0")
-        claimable = or_(
-            WebhookDelivery.status == "pending",
-            (WebhookDelivery.status == "running") & (WebhookDelivery.lease_expires_at <= now),
-        )
+        claimable = or_(WebhookDelivery.status == "pending", (WebhookDelivery.status == "running") & (WebhookDelivery.lease_expires_at <= now))
         result = await db.execute(
-            select(WebhookDelivery)
-            .options(selectinload(WebhookDelivery.destination), selectinload(WebhookDelivery.integration_event))
-            .where(
-                claimable,
-                WebhookDelivery.attempt_count < max_attempts,
+            select(WebhookDelivery).options(selectinload(WebhookDelivery.destination), selectinload(WebhookDelivery.integration_event)).where(
+                claimable, WebhookDelivery.attempt_count < max_attempts,
                 or_(WebhookDelivery.next_attempt_at.is_(None), WebhookDelivery.next_attempt_at <= now),
-            )
-            .order_by(WebhookDelivery.created_at, WebhookDelivery.id)
-            .with_for_update(skip_locked=True).limit(1)
+            ).order_by(WebhookDelivery.created_at, WebhookDelivery.id).with_for_update(skip_locked=True).limit(1)
         )
         record = result.scalar_one_or_none()
         if record is None:
@@ -51,16 +43,10 @@ class WebhookDeliveryRepository:
 
     async def _audit(self, db: AsyncSession, record: WebhookDelivery, action: str, actor: str, status: str, error_code: str | None = None, error_message: str | None = None) -> None:
         db.add(WebhookDeliveryAudit(
-            tenant_id=record.tenant_id,
-            delivery_id=record.id,
-            integration_event_id=record.integration_event_id,
-            action=action,
-            attempt_count=record.attempt_count,
-            status=status,
-            response_status_code=record.response_status_code,
-            error_code=error_code,
-            error_message=(error_message or "")[:2000] if error_message else None,
-            actor=actor,
+            tenant_id=record.tenant_id, delivery_id=record.id, integration_event_id=record.integration_event_id,
+            action=action, attempt_count=record.attempt_count, status=status,
+            response_status_code=record.response_status_code, error_code=error_code,
+            error_message=(error_message or "")[:2000] if error_message else None, actor=actor,
         ))
         await db.flush()
 
@@ -108,6 +94,18 @@ class WebhookDeliveryRepository:
         record.last_error_message = None
         await self._audit(db, record, "replay", actor, "pending")
         return record
+
+    async def get(self, db: AsyncSession, tenant_id: uuid.UUID, delivery_id: uuid.UUID) -> WebhookDelivery | None:
+        return await db.scalar(select(WebhookDelivery).where(WebhookDelivery.id == delivery_id, WebhookDelivery.tenant_id == tenant_id))
+
+    async def list(self, db: AsyncSession, tenant_id: uuid.UUID, status: str | None = None, limit: int = 100) -> list[WebhookDelivery]:
+        if limit < 1 or limit > 500:
+            raise ValueError("limit 必须在 1..500")
+        stmt = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_id)
+        if status:
+            stmt = stmt.where(WebhookDelivery.status == status)
+        result = await db.execute(stmt.order_by(WebhookDelivery.created_at.desc(), WebhookDelivery.id.desc()).limit(limit))
+        return list(result.scalars().all())
 
     async def list_audit(self, db: AsyncSession, tenant_id: uuid.UUID, delivery_id: uuid.UUID | None = None, limit: int = 100) -> list[WebhookDeliveryAudit]:
         if limit < 1 or limit > 500:
