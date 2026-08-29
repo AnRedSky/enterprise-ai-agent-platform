@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,7 +43,9 @@ async def test_dispose_database_engine_preserves_cancellation_after_shielded_cle
         dispose_started.set()
         await allow_dispose.wait()
 
-    fake_engine = type("FakeEngine", (), {"dispose": dispose})()
+    # 不使用动态 class attribute：普通函数挂到 class 后会发生 descriptor 绑定，
+    # 导致 dispose() 被隐式传入 self，从而测试 Task 永远无法到达 dispose_started。
+    fake_engine = SimpleNamespace(dispose=dispose)
     monkeypatch.setattr(worker_entrypoint, "engine", fake_engine)
 
     task = asyncio.create_task(worker_entrypoint._dispose_database_engine())
@@ -60,7 +63,7 @@ async def test_dispose_database_engine_preserves_cancellation_after_shielded_cle
 async def test_dispose_database_engine_propagates_dispose_failure(monkeypatch) -> None:
     """验证非取消型连接池清理异常不被吞掉。"""
     dispose = AsyncMock(side_effect=RuntimeError("dispose failed"))
-    fake_engine = type("FakeEngine", (), {"dispose": dispose})()
+    fake_engine = SimpleNamespace(dispose=dispose)
     monkeypatch.setattr(worker_entrypoint, "engine", fake_engine)
 
     with pytest.raises(RuntimeError, match="dispose failed"):
