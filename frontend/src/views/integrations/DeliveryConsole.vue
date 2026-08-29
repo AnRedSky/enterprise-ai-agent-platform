@@ -51,6 +51,59 @@ function formatTime(value: string | null) {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+/**
+ * 校验表格插槽传入的行对象是否满足 Delivery 操作所需的最小业务契约。
+ *
+ * Args:
+ *   value: Element Plus 表格插槽传入的未知行对象。
+ *
+ * Returns:
+ *   当对象包含 Delivery 操作所需的标识、状态和尝试次数时返回 true，否则返回 false。
+ *
+ * 设计意图：Element Plus 的表格插槽会把 `scope.row` 推断为通用行类型，不能直接
+ * 假定其已经完成业务类型收窄。这里在 UI 操作边界执行一次运行时校验，同时保持
+ * openAudit/replay 内部函数继续使用严格的 WebhookDelivery 类型。
+ */
+function isWebhookDelivery(value: unknown): value is WebhookDelivery {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<WebhookDelivery>;
+  return typeof row.id === "string" && typeof row.status === "string" && typeof row.attempt_count === "number";
+}
+
+/**
+ * 处理表格中的 Audit 操作，并在类型边界处拒绝无效行数据。
+ *
+ * Args:
+ *   row: Element Plus 表格插槽传入的未知行对象。
+ *
+ * Returns:
+ *   无效行直接结束；有效行进入 Delivery Audit 流程。
+ */
+function openAuditRow(row: unknown) {
+  if (!isWebhookDelivery(row)) {
+    ElMessage.error("当前 Delivery 行数据无效，无法打开 Audit");
+    return;
+  }
+  void openAudit(row);
+}
+
+/**
+ * 处理表格中的 Replay 操作，并在类型边界处拒绝无效行数据。
+ *
+ * Args:
+ *   row: Element Plus 表格插槽传入的未知行对象。
+ *
+ * Returns:
+ *   无效行直接结束；有效行进入 Replay 流程。
+ */
+function replayRow(row: unknown) {
+  if (!isWebhookDelivery(row)) {
+    ElMessage.error("当前 Delivery 行数据无效，无法 Replay");
+    return;
+  }
+  void replay(row);
+}
+
 async function loadDeliveries() {
   loading.value = true;
   try {
@@ -137,8 +190,8 @@ onMounted(loadDeliveries);
       <el-table-column label="更新时间" width="175"><template #default="scope">{{ formatTime(scope.row.updated_at) }}</template></el-table-column>
       <el-table-column label="操作" width="180" fixed="right">
         <template #default="scope">
-          <el-button link type="primary" :icon="View" @click="openAudit(scope.row)">Audit</el-button>
-          <el-button v-if="['failed', 'dead_letter'].includes(scope.row.status)" link type="warning" :icon="RefreshRight" @click="replay(scope.row)">Replay</el-button>
+          <el-button link type="primary" :icon="View" @click="openAuditRow(scope.row)">Audit</el-button>
+          <el-button v-if="['failed', 'dead_letter'].includes(scope.row.status)" link type="warning" :icon="RefreshRight" @click="replayRow(scope.row)">Replay</el-button>
         </template>
       </el-table-column>
     </el-table>
