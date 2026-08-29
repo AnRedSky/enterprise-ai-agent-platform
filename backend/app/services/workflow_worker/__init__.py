@@ -8,10 +8,10 @@ from app.services.workflow_worker.lease_guard import (
 )
 from app.services.workflow_worker.lease_runtime import LeaseAwareWorkflowWorker
 
-# Durable Frontier 默认直接复用唯一的 Runtime execution 入口。
-# PlannerDrivenDurableFrontierWorkflowWorker 是历史编排适配器，不作为生产默认入口，
-# 避免与 runtime_entry.execute_claimed_execution 形成第二套 Execution/Delegation 状态机。
-WorkflowWorker = DurableFrontierWorkflowWorker
+# Planner-driven Worker 是当前 Durable Frontier 的正式默认入口。
+# 它继承唯一 DurableFrontierWorkflowWorker 的 Claim、Lease 与 Runtime 能力，
+# 仅在单次 Frontier 执行边界增加 Planner/异常收敛编排，不创建第二套 Execution 状态机。
+WorkflowWorker = PlannerDrivenDurableFrontierWorkflowWorker
 
 __all__ = [
     "WorkflowWorker",
