@@ -19,6 +19,7 @@ from app.infrastructure.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外键元数据
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
+from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 from app.services.workflow_scheduler.misfire import build_due_slots, choose_misfire_slots, next_run_after_misfire
 from app.services.workflow_scheduler.models import MisfirePolicy
 from app.services.workflow_scheduler.repository import WorkflowSchedulerRepository
@@ -159,6 +160,7 @@ class ScheduledTriggerScheduler:
                 trigger_id_text = str(trigger_id)
                 workflow_id_text = "unknown"
                 repository = WorkflowSchedulerRepository(db)
+                integration = RuntimeIntegrationEventPublisher(db)
                 schedule = None
                 try:
                     candidate = (
@@ -219,9 +221,16 @@ class ScheduledTriggerScheduler:
                         await db.rollback()
                         continue
 
-                    # Lease claim 必须先独立提交。后续 Execution / Slot 写入以及 Worker 消费
-                    # 不应与 Scheduler schedule 行保持同一数据库事务，否则可能形成
-                    # schedule -> execution 与 execution -> schedule 的 PostgreSQL lock inversion。
+                    await integration.publish_scheduler(
+                        tenant_id=trigger.tenant_id,
+                        trigger_id=trigger.id,
+                        schedule_id=claimed.id,
+                        status="lease.acquired",
+                        slot_key=self.planned_slot_key(trigger.id, claimed.next_run_at, config["interval_seconds"]),
+                        payload={"owner": self.owner, "lease_expires_at": (now + timedelta(seconds=self.lease_seconds)).isoformat()},
+                    )
+                    # Lease claim 与 lease.acquired 事实保持同一事务；之后再提交，
+                    # 避免出现数据库已经授予 ownership 但 Durable Event 不存在的窗口。
                     await db.commit()
 
                     planned_at = claimed.next_run_at.replace(tzinfo=UTC) if claimed.next_run_at.tzinfo is None else claimed.next_run_at.astimezone(UTC)
@@ -298,11 +307,39 @@ class ScheduledTriggerScheduler:
                             latest_execution = execution
                         if created:
                             counters["dispatched"] += 1
+                            await integration.publish_scheduler(
+                                tenant_id=trigger.tenant_id,
+                                trigger_id=trigger.id,
+                                schedule_id=claimed.id,
+                                execution_id=execution.id if execution is not None else None,
+                                slot_key=slot_key,
+                                status="dispatched",
+                                payload={"recovery": slot_recovery},
+                            )
                         else:
                             counters["skipped"] += 1
 
-                    # Slot bind 是独立的幂等持久化边界。先提交，再更新 Schedule，
-                    # 保证 Scheduler 与 Worker 不会跨事务形成反向锁等待。
+                    if has_misfire:
+                        await integration.publish_scheduler(
+                            tenant_id=trigger.tenant_id,
+                            trigger_id=trigger.id,
+                            schedule_id=claimed.id,
+                            execution_id=latest_execution.id if latest_execution is not None else None,
+                            status="misfire",
+                            slot_key=self.planned_slot_key(trigger.id, planned_at, config["interval_seconds"]),
+                            payload={"policy": policy.value, "due_slot_count": len(due_slots), "selected_slot_count": len(selected_slots)},
+                        )
+                        await integration.publish_scheduler(
+                            tenant_id=trigger.tenant_id,
+                            trigger_id=trigger.id,
+                            schedule_id=claimed.id,
+                            execution_id=latest_execution.id if latest_execution is not None else None,
+                            status="recovery",
+                            slot_key=self.planned_slot_key(trigger.id, planned_at, config["interval_seconds"]),
+                            payload={"recovered": True, "selected_slot_count": len(selected_slots)},
+                        )
+
+                    # Slot bind 与 Scheduler runtime facts 是同一事务的幂等持久化边界。
                     await db.commit()
 
                     if len(due_slots) > 1:
@@ -330,7 +367,7 @@ class ScheduledTriggerScheduler:
                     await db.commit()
                     if has_misfire:
                         counters["recovered"] += 1
-                except Exception:
+                except Exception as exc:
                     await db.rollback()
                     if schedule is not None:
                         try:
@@ -339,6 +376,13 @@ class ScheduledTriggerScheduler:
                                 tenant_id=schedule.tenant_id,
                                 owner=self.owner,
                                 now=now,
+                            )
+                            await integration.publish_scheduler(
+                                tenant_id=schedule.tenant_id,
+                                trigger_id=trigger_id,
+                                schedule_id=schedule.id,
+                                status="failed",
+                                payload={"error_code": type(exc).__name__},
                             )
                             await db.commit()
                         except Exception:
