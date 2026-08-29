@@ -28,40 +28,55 @@
 
 ## 3. 最新本地验收证据
 
-开发者在 `352f737a` 基线完成 B5：
+开发者最新反馈基于 `2e73b52c`：
 
 ```text
-B5 Worker shutdown + Delegation lifecycle Unit   27 passed
-Backend regression                                860 passed, 3 skipped, 50 deselected
+B6 targeted Unit/Contract                        37 passed
+Backend regression                                869 passed, 3 skipped, 52 deselected
 Migration/head                                   0039_workflow_node_execution_tenant_trigger (head)
-B5 Real Gate                                     4 passed
+B6 Real Gate                                     3 passed, 1 failed
 ```
 
-B5 已达到本地 Gate 通过条件，允许进入 B6。
+失败仍集中在：
+
+```text
+tests/api_real/test_agent_delegation_multi_worker_api.py::test_delegation_is_consumed_by_multiple_worker_instances_through_durable_frontier
+TimeoutError: Durable Worker 未在验收等待窗口内完成本次 Delegation 集合
+```
+
+因此 **B6 尚未达到本地 Gate 通过条件，Phase 2.8 不得关闭**。
 
 ## 4. B6 实现与当前修复
 
-B6 初始实现已把 pending Delegation 接入 Durable Frontier Worker，但本地 Real Gate 暴露两个运行时问题：
+B6 初始实现已把 pending Delegation 接入 Durable Frontier Worker，但本地 Real Gate 暴露多个运行时边界问题：
 
-1. 多 Worker 两轮 dispatch 只消费了 2/4 个 Delegation；根因是 Delegation Claim 成功提交后，dispatch 再通过全局 tenant Frontier 扫描重新寻找刚创建的 Frontier，存在候选集合变化导致的空转窗口。
+1. 多 Worker 两轮 dispatch 只消费了 2/4 个 Delegation；根因是并发 Claim contention 与固定轮次测试时序组合导致合法竞争被误判为任务已全部消费。
 2. B2 旧 Real API 测试直接调用 `execute_claimed_execution()`，绕过了 B6 正式 Durable Frontier dispatch 边界；在 Frontier terminalization fencing 收紧后，该测试错误地让 Runtime 在仍存在 active Frontier 时直接 terminalize Execution。
+3. Worker 进程关闭阶段的 AsyncEngine / asyncpg connection close 在主 Task cancellation 传播期间出现 `CancelledError`，需要保证连接池清理不被 cancellation 中断。
 
-当前修复将 Delegation Claim → Worker Execution → Frontier 激活改为确定性链路：Claim 返回的 `worker_execution_id` 直接定位新建 Frontier，并在同一 Worker 调度流程中建立 Frontier lease；同时 B2 Real API 测试改为通过正式 `WorkflowWorker.claim_one_frontier()` + `execute_frontier()` 验证 Target Agent Runtime，不再绕过 Durable Frontier。
+当前代码已完成以下修复：
 
-随后发现默认 Worker 入口契约与 Delegation Runtime Entry 之间还存在边界冲突：`d44d6b86` 将公开 `WorkflowWorker` 错误切换为 `DurableFrontierWorkflowWorker`，导致 Backend default regression 的 3 个默认入口契约测试失败；直接恢复 Planner-driven 默认入口又会让 Delegation Frontier 进入普通 Planner execution，绕过 `AgentDelegationRuntimeBridge`。
+1. Delegation Claim → Worker Execution → Frontier 激活使用 Claim 返回的 `worker_execution_id` 直接定位刚创建的 Frontier，不重新依赖全局 tenant Frontier 扫描；
+2. B2 Real API 测试通过正式 `WorkflowWorker` Frontier Claim / Execute 边界验证 Target Agent Runtime；
+3. 默认 Worker 保持 Planner-driven 正式入口，已 Claim Delegation Frontier 路由到唯一 `runtime_entry.execute_claimed_execution()`；
+4. B6 Real API 首轮保留真实双 Worker Claim contention，随后在同一个 10 秒有界窗口内轮换两个独立 Worker drain 剩余 Delegation，避免固定轮次假设 PostgreSQL 调度顺序；
+5. B6 超时失败改为输出本次 Delegation 的实际 durable status，不再在前一个 10 秒 drain 结束后额外重复等待 10 秒；
+6. Worker AsyncEngine dispose 改为独立 Task + `asyncio.shield()`，主 Task cancellation 不再直接取消底层连接池清理；清理完成后仍恢复原 cancellation 语义，非 cancellation 异常继续传播；
+7. 增加 Worker shutdown targeted unit coverage，验证正常 dispose、cancellation 下完成 dispose 以及非取消型 dispose 异常传播。
 
-本轮代码修复已完成两点：
-
-1. 恢复 `WorkflowWorker = PlannerDrivenDurableFrontierWorkflowWorker` 作为正式默认入口；
-2. `PlannerDrivenDurableFrontierWorkflowWorker.execute_frontier()` 对已 Claim Delegation 的 Frontier 路由到父 `DurableFrontierWorkflowWorker.execute_frontier()`，从而进入唯一 `runtime_entry.execute_claimed_execution()`；普通 Workflow Frontier 继续走 Planner-driven 路径。
-
-两条路径共享同一个 Claim、Frontier、Lease、WorkflowRuntime 与状态模型，不新增第二套 Execution / Delegation / Retry / Recovery 状态机。
-
-开发者本次反馈中还出现 Provider `503 Service Unavailable`。从调用栈看，请求落入本地 OpenAI-compatible endpoint，且实际执行的是父 Workflow fixture 的 prompt；这与 Planner-driven Worker 未区分 Delegation Frontier 的职责边界问题一致。本轮修复已将 Delegation Frontier 路由回 canonical Runtime Entry，必须通过新的本地 Real Gate 结果最终确认。
-
-错误根因与修复记录：
+对应错误记录：
 
 - `docs/04-errors/2026-08-29-phase-2-8-b6-worker-entrypoint-and-delegation-runtime.md`
+- `docs/04-errors/2026-08-29-phase-2-8-b6-multi-worker-acceptance-contention.md`
+- `docs/04-errors/2026-08-29-worker-async-engine-shutdown-cancelled-error.md`
+
+最新修复提交：
+
+```text
+104cf240 fix(b6): harden multi-worker drain and worker shutdown cleanup
+```
+
+本地重新执行 Gate 前，不将 B6 标记为 Passed。
 
 ## 5. B6 自动化验收
 
