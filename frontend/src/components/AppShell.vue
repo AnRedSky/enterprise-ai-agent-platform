@@ -73,10 +73,6 @@ function navigate(path: string) {
   void router.push(path);
 }
 
-function handleMenuSelect(index: string) {
-  navigate(index);
-}
-
 function logout() {
   clearSession();
   void router.replace({ path: "/login", query: { redirect: route.fullPath } });
@@ -91,13 +87,13 @@ function logout() {
         <div v-if="!collapsed" class="brand-copy"><strong>Enterprise AI</strong><span>Agent Platform</span></div>
       </div>
       <el-scrollbar class="nav-scroll">
-        <el-menu :default-active="activeMenu" :collapse="collapsed" class="app-menu" @select="handleMenuSelect">
+        <el-menu :default-active="activeMenu" :collapse="collapsed" class="app-menu">
           <template v-for="item in navigation" :key="item.path">
             <el-sub-menu v-if="item.children" :index="item.path">
               <template #title><el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span></template>
-              <el-menu-item v-for="child in item.children" :key="child.path" :index="child.path">{{ child.label }}</el-menu-item>
+              <el-menu-item v-for="child in item.children" :key="child.path" :index="child.path" @click="navigate(child.path)">{{ child.label }}</el-menu-item>
             </el-sub-menu>
-            <el-menu-item v-else :index="item.path">
+            <el-menu-item v-else :index="item.path" @click="navigate(item.path)">
               <el-icon><component :is="item.icon" /></el-icon><template #title>{{ item.label }}</template>
             </el-menu-item>
           </template>

@@ -40,7 +40,7 @@ describe("AppShell", () => {
     expect(wrapper.text()).toContain("管理员");
   });
 
-  it("切换导航后更新路由", async () => {
+  it("点击叶子导航后更新路由", async () => {
     const router = createTestRouter();
     await router.push("/dashboard");
     await router.isReady();
@@ -48,8 +48,9 @@ describe("AppShell", () => {
 
     const agentsItem = wrapper.findAll(".el-menu-item").find((item) => item.text() === "Agent 管理");
     expect(agentsItem).toBeDefined();
+
     await agentsItem!.trigger("click");
-    await router.isReady();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
 
     expect(router.currentRoute.value.path).toBe("/agents");
   });
