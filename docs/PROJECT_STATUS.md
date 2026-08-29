@@ -50,22 +50,14 @@
 
 因此 **B6 已达到本地 Real Gate 通过条件，Phase 2.8 Runtime Integration 已达到收口条件**。
 
-验收结果说明：
-
-1. Unit/Contract 层的 Delegation Claim 与 Worker dispatch 已通过；
-2. Backend 默认回归测试保持通过，当前 B6 基线为 `870 passed, 3 skipped, 52 deselected`；
-3. Alembic 数据库迁移已验证到 `0039_workflow_node_execution_tenant_trigger` head；
-4. 真实 HTTP + PostgreSQL + 多 Worker Durable Frontier Runtime 已通过 5 个 Real API 验收用例；
-5. B6 验收前置的 Windows 外部 Worker/Scheduler 隔离检查已用于阻止污染性后台消费者；在无外部消费者条件下 Gate 正常完成。
-
 ## 4. B6 实现与问题闭环
 
 B6 开发期间本地 Real Gate 暴露并完成以下工程问题修复：
 
-1. 多 Worker 两轮 dispatch 只消费部分 Delegation：根因是 PostgreSQL Claim contention 与固定轮次测试时序组合导致合法竞争被错误解释为任务未消费；已改为有界窗口内安全 drain；
+1. 多 Worker 两轮 dispatch 只消费部分 Delegation：根因是 PostgreSQL Claim contention 与固定轮次时序组合导致合法竞争被错误解释为任务未消费；已改为有界窗口内安全 drain；
 2. B2 Real API 测试绕过正式 Durable Frontier dispatch 边界：已改为通过正式 `WorkflowWorker` Frontier Claim / Execute 边界验证 Target Agent Runtime；
 3. Worker 关闭阶段 AsyncEngine / asyncpg connection close 在主 Task cancellation 下出现 `CancelledError`：已使用独立 cleanup Task + `asyncio.shield()` 保证底层连接池清理完成，并恢复原 cancellation 语义；
-4. Real Gate 存在外部 Worker/Scheduler 消费测试 Delegation 的环境污染风险：已增加项目路径感知的 Windows PowerShell 进程隔离检查；Gate 不自动启动、停止或重启任何服务；
+4. Real Gate 存在外部 Worker/Scheduler 消费测试 Delegation 的环境污染风险：已增加项目路径感知的 Windows PowerShell 进程隔离检查；Gate 不自动启动、停止或重启服务；
 5. Windows PowerShell 进程检测曾存在正则字符串引用解析错误：已改为稳定的路径感知匹配实现。
 
 对应错误记录：
@@ -91,9 +83,28 @@ Phase 2.8 Runtime Integration                      ✅ 收口
 
 当前没有证据表明 B6 仍存在未解决的 Runtime 阻塞问题。除非出现新的实际回归，不再重复修改已经通过的 Claim、Worker dispatch、timeout/cancel 或 shutdown cleanup 路径。
 
-需要注意：仓库中早期 Phase 2.8 文档、产品矩阵或历史记录可能保留“B1-B5 未实现”“Runtime Integration 进行中”等当时有效的状态文字；这些属于历史事实，当前状态以本文件、最新 Phase/Acceptance 文档和实际 Gate 证据为准。
+## 6. 长期未完成能力
 
-## 6. Phase 2.9 进入前置条件
+长期企业化能力已从当前 Phase 文档中独立拆出，统一维护在 `docs/05-long-term/`，不作为 Phase 2.8 的未完成任务：
+
+| ID | 长期能力 | 状态 |
+|---|---|---|
+| LT-01 | Enterprise Integration / Event Infrastructure | 待立项 |
+| LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 |
+| LT-03 | Enterprise Operations Console | 待立项 |
+| LT-04 | API / Developer Platform | 待立项 |
+| LT-05 | Observability / SRE | 待立项 |
+| LT-06 | Security / Secrets / Policy | 待立项 |
+| LT-07 | Agent Evaluation / Quality | 待立项 |
+| LT-08 | Cost / Quota / Billing | 待立项 |
+| LT-09 | Agent Asset / Marketplace | 候选 |
+| LT-10 | Production Deployment / HA / Operations | 待立项 |
+
+长期任务索引：`docs/05-long-term/README.md`。
+
+这些 LT 文档只记录企业级能力缺口、长期目标和拆解，不代表当前已经冻结 Contract 或已经进入开发。正式进入开发后，再建立对应 `docs/02-phases/PHASE_x_y.md`。
+
+## 7. Phase 2.9 进入前置条件
 
 Phase 2.9 当前仍是**候选/前置评估状态**，尚未冻结 Contract，也未开始功能开发。进入正式开发前必须：
 
@@ -106,18 +117,21 @@ Phase 2.9 当前仍是**候选/前置评估状态**，尚未冻结 Contract，�
 
 **不得因为 Phase 2.8 已收口而直接引入 Kafka、MQ、Event Bus 或 Outbox；技术选型必须从已冻结的业务 Contract 和真实可靠性需求出发。**
 
-## 7. 当前文档基线
+## 8. 当前文档基线
 
-已完成本轮同步的核心文档：
+已完成本轮长期任务分类同步：
 
-- `docs/PROJECT_STATUS.md`
-- `docs/PRODUCT_CAPABILITY_BASELINE.md`
-- `docs/PRODUCT_DEVELOPMENT_MATRIX.md`
-- `docs/PRODUCT_ROADMAP.md`
-- `docs/02-phases/PHASE_2_8_A_CONTRACT.md`
-- `docs/03-acceptance/PHASE_2_8_ACCEPTANCE.md`
-- `docs/04-errors/2026-08-29-phase-2-8-b6-worker-entrypoint-and-delegation-runtime.md`
-- `docs/04-errors/2026-08-29-phase-2-8-b6-multi-worker-acceptance-contention.md`
-- `docs/04-errors/2026-08-29-worker-async-engine-shutdown-cancelled-error.md`
+- `docs/05-long-term/README.md`
+- `docs/05-long-term/LT-01-ENTERPRISE-INTEGRATION-EVENT-INFRASTRUCTURE.md`
+- `docs/05-long-term/LT-02-ENTERPRISE-IAM-SSO-IDENTITY.md`
+- `docs/05-long-term/LT-03-ENTERPRISE-OPERATIONS-CONSOLE.md`
+- `docs/05-long-term/LT-04-API-DEVELOPER-PLATFORM.md`
+- `docs/05-long-term/LT-05-OBSERVABILITY-SRE.md`
+- `docs/05-long-term/LT-06-SECURITY-SECRETS-POLICY.md`
+- `docs/05-long-term/LT-07-AGENT-EVALUATION-QUALITY.md`
+- `docs/05-long-term/LT-08-COST-QUOTA-BILLING.md`
+- `docs/05-long-term/LT-09-AGENT-ASSET-MARKETPLACE.md`
+- `docs/05-long-term/LT-10-PRODUCTION-DEPLOYMENT-HA-OPERATIONS.md`
+- `docs/01-governance/DOCUMENTATION.md`
 
-开发治理仍以 `docs/01-governance/DEVELOPMENT.md` 为唯一工程规则入口；文档分类与状态管理以 `docs/01-governance/DOCUMENTATION.md` 为准。开发规则明确要求阶段状态变化同步更新 Phase、Acceptance、Project Status 与 Error 记录，并禁止使用未执行测试作为 Passed 证据。
+开发治理仍以 `docs/01-governance/DEVELOPMENT.md` 为唯一工程规则入口；文档分类与状态管理以 `docs/01-governance/DOCUMENTATION.md` 为准。
