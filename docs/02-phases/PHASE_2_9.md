@@ -9,7 +9,7 @@
 - Phase 2.8 Multi-Agent Collaboration / Runtime Integration：已完成并通过本地 B6 Real Gate。
 - Phase 2.9-A Event Contract：已实现。
 - Phase 2.9-B Durable Event Persistence：已实现第一切片，数据库 Migration 已由开发者本地升级至 `0041`。
-- Phase 2.9-C Reliable Delivery：第一切片已实现；第二切片已补齐真实 PostgreSQL 验收测试入口，当前阻塞点为 Real Gate 本地 PowerShell 路径解析问题，业务实现尚未发现新的失败证据。
+- Phase 2.9-C Reliable Delivery：第一切片已实现；第二切片已补齐真实 PostgreSQL 验收测试入口。最新本地 Gate 首次进入 Real Gate 时发现 pytest 默认 marker 过滤导致 5 个真实测试被 deselect，现已修复专用 Gate 的 marker 选择逻辑，等待开发者重新执行真实 PostgreSQL 验收。
 - 当前任务：**2.9-C Reliable Delivery 第二切片：真实 PostgreSQL 并发验收**。
 
 ## 3. 2.9-A Event Contract
@@ -39,7 +39,7 @@ backend/tests/unit/test_integration_event_persistence.py
 
 ## 5. 2.9-C Reliable Delivery
 
-状态：**第一切片已实现；第二切片 Real Gate 已实现，当前正在修复 Gate 的本地路径解析问题，待开发者重新执行真实 PostgreSQL 验收**。
+状态：**第一切片已实现；第二切片 Real Gate 已实现，最新 Gate 的测试选择问题已修复，待开发者重新执行真实 PostgreSQL 验收**。
 
 实现：
 
@@ -68,7 +68,8 @@ backend/.env.example
 - Delivery Service 正确透传 `mark_delivered` / `mark_failed` 的租约结果，旧 Worker 失去 fencing 后不会被报告为成功；
 - Real Gate 自动生成并清理测试租户和事件，不要求手工填写测试信息；
 - Real Gate 不启动、不停止 API、Worker、Scheduler、Redis 或 PostgreSQL；
-- `backend/.env.example` 作为统一无 Secret 本地测试配置基线，并由 Gate 从脚本位置可靠解析 `backend` 根目录。
+- `backend/.env.example` 作为统一无 Secret 本地测试配置基线，并由 Gate 从脚本位置可靠解析 `backend` 根目录；
+- Real Gate 显式使用 `-m real_api`，覆盖 pytest 全局 `addopts = -m 'not real_api'`，确保真实 PostgreSQL 验收测试实际执行。
 
 ### 第二切片真实验收范围
 
@@ -83,12 +84,15 @@ backend/.env.example
 
 ### 本轮工程修复
 
-发现 Phase 2.9-C Real Gate 的 `$BackendRoot` 路径计算多向上一级：脚本位于 `backend/scripts/test/phase-2.9`，原实现向上四级导致实际根目录落到仓库根目录，进而把 `backend/.env.example` 错误检查为根目录 `.env.example`。现已修正为向上三级，并将缺失文件的 Git 检查改为直接检查 `HEAD:backend/.env.example`，避免本地 Git index 状态造成误判。
+发现 Phase 2.9-C Real Gate 的 `$BackendRoot` 路径计算多向上一级：脚本位于 `backend/scripts/test/phase-2.9`，原实现向上四级导致实际根目录落到仓库根目录，进而把 `backend/.env.example` 错误检查为根目录 `.env.example`。已修正为向上三级，并将缺失文件的 Git 检查改为直接检查 `HEAD:backend/.env.example`，避免本地 Git index 状态造成误判。
+
+本轮再次发现：Real Gate 执行真实 PostgreSQL 测试时继承 `pyproject.toml` 的 `addopts = -m 'not real_api'`，导致 5 个真实验收测试全部 `deselected`。已将专用 Gate 改为显式 `-m real_api`，保持全局 Backend regression 不自动执行 Real API 测试。
 
 错误记录：
 
 ```text
 docs/04-errors/2026-08-29-phase-2-9-env-example-working-tree-missing.md
+docs/04-errors/2026-08-29-phase-2-9-real-gate-marker-filter-bypass.md
 ```
 
 ### 当前验收命令
@@ -109,6 +113,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.9\01_
         ↓
 ④ 2.9-C 定向 Unit Regression
 ```
+
+只有开发者本地实际看到 5 个 Real Gate 测试执行并通过，才能把 2.9-C 第二切片标记为验收完成。
 
 ## 6. 2.9-D Webhook Integration
 
