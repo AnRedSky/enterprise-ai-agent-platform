@@ -23,15 +23,22 @@ async def _dispose_database_engine() -> None:
         None。
 
     设计意图：Worker 进程退出时必须先让所有 Worker task 完成 Session 上下文退出，再显式
-    dispose AsyncEngine。否则 asyncpg 连接可能在事件循环已经进入取消阶段时才由连接池
-    异步关闭，从而出现 `asyncio.CancelledError` 的连接关闭异常。
+    dispose AsyncEngine。若当前进程正在处理取消信号，必须暂时清除当前 Task 的 pending
+    cancellation，使 asyncpg 能在事件循环仍可用时完成连接关闭；清理完成后重新抛出取消信号。
     """
     try:
         await engine.dispose()
     except asyncio.CancelledError:
-        # 退出路径已经收到取消信号时，先恢复当前协程的清理机会，再执行一次连接池释放。
-        await engine.dispose()
-        raise
+        # asyncio.run 在收到终止信号时可能已经将主 Task 标记为 cancelling。若直接再次 await，
+        # asyncpg 的 close 会再次被取消，最终把 CancelledError 变成连接池关闭阶段的异常日志。
+        task = asyncio.current_task()
+        if task is not None:
+            while task.cancelling():
+                task.uncancel()
+        try:
+            await engine.dispose()
+        finally:
+            raise
 
 
 async def run_worker_service() -> None:
