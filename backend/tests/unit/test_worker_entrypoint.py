@@ -33,13 +33,37 @@ async def test_run_worker_service_disposes_database_engine_after_worker_stops(mo
 
 
 @pytest.mark.asyncio
-async def test_dispose_database_engine_retries_after_cancellation_and_preserves_signal(monkeypatch) -> None:
-    """验证连接池释放被取消时先完成第二次 dispose，再恢复取消语义。"""
-    dispose = AsyncMock(side_effect=[asyncio.CancelledError(), None])
+async def test_dispose_database_engine_preserves_cancellation_after_shielded_cleanup(monkeypatch) -> None:
+    """验证主任务取消后仍完成连接池清理，并在清理结束后恢复取消语义。"""
+    dispose_started = asyncio.Event()
+    allow_dispose = asyncio.Event()
+
+    async def dispose() -> None:
+        dispose_started.set()
+        await allow_dispose.wait()
+
     fake_engine = type("FakeEngine", (), {"dispose": dispose})()
     monkeypatch.setattr(worker_entrypoint, "engine", fake_engine)
 
+    task = asyncio.create_task(worker_entrypoint._dispose_database_engine())
+    await dispose_started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    allow_dispose.set()
     with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_dispose_database_engine_propagates_dispose_failure(monkeypatch) -> None:
+    """验证非取消型连接池清理异常不被吞掉。"""
+    dispose = AsyncMock(side_effect=RuntimeError("dispose failed"))
+    fake_engine = type("FakeEngine", (), {"dispose": dispose})()
+    monkeypatch.setattr(worker_entrypoint, "engine", fake_engine)
+
+    with pytest.raises(RuntimeError, match="dispose failed"):
         await worker_entrypoint._dispose_database_engine()
 
-    assert dispose.await_count == 2
+    dispose.assert_awaited_once()

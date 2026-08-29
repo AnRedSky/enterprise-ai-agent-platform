@@ -41,50 +41,61 @@ def _client() -> httpx.Client:
     return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=30.0)
 
 
-async def _wait_for_delegations_terminal(delegation_ids: list[uuid.UUID], timeout_seconds: float = 10.0) -> None:
-    """等待本测试创建的 Delegation 全部进入终态，避免把异步 dispatch 返回点误判为执行完成。
+async def _delegation_statuses(delegation_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """读取本次验收 Delegation 当前状态。
 
     Args:
         delegation_ids: 本次验收创建的 Delegation 标识。
-        timeout_seconds: 最长等待时间；超过后由最终断言输出实际状态。
+
+    Returns:
+        dict[uuid.UUID, str]: Delegation 标识到 durable status 的映射。
+
+    事务边界：仅执行只读查询，不改变本次验收数据。
+    """
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(AgentDelegation.id, AgentDelegation.status).where(AgentDelegation.id.in_(delegation_ids))
+            )
+        ).all()
+    return {delegation_id: status for delegation_id, status in rows}
+
+
+async def _assert_delegations_terminal(delegation_ids: list[uuid.UUID]) -> None:
+    """在有界 dispatch drain 结束后断言所有 Delegation 已进入终态，并输出实际状态。
+
+    Args:
+        delegation_ids: 本次验收创建的 Delegation 标识。
 
     Returns:
         None。
 
     Raises:
-        TimeoutError: Durable Worker 在限定时间内没有完成全部 Delegation。
+        AssertionError: 任一 Delegation 未在本次显式 Worker drain 窗口内完成。
     """
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    while asyncio.get_running_loop().time() < deadline:
-        async with SessionLocal() as db:
-            rows = (
-                await db.execute(
-                    select(AgentDelegation.status).where(AgentDelegation.id.in_(delegation_ids))
-                )
-            ).scalars().all()
-        if len(rows) == len(delegation_ids) and all(status in {"completed", "failed", "cancelled"} for status in rows):
-            return
-        await asyncio.sleep(0.1)
-    raise TimeoutError("Durable Worker 未在验收等待窗口内完成本次 Delegation 集合")
+    statuses = await _delegation_statuses(delegation_ids)
+    terminal = {"completed", "failed", "cancelled"}
+    if len(statuses) != len(delegation_ids) or not all(status in terminal for status in statuses.values()):
+        actual = {str(item): status for item, status in statuses.items()}
+        raise AssertionError(f"Durable Worker 未在有界 dispatch drain 窗口内完成 Delegation 集合：{actual}")
 
 
-async def _delegation_statuses(delegation_ids: list[uuid.UUID]) -> list[str]:
-    """读取本次验收 Delegation 状态，用于驱动有界的多 Worker dispatch drain。
+async def _dispatch_with_worker(worker: WorkflowWorker) -> WorkflowFrontier | None:
+    """让指定 Worker Claim 并立即执行一个 Delegation Frontier。
 
     Args:
-        delegation_ids: 本次验收创建的 Delegation 标识。
+        worker: 当前真实 Durable Frontier Worker 实例。
 
     Returns:
-        list[str]: 按数据库返回顺序排列的 Delegation 当前状态。
+        成功 Claim 的 Frontier；没有可 Claim 任务时返回 None。
+
+    事务边界：Claim、Frontier lease 与 Runtime execution 均通过正式 Worker 入口完成。
     """
-    async with SessionLocal() as db:
-        return list(
-            (
-                await db.execute(
-                    select(AgentDelegation.status).where(AgentDelegation.id.in_(delegation_ids))
-                )
-            ).scalars().all()
-        )
+    frontier = await worker._claim_pending_delegation_frontier()
+    if frontier is None:
+        return None
+    await worker.execute_frontier(frontier)
+    return frontier
 
 
 @pytest.mark.asyncio
@@ -113,42 +124,43 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
     worker_b = WorkflowWorker(concurrency=1, lease_seconds=60)
     worker_a.owner = f"b6-worker-a-{suffix}"
     worker_b.owner = f"b6-worker-b-{suffix}"
-
-    # 本验收同时存在父 Workflow 的普通 Frontier。若调用通用 claim_one_frontier()，Worker 可能合法地先消费父 Workflow，
-    # 从而无法证明本轮正在验收的 Delegation 已被 Claim。这里直接调用正式 Delegation Frontier discovery 入口；该入口仍使用
-    # 真实 PostgreSQL Claim、真实 Frontier lease 与真实 execute_frontier，不复制任何 Runtime 实现。
-    #
-    # Claim 内部会提交事务并释放候选行锁，因此两个 Worker 在并发竞争时可能合法地命中同一个候选快照，
-    # 其中一个随后收到 409 并返回 None。固定执行两轮会把这种合法竞争误判成“只消费 2/4”。
-    # 这里改为在有界窗口内持续 drain，直到本测试创建的 Delegation 全部进入终态；不延长业务 timeout，
-    # 也不依赖后台 Scheduler，因此仍然只验证本次显式 Worker dispatch 边界。
-    deadline = asyncio.get_running_loop().time() + 10.0
     delegation_ids = [uuid.UUID(item[0]) for item in fixtures]
+
+    # 本验收同时存在父 Workflow 的普通 Frontier，因此必须直接调用正式 Delegation Frontier discovery 入口。
+    # 首轮保留真实并发 Claim 竞争；若两个 Worker 同时竞争同一候选，允许其中一个因 409 返回 None。
+    # 后续使用显式 Worker 轮换 drain 剩余 Delegation，避免把 PostgreSQL 合法调度顺序错误地固化为固定轮次。
+    deadline = asyncio.get_running_loop().time() + 10.0
+    first_round = await asyncio.gather(
+        worker_a._claim_pending_delegation_frontier(),
+        worker_b._claim_pending_delegation_frontier(),
+    )
+    first_pairs = [
+        (worker, frontier)
+        for worker, frontier in zip((worker_a, worker_b), first_round)
+        if frontier is not None
+    ]
+    if first_pairs:
+        await asyncio.gather(*(worker.execute_frontier(frontier) for worker, frontier in first_pairs))
+
+    # 之后不再依赖并发快照竞争；两个独立 Worker 交替 drain，确保每个 Worker 都有真实 Claim 机会。
+    turn = 0
     while asyncio.get_running_loop().time() < deadline:
         statuses = await _delegation_statuses(delegation_ids)
         if len(statuses) == len(delegation_ids) and all(
-            status in {"completed", "failed", "cancelled"} for status in statuses
+            status in {"completed", "failed", "cancelled"} for status in statuses.values()
         ):
             break
+        worker = worker_a if turn % 2 == 0 else worker_b
+        await _dispatch_with_worker(worker)
+        turn += 1
+        await asyncio.sleep(0)
 
-        frontiers = await asyncio.gather(
-            worker_a._claim_pending_delegation_frontier(),
-            worker_b._claim_pending_delegation_frontier(),
-        )
-        pairs = [(worker, frontier) for worker, frontier in zip((worker_a, worker_b), frontiers) if frontier is not None]
-        if pairs:
-            await asyncio.gather(*(worker.execute_frontier(frontier) for worker, frontier in pairs))
-        else:
-            await asyncio.sleep(0.1)
-
-    await _wait_for_delegations_terminal(delegation_ids)
+    await _assert_delegations_terminal(delegation_ids)
 
     async with SessionLocal() as db:
         delegation_rows = (
             await db.execute(
-                select(AgentDelegation).where(
-                    AgentDelegation.id.in_(delegation_ids)
-                )
+                select(AgentDelegation).where(AgentDelegation.id.in_(delegation_ids))
             )
         ).scalars().all()
         assert len(delegation_rows) == len(fixtures)

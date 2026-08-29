@@ -17,30 +17,30 @@ logger = logging.getLogger(__name__)
 
 
 async def _dispose_database_engine() -> None:
-    """在 Worker 事件循环关闭前释放 SQLAlchemy 异步连接池。
+    """在 Worker 事件循环关闭前可靠释放 SQLAlchemy 异步连接池。
 
     Returns:
         None。
 
-    设计意图：Worker 进程退出时必须先让所有 Worker task 完成 Session 上下文退出，再显式
-    dispose AsyncEngine。收到终止信号后，当前主 Task 可能处于 cancelling 状态；此时先消费
-    pending cancellation，再执行一次完整 dispose，确保 asyncpg 在事件循环仍可用时关闭连接。
-    第一次 dispose 已经收到的取消信号不能被静默丢弃：资源清理完成后必须恢复取消语义，让上层
-    Worker 生命周期能够继续执行既定的停止流程，同时避免连接池清理被同一个 cancellation 中断。
+    设计意图：Worker 退出时必须让 AsyncEngine 在事件循环仍可用期间完成连接池关闭。
+    资源清理本身不应因为主 Task 的取消请求而被中断，因此使用 shield 让 dispose 操作继续执行；
+    如果主 Task 已进入 cancelling 状态，则先消费当前取消计数，再等待同一个 dispose 操作完成。
+    清理结束后恢复原取消语义，避免吞掉上层停止流程的 cancellation。
 
     Raises:
-        asyncio.CancelledError: 首次连接池清理收到取消信号且重试清理成功后，恢复原取消语义。
+        asyncio.CancelledError: 连接池清理完成后恢复此前收到的取消请求。
     """
+    dispose_task = asyncio.create_task(engine.dispose())
     cancellation_requested = False
     try:
-        await engine.dispose()
+        await asyncio.shield(dispose_task)
     except asyncio.CancelledError:
         cancellation_requested = True
         task = asyncio.current_task()
         if task is not None:
             while task.cancelling():
                 task.uncancel()
-        await engine.dispose()
+        await dispose_task
 
     if cancellation_requested:
         raise asyncio.CancelledError
