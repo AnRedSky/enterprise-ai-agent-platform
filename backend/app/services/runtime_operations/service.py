@@ -12,8 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.integration_event import IntegrationEventRecord
-from app.models.runtime_operations import RuntimeNotificationDelivery, RuntimeNotificationGroup
-from app.models.runtime_operations import RuntimeAlertInstance, RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry
+from app.models.runtime_operations import RuntimeNotificationDelivery
 from app.models.webhook_delivery import WebhookDelivery
 from app.models.webhook_integration import WebhookDestination
 
@@ -58,13 +57,12 @@ class RuntimeOperationsService:
         status_counts = {status: count for status, count in rows}
         delivered = status_counts.get("delivered", 0)
         terminal = delivered + status_counts.get("failed", 0) + status_counts.get("dead_letter", 0)
-        slo = self._slo(delivered, terminal)
         return {
             "total": sum(status_counts.values()),
             "status_counts": status_counts,
             "retry_count": status_counts.get("retrying", 0),
             "dead_letter_count": status_counts.get("dead_letter", 0),
-            "slo": slo,
+            "slo": self._slo(delivered, terminal),
         }
 
     async def overview(self, tenant_id: UUID, *, window_hours: int = 24) -> dict[str, Any]:
@@ -113,37 +111,38 @@ class RuntimeOperationsService:
                 RuntimeNotificationDelivery.provider,
                 RuntimeNotificationDelivery.transition,
                 RuntimeNotificationDelivery.status,
-                WebhookDestination.id,
+                WebhookDelivery.destination_id,
                 WebhookDestination.name,
                 func.count(),
             ).join(
-                WebhookDestination, WebhookDestination.id == RuntimeNotificationDelivery.webhook_delivery_id,
-                isouter=True,
+                WebhookDelivery,
+                WebhookDelivery.id == RuntimeNotificationDelivery.webhook_delivery_id,
+            ).join(
+                WebhookDestination,
+                WebhookDestination.id == WebhookDelivery.destination_id,
             ).where(
                 RuntimeNotificationDelivery.tenant_id == tenant_id,
+                WebhookDelivery.tenant_id == tenant_id,
+                WebhookDestination.tenant_id == tenant_id,
                 RuntimeNotificationDelivery.created_at >= since,
             ).group_by(
                 RuntimeNotificationDelivery.provider,
                 RuntimeNotificationDelivery.transition,
                 RuntimeNotificationDelivery.status,
-                WebhookDestination.id,
+                WebhookDelivery.destination_id,
                 WebhookDestination.name,
             )
         )).all()
-        buckets: dict[tuple[str, str, str | None, UUID | None, str | None], int] = {}
-        for provider, transition, status, destination_id, destination_name, count in rows:
-            key = (provider or "unknown", transition, status, destination_id, destination_name)
-            buckets[key] = count
         items = [
             {
-                "provider": provider,
+                "provider": provider or "unknown",
                 "transition": transition,
                 "status": status,
                 "destination_id": destination_id,
                 "destination_name": destination_name,
                 "count": count,
             }
-            for (provider, transition, status, destination_id, destination_name), count in buckets.items()
+            for provider, transition, status, destination_id, destination_name, count in rows
         ]
         items.sort(key=lambda item: (item["provider"], item["transition"], item["status"] or "", str(item["destination_id"])))
         return {"window_hours": window_hours, "since": since, "generated_at": datetime.now(UTC), "items": items}
