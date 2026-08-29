@@ -63,6 +63,7 @@ class WebhookDeliveryRepository:
         record.last_error_code = None
         record.last_error_message = None
         await db.flush()
+        await self._audit(db, record, "claim", owner, "running")
         return record
 
     async def _audit(
@@ -122,6 +123,7 @@ class WebhookDeliveryRepository:
         error_code: str,
         error_message: str,
         retry_at: datetime | None,
+        response_status_code: int | None = None,
     ) -> bool:
         result = await db.execute(
             select(WebhookDelivery)
@@ -137,6 +139,7 @@ class WebhookDeliveryRepository:
             return False
         record.last_error_code = error_code[:100]
         record.last_error_message = error_message[:4000]
+        record.response_status_code = response_status_code
         record.lease_owner = None
         record.lease_expires_at = None
         record.status = "dead_letter" if retry_at is None else "pending"
