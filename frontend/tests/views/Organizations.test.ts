@@ -11,7 +11,7 @@ const global = {
   stubs: {
     "el-button": { template: "<button @click=\"$emit('click')\"><slot/></button>" },
     "el-table": { template: "<div><slot/></div>" }, "el-table-column": { template: "<div/>" },
-    "el-alert": { template: "<div class=\"alert\"><slot/></div>" }, "el-empty": { template: "<div>empty</div>" },
+    "el-alert": { props: ["title"], template: "<div class=\"alert\">{{ title }}</div>" }, "el-empty": { template: "<div>empty</div>" },
     "el-dialog": { template: "<div><slot/><slot name=\"footer\"/></div>" }, "el-form": { template: "<form><slot/></form>" },
     "el-form-item": { template: "<div><slot/></div>" }, "el-input": { template: "<input/>" }, "el-tag": { template: "<span><slot/></span>" },
     "router-link": { template: "<a><slot/></a>" },
@@ -34,9 +34,16 @@ describe("Organizations management UI", () => {
     expect(text).toContain("组织");
     expect(text).toContain("创建组织");
     expect(text).toContain("管理成员");
-    expect(text).toContain("Tenant ID");
     expect(text).not.toContain("Organizations");
     expect(text).not.toContain("Organization");
+  });
+
+  it("maps organization status to Chinese with a safe unknown fallback", async () => {
+    const wrapper = mount(Organizations, { global });
+    await vi.waitFor(() => expect(api.listOrganizations).toHaveBeenCalled());
+    expect((wrapper.vm as any).statusLabel("active")).toBe("已启用");
+    expect((wrapper.vm as any).statusLabel("pending")).toBe("待处理");
+    expect((wrapper.vm as any).statusLabel("unknown_status")).toBe("未知状态（unknown_status）");
   });
 
   it("creates an organization and reloads the list", async () => {
@@ -49,9 +56,10 @@ describe("Organizations management UI", () => {
     expect(api.listOrganizations).toHaveBeenCalledTimes(2);
   });
 
-  it("exposes a loading error without losing the page contract", async () => {
-    api.listOrganizations.mockRejectedValueOnce(new Error("Organization API unavailable"));
+  it("replaces raw API HTTP errors with a Chinese user-facing message", async () => {
+    api.listOrganizations.mockRejectedValueOnce(new Error("500 Internal Server Error"));
     const wrapper = mount(Organizations, { global });
-    await vi.waitFor(() => expect((wrapper.vm as any).error).toBe("Organization API unavailable"));
+    await vi.waitFor(() => expect((wrapper.vm as any).error).toBe("组织列表加载失败，请稍后重试"));
+    expect(wrapper.text()).not.toContain("500 Internal Server Error");
   });
 });
