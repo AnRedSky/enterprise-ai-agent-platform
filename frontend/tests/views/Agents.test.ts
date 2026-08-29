@@ -71,4 +71,24 @@ describe("AgentWorkbench lifecycle", () => {
     expect(text).not.toContain("System Prompt");
     expect(text).not.toContain("Chat");
   });
+
+  it("uses Chinese labels for runtime identifiers", async () => {
+    const wrapper = mount(Agents, { global });
+    await vi.waitFor(() => expect(api.listAgents).toHaveBeenCalled());
+    (wrapper.vm as any).openChat(agent);
+    (wrapper.vm as any).requestId = "request-123456789";
+    (wrapper.vm as any).traceId = "trace-123456789";
+    (wrapper.vm as any).sessionId = "session-123456789";
+    (wrapper.vm as any).executionId = "execution-123456789";
+    await wrapper.vm.$nextTick();
+    const text = wrapper.text();
+    expect(text).toContain("请求标识");
+    expect(text).toContain("链路追踪标识");
+    expect(text).toContain("会话标识");
+    expect(text).toContain("执行标识");
+    expect(text).not.toContain("请求 ID");
+    expect(text).not.toContain("链路追踪 ID");
+    expect(text).not.toContain("会话 ID");
+    expect(text).not.toContain("执行 ID");
+  });
 });
