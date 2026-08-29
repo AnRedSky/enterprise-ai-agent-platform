@@ -8,8 +8,12 @@ const api = vi.hoisted(() => ({
   versions: vi.fn(),
   createVersion: vi.fn(),
   publish: vi.fn(),
+  listExecutions: vi.fn(),
   createExecution: vi.fn(),
   runExecution: vi.fn(),
+  cancelExecution: vi.fn(),
+  retryExecution: vi.fn(),
+  resumeExecution: vi.fn(),
   execution: vi.fn(),
   executionNodes: vi.fn(),
   trace: vi.fn(),
@@ -19,7 +23,7 @@ const api = vi.hoisted(() => ({
 vi.mock("../../src/api/workflows", () => ({ workflowApi: api }));
 vi.mock("element-plus", () => ({
   ElMessage: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
-  ElMessageBox: { confirm: vi.fn() },
+  ElMessageBox: { confirm: vi.fn(), prompt: vi.fn() },
 }));
 
 import Workflows from "../../src/views/workflows/index.vue";
@@ -65,6 +69,7 @@ describe("Workflow Governance view", () => {
     Object.values(api).forEach((mock) => mock.mockReset());
     api.list.mockResolvedValue({ data: [] });
     api.versions.mockResolvedValue({ data: [] });
+    api.listExecutions.mockResolvedValue({ data: [] });
     api.audit.mockResolvedValue({ data: { items: [], page: 1, page_size: 50, total: 0 } });
     api.trace.mockResolvedValue({ data: { execution_id: "e1", items: [] } });
   });
@@ -75,13 +80,16 @@ describe("Workflow Governance view", () => {
     expect(wrapper.text()).toContain("请选择 Workflow");
   });
 
-  it("loads versions when a workflow is selected", async () => {
+  it("loads versions and persisted executions when a workflow is selected", async () => {
     api.list.mockResolvedValue({ data: [workflow] });
     api.versions.mockResolvedValue({ data: [{ id: "v1", workflow_id: "w1", version: 1, definition: { nodes: [] }, status: "published", created_by: "u1", created_at: "2026-08-20" }] });
+    api.listExecutions.mockResolvedValue({ data: [{ id: "e1", workflow_id: "w1", workflow_version_id: "v1", status: "failed", input_data: {}, created_at: "2026-08-20" }] });
     const wrapper = mount(Workflows, { global });
     await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
     await (wrapper.vm as any).selectWorkflow(workflow);
     expect(api.versions).toHaveBeenCalledWith("w1");
+    expect(api.listExecutions).toHaveBeenCalledWith("w1");
+    expect((wrapper.vm as any).executions).toHaveLength(1);
     expect(wrapper.text()).toContain("Order Workflow");
   });
 
@@ -114,5 +122,56 @@ describe("Workflow Governance view", () => {
     expect(api.executionNodes).toHaveBeenCalledWith("e1");
     expect(wrapper.text()).toContain("completed");
     expect(wrapper.text()).toContain("output");
+  });
+
+  it("creates a Durable Resume execution from a persisted checkpoint lineage", async () => {
+    api.list.mockResolvedValue({ data: [workflow] });
+    api.listExecutions.mockResolvedValue({ data: [] });
+    api.execution.mockResolvedValue({ data: {
+      id: "e1",
+      tenant_id: "t1",
+      workflow_id: "w1",
+      workflow_version_id: "v1",
+      created_by: "u1",
+      status: "failed",
+      input_data: {},
+      resume_checkpoint_sequence: 7,
+      created_at: "2026-08-20",
+    } });
+    api.executionNodes.mockResolvedValue({ data: [] });
+    api.resumeExecution.mockResolvedValue({ data: {
+      id: "e2",
+      tenant_id: "t1",
+      workflow_id: "w1",
+      workflow_version_id: "v1",
+      created_by: "u1",
+      status: "pending",
+      input_data: {},
+      resume_of_execution_id: "e1",
+      resume_checkpoint_sequence: 7,
+      created_at: "2026-08-20",
+    } });
+    const wrapper = mount(Workflows, { global });
+    await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
+    await (wrapper.vm as any).selectWorkflow(workflow);
+    await (wrapper.vm as any).loadExecutionDetails("e1");
+    api.resumeExecution.mockResolvedValueOnce({ data: {
+      id: "e2",
+      tenant_id: "t1",
+      workflow_id: "w1",
+      workflow_version_id: "v1",
+      created_by: "u1",
+      status: "pending",
+      input_data: {},
+      resume_of_execution_id: "e1",
+      resume_checkpoint_sequence: 7,
+      created_at: "2026-08-20",
+    } });
+    const { ElMessageBox } = await import("element-plus");
+    vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce(undefined as never);
+    await (wrapper.vm as any).resumeExecution();
+    expect(api.resumeExecution).toHaveBeenCalledWith("e1");
+    expect((wrapper.vm as any).execution.id).toBe("e2");
+    expect((wrapper.vm as any).execution.resume_of_execution_id).toBe("e1");
   });
 });

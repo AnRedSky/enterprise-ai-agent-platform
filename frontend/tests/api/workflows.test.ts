@@ -81,11 +81,14 @@ describe("workflowApi", () => {
     );
   });
 
-  it("creates and runs an execution", async () => {
+  it("creates, lists and runs executions", async () => {
+    get.mockResolvedValue({ data: [] });
     post.mockResolvedValue({ data: {} });
     await workflowApi.createExecution("w1", { order_id: "o1" });
+    await workflowApi.listExecutions("w1");
     await workflowApi.runExecution("e1");
     expect(post).toHaveBeenNthCalledWith(1, "/workflows/w1/executions", { input_data: { order_id: "o1" } }, undefined);
+    expect(get).toHaveBeenCalledWith("/workflows/w1/executions");
     expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e1/run");
   });
 
@@ -99,12 +102,14 @@ describe("workflowApi", () => {
     );
   });
 
-  it("controls failed and active executions", async () => {
+  it("controls failed and active executions including Durable Resume", async () => {
     post.mockResolvedValue({ data: {} });
     await workflowApi.cancelExecution("e1", "operator requested stop");
     await workflowApi.retryExecution("e2");
+    await workflowApi.resumeExecution("e3");
     expect(post).toHaveBeenNthCalledWith(1, "/workflows/executions/e1/cancel", { reason: "operator requested stop" });
     expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e2/retry");
+    expect(post).toHaveBeenNthCalledWith(3, "/workflows/executions/e3/resume");
   });
 
   it("queries execution status, nodes, trace and audit", async () => {

@@ -5,6 +5,7 @@ import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowExecut
 
 const workflows = ref<Workflow[]>([]);
 const versions = ref<WorkflowVersion[]>([]);
+const executions = ref<WorkflowExecution[]>([]);
 const selected = ref<Workflow>();
 const selectedVersion = ref<WorkflowVersion>();
 const execution = ref<WorkflowExecution>();
@@ -13,6 +14,7 @@ const traces = ref<WorkflowTrace[]>([]);
 const audits = ref<Array<Record<string, unknown>>>([]);
 const loading = ref(false);
 const auditLoading = ref(false);
+const executionListLoading = ref(false);
 const executionLoading = ref(false);
 const executionActionLoading = ref(false);
 const form = ref({ name: "", description: "" });
@@ -28,14 +30,38 @@ async function load() {
   finally { loading.value = false; }
 }
 
+async function loadExecutions(workflowId: string) {
+  executionListLoading.value = true;
+  try {
+    executions.value = (await workflowApi.listExecutions(workflowId)).data;
+  } catch {
+    ElMessage.error("Workflow Execution 列表查询失败");
+  } finally {
+    executionListLoading.value = false;
+  }
+}
+
 async function selectWorkflow(row: Workflow) {
   selected.value = row;
   selectedVersion.value = undefined;
   execution.value = undefined;
   executionNodes.value = [];
   traces.value = [];
-  try { versions.value = (await workflowApi.versions(row.id)).data; }
-  catch { ElMessage.error("Workflow Version 查询失败"); }
+  executionId.value = "";
+  try {
+    const [versionsResponse] = await Promise.all([
+      workflowApi.versions(row.id),
+      loadExecutions(row.id),
+    ]);
+    versions.value = versionsResponse.data;
+  } catch {
+    ElMessage.error("Workflow Version 查询失败");
+  }
+}
+
+function selectExecution(item: WorkflowExecution) {
+  executionId.value = item.id;
+  void loadExecutionDetails(item.id);
 }
 
 async function createWorkflow() {
@@ -84,6 +110,7 @@ async function createExecution() {
     execution.value = response.data;
     executionId.value = response.data.id;
     executionNodes.value = [];
+    await loadExecutions(selected.value.id);
     ElMessage.success("Workflow Execution 创建成功");
   } catch (error) {
     ElMessage.error(error instanceof SyntaxError ? "Execution Input 不是合法 JSON" : "Workflow Execution 创建失败");
@@ -99,6 +126,7 @@ async function runExecution() {
     executionId.value = id;
     const nodesResponse = await workflowApi.executionNodes(id);
     executionNodes.value = nodesResponse.data;
+    if (selected.value) await loadExecutions(selected.value.id);
     ElMessage.success("Workflow Execution 已完成运行请求");
   } catch { ElMessage.error("Workflow Execution 运行失败"); }
   finally { executionActionLoading.value = false; }
@@ -117,6 +145,7 @@ async function cancelExecution() {
     executionActionLoading.value = true;
     execution.value = (await workflowApi.cancelExecution(execution.value.id, result.value)).data;
     await loadExecutionDetails(execution.value.id);
+    if (selected.value) await loadExecutions(selected.value.id);
     ElMessage.success("Workflow Execution 已取消");
   } catch (error) {
     if (error !== "cancel" && error !== "close") ElMessage.error("Workflow Execution 取消失败");
@@ -131,9 +160,29 @@ async function retryExecution() {
     execution.value = (await workflowApi.retryExecution(execution.value.id)).data;
     executionId.value = execution.value.id;
     executionNodes.value = [];
+    if (selected.value) await loadExecutions(selected.value.id);
     ElMessage.success("Retry Execution 已创建，可继续运行");
   } catch (error) {
     if (error !== "cancel") ElMessage.error("Retry Execution 创建失败");
+  } finally { executionActionLoading.value = false; }
+}
+
+async function resumeExecution() {
+  if (!execution.value?.resume_checkpoint_sequence || ["pending", "running"].includes(execution.value.status)) return;
+  try {
+    await ElMessageBox.confirm(
+      `将从 Checkpoint #${execution.value.resume_checkpoint_sequence} 创建新的 Durable Resume Execution，是否继续？`,
+      "Durable Resume Workflow Execution",
+      { type: "warning" },
+    );
+    executionActionLoading.value = true;
+    execution.value = (await workflowApi.resumeExecution(execution.value.id)).data;
+    executionId.value = execution.value.id;
+    executionNodes.value = [];
+    if (selected.value) await loadExecutions(selected.value.id);
+    ElMessage.success("Durable Resume Execution 已创建");
+  } catch (error) {
+    if (error !== "cancel") ElMessage.error("Durable Resume 创建失败");
   } finally { executionActionLoading.value = false; }
 }
 
@@ -225,13 +274,20 @@ onMounted(load);
               <el-button type="primary" @click="saveVersion">创建新 Version</el-button>
             </el-tab-pane>
             <el-tab-pane label="Execution" name="execution">
-              <el-alert title="可直接创建并运行当前已发布版本，也可以输入已有 Execution ID 查询、取消或 Retry。" type="info" :closable="false" />
+              <el-alert title="Execution 列表直接来自后端持久化查询；可查看历史运行、Retry，并从已有 Checkpoint 执行 Durable Resume。" type="info" :closable="false" />
+              <el-table v-loading="executionListLoading" :data="executions" highlight-current-row @row-click="selectExecution">
+                <el-table-column prop="id" label="Execution" min-width="180" />
+                <el-table-column prop="status" label="Status" width="110" />
+                <el-table-column prop="workflow_version_id" label="Version" min-width="150" />
+                <el-table-column prop="created_at" label="Created" min-width="170" />
+              </el-table>
               <el-input v-model="executionInputText" type="textarea" :rows="5" class="execution-input" placeholder='{"key":"value"}' />
               <div class="trace-query">
                 <el-button type="primary" :loading="executionActionLoading" :disabled="!selected.published_version_id" @click="createExecution">创建 Execution</el-button>
                 <el-button type="success" :loading="executionActionLoading" :disabled="!execution || execution.status !== 'pending'" @click="runExecution">运行 Execution</el-button>
                 <el-button type="warning" :loading="executionActionLoading" :disabled="!execution || !['pending', 'running'].includes(execution.status)" @click="cancelExecution">取消 Execution</el-button>
                 <el-button type="danger" :loading="executionActionLoading" :disabled="!execution || execution.status !== 'failed'" @click="retryExecution">Retry</el-button>
+                <el-button type="warning" plain :loading="executionActionLoading" :disabled="!execution || !execution.resume_checkpoint_sequence || ['pending', 'running'].includes(execution.status)" @click="resumeExecution">Durable Resume</el-button>
               </div>
               <div class="trace-query">
                 <el-input v-model="executionId" placeholder="execution UUID" @keyup.enter="loadExecution" />
@@ -243,6 +299,8 @@ onMounted(load);
                   <el-descriptions-item label="Status"><el-tag>{{ execution.status }}</el-tag></el-descriptions-item>
                   <el-descriptions-item label="Workflow Version">{{ execution.workflow_version_id }}</el-descriptions-item>
                   <el-descriptions-item label="Retry Of">{{ execution.retry_of_execution_id || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="Resume Of">{{ execution.resume_of_execution_id || '-' }}</el-descriptions-item>
+                  <el-descriptions-item label="Resume Checkpoint">{{ execution.resume_checkpoint_sequence ?? '-' }}</el-descriptions-item>
                   <el-descriptions-item label="Current Node">{{ execution.current_node_id || '-' }}</el-descriptions-item>
                   <el-descriptions-item label="Started">{{ execution.started_at || '-' }}</el-descriptions-item>
                   <el-descriptions-item label="Ended">{{ execution.ended_at || '-' }}</el-descriptions-item>
@@ -290,8 +348,8 @@ onMounted(load);
 .header { display: flex; align-items: center; justify-content: space-between; }
 .definition { margin: 12px 0; font-family: monospace; }
 .execution-input { margin-top: 12px; font-family: monospace; }
-.trace-query { display: flex; gap: 8px; margin-top: 12px; }
-.trace-query .el-input { flex: 1; }
+.trace-query { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.trace-query .el-input { flex: 1; min-width: 220px; }
 .execution-summary { margin-top: 16px; }
 .execution-nodes { margin-top: 16px; }
 .trace-list { margin-top: 20px; }

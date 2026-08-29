@@ -29,6 +29,8 @@ export type WorkflowExecution = {
   workflow_version_id: string;
   created_by: string;
   retry_of_execution_id?: string;
+  resume_of_execution_id?: string;
+  resume_checkpoint_sequence?: number;
   idempotency_key?: string;
   status: string;
   current_node_id?: string;
@@ -168,12 +170,18 @@ export const workflowApi = {
       idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
     );
   },
+  listExecutions(workflowId: string) {
+    return request.get<WorkflowExecution[]>(`/workflows/${workflowId}/executions`);
+  },
   runExecution(executionId: string) { return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/run`); },
   cancelExecution(executionId: string, reason?: string) {
     return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/cancel`, { reason });
   },
   retryExecution(executionId: string) {
     return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/retry`);
+  },
+  resumeExecution(executionId: string) {
+    return request.post<WorkflowExecution>(`/workflows/executions/${executionId}/resume`);
   },
   execution(executionId: string) { return request.get<WorkflowExecution>(`/workflows/executions/${executionId}`); },
   executionNodes(executionId: string) { return request.get<WorkflowExecutionNode[]>(`/workflows/executions/${executionId}/nodes`); },
