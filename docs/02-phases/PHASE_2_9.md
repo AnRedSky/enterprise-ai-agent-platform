@@ -8,7 +8,7 @@
 - Phase 2.9-A Event Contract：已实现。
 - Phase 2.9-B Durable Event Persistence：已实现第一切片，数据库 Migration 已验收。
 - Phase 2.9-C Reliable Delivery：**第二切片已通过本地真实 PostgreSQL Gate**。
-- 当前任务：**2.9-D Webhook Integration：Destination / Subscription / Fan-out Delivery Fact → Management API / Reliable Worker**。
+- 当前任务：**2.9-D Webhook Integration：Destination / Subscription / Fan-out Delivery Fact → Reliable Worker / Security Gate**。
 
 ## 3. 2.9-A Event Contract
 
@@ -76,15 +76,26 @@ Targeted delivery unit regression → 15 passed
 
 本轮修复了一个运行时完整性缺陷：ORM Registry 已先行引用 Webhook 模型，但模型文件未进入主分支，导致 API/Worker 导入阶段直接触发 `ModuleNotFoundError`。现已补齐 `WebhookDestination`、`WebhookSubscription`、`WebhookDelivery` 模型，并使表名、Destination 关联和 Migration revision 与本阶段 Fan-out 契约一致，同时增加模型注册回归测试。
 
-该层明确分离：Event Fact 描述“发生了什么”，Delivery Fact 描述“向哪个 Destination 投递及其生命周期”。不得使用 Event 的单一状态替代多 Destination 投递状态。
+### 6.3 Management API / Fan-out Planning
+**已开始实现下一切片。**
+
+已增加：
+- `GET/POST /api/v1/webhooks/destinations`；
+- `GET/POST /api/v1/webhooks/subscriptions`；
+- `POST /api/v1/webhooks/events/{event_id}/fanout`；
+- tenant-scoped `WebhookIntegrationService`；
+- Event Type → enabled Destination 的稳定 priority fan-out；
+- PostgreSQL 唯一约束驱动的重复规划幂等。
+
+该 API 只负责配置管理和 Delivery Fact 规划，不直接执行 HTTP 投递。
 
 ### 下一实现切片
-1. Destination / Subscription 管理 API；
-2. Delivery Worker 按 Destination 独立 Claim / lease / retry / dead-letter；
-3. Secret Resolver 抽象与运行时 Secret 获取；
-4. delivery audit / replay / 查询；
-5. endpoint allowlist / SSRF 与网络出口策略；
-6. Real HTTP + PostgreSQL Webhook Acceptance Gate。
+1. Delivery Worker 按 Destination 独立 Claim / lease / retry / dead-letter；
+2. Secret Resolver 抽象与运行时 Secret 获取；
+3. delivery audit / replay / 查询；
+4. endpoint allowlist / SSRF 与网络出口策略；
+5. Real HTTP + PostgreSQL Webhook Acceptance Gate；
+6. 再将 Webhook Delivery Worker 接入现有 Worker Runtime，而不是新建独立重复调度体系。
 
 ## 7. 2.9-E Runtime Integration
 
