@@ -20,6 +20,7 @@ from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow import WorkflowRuntime
+from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier
@@ -205,6 +206,23 @@ class WorkflowTriggerService:
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type, "timezone": config["timezone"],
             "interval_seconds": config["interval_seconds"], "recovery": recovery, "dispatch_mode": "durable_frontier",
         })
+        await RuntimeIntegrationEventPublisher(self.db).publish(
+            tenant_id=execution.tenant_id,
+            event_type="scheduler.trigger.dispatched",
+            source=RuntimeIntegrationEventPublisher.SOURCE_SCHEDULER,
+            subject=str(execution.id),
+            idempotency_key=f"scheduler-trigger:{trigger.id}:{idempotency_key}",
+            payload={
+                "trigger_id": str(trigger.id),
+                "workflow_id": str(workflow.id),
+                "workflow_version_id": str(version.id),
+                "execution_id": str(execution.id),
+                "scheduled_slot": input_data.get("scheduled_slot"),
+                "planned_at": input_data.get("planned_at"),
+                "recovery": recovery,
+                "dispatch_mode": "durable_frontier",
+            },
+        )
         await self.db.commit()
         return (execution, True) if return_created else execution
 
