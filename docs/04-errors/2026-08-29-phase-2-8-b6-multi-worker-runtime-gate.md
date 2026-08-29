@@ -45,14 +45,41 @@ Real PostgreSQL assertion
 
 在未取得实际数据库行与运行进程配置证据前，不修改生产 Provider 路由代码。
 
+### 3.3 Durable Frontier heartbeat 与 Runtime terminalization 竞态
+
+最新 B6 反馈中，Backend Regression 已通过，但 Real Runtime 出现 `WorkflowExecution=running`、`Delegation=running` 长时间不进入终态；同一代码路径由 `DurableFrontierWorkflowWorker.execute_frontier()` 启动 Frontier heartbeat。
+
+原实现的 heartbeat 在 `renew_owned_frontier_lease()` 返回 `False` 时直接取消当前 `execute_frontier()` Task。与此同时，`WorkflowRuntime` 正常完成 Node 后会先将 `WorkflowExecution` 推进 `completed` 并释放 Worker ownership，再由 `execute_frontier()` 的 `finally` 收敛 Frontier。于是 heartbeat 可能观察到“Execution 已正常终态、ownership 已释放”，却把它错误解释为“Worker 被其他实例抢走”，从而取消正在执行 Delegation terminalization 的外层 Task。
+
+实际竞态为：
+
+```text
+Runtime 完成 Node
+    ↓
+WorkflowExecution → completed + 释放 ownership
+    ↓
+Frontier heartbeat renewal 返回 False
+    ↓
+原实现错误地 cancel execute_frontier()
+    ↓
+execute_claimed_execution 无法继续完成 Delegation terminalization
+    ↓
+Delegation / Frontier 可能长期保持 running
+```
+
+该问题不是测试等待窗口本身，也不是第二套 Runtime 缺失，而是两个合法状态转换之间缺少“Execution 已经正常终态”的 fencing 语义。
+
 ## 4. 修复措施
 
 - 多 Worker Real API 测试改为直接覆盖 `claim_one_frontier()` 与 `execute_frontier()` 正式 Runtime 边界。
 - 增加 Delegation 终态等待窗口，防止异步 Runtime 调度完成与持久化终态之间产生测试竞态。
 - 保留 Claim AuditLog、`worker_execution_id`、Frontier `attempt` 与终态联合断言，继续验证一次性消费事实。
+- 修复 `renew_owned_frontier_lease()`：当 Execution lease UPDATE 因正常 terminalization 返回 0 行时，重新读取 Execution 状态；若已经是 `completed`、`failed` 或 `cancelled`，返回 `True`，让 heartbeat 停止续租但不要触发 Runtime lease-loss abort。
+- 保持真正的 ownership 丢失场景继续返回 `False`，因此其他 Worker 接管或 lease 过期仍会触发原有主动取消机制。
+- 新增 `tests/unit/test_frontier_lease_terminalization.py`，覆盖“Execution 正常终态不误报 lease loss”和“Execution 仍运行时 ownership 丢失仍返回 False”两个边界。
 - 不修改 Execution terminalization fencing。
 - 不增加第二套 Queue / Retry / Recovery。
-- B2 503 暂不通过 mock fallback 掩盖，待下一次本地 Gate 根据实际 Provider/Profile 数据继续定位。
+- B2 503 不通过 mock fallback 掩盖，仍要求下一次本地 Gate 根据实际 Provider/Profile 数据继续定位。
 
 ## 5. 验证要求
 
@@ -60,5 +87,6 @@ Real PostgreSQL assertion
 
 ```powershell
 cd backend
+uv run pytest -q tests/unit/test_frontier_lease_terminalization.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\06_delegation_multi_worker_runtime_gate.ps1
 ```
