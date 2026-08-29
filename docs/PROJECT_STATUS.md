@@ -48,7 +48,20 @@ B6 初始实现已把 pending Delegation 接入 Durable Frontier Worker，但本
 
 当前修复将 Delegation Claim → Worker Execution → Frontier 激活改为确定性链路：Claim 返回的 `worker_execution_id` 直接定位新建 Frontier，并在同一 Worker 调度流程中建立 Frontier lease；同时 B2 Real API 测试改为通过正式 `WorkflowWorker.claim_one_frontier()` + `execute_frontier()` 验证 Target Agent Runtime，不再绕过 Durable Frontier。
 
-Delegation Claim 与 Frontier 创建仍由 Claim Service 在同一事务中提交；新的 dispatch 激活阶段不会创建第二套队列、Retry 或 Recovery 状态机。
+随后发现默认 Worker 入口契约与 Delegation Runtime Entry 之间还存在边界冲突：`d44d6b86` 将公开 `WorkflowWorker` 错误切换为 `DurableFrontierWorkflowWorker`，导致 Backend default regression 的 3 个默认入口契约测试失败；直接恢复 Planner-driven 默认入口又会让 Delegation Frontier 进入普通 Planner execution，绕过 `AgentDelegationRuntimeBridge`。
+
+本轮代码修复已完成两点：
+
+1. 恢复 `WorkflowWorker = PlannerDrivenDurableFrontierWorkflowWorker` 作为正式默认入口；
+2. `PlannerDrivenDurableFrontierWorkflowWorker.execute_frontier()` 对已 Claim Delegation 的 Frontier 路由到父 `DurableFrontierWorkflowWorker.execute_frontier()`，从而进入唯一 `runtime_entry.execute_claimed_execution()`；普通 Workflow Frontier 继续走 Planner-driven 路径。
+
+两条路径共享同一个 Claim、Frontier、Lease、WorkflowRuntime 与状态模型，不新增第二套 Execution / Delegation / Retry / Recovery 状态机。
+
+开发者本次反馈中还出现 Provider `503 Service Unavailable`。从调用栈看，请求落入本地 OpenAI-compatible endpoint，且实际执行的是父 Workflow fixture 的 prompt；这与 Planner-driven Worker 未区分 Delegation Frontier 的职责边界问题一致。本轮修复已将 Delegation Frontier 路由回 canonical Runtime Entry，必须通过新的本地 Real Gate 结果最终确认。
+
+错误根因与修复记录：
+
+- `docs/04-errors/2026-08-29-phase-2-8-b6-worker-entrypoint-and-delegation-runtime.md`
 
 ## 5. B6 自动化验收
 
@@ -75,7 +88,7 @@ Gate 自动生成测试用户、Token、tenant、ID 与测试数据；Gate 本�
 [4] Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
 ```
 
-本次修复后必须重新实际执行 Gate，不能根据代码状态预填 Passed。
+本轮代码修复后必须重新实际执行 Gate，不能根据代码状态预填 Passed。
 
 ## 6. 下一主线任务
 
@@ -86,3 +99,5 @@ Phase 2.8 closure
     ↓
 Phase 2.9 Enterprise Integration / Event Infrastructure Contract
 ```
+
+在 B6 Real Gate 实际通过前，不提前进入 Phase 2.9 功能开发。
