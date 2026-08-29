@@ -36,8 +36,8 @@ describe("DeliveryConsole", () => {
     vi.mocked(integrationApi.deliveryAudit).mockResolvedValue({ data: [] } as never);
     const wrapper = mount(DeliveryConsole, { global: { plugins: [ElementPlus] } });
 
-    await vi.waitFor(() => expect(wrapper.text()).toContain("失败"));
-    expect(wrapper.text()).toContain("HTTP_ERROR");
+    await vi.waitFor(() => expect(wrapper.text()).toContain("HTTP_ERROR"));
+    expect(wrapper.text()).toContain("失败");
     expect(wrapper.text()).toContain("Replay");
     expect(wrapper.text()).toContain("Audit");
   });
