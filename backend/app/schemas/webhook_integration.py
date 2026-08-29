@@ -23,7 +23,6 @@ class WebhookDestinationResponse(BaseModel):
     enabled: bool
     created_at: datetime
     updated_at: datetime
-
     model_config = {"from_attributes": True}
 
 
@@ -44,10 +43,43 @@ class WebhookSubscriptionResponse(BaseModel):
     filter_config: dict
     created_at: datetime
     updated_at: datetime
-
     model_config = {"from_attributes": True}
 
 
 class WebhookFanoutResponse(BaseModel):
     event_id: UUID
     planned: int
+
+
+class WebhookDeliveryResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    subscription_id: UUID
+    destination_id: UUID
+    integration_event_id: UUID
+    status: str
+    attempt_count: int
+    next_attempt_at: datetime | None
+    last_attempt_at: datetime | None
+    delivered_at: datetime | None
+    response_status_code: int | None
+    last_error_code: str | None
+    last_error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class WebhookDeliveryAuditResponse(BaseModel):
+    id: UUID
+    delivery_id: UUID
+    integration_event_id: UUID
+    action: str
+    attempt_count: int
+    status: str
+    response_status_code: int | None
+    error_code: str | None
+    error_message: str | None
+    actor: str
+    created_at: datetime
+    model_config = {"from_attributes": True}
