@@ -2,13 +2,13 @@
   <div class="page">
     <div class="header">
       <div>
-        <h1>Tool 管理</h1>
+        <h1>工具管理</h1>
         <p>
-          工具注册、启停、绑定/解绑与执行；创建和治理操作受管理员 RBAC 保护。
+          管理工具的注册、启停、绑定、解绑和执行；创建及治理操作受管理员权限保护。
         </p>
       </div>
       <el-button v-if="isAdmin" type="primary" @click="createVisible = true"
-        >创建 Tool</el-button
+        >创建工具</el-button
       >
     </div>
     <el-alert
@@ -48,28 +48,28 @@
             link
             type="primary"
             @click="openBind(row as Tool, 'bind')"
-            >绑定 Agent</el-button
+            >绑定智能体</el-button
           ><el-button
             v-if="isAdmin"
             link
             type="danger"
             @click="openBind(row as Tool, 'unbind')"
-            >解绑 Agent</el-button
+            >解绑智能体</el-button
           ></template
         ></el-table-column
       ></el-table
-    ><el-empty v-if="!loading && !tools.length" description="暂无可用 Tool。" />
-    <el-dialog v-model="createVisible" title="创建 Tool" width="620px"
+    ><el-empty v-if="!loading && !tools.length" description="暂无可用工具。" />
+    <el-dialog v-model="createVisible" title="创建工具" width="620px"
       ><el-form label-width="110px"
         ><el-form-item label="名称" required
           ><el-input v-model="createForm.name" /></el-form-item
         ><el-form-item label="描述"
           ><el-input v-model="createForm.description" /></el-form-item
-        ><el-form-item label="Endpoint"
+        ><el-form-item label="接口地址"
           ><el-input
             v-model="createForm.endpoint"
-            placeholder="可选；禁止未经授权的 URL 执行" /></el-form-item
-        ><el-form-item label="Input Schema"
+            placeholder="可选；禁止执行未经授权的地址" /></el-form-item
+        ><el-form-item label="输入结构"
           ><el-input
             v-model="createForm.input_schema"
             type="textarea"
@@ -84,12 +84,12 @@
     <el-dialog
       v-model="bindVisible"
       :title="
-        bindingAction === 'bind' ? '绑定 Tool 到 Agent' : '解绑 Tool 到 Agent'
+        bindingAction === 'bind' ? '绑定工具到智能体' : '解绑工具与智能体'
       "
       width="520px"
       ><el-select
         v-model="selectedAgent"
-        placeholder="选择 Agent"
+        placeholder="选择智能体"
         style="width: 100%"
         ><el-option
           v-for="agent in agents"
@@ -108,21 +108,21 @@
     >
     <el-dialog
       v-model="executeVisible"
-      :title="`执行 Tool：${selectedTool?.name || ''}`"
+      :title="`执行工具：${selectedTool?.name || ''}`"
       width="620px"
       ><el-alert
-        title="Tool Execute 会创建 Runtime Execution，并受 Agent/Tool 权限、启用状态和 Schema 校验约束。"
+        title="执行工具会创建运行记录，并受智能体与工具权限、启用状态及输入结构校验约束。"
         type="info"
         :closable="false"
       /><el-form label-width="110px" class="form"
-        ><el-form-item label="Agent"
+        ><el-form-item label="智能体"
           ><el-select v-model="selectedAgent" style="width: 100%"
             ><el-option
               v-for="agent in agents"
               :key="agent.id"
               :label="agent.name"
               :value="agent.id" /></el-select></el-form-item
-        ><el-form-item label="Arguments"
+        ><el-form-item label="参数"
           ><el-input
             v-model="argumentsText"
             type="textarea"
@@ -186,7 +186,7 @@ async function load() {
       listAgents(),
     ]);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "Tool 数据加载失败";
+    error.value = e instanceof Error ? e.message : "工具数据加载失败";
   } finally {
     loading.value = false;
   }
@@ -195,9 +195,9 @@ async function toggle(tool: Tool) {
   try {
     await (tool.enabled ? disableTool(tool.id) : enableTool(tool.id));
     await load();
-    ElMessage.success(tool.enabled ? "Tool 已停用" : "Tool 已启用");
+    ElMessage.success(tool.enabled ? "工具已停用" : "工具已启用");
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "Tool 状态更新失败");
+    ElMessage.error(e instanceof Error ? e.message : "工具状态更新失败");
   }
 }
 async function create() {
@@ -207,10 +207,10 @@ async function create() {
     await createTool({ ...createForm.value, input_schema, enabled: true });
     createVisible.value = false;
     await load();
-    ElMessage.success("Tool 创建成功");
+    ElMessage.success("工具创建成功");
   } catch (e) {
     ElMessage.error(
-      e instanceof Error ? e.message : "Tool 创建失败，请检查 JSON Schema",
+      e instanceof Error ? e.message : "工具创建失败，请检查输入结构是否正确",
     );
   } finally {
     saving.value = false;
@@ -228,14 +228,14 @@ async function applyBinding() {
   try {
     if (bindingAction.value === "bind") {
       await bindTool(selectedTool.value.id, selectedAgent.value);
-      ElMessage.success("Tool 绑定成功");
+      ElMessage.success("工具绑定成功");
     } else {
       await unbindTool(selectedTool.value.id, selectedAgent.value);
-      ElMessage.success("Tool 解绑成功");
+      ElMessage.success("工具解绑成功");
     }
     bindVisible.value = false;
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "Tool 绑定关系更新失败");
+    ElMessage.error(e instanceof Error ? e.message : "工具绑定关系更新失败");
   } finally {
     saving.value = false;
   }
@@ -249,7 +249,7 @@ function openExecute(tool: Tool) {
 }
 async function execute() {
   if (!selectedTool.value || !selectedAgent.value) {
-    ElMessage.warning("请选择 Agent");
+    ElMessage.warning("请选择智能体");
     return;
   }
   try {
@@ -261,8 +261,8 @@ async function execute() {
     );
     executionResult.value = JSON.stringify(result, null, 2);
   } catch (e) {
-    executionResult.value = e instanceof Error ? e.message : "Tool 执行失败";
-    ElMessage.error("Tool 执行失败");
+    executionResult.value = e instanceof Error ? e.message : "工具执行失败";
+    ElMessage.error("工具执行失败");
   } finally {
     executing.value = false;
   }
