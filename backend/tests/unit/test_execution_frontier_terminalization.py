@@ -4,7 +4,7 @@
 边界：不连接 PostgreSQL；只验证 Execution Service 的状态机与 Frontier fencing Contract。
 """
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -14,6 +14,11 @@ from fastapi import HTTPException
 from app.services.workflow.execution import WorkflowExecutionService
 
 
+def _future_lease() -> datetime:
+    """生成相对当前时间仍有效的测试租约，避免固定历史时间使单元测试失效。"""
+    return datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=5)
+
+
 def _execution() -> MagicMock:
     execution = MagicMock()
     execution.id = uuid4()
@@ -21,7 +26,7 @@ def _execution() -> MagicMock:
     execution.status = "running"
     execution.worker_owner = "worker:b6"
     execution.worker_attempt = 3
-    execution.worker_lease_expires_at = datetime(2026, 8, 29, 12, 0)
+    execution.worker_lease_expires_at = _future_lease()
     execution.created_by = uuid4()
     execution.current_node_id = "node-a"
     return execution
@@ -35,7 +40,7 @@ def _frontier(execution: MagicMock, status: str = "running") -> MagicMock:
     frontier.status = status
     frontier.worker_owner = execution.worker_owner
     frontier.attempt = execution.worker_attempt
-    frontier.worker_lease_expires_at = datetime(2026, 8, 29, 12, 0)
+    frontier.worker_lease_expires_at = _future_lease()
     frontier.completed_at = None
     return frontier
 
@@ -87,4 +92,24 @@ async def test_terminal_execution_rejects_pending_sibling_frontier() -> None:
 
     assert execution.status == "running"
     assert frontier.status == "pending"
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_terminal_execution_rejects_expired_owned_running_frontier() -> None:
+    """验证当前 Worker 的 running Frontier 租约过期时禁止伪造终态收敛。"""
+    db = AsyncMock()
+    execution = _execution()
+    frontier = _frontier(execution)
+    frontier.worker_lease_expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1)
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = [frontier]
+    db.execute.return_value = result
+
+    service = _service(db)
+    with pytest.raises(HTTPException, match="lease 已失效"):
+        await service.transition(execution, "completed", actor_id=execution.created_by)
+
+    assert execution.status == "running"
+    assert frontier.status == "running"
     db.commit.assert_not_awaited()
