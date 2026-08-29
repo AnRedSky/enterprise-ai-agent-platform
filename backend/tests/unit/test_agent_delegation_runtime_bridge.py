@@ -18,6 +18,7 @@ def _context():
         allowed_tools=("tool:read",),
         trace_id=str(uuid4()),
         prompt="target",
+        timeout_at=None,
     )
 
 
