@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,9 +24,22 @@ async def test_run_worker_service_disposes_database_engine_after_worker_stops(mo
     dispose = AsyncMock(return_value=None)
 
     monkeypatch.setattr(worker_entrypoint, "WorkflowWorker", lambda: worker)
-    monkeypatch.setattr(worker_entrypoint.engine, "dispose", dispose)
+    monkeypatch.setattr(worker_entrypoint, "_dispose_database_engine", dispose)
 
     await worker_entrypoint.run_worker_service()
 
     worker.run_forever.assert_awaited_once()
     dispose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispose_database_engine_retries_after_cancellation_and_preserves_signal(monkeypatch) -> None:
+    """验证连接池释放被取消时先完成第二次 dispose，再恢复取消语义。"""
+    dispose = AsyncMock(side_effect=[asyncio.CancelledError(), None])
+    fake_engine = type("FakeEngine", (), {"dispose": dispose})()
+    monkeypatch.setattr(worker_entrypoint, "engine", fake_engine)
+
+    with pytest.raises(asyncio.CancelledError):
+        await worker_entrypoint._dispose_database_engine()
+
+    assert dispose.await_count == 2
