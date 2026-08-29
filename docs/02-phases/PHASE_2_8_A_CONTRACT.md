@@ -1,7 +1,7 @@
 # Phase 2.8-A Multi-Agent Collaboration Contract
 
 > 本文件冻结 Phase 2.8 Multi-Agent Collaboration 的产品与 Backend Contract。
-> Contract 已通过设计冻结，后续生产实现必须严格遵循本文件，不得重新定义已冻结的 tenant、版本、权限、幂等、预算、生命周期与 fencing 语义。
+> Contract 已通过设计冻结，并已完成对应 Runtime Integration；后续变更不得重新定义已冻结的 tenant、版本、权限、幂等、预算、生命周期与 fencing 基础语义，除非另行形成正式 Contract 变更。
 
 ## 1. 目标
 
@@ -225,7 +225,8 @@ Migration 必须在 Contract 通过后独立设计，并补充 tenant、幂等�
 3. 跨 tenant / 未发布 target Agent 被拒绝；
 4. Worker 结果持久化；
 5. timeout / cancel 状态真实落库；
-6. Audit / Trace 可反查父子关系。
+6. Audit / Trace 可反查父子关系；
+7. 2+ Worker 对多个 Delegation 的 durable ownership / drain 能够正确收敛。
 
 ### Browser E2E
 
@@ -240,24 +241,22 @@ Backend Domain + API Contract        ✅ 已实现
         ↓
 Alembic Migration                    ✅ 已实现
         ↓
-Unit / Integration / API Contract   🟡 基础测试已存在，Runtime 新增部分待本地验证
+Unit / Integration / API Contract   ✅ 已实现并通过当前 targeted / regression 范围
         ↓
-Runtime Integration                  ← 当前阶段
+Runtime Integration                  ✅ 已完成
         ↓
-Real API Gate                        ← Runtime 完成后
+Real API Gate                        ✅ B6 已通过
         ↓
-Backend Regression
+Backend Regression                  ✅ B6 Gate 已通过
         ↓
-Frontend API Types / UI（如需要）
+Frontend API Types / UI（如需要）   本 Phase 未新增专用 Delegation UI
         ↓
-Browser E2E（如需要）
-        ↓
-Acceptance
+Browser E2E（如需要）               不作为本 Phase 必选门槛
 ```
 
 ## 9. 当前决策
 
-Phase 2.8-A Contract 已冻结并已经进入生产实现阶段。当前不再重复讨论基础 Delegation 数据模型或 API 边界；下一阶段只围绕现有 Contract 完成 Worker Runtime 接入。
+Phase 2.8-A Contract 已冻结并完成生产实现。当前不再重复讨论基础 Delegation 数据模型或 API 边界；Runtime Integration 已由 B1-B6 完成并获得真实 HTTP + PostgreSQL + 多 Worker 验收证据。
 
 当前实现状态：
 
@@ -265,10 +264,12 @@ Phase 2.8-A Contract 已冻结并已经进入生产实现阶段。当前不再�
 - create/list/get/cancel API：已实现；
 - tenant/version/permission/idempotency/budget：已实现；
 - lifecycle / Worker completion fencing 纯规则：已实现；
-- Atomic Worker Claim：待实现；
-- Worker Execution bridge：待实现；
-- generation-fenced completion persistence：待实现；
-- timeout/cancel runtime：待实现；
-- PostgreSQL Integration / Real API Runtime acceptance：待实现。
+- Atomic Worker Claim：已实现并验收；
+- Worker Execution bridge：已实现并验收；
+- generation-fenced completion persistence：已实现并验收；
+- timeout/cancel runtime：已实现并验收；
+- Audit / Trace runtime closure：已实现并验收；
+- Multi-worker Durable Frontier runtime：已实现并通过 B6 Real Gate；
+- PostgreSQL Integration / Real API Runtime acceptance：已完成当前 Phase 范围验收。
 
-后续实现必须复用既有 Workflow Worker / lease / fencing / retry / recovery 能力，不创建第二套可靠性状态机。
+后续实现必须继续复用既有 Workflow Worker / lease / fencing / retry / recovery 能力，不创建第二套可靠性状态机。
