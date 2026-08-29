@@ -20,12 +20,11 @@ from app.models.agent_delegation import AgentDelegation
 from app.models.core import Agent, AgentVersion
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization
-from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.agent_delegation.claim import claim_delegation
 from app.services.agent_delegation.completion import complete_delegation, fail_delegation
 from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
 from app.services.workflow_worker import WorkflowWorker
-from app.services.workflow_worker.runtime_entry import execute_claimed_execution
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -171,7 +170,7 @@ async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix:
 
 @pytest.mark.asyncio
 async def test_b2_worker_execution_bridge_runs_target_agent_version():
-    """验证 B1 Claim 后现有 Worker Runtime 真正执行 Delegation target Agent，并完成 Delegation。"""
+    """验证 B1 Claim 后正式 Durable Frontier Worker 真正执行 Delegation target Agent，并完成 Delegation。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
         delegation_id, target_agent_id, target_version_id, workflow_version_id, _ = _create_delegation(client, suffix)
@@ -204,13 +203,15 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
 
     worker = WorkflowWorker(lease_seconds=60)
     worker.owner = f"b2-worker-{suffix}"
-    if not hasattr(worker, "_renew_with_abort_signal"):
-        worker._renew_with_abort_signal = worker._renew_lease_once
-    await execute_claimed_execution(worker, worker_execution_id)
+    frontier = await worker.claim_one_frontier()
+    assert frontier is not None
+    assert frontier.execution_id == worker_execution_id
+    await worker.execute_frontier(frontier)
 
     async with SessionLocal() as db:
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
         worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == persisted.worker_execution_id))).scalar_one()
+        worker_frontier = (await db.execute(select(WorkflowFrontier).where(WorkflowFrontier.execution_id == worker_execution.id))).scalar_one()
         assert worker_execution.workflow_version_id == uuid.UUID(workflow_version_id)
         assert worker_execution.status == "completed"
         assert worker_execution.output_data is not None
@@ -218,6 +219,8 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         assert worker_execution.output_data["agent_version"] is not None
         assert persisted.status == "completed"
         assert persisted.ended_at is not None
+        assert worker_frontier.status == "completed"
+        assert worker_frontier.worker_owner == worker.owner
 
 
 @pytest.mark.asyncio

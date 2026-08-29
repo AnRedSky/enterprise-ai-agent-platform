@@ -39,31 +39,16 @@ B5 Real Gate                                     4 passed
 
 B5 已达到本地 Gate 通过条件，允许进入 B6。
 
-## 4. B6 实现
+## 4. B6 实现与当前修复
 
-发现的工程缺口是：B1 Claim 创建 `WorkflowExecution` 后没有创建 `WorkflowFrontier`，而默认 `run_worker.py` 使用 Durable Frontier 作为唯一 dispatch 入口；同时原实现没有让默认 Worker 主动发现 pending Delegation。因此仅直接调用 Runtime 的测试无法证明真实 Worker 闭环。
+B6 初始实现已把 pending Delegation 接入 Durable Frontier Worker，但本地 Real Gate 暴露两个运行时问题：
 
-B6 现已形成完整链路：
+1. 多 Worker 两轮 dispatch 只消费了 2/4 个 Delegation；根因是 Delegation Claim 成功提交后，dispatch 再通过全局 tenant Frontier 扫描重新寻找刚创建的 Frontier，存在候选集合变化导致的空转窗口。
+2. B2 旧 Real API 测试直接调用 `execute_claimed_execution()`，绕过了 B6 正式 Durable Frontier dispatch 边界；在 Frontier terminalization fencing 收紧后，该测试错误地让 Runtime 在仍存在 active Frontier 时直接 terminalize Execution。
 
-```text
-pending Delegation
-    ↓
-Durable Frontier Worker 发现 pending Delegation
-    ↓
-claim_delegation()
-    ├── WorkflowExecution
-    └── Durable Frontier(delegation.target)
-            ↓
-      同一 Worker / 其他安全可接管 Worker
-            ↓
-      AgentDelegationRuntimeBridge
-            ↓
-      既有 WorkflowRuntime
-            ↓
-      Delegation terminalization
-```
+当前修复将 Delegation Claim → Worker Execution → Frontier 激活改为确定性链路：Claim 返回的 `worker_execution_id` 直接定位新建 Frontier，并在同一 Worker 调度流程中建立 Frontier lease；同时 B2 Real API 测试改为通过正式 `WorkflowWorker.claim_one_frontier()` + `execute_frontier()` 验证 Target Agent Runtime，不再绕过 Durable Frontier。
 
-Delegation Claim 与 Frontier 创建在同一事务中提交；Frontier fingerprint 同时绑定 Delegation 与 Worker Execution generation。多 Worker 仍复用现有 PostgreSQL lease/fencing，不创建第二套队列或 Retry/Recovery 状态机。
+Delegation Claim 与 Frontier 创建仍由 Claim Service 在同一事务中提交；新的 dispatch 激活阶段不会创建第二套队列、Retry 或 Recovery 状态机。
 
 ## 5. B6 自动化验收
 
@@ -90,18 +75,7 @@ Gate 自动生成测试用户、Token、tenant、ID 与测试数据；Gate 本�
 [4] Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
 ```
 
-B6 Real Gate 必须实际证明：
-
-1. pending Delegation 能被默认 Worker 自动发现；
-2. Claim 同事务创建唯一 WorkflowExecution 与 Durable Frontier；
-3. 两个独立 Worker 实例均可通过正式 `dispatch_once()` 消费 Delegation Frontier；
-4. Worker Execution、Frontier、Delegation 三者终态一致；
-5. 同一 Delegation 只有一个 `worker_execution_id`；
-6. Frontier 与 Execution 使用同一 worker owner；
-7. 父 Workflow Execution 不因子 Delegation 完成而进入终态；
-8. 真实 PostgreSQL 持久化链路成立。
-
-**B6 代码已实现，但本执行环境无法连接用户本地 PostgreSQL/Backend，因此不得预填 B6 Passed。**
+本次修复后必须重新实际执行 Gate，不能根据代码状态预填 Passed。
 
 ## 6. 下一主线任务
 
