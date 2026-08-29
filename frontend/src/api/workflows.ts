@@ -133,19 +133,14 @@ export type CreateWebhookTriggerConfig = {
 
 export const workflowApi = {
   list() { return request.get<Workflow[]>("/workflows"); },
+  get(id: string) { return request.get<Workflow>(`/workflows/${id}`); },
   create(payload: { name: string; description: string }) { return request.post<Workflow>("/workflows", payload); },
   update(id: string, payload: { name?: string; description?: string }) { return request.patch<Workflow>(`/workflows/${id}`, payload); },
+  delete(id: string) { return request.delete<void>(`/workflows/${id}`); },
   versions(id: string) { return request.get<WorkflowVersion[]>(`/workflows/${id}/versions`); },
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
   triggers(id: string) { return request.get<WorkflowTrigger[]>(`/workflows/${id}/triggers`); },
-  /**
-   * 查询 Scheduled Trigger 的持久化调度状态，并复用后端正式 Scheduler API Contract。
-   *
-   * @param id Workflow 标识，用于限定租户内的 Workflow 范围。
-   * @param triggerId Scheduled Trigger 标识，用于查询对应持久化调度记录。
-   * @returns 返回 Scheduler 持久化状态的 HTTP 响应，包含 next/last run、lease、misfire 等只读状态。
-   */
   schedule(id: string, triggerId: string) {
     return request.get<SchedulerStatus>(`/workflows/${id}/triggers/${triggerId}/schedule`);
   },
