@@ -3,7 +3,7 @@ import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { createOrganization, listOrganizations, type Organization } from "@/api/organizations";
 const organizations = ref<Organization[]>([]); const loading = ref(false); const error = ref(""); const dialogVisible = ref(false); const saving = ref(false); const name = ref("");
-function userError(error: unknown, fallback: string) { if (error instanceof Error) { const message = error.message.trim(); if (message && !/^\s*(?:HTTP\s*)?[45]\d\d\b/i.test(message)) return message; } return fallback; }
+function userError(_value: unknown, fallback: string) { return fallback; }
 async function load() { loading.value = true; error.value = ""; try { organizations.value = (await listOrganizations()).items; } catch (e) { console.error("组织列表加载失败", e); error.value = userError(e, "组织列表加载失败，请稍后重试"); } finally { loading.value = false; } }
 async function create() { if (!name.value.trim()) return; saving.value = true; try { await createOrganization({ name: name.value.trim() }); name.value = ""; dialogVisible.value = false; await load(); ElMessage.success("组织创建成功"); } catch (e) { console.error("组织创建失败", e); ElMessage.error(userError(e, "组织创建失败，请稍后重试")); } finally { saving.value = false; } }
 function statusLabel(status: Organization["status"]) { return status === "active" ? "已启用" : status === "inactive" ? "已停用" : `未知状态（${status}）`; }

@@ -42,7 +42,7 @@ const chatStatusType = computed(() => ({ idle: "info", streaming: "primary", com
 function statusLabel(status: string) { return ({ draft: "草稿", published: "已发布", archived: "已归档", active: "已启用", inactive: "已停用" } as Record<string, string>)[status] || `未知状态（${status}）`; }
 function statusType(status: string) { return status === "published" || status === "active" ? "success" : status === "archived" ? "info" : status === "inactive" ? "warning" : "info"; }
 function shortId(value?: string | null) { if (!value) return "-"; return value.length <= 18 ? value : `${value.slice(0, 8)}...${value.slice(-6)}`; }
-function userError(value: unknown, fallback: string) { if (value instanceof Error) { const message = value.message.trim(); if (message && !/^\s*(?:HTTP\s*)?[45]\d\d\b/i.test(message)) return message; } return fallback; }
+function userError(_value: unknown, fallback: string) { return fallback; }
 async function load(){loadingAgents.value=true;error.value="";try{agents.value=await listAgents()}catch(e){error.value=userError(e,"智能体列表加载失败，请刷新后重试。")}finally{loadingAgents.value=false}}
 async function create(){saving.value=true;try{await createAgent(form.value);dialogVisible.value=false;await load();ElMessage.success("智能体创建成功，请发布后再进行对话调试")}catch(e){ElMessage.error(userError(e,"智能体创建失败，请检查填写内容后重试"))}finally{saving.value=false}}
 async function openVersions(agent:Agent){selected.value=agent;versionsVisible.value=true;versionForm.value={system_prompt:"",model_id:agent.model_id||"mock-model"};try{versions.value=await listVersions(agent.id)}catch(e){ElMessage.error(userError(e,"版本加载失败，请刷新后重试"))}}

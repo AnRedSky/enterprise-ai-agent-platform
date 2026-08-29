@@ -56,10 +56,15 @@ describe("Organizations management UI", () => {
     expect(api.listOrganizations).toHaveBeenCalledTimes(2);
   });
 
-  it("replaces raw API HTTP errors with a Chinese user-facing message", async () => {
+  it("replaces raw API and backend errors with a Chinese user-facing message", async () => {
     api.listOrganizations.mockRejectedValueOnce(new Error("500 Internal Server Error"));
     const wrapper = mount(Organizations, { global });
     await vi.waitFor(() => expect((wrapper.vm as any).error).toBe("组织列表加载失败，请稍后重试"));
     expect(wrapper.text()).not.toContain("500 Internal Server Error");
+
+    api.listOrganizations.mockRejectedValueOnce(new Error("tenant unavailable"));
+    await (wrapper.vm as any).load();
+    expect((wrapper.vm as any).error).toBe("组织列表加载失败，请稍后重试");
+    expect(wrapper.text()).not.toContain("tenant unavailable");
   });
 });
