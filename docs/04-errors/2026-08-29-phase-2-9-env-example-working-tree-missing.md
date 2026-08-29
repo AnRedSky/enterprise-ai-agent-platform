@@ -1,47 +1,38 @@
-# Phase 2.9：`.env.example` 本地工作区缺失导致 Real Gate 前置检查失败
+# Phase 2.9：`.env.example` 本地工作区缺失与 Gate 路径解析错误
 
 ## 1. 现象
 
-Phase 2.9-C PostgreSQL Real Gate 在 `[0/3] Local prerequisite verification` 阶段停止，并提示 `backend/.env.example was not found`。
-
-开发者本地执行时使用的是项目 `main` 分支工作区；远端 `main` 实际已包含受版本控制的 `backend/.env.example`，因此该失败不是 PostgreSQL 连接失败，也不是业务代码失败，而是本地工作区缺少已跟踪的统一配置基线文件。
+Phase 2.9-C PostgreSQL Real Gate 在 `[0/3] Local prerequisite verification` 阶段停止。开发者本地 `backend/.env.example` 已存在，但 Gate 仍执行了 Git 基线检查并报告 `.env.example` 不受当前 checkout 跟踪。
 
 ## 2. 根因
 
-Gate 原实现只检查文件系统中的 `backend/.env.example`：
+Gate 原实现使用 `$PSScriptRoot` 向上四级计算 `$BackendRoot`。脚本实际位于 `backend/scripts/test/phase-2.9`，向上四级得到的是仓库根目录，而不是 `backend` 根目录。
 
-```powershell
-Test-Path $envExampleFile
-```
-
-当该文件因本地工作区状态异常而缺失时，脚本直接失败，没有利用 Git 中当前 `HEAD` 已跟踪的同名文件进行恢复。
+因此脚本实际检查的是仓库根目录的 `.env.example`，而项目统一配置文件位于 `backend/.env.example`。随后执行 `git ls-files --error-unmatch -- .env.example` 时同样检查了错误的 Git 路径，于是即使 `backend/.env.example` 已存在，也会错误失败。
 
 ## 3. 修复
 
-Phase 2.9-C Gate 现在采用以下顺序：
-
-1. 检查 `backend/.env.example` 是否存在；
-2. 若不存在，使用 `git ls-files --error-unmatch .env.example` 确认当前 `HEAD` 确实跟踪该文件；
-3. 确认后执行 `git restore --source=HEAD -- .env.example` 自动恢复；
-4. 恢复失败或当前 `HEAD` 未跟踪该文件时才终止 Gate。
-
-该修复不会要求开发者创建、复制或手工填写 `.env` / `.env.dev`，也不会启动或停止任何服务。
+1. 将 `$BackendRoot` 的路径计算从向上四级修正为向上三级；
+2. Gate 进入后始终切换到真实 `backend` 根目录；
+3. 环境文件路径固定解析为 `backend/.env.example`；
+4. 文件缺失时使用 `git cat-file -e HEAD:backend/.env.example` 检查当前提交树，而不是依赖本地 Git index；
+5. 确认当前 `main` 提交包含该文件后，再执行 `git restore --source=HEAD -- .env.example` 自动恢复工作区；
+6. Gate 仍不创建、复制或要求开发者手工填写 `.env` / `.env.dev`，也不启动或停止任何服务。
 
 ## 4. 边界
 
-- `.env.example` 仍然是 Phase 2.9 Real Gate 的统一本地配置基线；
-- 真实 Secret 不写入仓库；
-- Gate 不自动启动 API、Worker、Scheduler、Redis 或 PostgreSQL；
-- 测试数据仍由测试自动生成；
-- 如果当前 `main` 本身没有跟踪 `.env.example`，Gate 会明确要求先同步 `main`，而不是生成未经版本控制的配置文件。
+- `backend/.env.example` 是 Phase 2.9 Real Gate 的统一无 Secret 配置基线；
+- `.env.example` 不包含真实凭据；
+- Real Gate 不自动启动或停止 API、Worker、Scheduler、Redis 或 PostgreSQL；
+- 测试数据由测试自动生成；
+- 当前 `main` 提交本身不包含 `backend/.env.example` 时，Gate 必须明确失败并要求同步正确的 `main`，不得生成未受版本控制的替代配置。
 
 ## 5. 验证
 
-代码修复提交后，由开发者在最新 `main` 工作区重新执行：
+修复提交后，在 `backend` 目录执行：
 
 ```powershell
-cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.9\01_reliable_delivery_postgres_gate.ps1
 ```
 
-Real Gate 的 PostgreSQL、Migration 与业务测试结果必须以本地实际执行结果为准，不预填通过状态。
+本轮代码修复后的 PostgreSQL、Migration、Real API 与 Unit 测试结果必须以开发者实际执行输出为准，不预填通过状态。
