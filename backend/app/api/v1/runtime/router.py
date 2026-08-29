@@ -30,6 +30,7 @@ from app.schemas.runtime import (
 )
 from app.services.runtime_query import RuntimeQueryService
 from app.services.workflow import WorkflowExecutionService
+from app.api.v1.runtime.operations import router as operations_router
 
 router = APIRouter(prefix="/api/v1/runtime", tags=["runtime"])
 
@@ -196,3 +197,6 @@ async def integration_event_delivery_audits(
         _tenant_id(claims), delivery_id, page=page, page_size=page_size,
     )
     return {"items": rows, "page": page, "page_size": page_size, "total": total}
+
+
+router.include_router(operations_router)
