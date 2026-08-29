@@ -72,6 +72,16 @@ describe("AgentWorkbench lifecycle", () => {
     expect(text).not.toContain("Chat");
   });
 
+  it("maps agent lifecycle status to Chinese while keeping the backend value", async () => {
+    const wrapper = mount(Agents, { global });
+    await vi.waitFor(() => expect(api.listAgents).toHaveBeenCalled());
+    expect((wrapper.vm as any).statusLabel("published")).toBe("已发布");
+    expect((wrapper.vm as any).statusLabel("draft")).toBe("草稿");
+    expect((wrapper.vm as any).statusLabel("archived")).toBe("已归档");
+    expect((wrapper.vm as any).statusLabel("unknown_status")).toBe("unknown_status");
+    expect(agent.status).toBe("published");
+  });
+
   it("uses Chinese labels for runtime identifiers", async () => {
     const wrapper = mount(Agents, { global });
     await vi.waitFor(() => expect(api.listAgents).toHaveBeenCalled());
