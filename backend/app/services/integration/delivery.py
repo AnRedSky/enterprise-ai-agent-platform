@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.core.database import SessionLocal
+from app.infrastructure.db import SessionLocal
 from app.services.integration.repository import IntegrationEventRepository
 
 Sender = Callable[[Any], Awaitable[None]]
