@@ -39,8 +39,30 @@ Worker 进程退出时需要关闭 AsyncEngine 连接池。此前 `_dispose_data
 - cancellation 下完成 shielded dispose 并恢复取消语义；
 - 非取消型 dispose 异常继续传播。
 
-## 5. 验证要求
+## 5. 验证结果
 
-本修复必须通过 Worker entrypoint targeted unit test、Backend default regression，并在本地实际启动 Worker 后执行一次受控停止验证。启动脚本不得自动启动其他服务。
+后续修复已进入 B6 正式验收闭环。最新 B6 Gate 全部通过：
 
-在新的本地结果返回前，不将 Worker shutdown warning 标记为已完全验收。
+```text
+Delegation Claim + Worker dispatch Unit/Contract
+38 passed in 1.08s
+
+Backend default regression
+870 passed, 3 skipped, 52 deselected in 34.61s
+
+Migration/head
+0039_workflow_node_execution_tenant_trigger (head)
+
+Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
+5 passed in 7.48s
+
+[PASS] Phase 2.8 B6 multi-worker Delegation Runtime gate completed.
+```
+
+此外 Worker shutdown cancellation 的 targeted unit coverage 已作为 B6 修复链的一部分通过；当前没有新的证据表明该 AsyncEngine cleanup 问题仍阻塞运行时验收。
+
+## 6. 状态
+
+**已修复并已验证。**
+
+该错误继续保留作为工程追溯记录，但不再作为当前 Phase 2.8 blocker。后续若再次出现 shutdown resource cleanup 回归，应基于新的实际日志建立新的错误记录，而不是覆盖本记录的已关闭状态。
