@@ -18,7 +18,7 @@
 - Worker shutdown AsyncEngine cancellation-safe disposal 已完成；
 - Phase 2.9-A Event Contract 已实现；
 - Phase 2.9-B Durable Event Persistence 已实现第一切片；
-- Phase 2.9-C Reliable Delivery 已实现第一切片。
+- Phase 2.9-C Reliable Delivery 第一切片已实现，并完成定向单元测试验证。
 
 ## 3. Phase 2.8 验收基线
 
@@ -34,13 +34,13 @@
 
 ### 2.9-B Durable Event Persistence
 
-状态：**第一切片已实现；开发者本地 Migration 已验收**。
+状态：**第一切片已实现；数据库 Migration 已验收**。
 
 新增 `integration_events` PostgreSQL Durable Event Fact、Repository、0040 Migration 和单元测试。开发者已执行 `uv run alembic upgrade head`，并确认 `0041_integration_event_delivery_lease` 为当前 head。
 
 ### 2.9-C Reliable Delivery
 
-状态：**第一切片已实现；第二切片开发中**。
+状态：**第一切片已实现并完成本地定向测试；第二切片开发中**。
 
 当前包含：
 
@@ -56,9 +56,22 @@
 - Delivery Service 使用正式 `app.infrastructure.db` 数据库入口；
 - 单元测试已覆盖无事件、成功投递、失败重试的编排路径。
 
-开发者本地第一次定向测试发现 Delivery Service 错误引用不存在的 `app.core.database`，导致 collection 阶段失败；该问题已经修复并记录于 `docs/04-errors/2026-08-29-phase-2-9-delivery-database-import.md`。修复后的定向测试结果尚待开发者重新执行，不能预填通过。
+开发者最新本地验证结果：
 
-第二切片目标是补齐真实 PostgreSQL 并发验收：多 Worker 原子 Claim、租约恢复、旧租约 fencing、retry/dead-letter、tenant isolation 和幂等投递。
+```text
+uv run alembic upgrade head
+  → 成功，无待执行 Migration
+
+定向 2.9-C 测试
+  → 14 passed in 0.24s
+
+Backend default regression
+  → 884 passed, 3 skipped, 52 deselected in 33.77s
+```
+
+此前发现的 `ModuleNotFoundError: No module named 'app.core.database'` 已修复并记录于 `docs/04-errors/2026-08-29-phase-2-9-delivery-database-import.md`。
+
+第二切片仍未标记完成。下一步必须补齐真实 PostgreSQL 并发验收：多 Worker 原子 Claim、租约恢复、旧租约 fencing、retry/dead-letter、tenant isolation 和幂等投递。
 
 当前实现不绑定 Redis、Kafka、MQ 或具体 Webhook Provider。
 
@@ -66,7 +79,7 @@
 
 ### 2.9-D Webhook Integration
 
-在 2.9-C 真实并发验收完成后，将现有 Webhook Trigger 能力接入 Durable Event Delivery，统一 endpoint、签名、事件版本、幂等、回放和 delivery audit，并避免复制已有 Trigger Service。
+仅在 2.9-C 第二切片真实 PostgreSQL 并发验收完成后推进。将现有 Webhook Trigger 能力接入 Durable Event Delivery，统一 endpoint、签名、事件版本、幂等、回放和 delivery audit，并避免复制已有 Trigger Service。
 
 ## 6. 长期未完成能力
 
