@@ -35,7 +35,8 @@ async def renew_owned_frontier_lease(
         now: 当前时间，用于验证 lease 尚未失效。
 
     Returns:
-        bool: 两层 lease 均成功刷新且仍由当前 Worker 持有时返回 True，否则返回 False。
+        bool: 两层 lease 成功刷新，或关联 Execution 已由当前 Runtime 正常进入终态时返回 True；
+            其他 ownership 失效场景返回 False。
 
     Raises:
         Exception: 数据库操作失败时由调用方处理并决定是否重试。
@@ -46,6 +47,12 @@ async def renew_owned_frontier_lease(
     ownership 事务统一采用 ``Execution → Frontier`` 锁序：先更新带 ownership fencing 的
     WorkflowExecution，再更新 WorkflowFrontier。这样可以与 Claim 的 ``Execution → Frontier``
     锁序一致，避免 heartbeat 与 Claim/terminalization 形成 PostgreSQL 反向锁等待。
+
+    设计意图：Runtime 正常完成时会先将 WorkflowExecution 推进终态并释放 Worker ownership，
+    随后 Frontier Worker 才能在 `execute_frontier()` 的 finally 中收敛 Frontier。heartbeat 若把
+    这个“正常 terminalization”误判为 stale worker 并取消外层 Runtime Task，会截断 Delegation
+    completion，留下 Execution/Delegation 不一致的 running 悬挂状态。因此 Execution 已进入
+    completed/failed/cancelled 时，heartbeat 必须停止续租但不能发出 lease-loss abort 信号。
     """
     # 这里只读取得关联 Execution ID，不提前锁 Frontier。这样 heartbeat 不会形成
     # Frontier → Execution 的反向锁序。
@@ -74,6 +81,15 @@ async def renew_owned_frontier_lease(
     )
     if execution_result.rowcount != 1:
         await db.rollback()
+        terminal_status = (
+            await db.execute(
+                select(WorkflowExecution.status).where(
+                    WorkflowExecution.id == execution_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if terminal_status in {"completed", "failed", "cancelled"}:
+            return True
         return False
 
     # Execution ownership 已证明后，再更新同一 attempt 的 Frontier lease。
