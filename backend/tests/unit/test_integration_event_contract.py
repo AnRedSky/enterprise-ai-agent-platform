@@ -57,3 +57,8 @@ def test_naive_occurred_at_is_rejected() -> None:
 def test_schema_version_must_start_at_one() -> None:
     with pytest.raises(ValueError, match="schema_version"):
         _event(schema_version=0)
+
+
+def test_non_json_payload_is_rejected() -> None:
+    with pytest.raises(ValueError, match="JSON 可序列化"):
+        _event(payload={"invalid": object()})

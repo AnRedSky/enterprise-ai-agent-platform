@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -32,7 +33,7 @@ class IntegrationEvent:
         occurred_at: 业务事件发生时间；未提供时使用 UTC 当前时间。
         request_id: 关联 HTTP/API 请求标识。
         trace_id: 关联分布式追踪标识。
-        metadata: 不参与业务语义的扩展元数据。
+        metadata: 不参与业务语义的扩展元数据，必须是 JSON 可序列化数据。
     """
 
     tenant_id: uuid.UUID
@@ -62,6 +63,11 @@ class IntegrationEvent:
             raise ValueError("schema_version 必须从 1 开始")
         if self.occurred_at.tzinfo is None:
             raise ValueError("occurred_at 必须包含时区信息")
+        try:
+            json.dumps(self.payload)
+            json.dumps(self.metadata)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("payload 和 metadata 必须是 JSON 可序列化数据") from exc
 
     @property
     def deduplication_scope(self) -> tuple[uuid.UUID, str, str, str]:
