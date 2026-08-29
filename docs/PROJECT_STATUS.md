@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.9 Enterprise Integration / Event Infrastructure 开发中**
-- 当前任务：**2.9-D Webhook Integration 第一实现切片**
-- 下一任务：**2.9-D Webhook destination/subscription 持久化与可靠投递编排**
+- 当前任务：**Phase 2.9-E Runtime Integration 第一切片**
+- 下一任务：**补齐 Workflow / Agent / Scheduler 关键业务事实覆盖，并收口 2.9-D Real Acceptance**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -17,7 +17,8 @@
 - Phase 2.9-A Event Contract 已实现；
 - Phase 2.9-B Durable Event Persistence 已实现；
 - Phase 2.9-C Reliable Delivery 已通过真实 PostgreSQL Gate；
-- Phase 2.9-D Webhook Provider 第一实现切片已完成。
+- Phase 2.9-D Webhook Provider / Destination / Subscription / Fan-out / Delivery Worker / Security / Audit / Replay 第一实现链路已完成，Real Acceptance 待最终收口；
+- Phase 2.9-E Runtime Integration 已启动，统一 Runtime Event Publisher 已接入 Workflow / Agent / Scheduler 第一批关键业务事实。
 
 ## 3. Phase 2.8 验收基线
 开发者本地正式 B6 Gate 已全部通过：38 个 Unit/Contract 测试、870 个 Backend 回归测试（3 skipped）、Migration head 0039、5 个 Real HTTP + PostgreSQL 多 Worker 测试全部通过。
@@ -33,7 +34,7 @@
 ### 2.9-C Reliable Delivery
 状态：**已完成真实 PostgreSQL 验收**。
 
-开发者最新本地结果：
+开发者最新已验证结果：
 
 ```text
 PostgreSQL concurrency/recovery tests → 5 passed
@@ -41,35 +42,56 @@ Targeted delivery unit regression → 15 passed
 [PASS] Phase 2.9-C Reliable Delivery PostgreSQL Real Gate completed.
 ```
 
-覆盖并发 Claim、租约恢复、fencing、tenant isolation、retry/dead-letter，并确认 `0041_integration_event_delivery_lease` 为 migration head。
-
 ### 2.9-D Webhook Integration
-状态：**第一实现切片已完成，整体功能仍在开发中**。
+状态：**实现链路已完成，Real Acceptance 待最终收口**。
 
-新增正式出站 Provider：
+已具备：
+- HTTPS / SSRF / endpoint security；
+- Secret Resolver；
+- Provider / Destination / Subscription / Fan-out；
+- PostgreSQL Delivery Fact、lease、retry、dead-letter；
+- Delivery Audit 与 Replay；
+- Webhook Delivery Worker concurrency/backpressure/graceful shutdown；
+- `run_worker.py` Worker Runtime 集成；
+- `02_webhook_delivery_real_gate.ps1` Real Acceptance Gate。
+
+### 2.9-E Runtime Integration
+状态：**第一实现切片已完成，继续扩展中**。
+
+统一入口：
 
 ```text
-backend/app/infrastructure/providers/webhook.py
-backend/tests/unit/test_webhook_provider.py
+backend/app/services/integration/publisher.py
 ```
 
-已具备统一 Event JSON envelope、事件身份头、幂等头、HMAC-SHA256 签名、HTTPX Client 注入和非 2xx 失败透传。
+第一批 Runtime 事件：
 
-现有 `WebhookTriggerService` 仍只负责入站 Trigger；`WebhookProvider` 专门负责出站 Integration，两者职责分离。
+```text
+Workflow  → workflow.execution.completed
+Agent     → agent.execution.started
+            agent.execution.completed
+            agent.execution.failed
+Scheduler → scheduler.trigger.dispatched
+```
+
+事件均使用统一 `IntegrationEvent` Contract，并通过事务内 Publisher 写入 Durable `integration_events`。Publisher 不自行 commit；唯一冲突通过 savepoint + 查询收敛。
+
+Workflow completion event 与 Durable Frontier/Execution completion 共用同一数据库事务；Scheduler dispatch event 与 Scheduled Execution/Frontier 创建共用同一数据库事务；Agent lifecycle event 与既有 Observability Execution lifecycle 共用当前事务。
 
 ## 5. 下一任务
 
-### 2.9-D Webhook destination/subscription
+### 2.9-E Runtime Event Coverage
 
 继续实现：
-1. destination/subscription PostgreSQL 模型与 Migration；
-2. tenant boundary、启停状态和 Secret 引用；
-3. Durable Event → destination 的正式编排；
-4. delivery audit、replay、查询；
-5. endpoint allowlist / SSRF 与网络出口策略；
-6. Real HTTP + PostgreSQL Acceptance Gate。
+1. Workflow `created / started / failed / cancelled / retry_requested / resume_requested`；
+2. Agent Tool / Retrieval / Model Provider 关键事实；
+3. Scheduler lease / contention / misfire / recovery 结果事件；
+4. Integration Event tenant-scoped 查询与运维视图；
+5. Event schema/version 稳定化与 Runtime Integration Real Acceptance。
 
-完成后才进入 2.9-E Runtime Integration。
+### 2.9-D Real Acceptance
+
+与 2.9-E 并行收口既有 Webhook Real Gate，但不因此阻塞 Runtime Integration 的代码实现。
 
 ## 6. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`：
@@ -96,9 +118,9 @@ backend/tests/unit/test_webhook_provider.py
         ↓
 2.9-C Reliable Delivery                     ✅ Real PostgreSQL Gate
         ↓
-2.9-D Webhook Integration                   🔄 Provider 第一切片完成
+2.9-D Webhook Integration                   🔄 Real Acceptance 收口
         ↓
-2.9-E Runtime Integration                   ⏳
+2.9-E Runtime Integration                   🔄 第一切片完成
 ```
 
 所有实现仍遵循 Contract → Migration → Backend → Unit/Integration/Contract → Real API → Acceptance。
