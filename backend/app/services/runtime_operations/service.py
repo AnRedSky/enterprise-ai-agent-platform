@@ -56,7 +56,7 @@ class RuntimeOperationsService:
         total_deliveries = sum(delivery_counts.values())
         delivered = delivery_counts.get("delivered", 0)
         terminal = delivered + delivery_counts.get("failed", 0) + delivery_counts.get("dead_letter", 0)
-        retryable = await self.db.scalar(
+        retry_count = await self.db.scalar(
             select(func.count()).select_from(WebhookDelivery).where(
                 WebhookDelivery.tenant_id == tenant_id,
                 WebhookDelivery.created_at >= since,
@@ -78,7 +78,9 @@ class RuntimeOperationsService:
 
         success_rate = (delivered / terminal * 100.0) if terminal else 100.0
         slo_target = 99.0
-        error_budget = max(0.0, slo_target - (100.0 - success_rate))
+        allowed_error_percent = 100.0 - slo_target
+        observed_error_percent = 100.0 - success_rate
+        error_budget_remaining = max(0.0, allowed_error_percent - observed_error_percent)
         return {
             "window_hours": window_hours,
             "since": since,
@@ -87,13 +89,13 @@ class RuntimeOperationsService:
             "deliveries": {
                 "total": total_deliveries,
                 "status_counts": delivery_counts,
-                "retry_count": retryable,
+                "retry_count": retry_count,
                 "dead_letter_count": delivery_counts.get("dead_letter", 0),
             },
             "slo": {
                 "target_percent": slo_target,
                 "delivery_success_percent": round(success_rate, 4),
-                "error_budget_percent": round(error_budget, 4),
+                "error_budget_percent": round(error_budget_remaining, 4),
                 "p95_delivery_latency_ms": round(float(latency_ms), 2) if latency_ms is not None else None,
             },
         }
