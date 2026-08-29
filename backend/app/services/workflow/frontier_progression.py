@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
+from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 from app.services.workflow.checkpoint.service import WorkflowExecutionCheckpointService
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier, transition_owned_frontier
@@ -52,12 +53,7 @@ def validate_frontier_progression_contract(
 async def _assert_next_frontier_has_no_active_node_overlap(
     db: AsyncSession, *, frontier: WorkflowFrontier, next_identity: WorkflowFrontierIdentity,
 ) -> None:
-    """检查同一 Execution 的活动 Frontier 是否与 Next Frontier 存在 Node 重叠。
-
-    设计意图：调用方已在本事务中锁定当前 Frontier 与关联 Execution；所有会改变同一 Execution
-    Frontier ownership 的路径都必须先取得 Execution 锁，因此这里不再锁 sibling Frontier，避免形成
-    Execution → sibling Frontier 与其他路径 Frontier → Execution 的反向锁序。
-    """
+    """检查同一 Execution 的活动 Frontier 是否与 Next Frontier 存在 Node 重叠。"""
     result = await db.execute(
         select(WorkflowFrontier).where(
             WorkflowFrontier.tenant_id == frontier.tenant_id,
@@ -122,10 +118,6 @@ async def _resolve_completed_frontier_idempotency(
     checkpoint = checkpoints[0]
     if checkpoint.state_data != checkpoint_state:
         raise FrontierProgressionContractError("重复 completion 的 Checkpoint payload 与既有 Durable fact 不一致")
-
-    # 设计意图：Replay 幂等路径也必须与正常 terminalization 使用相同的 Frontier → Execution
-    # 锁序。这里锁定 Execution 后再读取 lifecycle，避免在返回既有 Durable fact 前观察到过期的
-    # Execution 状态，从而与并发 terminalization 产生错误收敛。
     execution_result = await db.execute(
         select(WorkflowExecution).where(
             WorkflowExecution.id == current.execution_id,
@@ -195,11 +187,6 @@ async def complete_frontier_with_checkpoint(
     execution = execution_result.scalar_one_or_none()
     if execution is None:
         raise FrontierProgressionContractError("Frontier 对应的 Workflow Execution 不存在")
-
-    # 设计意图：Frontier completion 的请求目标可能是 completed，但在真正完成当前 Frontier 之前，
-    # Execution 仍必须处于 running。必须先锁定并确认当前 lifecycle，再校验 Worker ownership/lease，
-    # 最后才允许 Frontier transition 与 Execution terminalization。这样 stale Worker 不会因为
-    # terminal target 与当前状态不同而提前得到错误的 lifecycle 失败，并且不会绕过 ownership fencing。
     if execution.status != "running":
         raise FrontierProgressionContractError(
             f"Frontier progression 的 Execution 当前 lifecycle 不允许 completion: 当前={execution.status}"
@@ -231,6 +218,20 @@ async def complete_frontier_with_checkpoint(
         await governance.audit(
             execution, audit_actor, "workflow.execution.completed", "success",
             metadata={"frontier_id": str(frontier.id), "worker_attempt": execution_worker_attempt},
+        )
+        await RuntimeIntegrationEventPublisher(db).publish(
+            tenant_id=execution.tenant_id,
+            event_type="workflow.execution.completed",
+            source=RuntimeIntegrationEventPublisher.SOURCE_WORKFLOW,
+            subject=str(execution.id),
+            idempotency_key=f"workflow-execution:{execution.id}:completed",
+            payload={
+                "execution_id": str(execution.id),
+                "workflow_id": str(execution.workflow_id),
+                "workflow_version_id": str(execution.workflow_version_id),
+                "frontier_id": str(frontier.id),
+                "worker_attempt": execution_worker_attempt,
+            },
         )
     checkpoint_service = WorkflowExecutionCheckpointService(db)
     checkpoint = await checkpoint_service.append_next_in_transaction(
