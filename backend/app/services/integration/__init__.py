@@ -2,6 +2,8 @@
 
 from app.services.integration.contract import IntegrationEvent
 from app.services.integration.delivery import IntegrationEventDeliveryService
+from app.services.integration.notification import NotificationRoutingService
+from app.services.integration.notification_dispatcher import NotificationDispatcher
 from app.services.integration.repository import IntegrationEventRepository
 from app.services.integration.security import WebhookEndpointPolicy, WebhookEndpointSecurityError
 from app.services.integration.secrets import EnvironmentSecretResolver, SecretResolutionError, SecretResolver
@@ -13,6 +15,8 @@ from app.services.integration.webhook_provider import WebhookDeliveryHTTPError, 
 __all__ = [
     "IntegrationEvent",
     "IntegrationEventDeliveryService",
+    "NotificationRoutingService",
+    "NotificationDispatcher",
     "IntegrationEventRepository",
     "WebhookIntegrationService",
     "WebhookDeliveryRepository",
