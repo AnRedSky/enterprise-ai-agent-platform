@@ -113,12 +113,12 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
 
         设计意图：Delegation API 创建的是 durable pending fact，而默认 Worker 只消费 Durable Frontier。
         Worker 每次 dispatch 在没有普通 Frontier 可消费时补做一次 Delegation Claim，把两者连接起来。
-        Claim 内部仍使用 Delegation 行锁与同事务 Frontier 创建，因此多 Worker 竞争不会产生重复 Worker Execution。
+        Claim 内部仍使用 Delegation 行锁与同事务 Frontier 创建；竞争失败的候选必须让位给后续有效 Delegation，避免单个坏数据阻塞整个 Worker。
         """
         now = now or datetime.now(UTC)
         now_naive = now.replace(tzinfo=None)
         async with SessionLocal() as db:
-            candidate = (
+            candidates = (
                 await db.execute(
                     select(AgentDelegation.id, AgentDelegation.tenant_id)
                     .where(
@@ -126,24 +126,28 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                         AgentDelegation.timeout_at > now_naive,
                     )
                     .order_by(AgentDelegation.created_at.asc(), AgentDelegation.id.asc())
-                    .limit(1)
+                    .limit(max(1, self.concurrency))
                     .with_for_update(skip_locked=True)
                 )
-            ).first()
-            if candidate is None:
+            ).all()
+            if not candidates:
                 await db.rollback()
                 return False
-            try:
-                await claim_delegation(
-                    db=db,
-                    tenant_id=candidate.tenant_id,
-                    delegation_id=candidate.id,
-                    worker_owner=self.owner,
-                )
-            except HTTPException:
-                await db.rollback()
-                return False
-            return True
+
+            for delegation_id, tenant_id in candidates:
+                try:
+                    await claim_delegation(
+                        db=db,
+                        tenant_id=tenant_id,
+                        delegation_id=delegation_id,
+                        worker_owner=self.owner,
+                    )
+                except HTTPException:
+                    await db.rollback()
+                    continue
+                return True
+            await db.rollback()
+            return False
 
     async def _frontier_tenant_candidate(self, db, now: datetime) -> UUID:
         """获取最早且当前 Worker 真正可领取的 Frontier 所属租户。"""
@@ -260,7 +264,7 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                     await db.rollback()
 
     async def dispatch_once(self) -> int:
-        """批量消费 Durable Frontier；无普通 Frontier 时发现一个 pending Delegation 后再消费其 Frontier。"""
+        """批量消费 Durable Frontier；无普通 Frontier 时发现 pending Delegation 后再消费其 Frontier。"""
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
             frontier = await self.claim_one_frontier()
