@@ -1,9 +1,14 @@
-"""Phase 2.10-I alert lifecycle and notification orchestration facts."""
+"""Phase 2.10-I 告警生命周期与通知编排事实持久化迁移。"""
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0045_alert_lifecycle_notifications"
-down_revision = "0044_webhook_destination_provider"
+# 0045 同时依赖两个从 0043 分叉的 0044：运行时运维表提供 runtime_alert_rules，
+# Webhook Provider 迁移提供 webhook_destinations.provider；必须在两个分支均完成后创建通知表。
+down_revision = (
+    "0044_runtime_operations_enterprise",
+    "0044_webhook_destination_provider",
+)
 branch_labels = None
 depends_on = None
 
