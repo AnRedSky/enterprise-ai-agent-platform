@@ -8,6 +8,10 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:phase:p1": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\phase-1-ai-assets.ps1",
+    "test:phase:p2": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\phase-2-automation-runtime.ps1",
+    "test:phase:p3": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\phase-3-governance.ps1",
+    "test:phase:p4": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\phase-4-platform-experience.ps1",
     "test:gate": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\release\\01_frontend_regression_gate.ps1",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
