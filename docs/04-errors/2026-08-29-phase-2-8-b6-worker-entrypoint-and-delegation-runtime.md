@@ -80,20 +80,30 @@ WorkflowWorker
 
 两条路径共享同一个 Claim、Frontier、Lease、WorkflowRuntime 与状态模型，没有新增 Provider、Queue、Retry 或 Recovery 实现。
 
-## 5. 验证要求
+## 5. 验证结果
 
-必须在开发者本地重新执行 B6 Gate，实际结果才能改变本错误记录的验证状态。不得根据代码修改预填 Passed。
+开发者已完成后续本地验证，B6 正式 Gate 已全部通过：
 
-重点验证：
+```text
+Delegation Claim + Worker dispatch Unit/Contract
+38 passed in 1.08s
 
-1. B6 targeted Unit/Contract；
-2. Backend default regression；
-3. `uv run alembic upgrade head` 与 `uv run alembic current`；
-4. B2 Delegation Bridge Real API；
-5. B6 Multi-Worker Real API；
-6. Real Gate 不得执行父 Workflow fixture 节点；
-7. Delegation 必须最终 `completed`，Worker Execution 与 Frontier 均必须形成唯一执行事实。
+Backend default regression
+870 passed, 3 skipped, 52 deselected in 34.61s
+
+Migration/head
+0039_workflow_node_execution_tenant_trigger (head)
+
+Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
+5 passed in 7.48s
+
+[PASS] Phase 2.8 B6 multi-worker Delegation Runtime gate completed.
+```
+
+同时已验证 Windows 外部 Worker/Scheduler 隔离检查能够阻止测试环境中的非项目消费者污染 Delegation；在无外部消费者条件下 Gate 正常通过。
 
 ## 6. 状态
 
-**代码修复已提交，等待开发者本地 B6 Gate 重新执行确认。**
+**已修复并已验证。**
+
+该错误不再构成 Phase 2.8 blocker。历史现象和根因仍保留用于追溯；当前完成度以最新 B6 Real Gate 实际通过结果为准。除非后续出现新的回归，不应重新引入旧的默认 Worker 入口替换方案。
