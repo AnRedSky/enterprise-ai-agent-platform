@@ -156,6 +156,7 @@ import {
   unbindTool,
   type Tool,
 } from "@/api/tools";
+import { getToolUserError } from "@/utils/toolError";
 type BindingAction = "bind" | "unbind";
 const tools = ref<Tool[]>([]),
   agents = ref<Agent[]>([]),
@@ -186,7 +187,8 @@ async function load() {
       listAgents(),
     ]);
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "工具数据加载失败";
+    console.error(e);
+    error.value = getToolUserError(e, "工具数据加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
@@ -197,7 +199,8 @@ async function toggle(tool: Tool) {
     await load();
     ElMessage.success(tool.enabled ? "工具已停用" : "工具已启用");
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "工具状态更新失败");
+    console.error(e);
+    ElMessage.error(getToolUserError(e, "工具状态更新失败，请稍后重试"));
   }
 }
 async function create() {
@@ -209,9 +212,8 @@ async function create() {
     await load();
     ElMessage.success("工具创建成功");
   } catch (e) {
-    ElMessage.error(
-      e instanceof Error ? e.message : "工具创建失败，请检查输入结构是否正确",
-    );
+    console.error(e);
+    ElMessage.error(getToolUserError(e, "工具创建失败，请稍后重试"));
   } finally {
     saving.value = false;
   }
@@ -235,7 +237,8 @@ async function applyBinding() {
     }
     bindVisible.value = false;
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : "工具绑定关系更新失败");
+    console.error(e);
+    ElMessage.error(getToolUserError(e, "工具绑定关系更新失败，请稍后重试"));
   } finally {
     saving.value = false;
   }
@@ -261,8 +264,9 @@ async function execute() {
     );
     executionResult.value = JSON.stringify(result, null, 2);
   } catch (e) {
-    executionResult.value = e instanceof Error ? e.message : "工具执行失败";
-    ElMessage.error("工具执行失败");
+    console.error(e);
+    executionResult.value = getToolUserError(e, "工具执行失败，请稍后重试");
+    ElMessage.error("工具执行失败，请稍后重试");
   } finally {
     executing.value = false;
   }
