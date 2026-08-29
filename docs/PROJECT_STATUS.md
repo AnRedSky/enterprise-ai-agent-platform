@@ -4,9 +4,9 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
-- 当前任务：**B6 Delegation Multi-Worker Runtime acceptance 已完成**
-- 下一主线：**Phase 2.8 收口并进入 Phase 2.9 Enterprise Integration / Event Infrastructure Contract**
+- 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration 已完成，正在文档收口**
+- 当前任务：**Phase 2.8 Closure / Phase 2.9 Contract 前置评估**
+- 下一主线：**Phase 2.9 Enterprise Integration / Event Infrastructure Contract**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -20,7 +20,7 @@
 - B1 Atomic Claim 已完成并通过本地真实 HTTP + PostgreSQL 双 Worker 并发 Gate；
 - B2 Worker Execution Bridge 已完成，复用既有 Workflow Worker / WorkflowRuntime；
 - B3 Delegation completion/failure generation fencing 已完成；
-- B4 timeout / cancel / parent semantics 已完成并由开发者本地 Real Gate 验收通过；
+- B4 timeout / cancel / parent semantics 已完成并有本地 Runtime / Real API 验收证据；
 - Runtime Session / Execution terminalization / Model Profile Snapshot / Frontier heartbeat 锁序问题已完成修复；
 - Scheduler 对单节点顺序 Workflow 的空 `edges` 语义已与 DAG Runtime 对齐；
 - B5 Delegation Audit / Trace 基础闭环已实现，创建与取消事件已写入 AuditLog / WorkflowTraceEvent；
@@ -48,15 +48,15 @@
 [PASS] Phase 2.8 B6 multi-worker Delegation Runtime gate completed.
 ```
 
-因此 **B6 已达到本地 Real Gate 通过条件，不再处于阻塞状态**。
+因此 **B6 已达到本地 Real Gate 通过条件，Phase 2.8 Runtime Integration 已达到收口条件**。
 
 验收结果说明：
 
 1. Unit/Contract 层的 Delegation Claim 与 Worker dispatch 已通过；
-2. Backend 默认回归测试保持通过，当前基线为 `870 passed, 3 skipped, 52 deselected`；
+2. Backend 默认回归测试保持通过，当前 B6 基线为 `870 passed, 3 skipped, 52 deselected`；
 3. Alembic 数据库迁移已验证到 `0039_workflow_node_execution_tenant_trigger` head；
 4. 真实 HTTP + PostgreSQL + 多 Worker Durable Frontier Runtime 已通过 5 个 Real API 验收用例；
-5. B6 验收前置的 Windows 外部 Worker/Scheduler 隔离检查已正确识别并阻止污染性后台消费者；在无外部消费者条件下 Gate 正常完成。
+5. B6 验收前置的 Windows 外部 Worker/Scheduler 隔离检查已用于阻止污染性后台消费者；在无外部消费者条件下 Gate 正常完成。
 
 ## 4. B6 实现与问题闭环
 
@@ -76,37 +76,9 @@ B6 开发期间本地 Real Gate 暴露并完成以下工程问题修复：
 
 B6 相关修复提交链已经完成闭环，最终以实际 Real Gate 通过结果作为验收依据，不以历史失败记录覆盖当前状态。
 
-## 5. B6 自动化验收
-
-正式入口：
-
-```powershell
-cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\06_delegation_multi_worker_runtime_gate.ps1
-```
-
-Gate 自动生成测试用户、Token、tenant、ID 与测试数据；Gate 本身不启动、重启或停止任何服务，只验证 PostgreSQL、Redis、Backend API 本地前置条件，并在真实验收前检查当前项目是否存在外部 `run_worker.py` / `run_scheduler.py` 消费者。
-
-验收顺序：
+## 5. Phase 2.8 当前阶段判断
 
 ```text
-[0] prerequisite service verification + Worker/Scheduler isolation
-    ↓
-[1] Delegation Claim + Worker dispatch Unit/Contract
-    ↓
-[2] Backend default regression
-    ↓
-[3] Alembic upgrade/head
-    ↓
-[4] Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
-```
-
-最新实际 Gate 已按上述入口完成并通过。
-
-## 6. 当前阶段判断
-
-```text
-Phase 2.7 Advanced Workflow                         ✅ 完成
 Phase 2.8-A Delegation Contract                    ✅ 完成
 B1 Atomic Claim                                    ✅ 完成
 B2 Worker Execution Bridge                         ✅ 完成
@@ -114,21 +86,34 @@ B3 Completion/Failure Generation Fencing           ✅ 完成
 B4 Timeout / Cancel / Parent Semantics             ✅ 完成
 B5 Audit / Trace                                   ✅ 完成
 B6 Multi-Worker Durable Frontier Runtime            ✅ 完成
-Phase 2.8 Runtime Integration                      🟢 已达到收口条件
+Phase 2.8 Runtime Integration                      ✅ 收口
 ```
 
-当前没有证据表明 B6 仍存在未解决的 Runtime 阻塞问题。后续不应继续围绕已经通过的 B6 Gate 重复修改测试等待时间、Claim 逻辑或 Worker shutdown cleanup，除非出现新的实际回归证据。
+当前没有证据表明 B6 仍存在未解决的 Runtime 阻塞问题。除非出现新的实际回归，不再重复修改已经通过的 Claim、Worker dispatch、timeout/cancel 或 shutdown cleanup 路径。
 
-## 7. 下一主线任务
+需要注意：仓库中早期 Phase 2.8 文档、产品矩阵或历史记录可能保留“B1-B5 未实现”“Runtime Integration 进行中”等当时有效的状态文字；这些属于历史事实，当前状态以本文件、最新 Phase/Acceptance 文档和实际 Gate 证据为准。
 
-```text
-B6 Real Gate Passed
-    ↓
-Phase 2.8 文档与验收收口
-    ↓
-Phase 2.9 Enterprise Integration / Event Infrastructure Contract
-    ↓
-Contract → Migration → Backend implementation → Unit/Integration → Real API Gate
-```
+## 6. Phase 2.9 进入前置条件
 
-进入 Phase 2.9 前必须先确认现有 Integration / Event Infrastructure 是否已经存在正式领域实现，禁止重复创建平行 Service、Repository、Runtime 或 Provider。新功能必须继续遵循 `docs/01-governance/DEVELOPMENT.md` 的领域模块化、Contract-first、Migration-first、测试 Gate 隔离及直接提交 `main` 的规则。
+Phase 2.9 当前仍是**候选/前置评估状态**，尚未冻结 Contract，也未开始功能开发。进入正式开发前必须：
+
+1. 盘点现有 Event、Webhook、Trigger、Audit、Trace、Outbox 等基础设施；
+2. 确认是否已有正式 Integration / Event Infrastructure 领域实现，禁止重复创建平行 Service / Repository / Runtime / Provider；
+3. 根据真实企业业务场景确定可靠性、幂等、投递、顺序、重试、隔离和可观测边界；
+4. 完成 Contract 决策后建立正式 `PHASE_2_9.md` 与对应 Acceptance 入口；
+5. 涉及数据库结构时必须 Migration-first，并实际验证 `uv run alembic upgrade head`；
+6. 遵循 Contract → Migration → Backend implementation → Unit/Integration/Contract → Real API → Acceptance 的工程顺序。
+
+**不得因为 Phase 2.8 已收口而直接引入 Kafka、MQ、Event Bus 或 Outbox；技术选型必须从已冻结的业务 Contract 和真实可靠性需求出发。**
+
+## 7. 当前文档基线
+
+已完成本轮同步的核心文档：
+
+- `docs/PROJECT_STATUS.md`
+- `docs/PRODUCT_CAPABILITY_BASELINE.md`
+- `docs/PRODUCT_DEVELOPMENT_MATRIX.md`
+- `docs/PRODUCT_ROADMAP.md`
+- `docs/02-phases/PHASE_2_8_A_CONTRACT.md`
+
+开发治理仍以 `docs/01-governance/DEVELOPMENT.md` 为唯一工程规则入口；文档分类与状态管理以 `docs/01-governance/DOCUMENTATION.md` 为准。开发规则明确要求阶段状态变化同步更新 Phase、Acceptance、Project Status 与 Error 记录，并禁止使用未执行测试作为 Passed 证据。
