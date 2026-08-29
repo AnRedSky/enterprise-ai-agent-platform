@@ -4,30 +4,13 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { createModelProfile, createModelProvider, deleteModelProfile, deleteModelProvider, listModelProfiles, listModelProviders, updateModelProfile, updateModelProvider, type ModelProfile, type ModelProfileCreatePayload, type ModelProvider, type ModelProviderCreatePayload, type ModelProviderUpdatePayload } from "@/api/modelProviders";
 
-const route = useRoute();
-const router = useRouter();
-const organizationId = String(route.params.id);
-const providers = ref<ModelProvider[]>([]);
-const profiles = ref<Record<string, ModelProfile[]>>({});
-const loading = ref(false);
-const error = ref("");
-const saving = ref(false);
-const providerDialog = ref(false);
-const profileDialog = ref(false);
-const editingProvider = ref<ModelProvider | null>(null);
-const editingProfile = ref<ModelProfile | null>(null);
-const selectedProviderId = ref("");
-const providerForm = ref<ModelProviderCreatePayload>({ organization_id: organizationId, name: "", provider_type: "ollama", provider_name: "", endpoint: "", credential_ref: "", enabled: true, metadata: {} });
-const profileForm = ref<ModelProfileCreatePayload>({ name: "", model_type: "chat", model_name: "", dimension: null, capabilities: {}, parameters: {}, enabled: true, is_default: false });
-const profileList = computed(() => selectedProviderId.value ? profiles.value[selectedProviderId.value] ?? [] : []);
-
-function userError(error: unknown, fallback: string) {
-  if (error instanceof Error) {
-    const message = error.message.trim();
-    if (message && !/^\s*(4\d\d|5\d\d)\b/.test(message)) return message;
-  }
-  return fallback;
-}
+const route = useRoute(); const router = useRouter(); const organizationId = String(route.params.id); const providers = ref<ModelProvider[]>([]); const profiles = ref<Record<string, ModelProfile[]>>({}); const loading = ref(false); const error = ref(""); const saving = ref(false); const providerDialog = ref(false); const profileDialog = ref(false); const editingProvider = ref<ModelProvider | null>(null); const editingProfile = ref<ModelProfile | null>(null); const selectedProviderId = ref(""); const providerForm = ref<ModelProviderCreatePayload>({ organization_id: organizationId, name: "", provider_type: "ollama", provider_name: "", endpoint: "", credential_ref: "", enabled: true, metadata: {} }); const profileForm = ref<ModelProfileCreatePayload>({ name: "", model_type: "chat", model_name: "", dimension: null, capabilities: {}, parameters: {}, enabled: true, is_default: false }); const profileList = computed(() => selectedProviderId.value ? profiles.value[selectedProviderId.value] ?? [] : []);
+const providerTypeLabels: Record<string, string> = { ollama: "本地模型服务", openai: "OpenAI 兼容服务", azure_openai: "Azure OpenAI", anthropic: "Anthropic", custom: "自定义模型服务" };
+const modelTypeLabels: Record<string, string> = { chat: "对话模型", embedding: "向量模型", rerank: "重排模型" };
+function displayType(value: unknown, labels: Record<string, string>, fallback: string) { if (typeof value !== "string" || !value) return fallback; return `${labels[value] || "未知类型"}（${value}）`; }
+function providerTypeLabel(value: unknown) { return displayType(value, providerTypeLabels, "未知提供方类型"); }
+function modelTypeLabel(value: unknown) { return displayType(value, modelTypeLabels, "未知模型类型"); }
+function userError(error: unknown, fallback: string) { if (error instanceof Error) { const message = error.message.trim(); if (message && !/^\s*(4\d\d|5\d\d)\b/.test(message)) return message; } return fallback; }
 function resetProvider() { editingProvider.value = null; providerForm.value = { organization_id: organizationId, name: "", provider_type: "ollama", provider_name: "", endpoint: "", credential_ref: "", enabled: true, metadata: {} }; }
 function resetProfile(providerId: string) { editingProfile.value = null; selectedProviderId.value = providerId; profileForm.value = { name: "", model_type: "chat", model_name: "", dimension: null, capabilities: {}, parameters: {}, enabled: true, is_default: false }; }
 async function loadProfiles(providerId: string) { profiles.value[providerId] = await listModelProfiles(providerId); }
@@ -50,10 +33,10 @@ onMounted(load);
     <el-alert v-if="error" :title="error" type="error" show-icon />
     <el-empty v-if="!loading && !providers.length" description="暂无模型提供方。" />
     <el-card v-for="provider in providers" :key="provider.id" v-loading="loading" class="provider-card">
-      <template #header><div class="provider-header"><div><strong>{{ provider.name }}</strong><div class="meta">{{ provider.provider_type }} · {{ provider.provider_name }}</div></div><div><el-tag :type="provider.enabled ? 'success' : 'info'">{{ provider.enabled ? '已启用' : '已停用' }}</el-tag><el-button link type="primary" @click="openEditProvider(provider)">编辑</el-button><el-button link type="danger" @click="removeProvider(provider)">删除</el-button></div></div></template>
+      <template #header><div class="provider-header"><div><strong>{{ provider.name }}</strong><div class="meta">{{ providerTypeLabel(provider.provider_type) }} · {{ provider.provider_name }}</div></div><div><el-tag :type="provider.enabled ? 'success' : 'info'">{{ provider.enabled ? '已启用' : '已停用' }}</el-tag><el-button link type="primary" @click="openEditProvider(provider)">编辑</el-button><el-button link type="danger" @click="removeProvider(provider)">删除</el-button></div></div></template>
       <el-descriptions :column="2" border><el-descriptions-item label="接口地址">{{ provider.endpoint || '未配置' }}</el-descriptions-item><el-descriptions-item label="凭据引用">{{ provider.credential_ref || '未配置' }}</el-descriptions-item></el-descriptions>
       <div class="profiles-header"><h2>模型配置</h2><el-button size="small" type="primary" @click="openCreateProfile(provider.id)">创建模型配置</el-button></div>
-      <el-table :data="profiles[provider.id] ?? []" border><el-table-column prop="name" label="名称" min-width="160" /><el-table-column prop="model_type" label="类型" width="120" /><el-table-column prop="model_name" label="模型" min-width="220" /><el-table-column prop="dimension" label="向量维度" width="110" /><el-table-column label="默认" width="90"><template #default="{ row }"><el-tag v-if="row.is_default" type="success">是</el-tag></template></el-table-column><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="{ row }"><el-button link type="primary" @click="editProfileFromTableRow(row)">编辑</el-button><el-button link type="danger" @click="removeProfileFromTableRow(row)">删除</el-button></template></el-table-column></el-table>
+      <el-table :data="profiles[provider.id] ?? []" border><el-table-column prop="name" label="名称" min-width="160" /><el-table-column label="类型" width="160"><template #default="{ row }">{{ modelTypeLabel(row.model_type) }}</template></el-table-column><el-table-column prop="model_name" label="模型" min-width="220" /><el-table-column prop="dimension" label="向量维度" width="110" /><el-table-column label="默认" width="90"><template #default="{ row }"><el-tag v-if="row.is_default" type="success">是</el-tag></template></el-table-column><el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '已启用' : '已停用' }}</el-tag></template></el-table-column><el-table-column label="操作" width="150"><template #default="{ row }"><el-button link type="primary" @click="editProfileFromTableRow(row)">编辑</el-button><el-button link type="danger" @click="removeProfileFromTableRow(row)">删除</el-button></template></el-table-column></el-table>
     </el-card>
     <el-dialog v-model="providerDialog" :title="editingProvider ? '编辑模型提供方' : '创建模型提供方'" width="620px"><el-form label-width="120px"><el-form-item label="名称" required><el-input v-model="providerForm.name" /></el-form-item><el-form-item label="提供方类型" required><el-input v-model="providerForm.provider_type" /></el-form-item><el-form-item label="提供方名称" required><el-input v-model="providerForm.provider_name" /></el-form-item><el-form-item label="接口地址"><el-input v-model="providerForm.endpoint" /></el-form-item><el-form-item label="凭据引用"><el-input v-model="providerForm.credential_ref" placeholder="仅填写密钥或环境变量的引用" /></el-form-item><el-form-item label="启用"><el-switch v-model="providerForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="providerDialog=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProvider">保存</el-button></template></el-dialog>
     <el-dialog v-model="profileDialog" :title="editingProfile ? '编辑模型配置' : '创建模型配置'" width="620px"><el-form label-width="120px"><el-form-item label="名称" required><el-input v-model="profileForm.name" /></el-form-item><el-form-item label="类型" required><el-select v-model="profileForm.model_type" style="width:100%"><el-option label="对话模型" value="chat" /><el-option label="向量模型" value="embedding" /></el-select></el-form-item><el-form-item label="模型名称" required><el-input v-model="profileForm.model_name" /></el-form-item><el-form-item v-if="profileForm.model_type === 'embedding'" label="向量维度" required><el-input-number v-model="profileForm.dimension" :min="1" /></el-form-item><el-form-item label="默认"><el-switch v-model="profileForm.is_default" /></el-form-item><el-form-item label="启用"><el-switch v-model="profileForm.enabled" /></el-form-item></el-form><template #footer><el-button @click="profileDialog=false">取消</el-button><el-button type="primary" :loading="saving" @click="saveProfile">保存</el-button></template></el-dialog>
