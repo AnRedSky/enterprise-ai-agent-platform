@@ -25,6 +25,9 @@ class WebhookDeliveryWorker:
 
     `concurrency` 是单进程最大 in-flight delivery 数，也是 backpressure 边界。
     Worker 不建立无界任务队列：只有存在空闲执行槽时才会继续 Claim。
+
+    ``tenant_id`` 可选；设置后 Worker 只领取该租户的 Delivery Fact，用于租户隔离的
+    Worker 池以及确定性的 tenant-scoped acceptance。未设置时保持平台级全局消费行为。
     """
 
     DEFAULT_CONCURRENCY = 4
@@ -37,6 +40,7 @@ class WebhookDeliveryWorker:
         lease_seconds: int = 60,
         max_attempts: int = 5,
         concurrency: int = DEFAULT_CONCURRENCY,
+        tenant_id: uuid.UUID | None = None,
     ) -> None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds 必须大于 0")
@@ -50,6 +54,7 @@ class WebhookDeliveryWorker:
         self.lease_seconds = lease_seconds
         self.max_attempts = max_attempts
         self.concurrency = concurrency
+        self.tenant_id = tenant_id
         self._running = True
 
     @staticmethod
@@ -65,7 +70,7 @@ class WebhookDeliveryWorker:
         now = datetime.now(UTC).replace(tzinfo=None)
         async with SessionLocal() as db:
             record = await self.repository.claim_next(
-                db, now, self.owner, self.lease_seconds, self.max_attempts
+                db, now, self.owner, self.lease_seconds, self.max_attempts, self.tenant_id
             )
             if record is None:
                 return False
