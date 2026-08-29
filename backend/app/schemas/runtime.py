@@ -161,3 +161,32 @@ class IntegrationEventDeliveryItem(BaseModel):
 
 class IntegrationEventDeliveryListResponse(PageMeta):
     items: list[IntegrationEventDeliveryItem]
+
+
+class WebhookDeliveryAuditItem(BaseModel):
+    """Webhook Delivery replay/attempt 的不可变运维审计事实。"""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    delivery_id: UUID
+    integration_event_id: UUID
+    action: str
+    attempt_count: int
+    status: str
+    response_status_code: int | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    actor: str
+    created_at: datetime
+
+
+class WebhookDeliveryAuditListResponse(PageMeta):
+    items: list[WebhookDeliveryAuditItem]
+
+
+class IntegrationEventReplayResponse(BaseModel):
+    """Replay 操作后的 Delivery 状态。"""
+
+    delivery: IntegrationEventDeliveryItem
+    replayed: bool = True
