@@ -27,55 +27,67 @@
 ## 2.10-E Operations Console
 状态：**第一切片已实现**。
 
-- 新增 `GET /api/v1/runtime/operations/overview`。
-- 统计窗口支持 1 / 24 / 168 小时，服务端最大限制 168 小时。
-- 返回事件状态分布、Delivery 状态分布、重试数量、死信数量。
-- 返回投递成功率、99% SLO 目标、剩余错误预算和 P95 投递延迟。
-- 新增前端 `/runtime/operations` 企业运维控制台入口。
-- 总览提供 Event / Delivery / SLO / Dead Letter 聚合视图。
-- 死信支持 tenant-scoped 查询和通过既有 Replay API 重新入队。
-- 浏览器不直接调用 Webhook endpoint，Replay 仍由 Worker 异步执行。
+- `GET /api/v1/runtime/operations/overview`。
+- 统计窗口支持 1 / 24 / 168 小时。
+- 返回事件状态、Delivery 状态、重试、死信、成功率、99% SLO、错误预算和 P95 延迟。
+- 前端 `/runtime/operations` 提供 Event / Delivery / SLO / Dead Letter 聚合视图。
 
 ## 2.10-F Metrics / SLO
-状态：**基础切片已实现，后续继续增强**。
+状态：**增强切片已实现**。
 
-当前指标均从 PostgreSQL Durable Event / Delivery 事实实时聚合，不引入第二套业务事实源。
+新增：
+- `GET /api/v1/runtime/operations/dimensions`；
+- 按 Event Type + Destination 聚合 Delivery Durable Facts；
+- 当前 Webhook HTTP Provider 作为 canonical provider dimension `webhook_http`；
+- 返回状态分布、Retry、Dead Letter 和成功率；
+- 维度查询继续强制 tenant scope；
+- `GET /api/v1/runtime/operations/alerts` 提供可解释的 SLO / Retry / Dead Letter 告警评估。
 
-已提供：
-- Event 总量及状态计数；
-- Delivery 总量及状态计数；
-- 重试数量；
-- Dead Letter 数量；
-- Delivery Success Rate；
-- 99% Delivery SLO；
-- Error Budget Remaining；
-- P95 Delivery Latency。
+指标仍全部从 PostgreSQL Durable Event / Delivery facts 实时计算，不建立平行事实源。
 
-后续增强：按事件类型 / Provider / Destination 分维度聚合、时间序列指标、告警规则与 Prometheus/OpenTelemetry 导出。
+后续：时间序列、Provider 可配置注册表、Prometheus/OpenTelemetry export。
 
 ## 2.10-G Dead Letter Management
-状态：**第一切片已实现**。
+状态：**增强切片已实现**。
 
 - tenant-scoped Dead Letter 查询；
 - 分页；
-- 展示 attempt / HTTP / error / lease / timestamps；
-- 管理员可通过 Replay API 重新进入 `pending`；
-- Replay 产生不可变审计事实。
+- attempt / HTTP / error / lease / timestamps；
+- 单条 Replay；
+- 新增 `POST /api/v1/runtime/operations/dead-letters/replay` 批量 Replay；
+- 一次最多 100 个 Delivery ID；
+- 重复 ID 自动去重；
+- 每项独立处理，成功与拒绝结果分别返回；
+- Replay 仍只重新入队，不同步执行网络请求；
+- 每次成功 Replay 均通过 canonical Repository 产生不可变 Audit Fact。
 
-后续增强：批量 Replay、筛选、人工关闭/归档、失败原因分类、重试策略诊断。
+后续：人工关闭/归档、失败原因分类、重试策略诊断与批量操作审计摘要。
 
 ## 2.10-H Runtime Operational Acceptance
-状态：**待执行**。
+状态：**Acceptance Gate 已实现，待本地 Real PostgreSQL 执行**。
 
-Acceptance 必须验证：
+Acceptance 脚本：
 
-1. tenant A 无法看到 tenant B 的 Event / Delivery / Audit / Dead Letter；
-2. overview 与列表使用相同 tenant scope；
-3. SLO 指标来自真实 PostgreSQL Durable facts；
-4. Dead Letter Replay 重新进入 Worker 投递链路；
-5. Replay Audit 可追溯；
-6. Real HTTP + PostgreSQL 链路保持不变；
-7. Frontend Operations Console 与 Runtime API Contract 一致。
+`backend/scripts/test/phase-2.10/01_runtime_operations_real_gate.ps1`
+
+Acceptance 测试：
+
+`backend/tests/api_real/test_runtime_operations_acceptance.py`
+
+必须一次性验证：
+
+1. tenant A / B Event 隔离；
+2. Delivery 隔离；
+3. Dead Letter 隔离；
+4. Overview 只统计当前 tenant；
+5. Event Type + Destination dimension 只统计当前 tenant；
+6. SLO 来自真实 PostgreSQL Durable facts；
+7. SLO breach / retry / dead-letter 告警可解释；
+8. Dead Letter Replay 重新进入 `pending`；
+9. Replay Audit 可追溯且 tenant scoped；
+10. 后续 Worker 仍负责实际网络投递，不由 Operations API 直接调用 Webhook。
+
+Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL；测试数据自动生成和清理，不要求人工填写测试信息。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改投递状态。
@@ -84,3 +96,4 @@ Acceptance 必须验证：
 - Replay 只重新入队，不同步执行网络请求。
 - 所有 Replay 必须产生不可变审计事实。
 - Metrics 必须从已有 Durable Event / Delivery 事实聚合，不建立平行事实源。
+- 告警计算必须是确定性的、可解释的，并可从 Durable facts 重算。
