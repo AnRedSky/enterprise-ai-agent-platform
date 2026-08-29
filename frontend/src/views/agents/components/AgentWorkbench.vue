@@ -5,7 +5,7 @@
     <el-table v-loading="loadingAgents" :data="agents" border class="table">
       <el-table-column prop="name" label="名称" min-width="180" />
       <el-table-column label="当前生效版本" width="180"><template #default="{ row }">{{ row.version || "未发布" }}<span v-if="row.version" class="published-badge">已发布</span></template></el-table-column>
-      <el-table-column prop="model_id" label="模型" width="160" /><el-table-column prop="status" label="状态" width="110" />
+      <el-table-column prop="model_id" label="模型" width="160" /><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
       <el-table-column label="操作" min-width="430"><template #default="{ row }"><el-button link type="primary" @click="openVersions(row as Agent)">版本</el-button><el-button link type="primary" @click="openChat(row as Agent)" :disabled="row.status !== 'published'">对话调试</el-button><el-button v-if="row.status !== 'published' && row.status !== 'archived'" link type="success" @click="publishLatest(row as Agent)">发布最新版本</el-button><el-button v-if="row.status === 'published'" link type="danger" @click="archive(row as Agent)">归档</el-button></template></el-table-column>
     </el-table>
     <el-empty v-if="!loadingAgents && !agents.length" description="暂无智能体，请先创建一个。" />
@@ -40,6 +40,8 @@ const versionForm = ref({ system_prompt: "", model_id: "mock-model" });
 
 const chatStatusLabel = computed(() => ({ idle: "就绪", streaming: "生成中", completed: "已完成", failed: "失败", cancelled: "已取消" }[chatState.value]));
 const chatStatusType = computed(() => ({ idle: "info", streaming: "primary", completed: "success", failed: "danger", cancelled: "warning" }[chatState.value] as "info" | "primary" | "success" | "danger" | "warning"));
+function statusLabel(status: string) { return ({ draft: "草稿", published: "已发布", archived: "已归档", active: "已启用", inactive: "已停用" } as Record<string, string>)[status] || status; }
+function statusType(status: string) { return status === "published" || status === "active" ? "success" : status === "archived" ? "info" : status === "inactive" ? "warning" : "info"; }
 function shortId(value?: string | null) { if (!value) return "-"; return value.length <= 18 ? value : `${value.slice(0, 8)}...${value.slice(-6)}`; }
 async function load(){loadingAgents.value=true;error.value="";try{agents.value=await listAgents()}catch(e){error.value=e instanceof Error?e.message:"智能体列表加载失败，请刷新后重试。"}finally{loadingAgents.value=false}}
 async function create(){saving.value=true;try{await createAgent(form.value);dialogVisible.value=false;await load();ElMessage.success("智能体创建成功，请发布后再进行对话调试")}catch(e){ElMessage.error(e instanceof Error?e.message:"智能体创建失败，请检查填写内容后重试")}finally{saving.value=false}}
