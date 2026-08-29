@@ -48,7 +48,9 @@ if ($LASTEXITCODE -ne 0) { throw "Alembic upgrade head failed." }
 if ($LASTEXITCODE -ne 0) { throw "Alembic current failed." }
 
 Write-Host "[2/3] Phase 2.9-C PostgreSQL concurrency/recovery tests"
-& uv run pytest -q tests/api_real/test_integration_event_delivery_postgres.py --tb=short
+# pyproject.toml 的默认 addopts 会排除 real_api；此 Gate 必须显式覆盖该默认筛选，
+# 否则 pytest 会把 5 个真实 PostgreSQL 验收测试全部 deselect，造成“脚本成功执行但实际未验收”的假阴性。
+& uv run pytest -q tests/api_real/test_integration_event_delivery_postgres.py --tb=short -m real_api
 if ($LASTEXITCODE -ne 0) { throw "Phase 2.9-C PostgreSQL Real Gate failed." }
 
 Write-Host "[3/3] Targeted delivery unit regression"
