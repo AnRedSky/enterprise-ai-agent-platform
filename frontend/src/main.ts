@@ -33,9 +33,9 @@ import {
 import "element-plus/dist/index.css";
 import App from "./App.vue";
 import router from "./router";
+import "./styles/global.css";
 
 const app = createApp(App);
-
 const components = {
   ElAlert,
   ElButton,
@@ -66,6 +66,5 @@ const components = {
   ElTimeline,
   ElTimelineItem,
 };
-
 for (const [name, component] of Object.entries(components)) app.component(name, component);
 app.use(createPinia()).use(router).mount("#app");
