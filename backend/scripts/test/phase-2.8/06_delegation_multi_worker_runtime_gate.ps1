@@ -10,7 +10,8 @@ function Assert-ExitCode([string]$Message) {
 }
 
 function Assert-NoExternalWorkerProcesses {
-    if ($IsWindows) {
+    $isWindowsHost = $env:OS -eq "Windows_NT"
+    if ($isWindowsHost) {
         $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
             $_.CommandLine -and (
                 $_.CommandLine -match "(^|[\\/ ])run_worker\.py([ \"']|$)" -or
