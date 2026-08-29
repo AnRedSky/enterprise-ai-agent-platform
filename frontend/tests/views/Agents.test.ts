@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 
 const api = vi.hoisted(() => ({
-  listAgents: vi.fn(), listVersions: vi.fn(), createAgent: vi.fn(), createVersion: vi.fn(), publishAgent: vi.fn(), archiveAgent: vi.fn(),
+  listAgents: vi.fn(), listVersions: vi.fn(), getPublishedVersion: vi.fn(), createAgent: vi.fn(), createVersion: vi.fn(), publishAgent: vi.fn(), archiveAgent: vi.fn(),
 }));
 vi.mock("../../src/api/agents", () => ({ ...api }));
 vi.mock("../../src/api/chat", () => ({ streamChat: vi.fn() }));
@@ -17,7 +17,7 @@ const stubs = {
   "el-dialog": { props: ["modelValue"], template: "<div><slot/><slot name=\"footer\"/></div>" },
   "el-form": { template: "<form><slot/></form>" }, "el-form-item": { template: "<div><slot/></div>" },
   "el-input": { template: "<input/>" }, "el-divider": { template: "<hr/>" }, "el-scrollbar": { template: "<div><slot/></div>" },
-  "el-tag": { template: "<span><slot/></span>" },
+  "el-tag": { template: "<span><slot/></span>" }, "el-descriptions": { template: "<div><slot/></div>" }, "el-descriptions-item": { template: "<div><slot/></div>" },
 };
 const global = { stubs, directives: { loading: () => undefined } };
 
@@ -26,6 +26,7 @@ const versions = [
   { id: "v2", agent_id: "a1", version: "1.1.0", system_prompt: "new", model_id: "mock-model", created_at: "2026-01-02", is_published: false },
   { id: "v1", agent_id: "a1", version: "1.0.0", system_prompt: "old", model_id: "mock-model", created_at: "2026-01-01", is_published: true },
 ];
+const publishedVersion = { ...versions[1], knowledge_config: { knowledge_base_ids: ["kb1"], top_k: 5 } };
 
 describe("AgentWorkbench lifecycle", () => {
   beforeEach(() => { vi.clearAllMocks(); api.listAgents.mockResolvedValue([agent]); api.listVersions.mockResolvedValue(versions); });
@@ -36,6 +37,17 @@ describe("AgentWorkbench lifecycle", () => {
     await (wrapper.vm as any).openVersions(agent);
     expect(api.listVersions).toHaveBeenCalledWith("a1");
     expect((wrapper.vm as any).versions[0].is_published).toBe(false);
+  });
+
+  it("loads the backend published-version contract for the active configuration", async () => {
+    api.getPublishedVersion.mockResolvedValue(publishedVersion);
+    const wrapper = mount(Agents, { global });
+    await vi.waitFor(() => expect(api.listAgents).toHaveBeenCalled());
+    await (wrapper.vm as any).openPublishedVersion(agent);
+    expect(api.getPublishedVersion).toHaveBeenCalledWith("a1");
+    expect((wrapper.vm as any).publishedVersion.knowledge_config.top_k).toBe(5);
+    expect(wrapper.text()).toContain("当前生效版本");
+    expect(wrapper.text()).toContain("版本标识");
   });
 
   it("publishes a selected draft version and refreshes lifecycle state", async () => {
