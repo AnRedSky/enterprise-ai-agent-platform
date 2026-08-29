@@ -2,75 +2,67 @@
   <div class="event-console">
     <div class="toolbar">
       <div>
-        <strong>Durable Integration Events</strong>
-        <span>查看 Runtime、Workflow、Agent、Scheduler 产生的可靠事件事实。</span>
+        <strong>事件记录</strong>
+        <span>查看平台产生的可靠事件记录，了解事件来源、状态和关联信息。</span>
       </div>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
     </div>
 
     <el-form inline @submit.prevent class="filters">
-      <el-input v-model="filters.event_type" clearable placeholder="Event Type" @keyup.enter="applyFilters" />
-      <el-input v-model="filters.source" clearable placeholder="Source" @keyup.enter="applyFilters" />
-      <el-select v-model="filters.status" clearable placeholder="Status" style="width: 150px">
-        <el-option label="Pending" value="pending" />
-        <el-option label="Processing" value="processing" />
-        <el-option label="Delivered" value="delivered" />
-        <el-option label="Failed" value="failed" />
-        <el-option label="Dead Letter" value="dead_letter" />
+      <el-input v-model="filters.event_type" clearable placeholder="事件类型" @keyup.enter="applyFilters" />
+      <el-input v-model="filters.source" clearable placeholder="来源" @keyup.enter="applyFilters" />
+      <el-select v-model="filters.status" clearable placeholder="状态" style="width: 150px">
+        <el-option label="待处理" value="pending" />
+        <el-option label="处理中" value="processing" />
+        <el-option label="已送达" value="delivered" />
+        <el-option label="处理失败" value="failed" />
+        <el-option label="进入死信" value="dead_letter" />
       </el-select>
-      <el-input v-model="filters.subject" clearable placeholder="Subject" @keyup.enter="applyFilters" />
+      <el-input v-model="filters.subject" clearable placeholder="关联对象" @keyup.enter="applyFilters" />
       <el-button type="primary" @click="applyFilters">查询</el-button>
     </el-form>
 
-    <el-alert v-if="error" type="error" :closable="false" title="Integration Event 查询失败，请稍后重试" />
-    <el-empty v-else-if="!loading && items.length === 0" description="暂无 Integration Event" />
+    <el-alert v-if="error" type="error" :closable="false" title="事件记录查询失败，请稍后重试" />
+    <el-empty v-else-if="!loading && items.length === 0" description="暂无事件记录" />
     <el-table v-else :data="items" v-loading="loading" @row-click="open">
-      <el-table-column label="Event Type" min-width="250">
+      <el-table-column label="事件类型" min-width="250">
         <template #default="{ row }"><strong>{{ row.event_type }}</strong></template>
       </el-table-column>
-      <el-table-column prop="source" label="Source" width="130" />
-      <el-table-column prop="subject" label="Subject" min-width="190" show-overflow-tooltip />
-      <el-table-column label="Status" width="125">
-        <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ row.status }}</el-tag></template>
+      <el-table-column prop="source" label="来源" width="130" />
+      <el-table-column prop="subject" label="关联对象" min-width="190" show-overflow-tooltip />
+      <el-table-column label="状态" width="125">
+        <template #default="{ row }"><el-tag :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="Attempts" width="95"><template #default="{ row }">{{ row.attempt_count }}</template></el-table-column>
-      <el-table-column label="Occurred" min-width="185"><template #default="{ row }">{{ formatTime(row.occurred_at) }}</template></el-table-column>
-      <el-table-column label="ID" width="120"><template #default="{ row }"><el-button link type="primary" @click.stop="copy(row.id)">复制 ID</el-button></template></el-table-column>
+      <el-table-column label="处理次数" width="95"><template #default="{ row }">{{ row.attempt_count }}</template></el-table-column>
+      <el-table-column label="发生时间" min-width="185"><template #default="{ row }">{{ formatTime(row.occurred_at) }}</template></el-table-column>
+      <el-table-column label="事件编号" width="120"><template #default="{ row }"><el-button link type="primary" @click.stop="copy(row.id)">复制编号</el-button></template></el-table-column>
     </el-table>
 
-    <el-pagination
-      v-if="total"
-      v-model:current-page="page"
-      v-model:page-size="pageSize"
-      :total="total"
-      :page-sizes="[10, 20, 50, 100]"
-      layout="total, sizes, prev, pager, next"
-      @change="load"
-    />
+    <el-pagination v-if="total" v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" @change="load" />
   </div>
 
-  <el-drawer v-model="drawer" title="Integration Event 详情" size="58%">
+  <el-drawer v-model="drawer" title="事件详情" size="58%">
     <template v-if="selected">
       <div class="event-summary">
-        <div><span>Event Type</span><strong>{{ selected.event_type }}</strong></div>
-        <div><span>Status</span><el-tag :type="statusType(selected.status)">{{ selected.status }}</el-tag></div>
-        <div><span>Source</span><strong>{{ selected.source }}</strong></div>
-        <div><span>Schema</span><strong>v{{ selected.schema_version }}</strong></div>
+        <div><span>事件类型</span><strong>{{ selected.event_type }}</strong></div>
+        <div><span>状态</span><el-tag :type="statusType(selected.status)">{{ statusLabel(selected.status) }}</el-tag></div>
+        <div><span>来源</span><strong>{{ selected.source }}</strong></div>
+        <div><span>数据版本</span><strong>v{{ selected.schema_version }}</strong></div>
       </div>
       <el-descriptions :column="2" border>
-        <el-descriptions-item label="Event ID"><el-button link type="primary" @click="copy(selected.id)">{{ selected.id }}</el-button></el-descriptions-item>
-        <el-descriptions-item label="Subject">{{ selected.subject }}</el-descriptions-item>
-        <el-descriptions-item label="Idempotency Key" :span="2">{{ selected.idempotency_key }}</el-descriptions-item>
-        <el-descriptions-item label="Trace ID">{{ selected.trace_id || "-" }}</el-descriptions-item>
-        <el-descriptions-item label="Request ID">{{ selected.request_id || "-" }}</el-descriptions-item>
-        <el-descriptions-item label="Occurred At">{{ formatTime(selected.occurred_at) }}</el-descriptions-item>
-        <el-descriptions-item label="Created At">{{ formatTime(selected.created_at) }}</el-descriptions-item>
-        <el-descriptions-item label="Attempts">{{ selected.attempt_count }}</el-descriptions-item>
-        <el-descriptions-item label="Last Error">{{ selected.last_error_code || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="事件编号"><el-button link type="primary" @click="copy(selected.id)">{{ selected.id }}</el-button></el-descriptions-item>
+        <el-descriptions-item label="关联对象">{{ selected.subject }}</el-descriptions-item>
+        <el-descriptions-item label="幂等标识" :span="2">{{ selected.idempotency_key }}</el-descriptions-item>
+        <el-descriptions-item label="链路追踪 ID">{{ selected.trace_id || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="请求 ID">{{ selected.request_id || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="发生时间">{{ formatTime(selected.occurred_at) }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatTime(selected.created_at) }}</el-descriptions-item>
+        <el-descriptions-item label="处理次数">{{ selected.attempt_count }}</el-descriptions-item>
+        <el-descriptions-item label="最近错误">{{ selected.last_error_code || "-" }}</el-descriptions-item>
       </el-descriptions>
-      <el-divider>Payload</el-divider>
+      <el-divider>事件内容</el-divider>
       <pre class="json-block">{{ JSON.stringify(selected.payload, null, 2) }}</pre>
-      <el-divider v-if="Object.keys(selected.metadata_json).length">Metadata</el-divider>
+      <el-divider v-if="Object.keys(selected.metadata_json).length">附加信息</el-divider>
       <pre v-if="Object.keys(selected.metadata_json).length" class="json-block">{{ JSON.stringify(selected.metadata_json, null, 2) }}</pre>
     </template>
   </el-drawer>
@@ -93,16 +85,8 @@ const drawer = ref(false);
 const filters = reactive({ event_type: "", source: "", status: "", subject: "" });
 
 function params() {
-  return {
-    page: page.value,
-    page_size: pageSize.value,
-    ...(filters.event_type ? { event_type: filters.event_type } : {}),
-    ...(filters.source ? { source: filters.source } : {}),
-    ...(filters.status ? { status: filters.status } : {}),
-    ...(filters.subject ? { subject: filters.subject } : {}),
-  };
+  return { page: page.value, page_size: pageSize.value, ...(filters.event_type ? { event_type: filters.event_type } : {}), ...(filters.source ? { source: filters.source } : {}), ...(filters.status ? { status: filters.status } : {}), ...(filters.subject ? { subject: filters.subject } : {}) };
 }
-
 async function load() {
   loading.value = true;
   error.value = false;
@@ -112,44 +96,15 @@ async function load() {
     total.value = response.data.total;
   } catch {
     error.value = true;
-    ElMessage.error("Integration Event 查询失败");
-  } finally {
-    loading.value = false;
-  }
+    ElMessage.error("事件记录查询失败");
+  } finally { loading.value = false; }
 }
-
-function applyFilters() {
-  page.value = 1;
-  void load();
-}
-
-function open(row: IntegrationEvent) {
-  selected.value = row;
-  drawer.value = true;
-}
-
-function formatTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("zh-CN", { hour12: false });
-}
-
-function statusType(status: string) {
-  if (status === "delivered") return "success";
-  if (status === "failed" || status === "dead_letter") return "danger";
-  if (status === "processing") return "warning";
-  return "info";
-}
-
-async function copy(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-    ElMessage.success("ID 已复制");
-  } catch {
-    ElMessage.error("复制失败，请手动复制");
-  }
-}
-
+function applyFilters() { page.value = 1; void load(); }
+function open(row: IntegrationEvent) { selected.value = row; drawer.value = true; }
+function formatTime(value: string) { const date = new Date(value); if (Number.isNaN(date.getTime())) return value; return date.toLocaleString("zh-CN", { hour12: false }); }
+function statusLabel(status: string) { return ({ pending: "待处理", processing: "处理中", delivered: "已送达", failed: "处理失败", dead_letter: "进入死信" } as Record<string, string>)[status] || status; }
+function statusType(status: string) { if (status === "delivered") return "success"; if (status === "failed" || status === "dead_letter") return "danger"; if (status === "processing") return "warning"; return "info"; }
+async function copy(value: string) { try { await navigator.clipboard.writeText(value); ElMessage.success("编号已复制"); } catch { ElMessage.error("复制失败，请手动复制"); } }
 onMounted(load);
 </script>
 

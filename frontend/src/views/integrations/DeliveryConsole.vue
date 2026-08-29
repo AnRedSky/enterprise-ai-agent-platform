@@ -11,203 +11,43 @@ const auditItems = ref<WebhookDeliveryAudit[]>([]);
 const status = ref("");
 const auditDialog = ref(false);
 const selectedDelivery = ref<WebhookDelivery | null>(null);
-
 const statusOptions = [
-  { value: "pending", label: "待投递" },
-  { value: "delivering", label: "投递中" },
-  { value: "delivered", label: "已送达" },
-  { value: "retrying", label: "重试中" },
-  { value: "dead_letter", label: "死信" },
-  { value: "failed", label: "失败" },
+  { value: "pending", label: "待投递" }, { value: "delivering", label: "投递中" }, { value: "delivered", label: "已送达" },
+  { value: "retrying", label: "重试中" }, { value: "dead_letter", label: "进入死信" }, { value: "failed", label: "失败" },
 ];
-
-const statusSummary = computed(() => ({
-  total: deliveries.value.length,
-  delivered: deliveries.value.filter((item) => item.status === "delivered").length,
-  retrying: deliveries.value.filter((item) => item.status === "retrying").length,
-  failed: deliveries.value.filter((item) => ["failed", "dead_letter"].includes(item.status)).length,
-}));
-
-function statusLabel(value: string) {
-  return statusOptions.find((item) => item.value === value)?.label || value;
-}
-
-function statusType(value: string) {
-  if (value === "delivered") return "success";
-  if (["failed", "dead_letter"].includes(value)) return "danger";
-  if (["retrying", "delivering"].includes(value)) return "warning";
-  return "info";
-}
-
-function statusIcon(value: string) {
-  if (value === "delivered") return CircleCheck;
-  if (["failed", "dead_letter"].includes(value)) return CircleClose;
-  if (value === "retrying") return RefreshRight;
-  return Clock;
-}
-
-function formatTime(value: string | null) {
-  if (!value) return "—";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
-
-/**
- * 校验表格插槽传入的行对象是否满足 Delivery 操作所需的最小业务契约。
- *
- * Args:
- *   value: Element Plus 表格插槽传入的未知行对象。
- *
- * Returns:
- *   当对象包含 Delivery 操作所需的标识、状态和尝试次数时返回 true，否则返回 false。
- *
- * 设计意图：Element Plus 的表格插槽会把 `scope.row` 推断为通用行类型，不能直接
- * 假定其已经完成业务类型收窄。这里在 UI 操作边界执行一次运行时校验，同时保持
- * openAudit/replay 内部函数继续使用严格的 WebhookDelivery 类型。
- */
-function isWebhookDelivery(value: unknown): value is WebhookDelivery {
-  if (!value || typeof value !== "object") return false;
-  const row = value as Partial<WebhookDelivery>;
-  return typeof row.id === "string" && typeof row.status === "string" && typeof row.attempt_count === "number";
-}
-
-/**
- * 处理表格中的 Audit 操作，并在类型边界处拒绝无效行数据。
- *
- * Args:
- *   row: Element Plus 表格插槽传入的未知行对象。
- *
- * Returns:
- *   无效行直接结束；有效行进入 Delivery Audit 流程。
- */
-function openAuditRow(row: unknown) {
-  if (!isWebhookDelivery(row)) {
-    ElMessage.error("当前 Delivery 行数据无效，无法打开 Audit");
-    return;
-  }
-  void openAudit(row);
-}
-
-/**
- * 处理表格中的 Replay 操作，并在类型边界处拒绝无效行数据。
- *
- * Args:
- *   row: Element Plus 表格插槽传入的未知行对象。
- *
- * Returns:
- *   无效行直接结束；有效行进入 Replay 流程。
- */
-function replayRow(row: unknown) {
-  if (!isWebhookDelivery(row)) {
-    ElMessage.error("当前 Delivery 行数据无效，无法 Replay");
-    return;
-  }
-  void replay(row);
-}
-
-async function loadDeliveries() {
-  loading.value = true;
-  try {
-    const response = await integrationApi.deliveries(status.value ? { status: status.value } : undefined);
-    deliveries.value = response.data;
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "Delivery 数据加载失败");
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function openAudit(delivery: WebhookDelivery) {
-  selectedDelivery.value = delivery;
-  auditDialog.value = true;
-  auditLoading.value = true;
-  auditItems.value = [];
-  try {
-    const response = await integrationApi.deliveryAudit(delivery.id);
-    auditItems.value = response.data;
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : "Delivery Audit 加载失败");
-  } finally {
-    auditLoading.value = false;
-  }
-}
-
-async function replay(delivery: WebhookDelivery) {
-  try {
-    await ElMessageBox.confirm(
-      `确认重新投递该 Delivery？当前状态为“${statusLabel(delivery.status)}”，系统会重新进入可靠投递流程。`,
-      "确认 Replay",
-      { type: "warning", confirmButtonText: "重新投递", cancelButtonText: "取消" },
-    );
-    await integrationApi.replayDelivery(delivery.id);
-    ElMessage.success("Replay 已提交");
-    await loadDeliveries();
-  } catch (error) {
-    if (error === "cancel" || error === "close") return;
-    ElMessage.error(error instanceof Error ? error.message : "Replay 失败");
-  }
-}
-
+const statusSummary = computed(() => ({ total: deliveries.value.length, delivered: deliveries.value.filter((item) => item.status === "delivered").length, retrying: deliveries.value.filter((item) => item.status === "retrying").length, failed: deliveries.value.filter((item) => ["failed", "dead_letter"].includes(item.status)).length }));
+function statusLabel(value: string) { return statusOptions.find((item) => item.value === value)?.label || value; }
+function statusType(value: string) { if (value === "delivered") return "success"; if (["failed", "dead_letter"].includes(value)) return "danger"; if (["retrying", "delivering"].includes(value)) return "warning"; return "info"; }
+function statusIcon(value: string) { if (value === "delivered") return CircleCheck; if (["failed", "dead_letter"].includes(value)) return CircleClose; if (value === "retrying") return RefreshRight; return Clock; }
+function formatTime(value: string | null) { if (!value) return "—"; return new Date(value).toLocaleString("zh-CN", { hour12: false }); }
+function isWebhookDelivery(value: unknown): value is WebhookDelivery { if (!value || typeof value !== "object") return false; const row = value as Partial<WebhookDelivery>; return typeof row.id === "string" && typeof row.status === "string" && typeof row.attempt_count === "number"; }
+function openAuditRow(row: unknown) { if (!isWebhookDelivery(row)) { ElMessage.error("当前投递记录无效，无法查看审计记录"); return; } void openAudit(row); }
+function replayRow(row: unknown) { if (!isWebhookDelivery(row)) { ElMessage.error("当前投递记录无效，无法重新投递"); return; } void replay(row); }
+async function loadDeliveries() { loading.value = true; try { const response = await integrationApi.deliveries(status.value ? { status: status.value } : undefined); deliveries.value = response.data; } catch (error) { ElMessage.error(error instanceof Error ? error.message : "投递数据加载失败"); } finally { loading.value = false; } }
+async function openAudit(delivery: WebhookDelivery) { selectedDelivery.value = delivery; auditDialog.value = true; auditLoading.value = true; auditItems.value = []; try { const response = await integrationApi.deliveryAudit(delivery.id); auditItems.value = response.data; } catch (error) { ElMessage.error(error instanceof Error ? error.message : "审计记录加载失败"); } finally { auditLoading.value = false; } }
+async function replay(delivery: WebhookDelivery) { try { await ElMessageBox.confirm(`确认重新投递该记录？当前状态为“${statusLabel(delivery.status)}”，系统会重新进入可靠投递流程。`, "确认重新投递", { type: "warning", confirmButtonText: "重新投递", cancelButtonText: "取消" }); await integrationApi.replayDelivery(delivery.id); ElMessage.success("重新投递已提交"); await loadDeliveries(); } catch (error) { if (error === "cancel" || error === "close") return; ElMessage.error(error instanceof Error ? error.message : "重新投递失败"); } }
 onMounted(loadDeliveries);
 </script>
 
 <template>
   <section class="delivery-console">
     <div class="delivery-summary">
-      <div class="summary-item"><span>当前记录</span><strong>{{ statusSummary.total }}</strong></div>
-      <div class="summary-item success"><span>已送达</span><strong>{{ statusSummary.delivered }}</strong></div>
-      <div class="summary-item warning"><span>重试中</span><strong>{{ statusSummary.retrying }}</strong></div>
-      <div class="summary-item danger"><span>失败 / 死信</span><strong>{{ statusSummary.failed }}</strong></div>
+      <div class="summary-item"><span>当前记录</span><strong>{{ statusSummary.total }}</strong></div><div class="summary-item success"><span>已送达</span><strong>{{ statusSummary.delivered }}</strong></div><div class="summary-item warning"><span>重试中</span><strong>{{ statusSummary.retrying }}</strong></div><div class="summary-item danger"><span>失败 / 死信</span><strong>{{ statusSummary.failed }}</strong></div>
     </div>
-
-    <div class="delivery-toolbar">
-      <div><strong>Delivery Operations</strong><span>观察可靠投递状态、失败原因与审计轨迹，并对可恢复失败执行 Replay。</span></div>
-      <div class="toolbar-actions">
-        <el-select v-model="status" clearable placeholder="全部状态" style="width: 150px" @change="loadDeliveries">
-          <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-        <el-button :icon="Refresh" :loading="loading" @click="loadDeliveries">刷新</el-button>
-      </div>
-    </div>
-
-    <el-alert title="运维提示" description="Delivery 是 Durable Event 投递事实。Replay 只重新进入后端可靠投递流程，不在浏览器直接调用目标 Endpoint。" type="info" :closable="false" show-icon class="delivery-note" />
-
-    <el-table v-loading="loading" :data="deliveries" empty-text="暂无 Delivery 记录" class="delivery-table">
-      <el-table-column label="状态" width="130">
-        <template #default="scope">
-          <span class="delivery-status"><component :is="statusIcon(scope.row.status)" /><el-tag :type="statusType(scope.row.status)" effect="light">{{ statusLabel(scope.row.status) }}</el-tag></span>
-        </template>
-      </el-table-column>
-      <el-table-column label="Delivery / Event" min-width="270">
-        <template #default="scope"><div class="id-cell"><strong>{{ scope.row.id }}</strong><span>{{ scope.row.integration_event_id }}</span></div></template>
-      </el-table-column>
+    <div class="delivery-toolbar"><div><strong>投递管理</strong><span>查看投递状态、失败原因和审计记录，并对可以恢复的失败记录重新投递。</span></div><div class="toolbar-actions"><el-select v-model="status" clearable placeholder="全部状态" style="width: 150px" @change="loadDeliveries"><el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-button :icon="Refresh" :loading="loading" @click="loadDeliveries">刷新</el-button></div></div>
+    <el-alert title="运维提示" description="投递记录用于记录事件发送过程中的真实结果。重新投递只会重新进入后端可靠投递流程，不会由浏览器直接请求目标地址。" type="info" :closable="false" show-icon class="delivery-note" />
+    <el-table v-loading="loading" :data="deliveries" empty-text="暂无投递记录" class="delivery-table">
+      <el-table-column label="状态" width="130"><template #default="scope"><span class="delivery-status"><component :is="statusIcon(scope.row.status)" /><el-tag :type="statusType(scope.row.status)" effect="light">{{ statusLabel(scope.row.status) }}</el-tag></span></template></el-table-column>
+      <el-table-column label="投递编号 / 事件编号" min-width="270"><template #default="scope"><div class="id-cell"><strong>{{ scope.row.id }}</strong><span>{{ scope.row.integration_event_id }}</span></div></template></el-table-column>
       <el-table-column prop="attempt_count" label="尝试次数" width="100" />
-      <el-table-column label="HTTP" width="90">
-        <template #default="scope"><span :class="scope.row.response_status_code && scope.row.response_status_code >= 400 ? 'http-error' : ''">{{ scope.row.response_status_code ?? "—" }}</span></template>
-      </el-table-column>
-      <el-table-column label="最近错误" min-width="220" show-overflow-tooltip>
-        <template #default="scope"><span class="error-cell">{{ scope.row.last_error_code || scope.row.last_error_message || "—" }}</span></template>
-      </el-table-column>
+      <el-table-column label="HTTP 状态" width="105"><template #default="scope"><span :class="scope.row.response_status_code && scope.row.response_status_code >= 400 ? 'http-error' : ''">{{ scope.row.response_status_code ?? "—" }}</span></template></el-table-column>
+      <el-table-column label="最近错误" min-width="220" show-overflow-tooltip><template #default="scope"><span class="error-cell">{{ scope.row.last_error_code || scope.row.last_error_message || "—" }}</span></template></el-table-column>
       <el-table-column label="更新时间" width="175"><template #default="scope">{{ formatTime(scope.row.updated_at) }}</template></el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
-        <template #default="scope">
-          <el-button link type="primary" :icon="View" @click="openAuditRow(scope.row)">Audit</el-button>
-          <el-button v-if="['failed', 'dead_letter'].includes(scope.row.status)" link type="warning" :icon="RefreshRight" @click="replayRow(scope.row)">Replay</el-button>
-        </template>
-      </el-table-column>
+      <el-table-column label="操作" width="190" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" @click="openAuditRow(scope.row)">查看审计记录</el-button><el-button v-if="['failed', 'dead_letter'].includes(scope.row.status)" link type="warning" :icon="RefreshRight" @click="replayRow(scope.row)">重新投递</el-button></template></el-table-column>
     </el-table>
-
-    <el-dialog v-model="auditDialog" title="Delivery Audit" width="760px">
-      <div v-if="selectedDelivery" class="audit-header">
-        <div><span>Delivery</span><strong>{{ selectedDelivery.id }}</strong></div>
-        <div><span>状态</span><el-tag :type="statusType(selectedDelivery.status)">{{ statusLabel(selectedDelivery.status) }}</el-tag></div>
-        <div><span>尝试次数</span><strong>{{ selectedDelivery.attempt_count }}</strong></div>
-      </div>
-      <el-timeline v-loading="auditLoading" class="audit-timeline">
-        <el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top">
-          <div class="audit-item"><div class="audit-title"><strong>{{ item.action }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>Actor：{{ item.actor }} · Attempt：{{ item.attempt_count }} · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ item.error_code || "ERROR" }}：{{ item.error_message || "—" }}</p></div>
-        </el-timeline-item>
-        <el-empty v-if="!auditLoading && !auditItems.length" description="暂无 Audit 记录" />
-      </el-timeline>
+    <el-dialog v-model="auditDialog" title="投递审计记录" width="760px">
+      <div v-if="selectedDelivery" class="audit-header"><div><span>投递编号</span><strong>{{ selectedDelivery.id }}</strong></div><div><span>状态</span><el-tag :type="statusType(selectedDelivery.status)">{{ statusLabel(selectedDelivery.status) }}</el-tag></div><div><span>尝试次数</span><strong>{{ selectedDelivery.attempt_count }}</strong></div></div>
+      <el-timeline v-loading="auditLoading" class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ item.action }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ item.error_code || "错误" }}：{{ item.error_message || "—" }}</p></div></el-timeline-item><el-empty v-if="!auditLoading && !auditItems.length" description="暂无审计记录" /></el-timeline>
     </el-dialog>
   </section>
 </template>
