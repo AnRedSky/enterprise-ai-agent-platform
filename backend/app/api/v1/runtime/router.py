@@ -20,6 +20,7 @@ from app.schemas.runtime import (
     AuditLogListResponse,
     ExecutionListResponse,
     ExecutionTimelineResponse,
+    IntegrationEventDeliveryListResponse,
     IntegrationEventListResponse,
     IntegrationEventSummaryResponse,
     WorkflowTraceResponse,
@@ -135,43 +136,39 @@ async def list_integration_events(
 ):
     """租户范围内查询 Durable Integration Event；调用方不能指定任意 tenant。"""
     page, page_size, total, rows = await RuntimeQueryService(db).integration_events(
-        _tenant_id(claims),
-        page=page,
-        page_size=page_size,
-        event_type=event_type,
-        source=source,
-        status=status,
-        subject=subject,
-        trace_id=trace_id,
-        request_id=request_id,
-        occurred_from=occurred_from,
-        occurred_to=occurred_to,
+        _tenant_id(claims), page=page, page_size=page_size, event_type=event_type, source=source,
+        status=status, subject=subject, trace_id=trace_id, request_id=request_id,
+        occurred_from=occurred_from, occurred_to=occurred_to,
     )
     return {"items": rows, "page": page, "page_size": page_size, "total": total}
 
 
 @router.get("/integration-events/summary", response_model=IntegrationEventSummaryResponse)
 async def integration_event_summary(
-    event_type: str | None = None,
-    source: str | None = None,
-    status: str | None = None,
-    subject: str | None = None,
-    trace_id: str | None = None,
-    request_id: str | None = None,
-    occurred_from: datetime | None = None,
-    occurred_to: datetime | None = None,
-    claims: dict = Depends(_runtime_claims),
-    db: AsyncSession = Depends(get_db),
+    event_type: str | None = None, source: str | None = None, status: str | None = None,
+    subject: str | None = None, trace_id: str | None = None, request_id: str | None = None,
+    occurred_from: datetime | None = None, occurred_to: datetime | None = None,
+    claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db),
 ):
     """返回当前租户 Integration Event 的状态与来源聚合摘要。"""
     return await RuntimeQueryService(db).integration_event_summary(
-        _tenant_id(claims),
-        event_type=event_type,
-        source=source,
-        status=status,
-        subject=subject,
-        trace_id=trace_id,
-        request_id=request_id,
-        occurred_from=occurred_from,
-        occurred_to=occurred_to,
+        _tenant_id(claims), event_type=event_type, source=source, status=status,
+        subject=subject, trace_id=trace_id, request_id=request_id,
+        occurred_from=occurred_from, occurred_to=occurred_to,
     )
+
+
+@router.get("/integration-events/{integration_event_id}/deliveries", response_model=IntegrationEventDeliveryListResponse)
+async def integration_event_deliveries(
+    integration_event_id: UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: str | None = None,
+    claims: dict = Depends(_runtime_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询当前租户指定 Integration Event 的 Webhook Delivery 运维事实。"""
+    page, page_size, total, rows = await RuntimeQueryService(db).integration_event_deliveries(
+        _tenant_id(claims), integration_event_id, page=page, page_size=page_size, status=status,
+    )
+    return {"items": rows, "page": page, "page_size": page_size, "total": total}

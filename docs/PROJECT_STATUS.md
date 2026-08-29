@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
-- 当前任务：**2.10-A Integration Event Operations Query**
-- 下一任务：**2.10-B Delivery Operations Query**
+- 当前任务：**2.10-B Delivery Operations Query**
+- 下一任务：**2.10-C Retry / Replay Operations**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -45,7 +45,7 @@ Tenant-scoped Operations Query
 ## 4. Phase 2.10 当前实现
 
 ### 2.10-A Integration Event Operations Query
-状态：**开发中，第一切片已实现**。
+状态：**第一切片已实现**。
 
 已实现：
 - `GET /api/v1/runtime/integration-events`；
@@ -58,17 +58,25 @@ Tenant-scoped Operations Query
 - summary 与列表使用相同 tenant scope 和过滤口径；
 - API Contract 与 Unit 覆盖认证、路由及聚合边界。
 
-### 2.10-D Tenant-scoped Operations Console
-前端已建立基础 Integration Event Observation Console，位于 Integration Center；展示列表、状态、尝试次数、发生时间及详情 Drawer。后续继续增强时间范围、Summary、Trace/Delivery 联动。
+### 2.10-B Delivery Operations Query
+状态：**第一实现已提交**。
+
+已实现：
+- `GET /api/v1/runtime/integration-events/{integration_event_id}/deliveries`；
+- 强制 tenant + integration_event 双重范围；
+- 支持分页与 Delivery status 过滤；
+- 返回 lease owner / lease expiry、attempt、response status、last error、delivery timestamps 等运维事实；
+- 不改变 Delivery 状态，不绕过 Worker/Replay 领域服务；
+- API Contract 与 Unit 已加入路由、认证及 tenant/event scope 验证。
 
 ## 5. Phase 2.10 顺序
 
 ```text
-2.10-A Integration Event Operations Query       🔄 第一切片已实现
+2.10-A Integration Event Operations Query       ✅ 第一切片
         ↓
-2.10-B Delivery Operations Query                ⏭ 下一任务
+2.10-B Delivery Operations Query                🔄 第一实现已提交
         ↓
-2.10-C Retry / Replay Operations                ⏳
+2.10-C Retry / Replay Operations                ⏭ 下一任务
         ↓
 2.10-D Tenant-scoped Operations Console        🔄 基础 UI 已实现
         ↓
@@ -95,4 +103,4 @@ Tenant-scoped Operations Query
 | LT-09 | Agent Asset / Marketplace | 候选 |
 | LT-10 | Production Deployment / HA / Operations | 待立项 |
 
-所有实现仍遵循 Contract → Migration → Backend → Unit/Integration/Contract → Real API → Acceptance；Phase 2.10 的只读 Operations Query 不引入数据库结构变更，因此当前切片无需新增 migration。
+所有实现仍遵循 Contract → Migration → Backend → Unit/Integration/Contract → Real API → Acceptance；当前 2.10-A/B 均为只读 Operations Query，不引入数据库结构变更。

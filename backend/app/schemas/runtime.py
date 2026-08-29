@@ -134,3 +134,30 @@ class IntegrationEventSummaryResponse(BaseModel):
     status_counts: dict[str, int]
     source_counts: dict[str, int]
     generated_at: datetime
+
+
+class IntegrationEventDeliveryItem(BaseModel):
+    """Integration Event 对应的 Webhook Delivery 运维事实。"""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    integration_event_id: UUID
+    destination_id: UUID
+    subscription_id: UUID
+    status: str
+    attempt_count: int
+    next_attempt_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    delivered_at: datetime | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    response_status_code: int | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class IntegrationEventDeliveryListResponse(PageMeta):
+    items: list[IntegrationEventDeliveryItem]
