@@ -56,4 +56,19 @@ describe("AgentWorkbench lifecycle", () => {
     await (wrapper.vm as any).createVersion();
     expect(api.createVersion).not.toHaveBeenCalled();
   });
+
+  it("uses Chinese-only visible Agent terminology while preserving technical identifiers", async () => {
+    const wrapper = mount(Agents, { global });
+    await vi.waitFor(() => expect(api.listAgents).toHaveBeenCalled());
+    const text = wrapper.text();
+    expect(text).toContain("智能体工作台");
+    expect(text).toContain("创建智能体");
+    expect(text).toContain("对话调试");
+    expect(text).toContain("系统提示词");
+    expect(text).not.toContain("Agent 工作台");
+    expect(text).not.toContain("创建 Agent");
+    expect(text).not.toContain("Published");
+    expect(text).not.toContain("System Prompt");
+    expect(text).not.toContain("Chat");
+  });
 });
