@@ -324,17 +324,16 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
                         AgentDelegation.worker_execution_id == frontier.execution_id,
                         AgentDelegation.tenant_id == frontier.tenant_id,
                     )
-                )
-            ).scalar_one_or_none()
+            )).scalar_one_or_none()
             await db.rollback()
             return delegation_id is not None
 
     async def execute_frontier(self, frontier: WorkflowFrontier) -> None:
         """执行一个 Durable Frontier；Delegation 走唯一 Runtime Entry，普通 Workflow 走 Planner。"""
+        if not await self._verify_frontier_consumption_ownership(frontier):
+            return
         if await self._is_delegation_frontier(frontier):
             await super().execute_frontier(frontier)
-            return
-        if not await self._verify_frontier_consumption_ownership(frontier):
             return
         runtime_task = asyncio.current_task()
         heartbeat = asyncio.create_task(self._renew_frontier_forever(frontier.id, frontier.attempt, runtime_task))
