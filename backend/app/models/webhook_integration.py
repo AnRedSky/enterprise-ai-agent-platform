@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.core import Base, utcnow_naive
@@ -22,6 +22,7 @@ class WebhookDestination(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "name", name="uq_webhook_destination_tenant_name"),
         Index("ix_webhook_destination_tenant_enabled", "tenant_id", "enabled"),
+        Index("ix_webhook_destination_tenant_provider", "tenant_id", "provider", "enabled"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -29,6 +30,7 @@ class WebhookDestination(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, default="webhook_http")
     endpoint_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     secret_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
     headers: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
