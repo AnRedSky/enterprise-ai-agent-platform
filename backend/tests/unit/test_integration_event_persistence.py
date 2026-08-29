@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.repositories.integration_event import IntegrationEventRepository
+from app.services.integration.repository import IntegrationEventRepository
 from app.services.integration.contract import IntegrationEvent
 
 
@@ -29,9 +29,7 @@ async def test_create_maps_contract_to_durable_record() -> None:
     db = MagicMock()
     db.flush = AsyncMock()
     event = make_event()
-
     record = await IntegrationEventRepository().create(db, event)
-
     assert record.id == event.event_id
     assert record.tenant_id == event.tenant_id
     assert record.status == "pending"
@@ -49,9 +47,7 @@ async def test_get_scopes_lookup_by_tenant_and_event_id() -> None:
     db.execute = AsyncMock(return_value=result)
     tenant_id = uuid.uuid4()
     event_id = uuid.uuid4()
-
     found = await IntegrationEventRepository().get(db, tenant_id, event_id)
-
     assert found is not None
     statement = db.execute.await_args.args[0]
     assert len(statement.whereclause.clauses) == 2

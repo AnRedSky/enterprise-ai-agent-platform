@@ -2,115 +2,91 @@
 
 ## 1. 阶段目标
 
-在 Phase 2.8 Runtime Integration 收口后，建立 Enterprise Integration / Event Infrastructure 的第一个正式实现切片：先冻结统一事件 Contract，再逐步实现持久化、可靠投递和外部 Integration。不得在 Contract 未稳定前直接引入 Kafka、MQ 或第二套 Outbox。
+在 Phase 2.8 Runtime Integration 收口后，建立 Enterprise Integration / Event Infrastructure：冻结统一事件 Contract，建立 PostgreSQL Durable Event Fact，再实现可靠投递、Webhook Integration 和 Runtime Integration。Redis、Kafka、MQ 均不是 Durable Event Fact 的必要依赖。
 
 ## 2. 当前基线
 
 - Phase 2.8 Multi-Agent Collaboration / Runtime Integration：已完成并通过本地 B6 Real Gate。
-- LT-01：由长期待立项转入 Phase 2.9 正式开发。
-- 现有能力：Webhook / Trigger、Audit、Trace、Workflow / Agent / Scheduler Runtime 已存在，但尚未形成统一企业事件领域。
+- Phase 2.9-A Event Contract：已实现。
+- Phase 2.9-B Durable Event Persistence：已实现第一切片。
+- 当前任务：**2.9-C Reliable Delivery**。
 
-## 3. 本阶段任务
+## 3. 2.9-A Event Contract
 
-### 2.9-A Event Contract
+状态：**已实现**。统一事件信封包含 `event_id`、`tenant_id`、`event_type`、`schema_version`、`source`、`subject`、`idempotency_key`、`occurred_at`、`request_id`、`trace_id`、`payload`、`metadata`。
 
-状态：**已实现第一切片**。
-
-统一事件信封包含：
-
-- `event_id`：全局事件标识；
-- `tenant_id`：租户边界；
-- `event_type`：稳定事件类型；
-- `schema_version`：事件载荷版本；
-- `source`：事件生产领域；
-- `subject`：事件作用对象；
-- `idempotency_key`：生产幂等键；
-- `occurred_at`：带时区的业务发生时间；
-- `request_id` / `trace_id`：请求与追踪关联；
-- `payload` / `metadata`：业务载荷与非业务扩展元数据。
-
-幂等唯一性作用域冻结为：
+幂等作用域冻结为：
 
 ```text
 tenant_id + source + event_type + idempotency_key
 ```
 
-这一阶段只定义领域契约，不承诺数据库唯一索引或具体消息系统实现；数据库实现将在可靠性语义进一步冻结后进入 Migration。
+## 4. 2.9-B Durable Event Persistence
 
-实现位置：
+状态：**已实现第一切片，待开发者本地数据库验收**。
 
-```text
-backend/app/services/integration/
-├── __init__.py
-└── contract.py
-```
-
-### 2.9-B Durable Event Persistence
-
-状态：待实现。
-
-目标：在 2.9-A Contract 基础上实现 PostgreSQL 持久化事实，至少覆盖状态、投递次数、最后错误、下一次投递时间、租户隔离和幂等唯一约束。
-
-进入条件：冻结事件状态机、投递状态和事务边界后建立 Alembic Migration。
-
-### 2.9-C Reliable Delivery
-
-状态：待实现。
-
-目标：实现有限重试、指数退避、失败恢复和死信语义，并明确与 Scheduler / Worker 的职责边界。
-
-### 2.9-D Webhook Integration
-
-状态：待实现。
-
-目标：在现有 Webhook Trigger 基础上统一 endpoint 身份、签名、事件版本、幂等、回放和 delivery audit，不复制现有 Trigger Service。
-
-### 2.9-E Runtime Integration
-
-状态：待实现。
-
-目标：将 Workflow / Agent / Scheduler 的关键业务事实接入统一事件 Contract，同时保留既有 Runtime 状态机与执行语义。
-
-## 4. 第一切片完成证据
-
-本提交新增：
-
-- `backend/app/services/integration/contract.py`
-- `backend/app/services/integration/__init__.py`
-- `backend/tests/unit/test_integration_event_contract.py`
-
-测试覆盖事件身份、幂等作用域、事件类型约束、时区约束和版本约束。
-
-## 5. 开发顺序
+实现：
 
 ```text
-2.9-A Event Contract
-    ↓
-2.9-B Durable Event Persistence
-    ↓
-2.9-C Reliable Delivery
-    ↓
-2.9-D Webhook Integration
-    ↓
-2.9-E Runtime Integration
+backend/app/models/integration_event.py
+backend/app/services/integration/repository.py
+backend/alembic/versions/0040_integration_events.py
+backend/tests/unit/test_integration_event_persistence.py
 ```
 
-任何一步发现 Contract 不足，必须先修正 Contract 与对应测试，再继续后续实现。
+持久化模型提供 Tenant 隔离、Event Contract 核心字段、`pending` 初始状态、attempt count、retry time、delivery time、错误信息、幂等唯一约束和稳定 pending 查询。
 
-## 6. 不在本阶段直接做的事情
+## 5. 2.9-C Reliable Delivery
 
-- Contract 未冻结前不引入 Kafka / MQ / Event Bus；
-- 不复制 Webhook / Trigger / Audit / Trace 的已有业务实现；
-- 不修改已通过 Phase 2.8 的 Delegation Claim、Worker dispatch、timeout/cancel 和 shutdown cleanup 路径；
-- 不把 GitHub Actions 结果作为开发验收依据。
+状态：**实现第一切片，待开发者本地验收**。
 
-## 7. 验收要求
+本轮新增：
 
-每个交付切片必须提供：
+```text
+backend/app/services/integration/delivery.py
+backend/alembic/versions/0041_integration_event_delivery_lease.py
+backend/tests/unit/test_integration_event_delivery.py
+```
 
-1. 对应领域单元测试；
-2. 涉及数据库时的 Alembic migration 与 `uv run alembic upgrade head` 实际结果；
-3. 涉及 HTTP 时的 API Contract / Real API 测试；
-4. 涉及后台生命周期时的 Worker / Scheduler 实际运行证据；
-5. Phase / Acceptance / PROJECT_STATUS / LT 文档同步更新；
-6. 所有变更直接提交 `main`，不创建功能分支。
+当前实现：
+
+- PostgreSQL `FOR UPDATE SKIP LOCKED` 原子 Claim；
+- `lease_owner` / `lease_expires_at` Worker 租约；
+- 过期 running 事件可恢复领取；
+- 每次 Claim 增加 `attempt_count`；
+- 成功后进入 `delivered`；
+- 失败后按有限次数进入 `pending` retry；
+- 使用 capped exponential backoff；
+- 超过最大尝试次数进入 `dead_letter`；
+- 外部 Sender 通过依赖注入提供，当前不绑定 Webhook/MQ Provider；
+- PostgreSQL 保持 Durable Event Fact 唯一事实源。
+
+### 验收要求
+
+开发者本地执行：
+
+```powershell
+cd backend
+uv run pytest -q tests/unit/test_integration_event_contract.py tests/unit/test_integration_event_persistence.py tests/unit/test_integration_event_delivery.py
+uv run alembic upgrade head
+uv run alembic current
+uv run pytest -q
+```
+
+Migration 应从 `0040_integration_events` 升级到 `0041_integration_event_delivery_lease`。Real API/并发数据库验收尚待补充，不得仅凭单元测试标记为完成。
+
+## 6. 2.9-D Webhook Integration
+
+下一阶段：在现有 Webhook Trigger 基础上统一 endpoint 身份、签名、版本、幂等、回放和 delivery audit，不复制 Trigger Service。
+
+## 7. 2.9-E Runtime Integration
+
+将 Workflow / Agent / Scheduler 关键业务事实接入统一 Event Contract，同时保持既有 Runtime 状态机和 Execution Fact 语义。
+
+## 8. 开发边界
+
+- 不把 Redis、Kafka、MQ 作为 Durable Event Fact；
+- 不复制已有 Webhook / Trigger / Audit / Trace 实现；
+- 不修改已通过 Phase 2.8 B6 Gate 的 Delegation Runtime 主路径；
+- 不用 GitHub Actions 结果替代本地验收事实；
+- 涉及数据库必须先 Migration，再 Backend/Repository，再测试和 Real API。

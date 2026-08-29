@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -47,7 +46,7 @@ class IntegrationEventDeliveryService:
         self, tenant_id, owner: str, sender: Sender,
         lease_seconds: int = 60, max_attempts: int = 5,
     ) -> bool:
-        """领取并尝试投递一个事件；状态更新与 Claim 分别使用明确事务边界。
+        """领取并尝试投递一个事件；Claim 与发送结果更新使用独立事务边界。
 
         Args:
             tenant_id: 目标租户标识。
@@ -56,7 +55,7 @@ class IntegrationEventDeliveryService:
             lease_seconds: 事件租约秒数。
             max_attempts: 最大投递次数。
         Returns:
-            ``True`` 表示确实领取并处理了一个事件，``False`` 表示当前没有可领取事件。
+            ``True`` 表示领取并处理了一个事件，``False`` 表示当前没有可领取事件。
         """
         now = datetime.now(UTC).replace(tzinfo=None)
         async with SessionLocal() as db:
@@ -72,10 +71,15 @@ class IntegrationEventDeliveryService:
         except Exception as exc:  # noqa: BLE001
             retry_at = self.retry_at(now, attempt_count) if attempt_count < max_attempts else None
             async with SessionLocal() as db:
-                await self.repository.mark_failed(db, event_id, owner, datetime.now(UTC).replace(tzinfo=None), type(exc).__name__, str(exc), retry_at)
+                await self.repository.mark_failed(
+                    db, event_id, owner, datetime.now(UTC).replace(tzinfo=None),
+                    type(exc).__name__, str(exc), retry_at,
+                )
                 await db.commit()
         else:
             async with SessionLocal() as db:
-                await self.repository.mark_delivered(db, event_id, owner, datetime.now(UTC).replace(tzinfo=None))
+                await self.repository.mark_delivered(
+                    db, event_id, owner, datetime.now(UTC).replace(tzinfo=None)
+                )
                 await db.commit()
         return True
