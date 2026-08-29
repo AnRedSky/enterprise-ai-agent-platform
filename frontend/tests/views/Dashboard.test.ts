@@ -54,7 +54,25 @@ describe("DashboardOverview", () => {
     expect(wrapper.get('[data-testid="metric-failed"]').text()).toBe("2");
     expect(wrapper.text()).toContain("最近执行");
     expect(wrapper.text()).toContain("execution-001");
-    expect(wrapper.text()).toContain("Agent 管理");
+    expect(wrapper.text()).toContain("智能体管理");
+  });
+
+  it("uses Chinese wording for dashboard labels and quick entries", async () => {
+    listAgents.mockResolvedValue([]);
+    listTools.mockResolvedValue([]);
+    executions.mockResolvedValue({ data: { total: 0, items: [] } });
+    const wrapper = mount(Dashboard, { global });
+    await vi.waitFor(() => expect(executions).toHaveBeenCalledTimes(2));
+    const text = wrapper.text();
+    expect(text).toContain("企业级智能体平台");
+    expect(text).toContain("智能体");
+    expect(text).toContain("工具");
+    expect(text).toContain("运行记录");
+    expect(text).toContain("审计日志");
+    expect(text).not.toContain("ENTERPRISE AI AGENT PLATFORM");
+    expect(text).not.toContain("Published");
+    expect(text).not.toContain("Agent 管理");
+    expect(text).not.toContain("Tool 管理");
   });
 
   it("renders a clear error when dashboard data fails", async () => {
