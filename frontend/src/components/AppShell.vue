@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { clearSession, getRoles, getUserId } from "@/api/auth";
-import { Bell, Box, Connection, Document, Expand, Fold, FolderOpened, Grid, HelpFilled, House, Lightning, OfficeBuilding, Search, UserFilled } from "@element-plus/icons-vue";
+import { Bell, Box, Connection, Document, Expand, Fold, FolderOpened, Grid, HelpFilled, House, Lightning, OfficeBuilding, Search, UserFilled, DataAnalysis } from "@element-plus/icons-vue";
 import { ElAvatar, ElBreadcrumb, ElBreadcrumbItem, ElButton, ElContainer, ElDropdown, ElDropdownItem, ElDropdownMenu, ElHeader, ElIcon, ElMain, ElMenu, ElMenuItem, ElScrollbar, ElTag } from "element-plus";
 
 const route = useRoute();
@@ -21,6 +21,7 @@ const navigation = [
   ] },
   { section: "运行与治理", items: [
     { path: "/runtime", label: "运行中心", icon: Box, description: "Execution、Event 与 Trace" },
+    { path: "/runtime/operations", label: "运行运维", icon: DataAnalysis, description: "事件、投递、SLO 与死信" },
     { path: "/runtime/audit", label: "审计日志", icon: Document, description: "治理操作与执行审计" },
   ] },
   { section: "平台管理", items: [
@@ -29,7 +30,7 @@ const navigation = [
   ] },
 ];
 const titleMap: Record<string, string> = {
-  "/dashboard": "总览", "/agents": "智能体", "/tools": "工具", "/knowledge": "知识库", "/workflows": "工作流编排", "/workflows/triggers": "触发器", "/organizations": "组织与成员", "/runtime": "运行中心", "/runtime/audit": "审计日志", "/integrations": "集成中心",
+  "/dashboard": "总览", "/agents": "智能体", "/tools": "工具", "/knowledge": "知识库", "/workflows": "工作流编排", "/workflows/triggers": "触发器", "/organizations": "组织与成员", "/runtime": "运行中心", "/runtime/operations": "运行运维", "/runtime/audit": "审计日志", "/integrations": "集成中心",
 };
 const currentTitle = computed(() => {
   if (route.path.startsWith("/organizations/") && route.path.endsWith("/model-providers")) return "模型 Provider";
