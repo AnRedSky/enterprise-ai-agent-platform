@@ -19,6 +19,7 @@ from .contract import (
     usage_dimensions,
 )
 from .governance import RuntimeInvocationAttemptCallback, RuntimeModelGovernanceService, RuntimeProviderCandidate
+from .invocation import ModelProviderInvocationService
 from .provider import ModelProviderService
 from .routing import select_candidates
 
@@ -27,6 +28,7 @@ __all__ = [
     "CostUnit",
     "FallbackPolicy",
     "FallbackReason",
+    "ModelProviderInvocationService",
     "ModelProviderService",
     "PricingSource",
     "ProviderCandidate",
