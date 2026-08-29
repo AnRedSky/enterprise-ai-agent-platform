@@ -1,7 +1,7 @@
 """Phase 2.9-C Reliable Event Delivery 单元测试。"""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -36,6 +36,12 @@ class FakeSessionContext:
         return None
 
 
+def _session() -> MagicMock:
+    session = MagicMock()
+    session.commit = AsyncMock()
+    return session
+
+
 def _install_fake_sessions(monkeypatch: pytest.MonkeyPatch, *sessions: MagicMock) -> None:
     iterator = iter(sessions)
     monkeypatch.setattr(delivery, "SessionLocal", lambda: FakeSessionContext(next(iterator)))
@@ -43,7 +49,7 @@ def _install_fake_sessions(monkeypatch: pytest.MonkeyPatch, *sessions: MagicMock
 
 @pytest.mark.asyncio
 async def test_delivery_service_returns_false_when_no_event_is_claimable(monkeypatch: pytest.MonkeyPatch) -> None:
-    session = MagicMock()
+    session = _session()
     repository = MagicMock()
     repository.claim_next = AsyncMock(return_value=None)
     _install_fake_sessions(monkeypatch, session)
@@ -59,8 +65,8 @@ async def test_delivery_service_returns_false_when_no_event_is_claimable(monkeyp
 
 @pytest.mark.asyncio
 async def test_delivery_service_commits_claim_then_marks_delivered(monkeypatch: pytest.MonkeyPatch) -> None:
-    claim_session = MagicMock()
-    result_session = MagicMock()
+    claim_session = _session()
+    result_session = _session()
     event_id = uuid.uuid4()
     record = SimpleNamespace(id=event_id, attempt_count=1, payload={"event": "ok"})
     repository = MagicMock()
@@ -84,8 +90,8 @@ async def test_delivery_service_commits_claim_then_marks_delivered(monkeypatch: 
 
 @pytest.mark.asyncio
 async def test_delivery_service_marks_retry_after_sender_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    claim_session = MagicMock()
-    result_session = MagicMock()
+    claim_session = _session()
+    result_session = _session()
     record = SimpleNamespace(id=uuid.uuid4(), attempt_count=1, payload={"event": "retry"})
     repository = MagicMock()
     repository.claim_next = AsyncMock(return_value=record)
