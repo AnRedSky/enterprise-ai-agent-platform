@@ -21,6 +21,7 @@ from app.schemas.runtime import (
     ExecutionListResponse,
     ExecutionTimelineResponse,
     IntegrationEventListResponse,
+    IntegrationEventSummaryResponse,
     WorkflowTraceResponse,
 )
 from app.services.runtime_query import RuntimeQueryService
@@ -127,6 +128,8 @@ async def list_integration_events(
     subject: str | None = None,
     trace_id: str | None = None,
     request_id: str | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
     claims: dict = Depends(_runtime_claims),
     db: AsyncSession = Depends(get_db),
 ):
@@ -141,5 +144,34 @@ async def list_integration_events(
         subject=subject,
         trace_id=trace_id,
         request_id=request_id,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
     )
     return {"items": rows, "page": page, "page_size": page_size, "total": total}
+
+
+@router.get("/integration-events/summary", response_model=IntegrationEventSummaryResponse)
+async def integration_event_summary(
+    event_type: str | None = None,
+    source: str | None = None,
+    status: str | None = None,
+    subject: str | None = None,
+    trace_id: str | None = None,
+    request_id: str | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+    claims: dict = Depends(_runtime_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """返回当前租户 Integration Event 的状态与来源聚合摘要。"""
+    return await RuntimeQueryService(db).integration_event_summary(
+        _tenant_id(claims),
+        event_type=event_type,
+        source=source,
+        status=status,
+        subject=subject,
+        trace_id=trace_id,
+        request_id=request_id,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
+    )

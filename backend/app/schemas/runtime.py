@@ -125,3 +125,12 @@ class IntegrationEventItem(BaseModel):
 
 class IntegrationEventListResponse(PageMeta):
     items: list[IntegrationEventItem]
+
+
+class IntegrationEventSummaryResponse(BaseModel):
+    """当前租户 Integration Event 的运维聚合结果。"""
+
+    total: int
+    status_counts: dict[str, int]
+    source_counts: dict[str, int]
+    generated_at: datetime
