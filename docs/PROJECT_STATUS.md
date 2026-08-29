@@ -18,7 +18,7 @@
 - Worker shutdown AsyncEngine cancellation-safe disposal 已完成；
 - Phase 2.9-A Event Contract 已实现；
 - Phase 2.9-B Durable Event Persistence 已实现第一切片；
-- Phase 2.9-C Reliable Delivery 第一切片已实现；本轮补齐第二切片真实 PostgreSQL 验收入口与 fencing 返回值修复，等待开发者本地执行 Gate。
+- Phase 2.9-C Reliable Delivery 第一切片已实现；第二切片真实 PostgreSQL 验收测试已实现，Gate 的 marker 过滤问题已修复，等待开发者重新执行 Real Gate。
 
 ## 3. Phase 2.8 验收基线
 
@@ -40,7 +40,7 @@
 
 ### 2.9-C Reliable Delivery
 
-状态：**第一切片已实现；第二切片已实现 Real Gate 测试代码，等待本地真实 PostgreSQL 验收**。
+状态：**第一切片已实现；第二切片 Real Gate 已实现，最新本地 Gate 首次执行发现测试 marker 被默认配置过滤，现已修复 Gate 测试选择逻辑，等待开发者重新执行真实 PostgreSQL 验收**。
 
 当前包含：
 
@@ -55,9 +55,10 @@
 - 0041 Migration；
 - Delivery Service 使用正式 `app.infrastructure.db` 数据库入口；
 - 旧 Worker 失去租约后不能覆盖新 Worker 状态，并且 Delivery Service 正确透传 fencing 结果；
-- 真实 PostgreSQL Real Gate 自动生成并清理测试租户、事件和幂等键，不依赖后台 Scheduler。
+- 真实 PostgreSQL Real Gate 自动生成并清理测试租户、事件和幂等键，不依赖后台 Scheduler；
+- Real Gate 显式使用 `-m real_api`，避免全局 `addopts = -m 'not real_api'` 导致真实验收测试全部 deselect。
 
-本轮新增真实验收：
+本轮真实验收入口：
 
 ```text
 backend/tests/api_real/test_integration_event_delivery_postgres.py
@@ -65,8 +66,6 @@ backend/scripts/test/phase-2.9/01_reliable_delivery_postgres_gate.ps1
 ```
 
 真实 Gate 覆盖：并发 Claim、租约恢复、旧租约 fencing、tenant isolation、retry/dead-letter，以及定向 Delivery Unit Regression。
-
-本轮发现并修复的工程错误：Delivery Service 在 `mark_delivered()` / `mark_failed()` 因租约丢失返回 `False` 时原先仍固定返回 `True`，已记录于 `docs/04-errors/2026-08-29-phase-2-9-delivery-lease-result-semantics.md`。
 
 ### 当前验收状态
 
@@ -78,7 +77,13 @@ Backend default regression → 884 passed, 3 skipped, 52 deselected
 Alembic upgrade head → 成功
 ```
 
-这些结果保持为历史实际反馈。本轮新增 Real Gate 尚未由开发者本地执行，因此不得预填“通过”。
+最新 Gate 执行到真实 PostgreSQL 测试阶段时得到 `5 deselected`，根因是 pytest 默认 `addopts` 排除了 `real_api`。该测试选择问题已经在 `main` 修复，并新增错误记录：
+
+```text
+docs/04-errors/2026-08-29-phase-2-9-real-gate-marker-filter-bypass.md
+```
+
+因此，**2.9-C 第二切片当前仍不得标记为 Real Gate 通过**；必须以开发者本地修复后的重新执行结果为准。
 
 ## 5. 下一任务
 
@@ -110,7 +115,7 @@ Alembic upgrade head → 成功
         ↓
 2.9-B Durable Event Persistence              ✅ 第一切片 + Migration 本地验收
         ↓
-2.9-C Reliable Delivery                     🔄 第二切片 Real Gate 待本地执行
+2.9-C Reliable Delivery                     🔄 Gate marker 修复，待本地重新验收
         ↓
 2.9-D Webhook Integration                   ⏳
         ↓
