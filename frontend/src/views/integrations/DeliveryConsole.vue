@@ -15,10 +15,14 @@ const statusOptions = [
   { value: "pending", label: "待投递" }, { value: "delivering", label: "投递中" }, { value: "delivered", label: "已送达" },
   { value: "retrying", label: "重试中" }, { value: "dead_letter", label: "进入死信" }, { value: "failed", label: "失败" },
 ];
+const actionLabels: Record<string, string> = { created: "已创建", delivery_created: "已创建投递记录", delivering: "开始投递", delivered: "投递成功", failed: "投递失败", retrying: "进入重试", dead_letter: "进入死信", replayed: "已重新投递" };
+const errorLabels: Record<string, string> = { HTTP_ERROR: "外部请求失败", TIMEOUT: "请求超时", CONNECTION_ERROR: "连接失败", AUTH_ERROR: "认证失败", RATE_LIMITED: "请求过于频繁" };
 const statusSummary = computed(() => ({ total: deliveries.value.length, delivered: deliveries.value.filter((item) => item.status === "delivered").length, retrying: deliveries.value.filter((item) => item.status === "retrying").length, failed: deliveries.value.filter((item) => ["failed", "dead_letter"].includes(item.status)).length }));
-function statusLabel(value: string) { return statusOptions.find((item) => item.value === value)?.label || value; }
+function statusLabel(value: string) { return statusOptions.find((item) => item.value === value)?.label || `未知状态（${value}）`; }
 function statusType(value: string) { if (value === "delivered") return "success"; if (["failed", "dead_letter"].includes(value)) return "danger"; if (["retrying", "delivering"].includes(value)) return "warning"; return "info"; }
 function statusIcon(value: string) { if (value === "delivered") return CircleCheck; if (["failed", "dead_letter"].includes(value)) return CircleClose; if (value === "retrying") return RefreshRight; return Clock; }
+function actionLabel(value: unknown) { if (typeof value !== "string" || !value) return "未知操作"; const direct = actionLabels[value]; return `${direct || "未知操作"}（${value}）`; }
+function errorLabel(code: unknown, message: unknown) { if (typeof code === "string" && code) return `${errorLabels[code] || "投递失败"}（${code}）`; return typeof message === "string" && message ? "投递失败，请查看错误代码" : "—"; }
 function formatTime(value: string | null) { if (!value) return "—"; return new Date(value).toLocaleString("zh-CN", { hour12: false }); }
 function isWebhookDelivery(value: unknown): value is WebhookDelivery { if (!value || typeof value !== "object") return false; const row = value as Partial<WebhookDelivery>; return typeof row.id === "string" && typeof row.status === "string" && typeof row.attempt_count === "number"; }
 function openAuditRow(row: unknown) { if (!isWebhookDelivery(row)) { ElMessage.error("当前投递记录无效，无法查看审计记录"); return; } void openAudit(row); }
@@ -41,13 +45,13 @@ onMounted(loadDeliveries);
       <el-table-column label="投递编号 / 事件编号" min-width="270"><template #default="scope"><div class="id-cell"><strong>{{ scope.row.id }}</strong><span>{{ scope.row.integration_event_id }}</span></div></template></el-table-column>
       <el-table-column prop="attempt_count" label="尝试次数" width="100" />
       <el-table-column label="HTTP 状态" width="105"><template #default="scope"><span :class="scope.row.response_status_code && scope.row.response_status_code >= 400 ? 'http-error' : ''">{{ scope.row.response_status_code ?? "—" }}</span></template></el-table-column>
-      <el-table-column label="最近错误" min-width="220" show-overflow-tooltip><template #default="scope"><span class="error-cell">{{ scope.row.last_error_code || scope.row.last_error_message || "—" }}</span></template></el-table-column>
+      <el-table-column label="最近错误" min-width="220" show-overflow-tooltip><template #default="scope"><span class="error-cell">{{ errorLabel(scope.row.last_error_code, scope.row.last_error_message) }}</span></template></el-table-column>
       <el-table-column label="更新时间" width="175"><template #default="scope">{{ formatTime(scope.row.updated_at) }}</template></el-table-column>
       <el-table-column label="操作" width="190" fixed="right"><template #default="scope"><el-button link type="primary" :icon="View" @click="openAuditRow(scope.row)">查看审计记录</el-button><el-button v-if="['failed', 'dead_letter'].includes(scope.row.status)" link type="warning" :icon="RefreshRight" @click="replayRow(scope.row)">重新投递</el-button></template></el-table-column>
     </el-table>
     <el-dialog v-model="auditDialog" title="投递审计记录" width="760px">
       <div v-if="selectedDelivery" class="audit-header"><div><span>投递编号</span><strong>{{ selectedDelivery.id }}</strong></div><div><span>状态</span><el-tag :type="statusType(selectedDelivery.status)">{{ statusLabel(selectedDelivery.status) }}</el-tag></div><div><span>尝试次数</span><strong>{{ selectedDelivery.attempt_count }}</strong></div></div>
-      <el-timeline v-loading="auditLoading" class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ item.action }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ item.error_code || "错误" }}：{{ item.error_message || "—" }}</p></div></el-timeline-item><el-empty v-if="!auditLoading && !auditItems.length" description="暂无审计记录" /></el-timeline>
+      <el-timeline v-loading="auditLoading" class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ actionLabel(item.action) }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ errorLabel(item.error_code, item.error_message) }}</p></div></el-timeline-item><el-empty v-if="!auditLoading && !auditItems.length" description="暂无审计记录" /></el-timeline>
     </el-dialog>
   </section>
 </template>
