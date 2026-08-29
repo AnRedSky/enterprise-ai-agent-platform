@@ -1,6 +1,6 @@
 """Runtime Integration Event 运维聚合服务。
 
-职责：在 tenant scope 内计算事件、Delivery、死信和 SLO 指标，并提供死信分页、维度指标与告警查询。
+职责：在 tenant scope 内计算事件、Delivery、Notification、死信和 SLO 指标，并提供死信分页、维度指标与告警查询。
 边界：只读查询；Replay、状态变更和网络投递必须继续通过正式领域 Repository / Worker 完成。
 """
 
@@ -12,6 +12,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.integration_event import IntegrationEventRecord
+from app.models.runtime_operations import RuntimeNotificationDelivery, RuntimeNotificationGroup
+from app.models.runtime_operations import RuntimeAlertInstance, RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry
 from app.models.webhook_delivery import WebhookDelivery
 from app.models.webhook_integration import WebhookDestination
 
@@ -47,8 +49,26 @@ class RuntimeOperationsService:
             "error_budget_percent": round(max(0.0, allowed_error_percent - observed_error_percent), 4),
         }
 
+    async def _notification_summary(self, tenant_id: UUID, since: datetime) -> dict[str, Any]:
+        rows = (await self.db.execute(
+            select(RuntimeNotificationDelivery.status, func.count())
+            .where(RuntimeNotificationDelivery.tenant_id == tenant_id, RuntimeNotificationDelivery.created_at >= since)
+            .group_by(RuntimeNotificationDelivery.status)
+        )).all()
+        status_counts = {status: count for status, count in rows}
+        delivered = status_counts.get("delivered", 0)
+        terminal = delivered + status_counts.get("failed", 0) + status_counts.get("dead_letter", 0)
+        slo = self._slo(delivered, terminal)
+        return {
+            "total": sum(status_counts.values()),
+            "status_counts": status_counts,
+            "retry_count": status_counts.get("retrying", 0),
+            "dead_letter_count": status_counts.get("dead_letter", 0),
+            "slo": slo,
+        }
+
     async def overview(self, tenant_id: UUID, *, window_hours: int = 24) -> dict[str, Any]:
-        """计算当前租户的事件、Delivery、死信与 SLO 运维摘要。"""
+        """计算当前租户的事件、Delivery、Notification、死信与双层 SLO 运维摘要。"""
         window_hours, since = self._since(window_hours)
         event_base = select(IntegrationEventRecord.status, func.count()).where(
             IntegrationEventRecord.tenant_id == tenant_id, IntegrationEventRecord.created_at >= since,
@@ -75,13 +95,58 @@ class RuntimeOperationsService:
         ))
         slo = self._slo(delivered, terminal)
         slo["p95_delivery_latency_ms"] = round(float(latency_ms), 2) if latency_ms is not None else None
+        notification = await self._notification_summary(tenant_id, since)
         return {
             "window_hours": window_hours, "since": since, "generated_at": datetime.now(UTC),
             "events": {"total": sum(event_counts.values()), "status_counts": event_counts},
             "deliveries": {"total": total_deliveries, "status_counts": delivery_counts,
                            "retry_count": retry_count, "dead_letter_count": delivery_counts.get("dead_letter", 0)},
             "slo": slo,
+            "notifications": notification,
         }
+
+    async def notification_metrics(self, tenant_id: UUID, *, window_hours: int = 24) -> dict[str, Any]:
+        """聚合 Alert -> Notification -> Provider -> Destination 的租户级运行指标。"""
+        window_hours, since = self._since(window_hours)
+        rows = (await self.db.execute(
+            select(
+                RuntimeNotificationDelivery.provider,
+                RuntimeNotificationDelivery.transition,
+                RuntimeNotificationDelivery.status,
+                WebhookDestination.id,
+                WebhookDestination.name,
+                func.count(),
+            ).join(
+                WebhookDestination, WebhookDestination.id == RuntimeNotificationDelivery.webhook_delivery_id,
+                isouter=True,
+            ).where(
+                RuntimeNotificationDelivery.tenant_id == tenant_id,
+                RuntimeNotificationDelivery.created_at >= since,
+            ).group_by(
+                RuntimeNotificationDelivery.provider,
+                RuntimeNotificationDelivery.transition,
+                RuntimeNotificationDelivery.status,
+                WebhookDestination.id,
+                WebhookDestination.name,
+            )
+        )).all()
+        buckets: dict[tuple[str, str, str | None, UUID | None, str | None], int] = {}
+        for provider, transition, status, destination_id, destination_name, count in rows:
+            key = (provider or "unknown", transition, status, destination_id, destination_name)
+            buckets[key] = count
+        items = [
+            {
+                "provider": provider,
+                "transition": transition,
+                "status": status,
+                "destination_id": destination_id,
+                "destination_name": destination_name,
+                "count": count,
+            }
+            for (provider, transition, status, destination_id, destination_name), count in buckets.items()
+        ]
+        items.sort(key=lambda item: (item["provider"], item["transition"], item["status"] or "", str(item["destination_id"])))
+        return {"window_hours": window_hours, "since": since, "generated_at": datetime.now(UTC), "items": items}
 
     async def dimension_metrics(self, tenant_id: UUID, *, window_hours: int = 24) -> dict[str, Any]:
         """按 Event Type、Destination 和当前 HTTP Provider 聚合 Durable Delivery facts。"""
@@ -132,14 +197,18 @@ class RuntimeOperationsService:
         """根据 Durable facts 评估固定、可解释的 Runtime 运维告警。"""
         overview = await self.overview(tenant_id, window_hours=window_hours)
         slo = overview["slo"]
+        notifications = overview["notifications"]
         deliveries = overview["deliveries"]
         alerts: list[dict[str, Any]] = []
         success = float(slo["delivery_success_percent"])
         if success < self.SLO_TARGET_PERCENT:
             alerts.append({"code": "delivery_slo_breach", "severity": "critical", "message": "Delivery success rate is below the 99% SLO."})
-        if deliveries["dead_letter_count"] > 0:
+        notification_success = float(notifications["slo"]["delivery_success_percent"])
+        if notification_success < self.SLO_TARGET_PERCENT:
+            alerts.append({"code": "notification_slo_breach", "severity": "critical", "message": "Notification delivery success rate is below the 99% SLO."})
+        if deliveries["dead_letter_count"] > 0 or notifications["dead_letter_count"] > 0:
             alerts.append({"code": "dead_letter_present", "severity": "warning", "message": "One or more deliveries are in dead letter state."})
-        if deliveries["retry_count"] > 0:
+        if deliveries["retry_count"] > 0 or notifications["retry_count"] > 0:
             alerts.append({"code": "delivery_retry_present", "severity": "info", "message": "One or more deliveries required retry."})
         return {"window_hours": overview["window_hours"], "generated_at": datetime.now(UTC), "items": alerts}
 
