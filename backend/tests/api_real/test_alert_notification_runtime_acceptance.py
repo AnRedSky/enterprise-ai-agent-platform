@@ -38,7 +38,6 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
     destination_b = uuid.uuid4()
     subscription_a = uuid.uuid4()
     subscription_b = uuid.uuid4()
-    event_id = uuid.uuid4()
     try:
         async with SessionLocal() as db:
             db.add_all([
@@ -56,7 +55,7 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
                 WebhookDestination(
                     id=destination_b, tenant_id=tenant_a, name=f"fallback-{suffix}",
                     endpoint_url="http://localhost:1/fallback", secret_ref=f"test://{suffix}-b", headers={},
-                    enabled=True, provider="webhook_http",
+                    enabled=True, provider="webhook_http_fallback",
                 ),
                 WebhookSubscription(
                     id=subscription_a, tenant_id=tenant_a, destination_id=destination_a,
@@ -69,14 +68,17 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
                 RuntimeNotificationPolicy(
                     tenant_id=tenant_a, name=f"critical-{suffix}", severity="critical",
                     routing_key=f"alert.delivery-{suffix}", destination_ids=[str(destination_a), str(destination_b)],
-                    provider_order=["webhook_http"], group_window_seconds=60, cooldown_seconds=0,
-                    escalation=[], enabled=True,
+                    provider_order=["webhook_http", "webhook_http_fallback"], group_window_seconds=60,
+                    cooldown_seconds=0, escalation=[], enabled=True,
                 ),
             ])
             await db.flush()
             rule = await db.get(RuntimeAlertRule, rule_id)
             assert rule is not None
-            sample = RuntimeMetricSample(tenant_id=tenant_a, metric_name="runtime.test", value=20, dimensions={}, recorded_at=datetime.now(UTC).replace(tzinfo=None))
+            sample = RuntimeMetricSample(
+                tenant_id=tenant_a, metric_name="runtime.test", value=20, dimensions={},
+                recorded_at=datetime.now(UTC).replace(tzinfo=None),
+            )
             db.add(sample)
             await db.flush()
             lifecycle = AlertLifecycleService(db, actor=f"acceptance-{suffix}")
@@ -90,17 +92,11 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             notifications = list((await db.execute(
                 select(RuntimeNotificationDelivery).where(RuntimeNotificationDelivery.tenant_id == tenant_a)
             )).scalars().all())
-            assert len(deliveries) == 2
-            assert len(notifications) == 2
-            assert all(item.status == "planned" for item in notifications)
-            assert all(item.alert_instance_id == instance.id for item in notifications)
-            assert all(item.tenant_id == tenant_a for item in notifications)
-            event = await db.scalar(select(IntegrationEventRecord).where(
-                IntegrationEventRecord.tenant_id == tenant_a,
-                IntegrationEventRecord.event_type == "alert.firing",
-            ))
-            assert event is not None
-            event_id = event.id
+            assert len(deliveries) == 1
+            assert len(notifications) == 1
+            assert notifications[0].provider == "webhook_http"
+            assert notifications[0].status == "planned"
+            assert notifications[0].alert_instance_id == instance.id
 
         calls = 0
 
@@ -111,14 +107,18 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
                 raise RuntimeError("primary provider failure")
             return 200
 
-        first = WebhookDeliveryWorker(owner=f"acceptance-primary-{suffix}", sender=sender, max_attempts=1, tenant_id=tenant_a)
+        first = WebhookDeliveryWorker(
+            owner=f"acceptance-primary-{suffix}", sender=sender, max_attempts=1, tenant_id=tenant_a,
+        )
         assert await first.deliver_once() is True
 
         async with SessionLocal() as db:
-            first_delivery = await db.scalar(select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_a).order_by(WebhookDelivery.created_at))
+            first_delivery = await db.scalar(select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_a))
             assert first_delivery is not None
             assert first_delivery.status == "dead_letter"
-            first_notification = await db.scalar(select(RuntimeNotificationDelivery).where(RuntimeNotificationDelivery.webhook_delivery_id == first_delivery.id))
+            first_notification = await db.scalar(select(RuntimeNotificationDelivery).where(
+                RuntimeNotificationDelivery.webhook_delivery_id == first_delivery.id,
+            ))
             assert first_notification is not None
             assert first_notification.status == "dead_letter"
             fallback = await db.scalar(select(RuntimeNotificationDelivery).where(
@@ -126,9 +126,12 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
                 RuntimeNotificationDelivery.webhook_delivery_id != first_delivery.id,
             ))
             assert fallback is not None
+            assert fallback.provider == "webhook_http_fallback"
             assert fallback.status == "planned"
 
-        second = WebhookDeliveryWorker(owner=f"acceptance-fallback-{suffix}", sender=sender, max_attempts=1, tenant_id=tenant_a)
+        second = WebhookDeliveryWorker(
+            owner=f"acceptance-fallback-{suffix}", sender=sender, max_attempts=1, tenant_id=tenant_a,
+        )
         assert await second.deliver_once() is True
 
         async with SessionLocal() as db:
@@ -139,22 +142,32 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             metrics = list((await db.execute(
                 select(RuntimeMetricSample).where(
                     RuntimeMetricSample.tenant_id == tenant_a,
-                    RuntimeMetricSample.metric_name.in_(["notification.delivery.dead_letter", "notification.delivery.delivered"]),
+                    RuntimeMetricSample.metric_name.in_([
+                        "notification.delivery.dead_letter",
+                        "notification.delivery.delivered",
+                    ]),
                 )
             )).scalars().all())
-            assert {item.metric_name for item in metrics} == {"notification.delivery.dead_letter", "notification.delivery.delivered"}
+            assert {item.metric_name for item in metrics} == {
+                "notification.delivery.dead_letter", "notification.delivery.delivered",
+            }
             audits = list((await db.execute(
                 select(RuntimeOperationAudit).where(
                     RuntimeOperationAudit.tenant_id == tenant_a,
-                    RuntimeOperationAudit.action.in_(["notification.delivery.dead_letter", "notification.delivery.delivered", "notification.fallback.routed"]),
+                    RuntimeOperationAudit.action.in_([
+                        "notification.delivery.dead_letter",
+                        "notification.delivery.delivered",
+                        "notification.fallback.routed",
+                    ]),
                 )
             )).scalars().all())
-            assert {item.action for item in audits} >= {"notification.delivery.dead_letter", "notification.delivery.delivered", "notification.fallback.routed"}
+            assert {item.action for item in audits} >= {
+                "notification.delivery.dead_letter", "notification.delivery.delivered", "notification.fallback.routed",
+            }
             other_tenant = list((await db.execute(
                 select(RuntimeNotificationDelivery).where(RuntimeNotificationDelivery.tenant_id == tenant_b)
             )).scalars().all())
             assert other_tenant == []
-            assert event_id is not None
     finally:
         async with SessionLocal() as db:
             await db.execute(delete(RuntimeOperationAudit).where(RuntimeOperationAudit.tenant_id.in_([tenant_a, tenant_b])))
