@@ -7,7 +7,6 @@ in-process so the acceptance verifies the real PostgreSQL lease/state path and r
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -93,7 +92,13 @@ async def test_webhook_delivery_real_http_postgres_replay_and_audit() -> None:
             db.add_all([event, destination, subscription, delivery])
             await db.commit()
 
-        worker = WebhookDeliveryWorker(sender=provider.send, owner=f"acceptance-{suffix}", lease_seconds=30, max_attempts=3)
+        worker = WebhookDeliveryWorker(
+            sender=provider.send,
+            owner=f"acceptance-{suffix}",
+            lease_seconds=30,
+            max_attempts=3,
+            tenant_id=tenant_id,
+        )
         assert await worker.deliver_once() is True
 
         async with SessionLocal() as db:
