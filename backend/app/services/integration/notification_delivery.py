@@ -1,13 +1,10 @@
-"""Idempotent alert notification -> durable delivery routing.
-
-This layer provides a stable notification identity and routing boundary. It does not
-perform network I/O; WebhookDeliveryWorker remains the only delivery executor.
-"""
+"""Idempotent alert notification -> durable delivery routing."""
 
 from __future__ import annotations
 
 import hashlib
 import uuid
+from typing import Sequence
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -29,13 +26,24 @@ class AlertNotificationDeliveryService:
 
     @staticmethod
     def notification_key(event: IntegrationEventRecord, subscription: WebhookSubscription) -> str:
-        """Stable identity for one alert transition and destination."""
         material = f"{event.tenant_id}:{event.event_type}:{event.id}:{subscription.destination_id}"
         return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
-    async def dispatch_event(self, event: IntegrationEventRecord) -> list[WebhookDelivery]:
-        """Route exactly to matching destinations and atomically deduplicate delivery facts."""
-        result = await self.db.execute(
+    async def dispatch_event(
+        self,
+        event: IntegrationEventRecord,
+        *,
+        destination_ids: Sequence[uuid.UUID] | None = None,
+        provider_order: Sequence[str] | None = None,
+        fallback: bool = False,
+    ) -> list[WebhookDelivery]:
+        """Route to policy-selected destinations with deterministic provider ordering.
+
+        When ``fallback`` is true only the first enabled destination for the first
+        available provider is materialized. Callers can invoke this again after a
+        terminal delivery failure to advance to the next provider tier.
+        """
+        query = (
             select(WebhookSubscription)
             .join(WebhookDestination, WebhookDestination.id == WebhookSubscription.destination_id)
             .where(
@@ -46,12 +54,41 @@ class AlertNotificationDeliveryService:
                 WebhookDestination.enabled.is_(True),
                 WebhookDestination.provider.in_(self.SUPPORTED_PROVIDERS),
             )
-            .order_by(WebhookSubscription.priority, WebhookSubscription.id)
         )
+        if destination_ids:
+            query = query.where(WebhookDestination.id.in_(list(destination_ids)))
+        result = await self.db.execute(query)
         subscriptions = [
             subscription for subscription in result.scalars().all()
             if NotificationRoutingService._matches_filter(event.payload, subscription.filter_config)
         ]
+
+        if provider_order:
+            order = {provider: index for index, provider in enumerate(provider_order)}
+            destinations = {
+                subscription.destination_id: subscription
+                for subscription in subscriptions
+            }
+            destination_rows = await self.db.execute(
+                select(WebhookDestination).where(WebhookDestination.id.in_(list(destinations)))
+            )
+            provider_by_destination = {row.id: row.provider for row in destination_rows.scalars().all()}
+            subscriptions.sort(key=lambda item: (order.get(provider_by_destination.get(item.destination_id, ""), len(order)), item.priority, item.id))
+
+        if fallback and subscriptions:
+            first_provider = None
+            selected = []
+            for subscription in subscriptions:
+                destination_provider = await self.db.scalar(
+                    select(WebhookDestination.provider).where(WebhookDestination.id == subscription.destination_id)
+                )
+                if first_provider is None:
+                    first_provider = destination_provider
+                if destination_provider == first_provider:
+                    selected.append(subscription)
+                    break
+            subscriptions = selected
+
         if not subscriptions:
             return []
 
@@ -67,22 +104,19 @@ class AlertNotificationDeliveryService:
             }
             for subscription in subscriptions
         ]
-        statement = (
-            pg_insert(WebhookDelivery)
-            .values(values)
-            .on_conflict_do_nothing(constraint="uq_webhook_delivery_event_destination")
+        await self.db.execute(
+            pg_insert(WebhookDelivery).values(values).on_conflict_do_nothing(
+                constraint="uq_webhook_delivery_event_destination"
+            )
         )
-        await self.db.execute(statement)
         await self.db.flush()
-
-        deliveries = list((await self.db.execute(
+        return list((await self.db.execute(
             select(WebhookDelivery).where(
                 WebhookDelivery.tenant_id == event.tenant_id,
                 WebhookDelivery.integration_event_id == event.id,
                 WebhookDelivery.destination_id.in_([s.destination_id for s in subscriptions]),
             ).order_by(WebhookDelivery.created_at, WebhookDelivery.id)
         )).scalars().all())
-        return deliveries
 
 
 __all__ = ["AlertNotificationDeliveryService"]
