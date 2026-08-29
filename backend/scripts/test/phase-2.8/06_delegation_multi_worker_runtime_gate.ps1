@@ -9,6 +9,25 @@ function Assert-ExitCode([string]$Message) {
     if ($LASTEXITCODE -ne 0) { throw $Message }
 }
 
+function Assert-NoExternalWorkerProcesses {
+    if ($IsWindows) {
+        $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+            $_.CommandLine -and (
+                $_.CommandLine -match "(^|[\\/ ])run_worker\.py([ \"']|$)" -or
+                $_.CommandLine -match "(^|[\\/ ])run_scheduler\.py([ \"']|$)"
+            )
+        })
+    } elseif (Get-Command pgrep -ErrorAction SilentlyContinue) {
+        $processes = @(pgrep -af "run_worker\.py|run_scheduler\.py" 2>$null)
+    } else {
+        return
+    }
+
+    if ($processes.Count -gt 0) {
+        throw "External Worker/Scheduler process detected. B6 Real API acceptance must run without background Worker/Scheduler consumers because they can legitimately claim the test-created Delegation before the explicit acceptance Workers. Stop the documented background processes and rerun the gate; the gate never starts or stops services."
+    }
+}
+
 function Assert-PrerequisiteServices {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         throw "Docker is required to run the Phase 2.8 multi-worker runtime gate."
@@ -57,6 +76,7 @@ try {
 
     Write-Host "[0/4] Local prerequisite service verification (no service startup)"
     Assert-PrerequisiteServices
+    Assert-NoExternalWorkerProcesses
 
     Write-Host "[1/4] Delegation Claim + Worker dispatch Unit/Contract"
     uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py tests/unit/test_agent_delegation_lifecycle.py tests/unit/test_agent_delegation_timeout.py tests/unit/test_delegation_worker_dispatch.py tests/unit/test_workflow_worker_entrypoint.py tests/unit/test_worker_entrypoint.py tests/unit/test_frontier_lease_terminalization.py tests/unit/test_execution_frontier_terminalization.py
