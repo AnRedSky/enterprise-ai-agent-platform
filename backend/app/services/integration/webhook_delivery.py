@@ -1,6 +1,7 @@
 """Webhook Delivery Worker orchestration.
 
-职责：领取 Webhook Delivery Fact、解析目标配置、执行 Provider 投递并完成 lease/retry 状态机。
+职责：领取 Webhook Delivery Fact、解析目标配置、执行 Provider 投递并完成 lease/retry 状态机，
+同时把结果同步回 Alert Notification Runtime。
 边界：不创建调度计划；不管理 Destination/Subscription；不直接暴露 HTTP API。
 """
 
@@ -14,6 +15,7 @@ from typing import Any
 
 from app.infrastructure.db import SessionLocal
 from app.models.webhook_delivery import WebhookDelivery
+from app.services.integration.alert_lifecycle import AlertLifecycleService
 from app.services.integration.webhook_delivery_repository import WebhookDeliveryRepository
 from app.services.integration.webhook_provider import WebhookDeliveryHTTPError
 
@@ -57,8 +59,41 @@ class WebhookDeliveryWorker:
             raise ValueError("attempt_count、base_seconds、max_seconds 必须大于 0")
         return now + timedelta(seconds=min(max_seconds, base_seconds * (2 ** (attempt_count - 1))))
 
+    @staticmethod
+    def _notification_status(delivery: WebhookDelivery, *, success: bool | None = None) -> str:
+        """Translate durable webhook state into notification lifecycle semantics."""
+        if success is True:
+            return "delivered"
+        if delivery.status == "dead_letter":
+            return "dead_letter"
+        if delivery.status in {"pending", "running"}:
+            return "retrying"
+        if delivery.status == "delivered":
+            return "delivered"
+        return "failed"
+
+    async def _record_notification_outcome(
+        self,
+        delivery_id: uuid.UUID,
+        status: str,
+        *,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Persist notification outcome in its own transaction so Worker state is authoritative."""
+        async with SessionLocal() as db:
+            lifecycle = AlertLifecycleService(db, actor=self.owner)
+            await lifecycle.record_delivery_outcome(
+                delivery_id,
+                status=status,
+                error_code=error_code,
+                error_message=error_message,
+                now=datetime.now(UTC),
+            )
+            await db.commit()
+
     async def deliver_once(self) -> bool:
-        """领取并投递一个 Delivery Fact；失败进入 retry/dead-letter 并留下审计事实。"""
+        """领取并投递一个 Delivery Fact；同步 Notification Runtime 的结果。"""
         if self.sender is None:
             raise RuntimeError("WebhookDeliveryWorker 未配置 sender")
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -84,19 +119,32 @@ class WebhookDeliveryWorker:
         except Exception as exc:  # noqa: BLE001
             retry_at = self.retry_at(now, attempt_count) if attempt_count < self.max_attempts else None
             response_status_code = exc.status_code if isinstance(exc, WebhookDeliveryHTTPError) else None
+            error_code = type(exc).__name__
+            error_message = str(exc)
             async with SessionLocal() as db:
                 updated = await self.repository.mark_failed(
                     db, delivery_id, self.owner, datetime.now(UTC).replace(tzinfo=None),
-                    type(exc).__name__, str(exc), retry_at, response_status_code,
+                    error_code, error_message, retry_at, response_status_code,
                 )
+                delivery_state = await self.repository.get(db, record.tenant_id, delivery_id)
                 await db.commit()
+            if updated and delivery_state is not None:
+                await self._record_notification_outcome(
+                    delivery_id,
+                    self._notification_status(delivery_state),
+                    error_code=error_code,
+                    error_message=error_message,
+                )
             return updated
 
         async with SessionLocal() as db:
             updated = await self.repository.mark_delivered(
                 db, delivery_id, self.owner, datetime.now(UTC).replace(tzinfo=None), status_code
             )
+            delivery_state = await self.repository.get(db, record.tenant_id, delivery_id)
             await db.commit()
+        if updated and delivery_state is not None:
+            await self._record_notification_outcome(delivery_id, "delivered")
         return updated
 
     def stop(self) -> None:
