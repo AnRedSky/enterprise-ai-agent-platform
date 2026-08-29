@@ -12,7 +12,7 @@ import OrganizationDetail from "../../src/views/organizations/detail.vue";
 const global = {
   stubs: {
     "el-button": { template: "<button @click=\"$emit('click')\"><slot/></button>" }, "el-card": { template: "<div><slot/><slot name=\"header\"/></div>" },
-    "el-alert": { template: "<div><slot/></div>" }, "el-table": { template: "<div><slot/></div>" }, "el-table-column": { template: "<div/>" },
+    "el-alert": { template: "<div><slot/></div>" }, "el-table": { template: "<div><slot /></div>" }, "el-table-column": { template: "<div/>" },
     "el-tag": { template: "<span><slot/></span>" }, "el-empty": { template: "<div>empty</div>" }, "el-dialog": { template: "<div><slot/><slot name=\"footer\"/></div>" },
     "el-form": { template: "<form><slot/></form>" }, "el-form-item": { template: "<div><slot/></div>" }, "el-input": { template: "<input/>" },
     "el-select": { template: "<select><slot/></select>" }, "el-option": { template: "<option><slot/></option>" },
@@ -49,11 +49,29 @@ describe("OrganizationDetail management UI", () => {
     expect(text).toContain("返回组织列表");
     expect(text).toContain("模型提供方 / 模型配置");
     expect(text).toContain("添加成员");
-    expect(text).toContain("User ID");
+    expect(text).toContain("用户 ID（User ID）");
     expect(text).not.toContain("Organizations");
     expect(text).not.toContain("Organization");
     expect(text).not.toContain("Admin");
     expect(text).not.toContain("Member");
+  });
+
+  it("maps organization and membership status and roles to Chinese", async () => {
+    const wrapper = mount(OrganizationDetail, { global });
+    await vi.waitFor(() => expect(api.listMembers).toHaveBeenCalled());
+    expect((wrapper.vm as any).statusLabel("active")).toBe("已启用（active）");
+    expect((wrapper.vm as any).statusLabel("suspended")).toBe("已暂停（suspended）");
+    expect((wrapper.vm as any).statusLabel("unknown_status")).toBe("未知状态（unknown_status）");
+    expect((wrapper.vm as any).roleLabel("owner")).toBe("所有者（owner）");
+    expect((wrapper.vm as any).roleLabel("admin")).toBe("管理员（admin）");
+    expect((wrapper.vm as any).roleLabel("member")).toBe("成员（member）");
+  });
+
+  it("does not expose raw backend error text", async () => {
+    api.getOrganization.mockRejectedValue(new Error("500 Internal Server Error"));
+    const wrapper = mount(OrganizationDetail, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("组织详情加载失败，请稍后重试"));
+    expect(wrapper.text()).not.toContain("500 Internal Server Error");
   });
 
   it("uses the dedicated owner transfer contract", async () => {
