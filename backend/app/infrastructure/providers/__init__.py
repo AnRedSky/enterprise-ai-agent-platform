@@ -1,6 +1,6 @@
 """外部 Provider 技术适配包。
 
-模块职责：集中承载模型、Embedding 与向量后端的具体技术适配。
+模块职责：集中承载模型、Embedding、向量后端与企业集成 HTTP Provider 的具体技术适配。
 边界：不放领域业务规则；同一外部能力只保留一个正式技术实现，Service 只依赖稳定 Contract。
 关键外部依赖：各具体 Provider 适配及其第三方 SDK/HTTP 客户端。
 """
@@ -19,6 +19,7 @@ from .vector_retrieval import (
     VectorRetrievalProviderError,
     VectorSearchResult,
 )
+from .webhook import WebhookProvider, WebhookRequest
 
 __all__ = [
     "EmbeddingProvider",
@@ -37,4 +38,6 @@ __all__ = [
     "VectorRetrievalProvider",
     "VectorRetrievalProviderError",
     "VectorSearchResult",
+    "WebhookProvider",
+    "WebhookRequest",
 ]

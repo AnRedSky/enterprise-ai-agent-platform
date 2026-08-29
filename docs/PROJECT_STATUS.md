@@ -1,99 +1,78 @@
 # 项目状态
 
 ## 1. 当前基线
-
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.9 Enterprise Integration / Event Infrastructure 开发中**
-- 当前任务：**2.9-C Reliable Delivery 第二实现切片：真实 PostgreSQL 并发验收**
-- 下一任务：**2.9-D Webhook Integration**
+- 当前任务：**2.9-D Webhook Integration 第一实现切片**
+- 下一任务：**2.9-D Webhook destination/subscription 持久化与可靠投递编排**
 
 开发严格基于远端 `main`，不创建功能分支。
 
 ## 2. 已完成能力
-
 - Phase 2.7 Advanced Workflow 主线生产能力完成；
 - Durable Workflow / Resume / Frontier / Scheduler 基础设施完成；
 - Phase 2.8 Delegation Contract、Durable Entity、Claim、Worker Bridge、generation fencing、timeout/cancel、Audit/Trace、B6 multi-worker Runtime 已完成并通过本地 Real Gate；
 - Worker shutdown AsyncEngine cancellation-safe disposal 已完成；
 - Phase 2.9-A Event Contract 已实现；
-- Phase 2.9-B Durable Event Persistence 已实现第一切片；
-- Phase 2.9-C Reliable Delivery 第一切片已实现；第二切片真实 PostgreSQL 验收测试已实现，Gate 的 marker 过滤问题已修复，等待开发者重新执行 Real Gate。
+- Phase 2.9-B Durable Event Persistence 已实现；
+- Phase 2.9-C Reliable Delivery 已通过真实 PostgreSQL Gate；
+- Phase 2.9-D Webhook Provider 第一实现切片已完成。
 
 ## 3. Phase 2.8 验收基线
-
 开发者本地正式 B6 Gate 已全部通过：38 个 Unit/Contract 测试、870 个 Backend 回归测试（3 skipped）、Migration head 0039、5 个 Real HTTP + PostgreSQL 多 Worker 测试全部通过。
 
 ## 4. Phase 2.9 当前实现
 
 ### 2.9-A Event Contract
-
 状态：**已实现**。
 
-统一事件信封包含 `event_id`、`tenant_id`、`event_type`、`schema_version`、`source`、`subject`、`idempotency_key`、`occurred_at`、`request_id`、`trace_id`、`payload`、`metadata`。幂等作用域为 `tenant_id + source + event_type + idempotency_key`。
-
 ### 2.9-B Durable Event Persistence
-
-状态：**第一切片已实现；数据库 Migration 已验收**。
-
-新增 `integration_events` PostgreSQL Durable Event Fact、Repository、0040 Migration 和单元测试。开发者已执行 `uv run alembic upgrade head`，并确认 `0041_integration_event_delivery_lease` 为此前本地 head。
+状态：**已实现**。
 
 ### 2.9-C Reliable Delivery
+状态：**已完成真实 PostgreSQL 验收**。
 
-状态：**第一切片已实现；第二切片 Real Gate 已实现，最新本地 Gate 首次执行发现测试 marker 被默认配置过滤，现已修复 Gate 测试选择逻辑，等待开发者重新执行真实 PostgreSQL 验收**。
-
-当前包含：
-
-- PostgreSQL `FOR UPDATE SKIP LOCKED` 原子 Claim；
-- Worker lease owner / expiry；
-- 过期租约恢复；
-- attempt count；
-- delivered terminal state；
-- capped exponential retry；
-- retry exhaustion 后 `dead_letter`；
-- 外部 Sender 依赖注入；
-- 0041 Migration；
-- Delivery Service 使用正式 `app.infrastructure.db` 数据库入口；
-- 旧 Worker 失去租约后不能覆盖新 Worker 状态，并且 Delivery Service 正确透传 fencing 结果；
-- 真实 PostgreSQL Real Gate 自动生成并清理测试租户、事件和幂等键，不依赖后台 Scheduler；
-- Real Gate 显式使用 `-m real_api`，避免全局 `addopts = -m 'not real_api'` 导致真实验收测试全部 deselect。
-
-本轮真实验收入口：
+开发者最新本地结果：
 
 ```text
-backend/tests/api_real/test_integration_event_delivery_postgres.py
-backend/scripts/test/phase-2.9/01_reliable_delivery_postgres_gate.ps1
+PostgreSQL concurrency/recovery tests → 5 passed
+Targeted delivery unit regression → 15 passed
+[PASS] Phase 2.9-C Reliable Delivery PostgreSQL Real Gate completed.
 ```
 
-真实 Gate 覆盖：并发 Claim、租约恢复、旧租约 fencing、tenant isolation、retry/dead-letter，以及定向 Delivery Unit Regression。
+覆盖并发 Claim、租约恢复、fencing、tenant isolation、retry/dead-letter，并确认 `0041_integration_event_delivery_lease` 为 migration head。
 
-### 当前验收状态
+### 2.9-D Webhook Integration
+状态：**第一实现切片已完成，整体功能仍在开发中**。
 
-开发者此前已验证：
+新增正式出站 Provider：
 
 ```text
-定向 2.9-C 单元测试 → 14 passed
-Backend default regression → 884 passed, 3 skipped, 52 deselected
-Alembic upgrade head → 成功
+backend/app/infrastructure/providers/webhook.py
+backend/tests/unit/test_webhook_provider.py
 ```
 
-最新 Gate 执行到真实 PostgreSQL 测试阶段时得到 `5 deselected`，根因是 pytest 默认 `addopts` 排除了 `real_api`。该测试选择问题已经在 `main` 修复，并新增错误记录：
+已具备统一 Event JSON envelope、事件身份头、幂等头、HMAC-SHA256 签名、HTTPX Client 注入和非 2xx 失败透传。
 
-```text
-docs/04-errors/2026-08-29-phase-2-9-real-gate-marker-filter-bypass.md
-```
-
-因此，**2.9-C 第二切片当前仍不得标记为 Real Gate 通过**；必须以开发者本地修复后的重新执行结果为准。
+现有 `WebhookTriggerService` 仍只负责入站 Trigger；`WebhookProvider` 专门负责出站 Integration，两者职责分离。
 
 ## 5. 下一任务
 
-### 2.9-D Webhook Integration
+### 2.9-D Webhook destination/subscription
 
-仅在 2.9-C 第二切片真实 PostgreSQL 验收通过后推进。将现有 Webhook Trigger 能力接入 Durable Event Delivery，统一 endpoint、签名、事件版本、幂等、回放和 delivery audit，并避免复制已有 Trigger Service。
+继续实现：
+1. destination/subscription PostgreSQL 模型与 Migration；
+2. tenant boundary、启停状态和 Secret 引用；
+3. Durable Event → destination 的正式编排；
+4. delivery audit、replay、查询；
+5. endpoint allowlist / SSRF 与网络出口策略；
+6. Real HTTP + PostgreSQL Acceptance Gate。
+
+完成后才进入 2.9-E Runtime Integration。
 
 ## 6. 长期未完成能力
-
-长期企业化能力继续独立维护在 `docs/05-long-term/`：
+长期企业化能力独立维护在 `docs/05-long-term/`：
 
 | ID | 长期能力 | 状态 |
 |---|---|---|
@@ -113,11 +92,11 @@ docs/04-errors/2026-08-29-phase-2-9-real-gate-marker-filter-bypass.md
 ```text
 2.9-A Event Contract                         ✅
         ↓
-2.9-B Durable Event Persistence              ✅ 第一切片 + Migration 本地验收
+2.9-B Durable Event Persistence              ✅
         ↓
-2.9-C Reliable Delivery                     🔄 Gate marker 修复，待本地重新验收
+2.9-C Reliable Delivery                     ✅ Real PostgreSQL Gate
         ↓
-2.9-D Webhook Integration                   ⏳
+2.9-D Webhook Integration                   🔄 Provider 第一切片完成
         ↓
 2.9-E Runtime Integration                   ⏳
 ```
