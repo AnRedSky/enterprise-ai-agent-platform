@@ -1,9 +1,9 @@
 <template>
   <el-card>
-    <template #header>Audit Logs</template>
+    <template #header>审计日志</template>
 
     <el-form inline @submit.prevent="load">
-      <el-input v-model="status" placeholder="Status" clearable />
+      <el-input v-model="status" placeholder="状态" clearable />
       <el-button type="primary" @click="load">查询</el-button>
     </el-form>
 
@@ -11,21 +11,21 @@
       v-if="error"
       type="error"
       :closable="false"
-      title="Audit 查询失败"
+      title="审计日志查询失败"
     />
 
     <el-empty
       v-else-if="!loading && !items.length"
-      description="暂无 Audit Log"
+      description="暂无审计日志"
     />
 
     <el-table v-else :data="items" v-loading="loading">
       <el-table-column prop="id" label="ID" min-width="260" />
-      <el-table-column prop="action" label="Action" />
-      <el-table-column prop="status" label="Status" />
-      <el-table-column prop="agent_id" label="Agent" min-width="220" />
-      <el-table-column prop="tool_id" label="Tool" min-width="220" />
-      <el-table-column prop="created_at" label="Created At" />
+      <el-table-column prop="action" label="操作" />
+      <el-table-column prop="status" label="状态" />
+      <el-table-column prop="agent_id" label="智能体" min-width="220" />
+      <el-table-column prop="tool_id" label="工具" min-width="220" />
+      <el-table-column prop="created_at" label="创建时间" />
     </el-table>
 
     <el-pagination
@@ -64,7 +64,7 @@ async function load() {
     items.value = response.data.items ?? [];
     total.value = response.data.total ?? 0;
   } catch (err) {
-    console.error("AuditLog query failed", err);
+    console.error("审计日志查询失败", err);
     items.value = [];
     total.value = 0;
     error.value = true;
