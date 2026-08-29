@@ -89,6 +89,26 @@ async def test_delivery_service_commits_claim_then_marks_delivered(monkeypatch: 
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_returns_false_when_delivery_lease_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:
+    """验证发送完成后若租约已被其他 Worker 接管，服务不会报告本次状态更新成功。"""
+    claim_session = _session()
+    result_session = _session()
+    record = SimpleNamespace(id=uuid.uuid4(), attempt_count=1, payload={"event": "fenced"})
+    repository = MagicMock()
+    repository.claim_next = AsyncMock(return_value=record)
+    repository.mark_delivered = AsyncMock(return_value=False)
+    sender = AsyncMock()
+    _install_fake_sessions(monkeypatch, claim_session, result_session)
+
+    service = IntegrationEventDeliveryService(repository)
+
+    assert await service.deliver_once(uuid.uuid4(), "stale-worker", sender) is False
+    sender.assert_awaited_once_with({"event": "fenced"})
+    repository.mark_delivered.assert_awaited_once()
+    result_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_delivery_service_marks_retry_after_sender_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     claim_session = _session()
     result_session = _session()

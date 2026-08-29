@@ -5,7 +5,7 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.9 Enterprise Integration / Event Infrastructure 开发中**
-- 当前任务：**2.9-C Reliable Delivery 第二实现切片：真实 PostgreSQL 并发验收准备**
+- 当前任务：**2.9-C Reliable Delivery 第二实现切片：真实 PostgreSQL 并发验收**
 - 下一任务：**2.9-D Webhook Integration**
 
 开发严格基于远端 `main`，不创建功能分支。
@@ -18,7 +18,7 @@
 - Worker shutdown AsyncEngine cancellation-safe disposal 已完成；
 - Phase 2.9-A Event Contract 已实现；
 - Phase 2.9-B Durable Event Persistence 已实现第一切片；
-- Phase 2.9-C Reliable Delivery 第一切片已实现，并完成定向单元测试验证。
+- Phase 2.9-C Reliable Delivery 第一切片已实现；本轮补齐第二切片真实 PostgreSQL 验收入口与 fencing 返回值修复，等待开发者本地执行 Gate。
 
 ## 3. Phase 2.8 验收基线
 
@@ -36,11 +36,11 @@
 
 状态：**第一切片已实现；数据库 Migration 已验收**。
 
-新增 `integration_events` PostgreSQL Durable Event Fact、Repository、0040 Migration 和单元测试。开发者已执行 `uv run alembic upgrade head`，并确认 `0041_integration_event_delivery_lease` 为当前 head。
+新增 `integration_events` PostgreSQL Durable Event Fact、Repository、0040 Migration 和单元测试。开发者已执行 `uv run alembic upgrade head`，并确认 `0041_integration_event_delivery_lease` 为此前本地 head。
 
 ### 2.9-C Reliable Delivery
 
-状态：**第一切片已实现并完成本地定向测试；第二切片开发中**。
+状态：**第一切片已实现；第二切片已实现 Real Gate 测试代码，等待本地真实 PostgreSQL 验收**。
 
 当前包含：
 
@@ -54,32 +54,37 @@
 - 外部 Sender 依赖注入；
 - 0041 Migration；
 - Delivery Service 使用正式 `app.infrastructure.db` 数据库入口；
-- 单元测试已覆盖无事件、成功投递、失败重试的编排路径。
+- 旧 Worker 失去租约后不能覆盖新 Worker 状态，并且 Delivery Service 正确透传 fencing 结果；
+- 真实 PostgreSQL Real Gate 自动生成并清理测试租户、事件和幂等键，不依赖后台 Scheduler。
 
-开发者最新本地验证结果：
+本轮新增真实验收：
 
 ```text
-uv run alembic upgrade head
-  → 成功，无待执行 Migration
-
-定向 2.9-C 测试
-  → 14 passed in 0.24s
-
-Backend default regression
-  → 884 passed, 3 skipped, 52 deselected in 33.77s
+backend/tests/api_real/test_integration_event_delivery_postgres.py
+backend/scripts/test/phase-2.9/01_reliable_delivery_postgres_gate.ps1
 ```
 
-此前发现的 `ModuleNotFoundError: No module named 'app.core.database'` 已修复并记录于 `docs/04-errors/2026-08-29-phase-2-9-delivery-database-import.md`。
+真实 Gate 覆盖：并发 Claim、租约恢复、旧租约 fencing、tenant isolation、retry/dead-letter，以及定向 Delivery Unit Regression。
 
-第二切片仍未标记完成。下一步必须补齐真实 PostgreSQL 并发验收：多 Worker 原子 Claim、租约恢复、旧租约 fencing、retry/dead-letter、tenant isolation 和幂等投递。
+本轮发现并修复的工程错误：Delivery Service 在 `mark_delivered()` / `mark_failed()` 因租约丢失返回 `False` 时原先仍固定返回 `True`，已记录于 `docs/04-errors/2026-08-29-phase-2-9-delivery-lease-result-semantics.md`。
 
-当前实现不绑定 Redis、Kafka、MQ 或具体 Webhook Provider。
+### 当前验收状态
+
+开发者此前已验证：
+
+```text
+定向 2.9-C 单元测试 → 14 passed
+Backend default regression → 884 passed, 3 skipped, 52 deselected
+Alembic upgrade head → 成功
+```
+
+这些结果保持为历史实际反馈。本轮新增 Real Gate 尚未由开发者本地执行，因此不得预填“通过”。
 
 ## 5. 下一任务
 
 ### 2.9-D Webhook Integration
 
-仅在 2.9-C 第二切片真实 PostgreSQL 并发验收完成后推进。将现有 Webhook Trigger 能力接入 Durable Event Delivery，统一 endpoint、签名、事件版本、幂等、回放和 delivery audit，并避免复制已有 Trigger Service。
+仅在 2.9-C 第二切片真实 PostgreSQL 验收通过后推进。将现有 Webhook Trigger 能力接入 Durable Event Delivery，统一 endpoint、签名、事件版本、幂等、回放和 delivery audit，并避免复制已有 Trigger Service。
 
 ## 6. 长期未完成能力
 
@@ -105,7 +110,7 @@ Backend default regression
         ↓
 2.9-B Durable Event Persistence              ✅ 第一切片 + Migration 本地验收
         ↓
-2.9-C Reliable Delivery                     🔄 第一切片完成 / 第二切片开发中
+2.9-C Reliable Delivery                     🔄 第二切片 Real Gate 待本地执行
         ↓
 2.9-D Webhook Integration                   ⏳
         ↓
