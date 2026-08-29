@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.core import Base, utcnow_naive
 
@@ -59,3 +59,6 @@ class WebhookDelivery(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive
     )
+
+    destination = relationship("WebhookDestination", lazy="raise")
+    integration_event = relationship("IntegrationEventRecord", lazy="raise")
