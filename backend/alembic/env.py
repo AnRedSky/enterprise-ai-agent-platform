@@ -9,6 +9,7 @@ from app.core.alembic_compat import prepare_alembic_version_table
 from app.core.config import settings
 from app.models.core import Base
 from app.models.execution import Execution, ExecutionEvent  # noqa: F401
+from app.models.integration_event import IntegrationEventRecord  # noqa: F401
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion  # noqa: F401
 from app.models.model_provider import ModelProfile, ModelProvider  # noqa: F401
 from app.models.organization import Organization, OrganizationMembership  # noqa: F401

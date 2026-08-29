@@ -17,19 +17,17 @@ from app.models.core import Base, utcnow_naive
 
 
 class IntegrationEventRecord(Base):
-    """可重放、可审计的 Durable Integration Event。"""
+    """可重放、可审计并支持租约投递的 Durable Integration Event。"""
 
     __tablename__ = "integration_events"
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id",
-            "source",
-            "event_type",
-            "idempotency_key",
+            "tenant_id", "source", "event_type", "idempotency_key",
             name="uq_integration_event_tenant_source_type_key",
         ),
         Index("ix_integration_event_tenant_status_next", "tenant_id", "status", "next_attempt_at"),
         Index("ix_integration_event_status_next", "status", "next_attempt_at"),
+        Index("ix_integration_event_lease", "status", "lease_expires_at"),
         Index("ix_integration_event_subject", "tenant_id", "subject"),
         Index("ix_integration_event_trace", "tenant_id", "trace_id"),
     )
@@ -51,6 +49,8 @@ class IntegrationEventRecord(Base):
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
