@@ -15,8 +15,7 @@ function Assert-NoExternalWorkerProcesses {
         $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
             $commandLine = [string]$_.CommandLine
             if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
-            return ($commandLine -match '(^|[\\/ ])run_worker\.py([\s\'"'"']|$)') -or
-                   ($commandLine -match '(^|[\\/ ])run_scheduler\.py([\s\'"'"']|$)')
+            return ($commandLine -like '*run_worker.py*') -or ($commandLine -like '*run_scheduler.py*')
         })
     } elseif (Get-Command pgrep -ErrorAction SilentlyContinue) {
         $processes = @(pgrep -af 'run_worker\.py|run_scheduler\.py' 2>$null)
