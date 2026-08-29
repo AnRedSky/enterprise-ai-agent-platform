@@ -15,7 +15,7 @@
       <el-scrollbar height="360px" class="messages"><div v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><b>{{ message.role === 'user' ? '你' : '智能体' }}</b><div>{{ message.content }}</div></div><el-empty v-if="!messages.length" description="输入消息开始调试" /></el-scrollbar>
       <el-alert v-if="chatError" :title="chatError" type="error" :closable="false" show-icon class="chat-alert" />
       <el-input v-model="input" type="textarea" :rows="4" placeholder="输入消息..." :disabled="chatState === 'streaming'" @keyup.ctrl.enter="execute" />
-      <div class="chat-status"><el-tag :type="chatStatusType">{{ chatStatusLabel }}</el-tag><span v-if="requestId">请求 ID：{{ shortId(requestId) }}</span><span v-if="traceId">链路追踪 ID：{{ shortId(traceId) }}</span><span v-if="sessionId">会话 ID：{{ shortId(sessionId) }}</span><span v-if="executionId">执行 ID：{{ shortId(executionId) }}</span></div>
+      <div class="chat-status"><el-tag :type="chatStatusType">{{ chatStatusLabel }}</el-tag><span v-if="requestId">请求标识：{{ shortId(requestId) }}</span><span v-if="traceId">链路追踪标识：{{ shortId(traceId) }}</span><span v-if="sessionId">会话标识：{{ shortId(sessionId) }}</span><span v-if="executionId">执行标识：{{ shortId(executionId) }}</span></div>
       <template #footer><el-button v-if="chatState === 'streaming'" type="warning" @click="cancelChat">停止生成</el-button><el-button @click="closeChat">关闭</el-button><el-button type="primary" :loading="chatState === 'streaming'" :disabled="!input.trim() || chatState === 'streaming'" @click="execute">发送</el-button></template>
     </el-dialog>
   </div>
