@@ -3,6 +3,7 @@
 > 基线：当前 `main`（2026-08-29）
 > 目的：将产品能力目标、当前实现、验收证据、明确缺口、下一步决策放在同一张可追溯矩阵中。
 > 规则：`已实现` 只表示当前代码/Phase 已有对应能力；`已验收` 必须有实际 Acceptance 证据；`待决策` 不得直接转化为开发任务。
+> 长期未完成企业化能力不在本矩阵中展开为阶段任务，统一由 `docs/05-long-term/` 独立记录。
 
 ## 1. 当前核心能力
 
@@ -75,7 +76,7 @@ B6 Gate 还包含 Windows 外部 Worker/Scheduler 隔离检查，用于避免本
 
 本轮核查未发现仍足以阻塞 Phase 2.8 收口的新 Runtime 问题。此前 `AgentDelegationService` 与 `lifecycle.py` 重复维护 lifecycle 规则的问题属于 B1 前约束，目前历史错误记录应作为已修复事实保留，不应继续作为当前 blocker。
 
-当前需要重点防止的是文档基线漂移：旧文档仍可能保留“B1-B5 未实现”“Runtime 未完成”“待 B4”等历史文字，因此应以 `PROJECT_STATUS.md`、本矩阵最新版本及最终 Acceptance 证据覆盖当前判断。
+当前需要重点防止的是文档基线漂移：旧文档仍可能保留历史状态文字；当前长期能力缺口统一见 `docs/05-long-term/README.md` 及 LT-01～LT-10 独立记录。
 
 ## 5. Phase 2.8 收口门槛
 
@@ -92,3 +93,5 @@ Browser E2E 不属于当前 Phase 2.8 必选项，因为本 Phase 未增加专�
 3. 明确真实产品场景与可靠性需求，而不是先选 Kafka / MQ；
 4. 冻结 Contract 后再创建 Phase 2.9 正式文档与开发任务；
 5. 遵循 Contract → Migration → Backend implementation → Unit/Integration → Real API Gate 的既定顺序。
+
+长期任务索引：`docs/05-long-term/README.md`。
