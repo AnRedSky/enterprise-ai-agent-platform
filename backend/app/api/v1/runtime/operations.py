@@ -1,8 +1,4 @@
-"""Runtime 运维聚合 API 路由。
-
-职责：提供 tenant-scoped Operations Console 所需的指标、SLO、维度、告警、注册表、时间序列、导出、健康探测和死信接口。
-边界：只负责协议、身份与租户上下文适配；Provider 健康探测通过独立领域服务执行，Delivery 网络投递仍由 Worker 负责。
-"""
+"""Runtime 运维聚合 API 路由。"""
 
 from datetime import datetime
 from uuid import UUID
@@ -16,6 +12,7 @@ from app.core.auth import bearer, current_claims
 from app.dependencies.db import get_db
 from app.services.integration.webhook_delivery_repository import WebhookDeliveryRepository
 from app.services.runtime_operations import RuntimeOperationsEnterpriseService, RuntimeOperationsService, RuntimeProviderHealthService
+from app.services.runtime_operations.alerting import RuntimeAlertEvaluator
 
 
 class RuntimeOperationsOverview(BaseModel):
@@ -70,6 +67,10 @@ class ProviderCreateRequest(BaseModel):
     config: dict = Field(default_factory=dict)
 
 
+class ProviderEnabledRequest(BaseModel):
+    enabled: bool
+
+
 class AlertRuleCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     metric_name: str = Field(min_length=1, max_length=120)
@@ -77,6 +78,10 @@ class AlertRuleCreateRequest(BaseModel):
     threshold: float
     window_minutes: int = Field(default=15, ge=1, le=10080)
     severity: str = "warning"
+
+
+class AlertRuleEnabledRequest(BaseModel):
+    enabled: bool
 
 
 router = APIRouter(prefix="/api/v1/runtime/operations", tags=["runtime-operations"])
@@ -135,9 +140,19 @@ async def create_provider(request: ProviderCreateRequest, claims: dict = Depends
     return item
 
 
+@router.patch("/providers/{provider_id}")
+async def set_provider_enabled(provider_id: UUID, request: ProviderEnabledRequest, claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
+    _require_admin(claims)
+    try:
+        item = await RuntimeOperationsEnterpriseService(db).set_provider_enabled(_tenant_id(claims), provider_id, request.enabled, _actor(claims))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return item
+
+
 @router.post("/providers/{provider_id}/health", status_code=200)
 async def probe_provider_health(provider_id: UUID, claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
-    """管理员执行当前租户 Provider 健康探测并返回状态事实。"""
     _require_admin(claims)
     try:
         result = await RuntimeProviderHealthService().probe(db, _tenant_id(claims), provider_id, _actor(claims))
@@ -145,13 +160,7 @@ async def probe_provider_health(provider_id: UUID, claims: dict = Depends(_claim
         await db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
-    return {
-        "provider_id": result.provider_id,
-        "status": result.status,
-        "http_status": result.http_status,
-        "latency_ms": result.latency_ms,
-        "error": result.error,
-    }
+    return {"provider_id": result.provider_id, "status": result.status, "http_status": result.http_status, "latency_ms": result.latency_ms, "error": result.error}
 
 
 @router.get("/destinations")
@@ -173,6 +182,26 @@ async def create_alert_rule(request: AlertRuleCreateRequest, claims: dict = Depe
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
     return item
+
+
+@router.patch("/alert-rules/{rule_id}")
+async def set_alert_rule_enabled(rule_id: UUID, request: AlertRuleEnabledRequest, claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
+    _require_admin(claims)
+    try:
+        item = await RuntimeOperationsEnterpriseService(db).set_alert_rule_enabled(_tenant_id(claims), rule_id, request.enabled, _actor(claims))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return item
+
+
+@router.post("/alert-rules/evaluate")
+async def evaluate_alert_rules(claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
+    """显式执行当前租户规则评估；只返回生命周期状态发生变化的事实。"""
+    _require_admin(claims)
+    transitions = await RuntimeAlertEvaluator(db).evaluate(_tenant_id(claims), actor=_actor(claims))
+    await db.commit()
+    return {"items": transitions, "count": len(transitions)}
 
 
 @router.post("/metrics/snapshot")
@@ -211,7 +240,6 @@ async def list_dead_letters(page: int = Query(1, ge=1), page_size: int = Query(2
 
 @router.post("/dead-letters/replay", response_model=BatchReplayResponse)
 async def batch_replay_dead_letters(request: BatchReplayRequest, claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
-    """批量将当前租户死信重新入队；每项独立处理，网络投递仍由 Worker 执行。"""
     _require_admin(claims)
     if not request.delivery_ids or len(request.delivery_ids) > 100:
         raise HTTPException(status_code=422, detail="delivery_ids must contain 1 to 100 items")
