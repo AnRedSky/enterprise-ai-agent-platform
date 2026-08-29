@@ -14,7 +14,8 @@ docs/
 ├── 01-governance/
 ├── 02-phases/
 ├── 03-acceptance/
-└── 04-errors/
+├── 04-errors/
+└── 05-long-term/
 ```
 
 ## 3. 职责边界
@@ -26,11 +27,6 @@ docs/
 ### 00-architecture/
 
 记录长期稳定的系统、领域、Runtime、数据、安全、Observability 和 Backend 模块架构。不得记录单次任务的临时执行结果。
-
-当前 Backend 模块架构正式文档：
-
-- `00-architecture/BACKEND_MODULE_ARCHITECTURE.md`：Backend 目录、职责、依赖方向、完整重构规则和通用开发模板。
-- `00-architecture/BACKEND_MODULE_MIGRATION_MAP.md`：当前项目从远端 `main` 实际目录到目标模块的迁移映射与完整重构验收要求。
 
 ### 01-governance/
 
@@ -48,13 +44,15 @@ docs/
 
 只记录已经发生并完成分析的工程错误。错误必须有实际现象、根因、影响、修复、验证和防重复措施。
 
-本次 Backend 模块重构兼容垫片方案已记录：
+### 05-long-term/
 
-```text
-04-errors/2026-08-23-backend-module-refactor-compatibility-shim.md
-```
+只记录当前尚未完成、需要跨多个 Phase 持续推进的长期产品/工程能力。每项长期能力必须使用独立 `LT-xx-*.md` 文档，不能与当前 Phase 计划、Acceptance 或 Error 记录混合。
 
-### Backend 模块化整改测试
+`05-long-term/README.md` 维护长期任务索引。LT 文档记录目标、当前状态、缺口、边界、依赖、长期拆解和完成判定；只有 Contract 冻结并正式进入开发后，才建立对应 `02-phases/PHASE_x_y.md`。
+
+已关闭 Phase 不因 LT 任务重新打开；已验收 Runtime 只保留回归维护。长期任务中的候选技术不能在 Contract 冻结前写成既定实现。
+
+## 4. Backend 模块化整改测试
 
 模块化整改测试编排统一位于：
 
@@ -70,7 +68,7 @@ backend/scripts/test/module-refactor/
 
 Gate 同时检查旧文件、旧 import、重复实现、目标目录以及 Agent / Knowledge / Infrastructure Provider targeted tests，最终再执行 Backend Regression。测试实现仍必须位于 `backend/tests/unit`、`integration`、`api_contract`、`api_real`，脚本只负责 Gate 和顺序编排。
 
-## 4. 命名
+## 5. 命名
 
 ```text
 PHASE_1_8.md
@@ -82,6 +80,7 @@ BACKEND_MODULE_ARCHITECTURE.md
 BACKEND_MODULE_MIGRATION_MAP.md
 DEVELOPMENT.md
 DOCUMENTATION.md
+LT-01-ENTERPRISE-INTEGRATION-EVENT-INFRASTRUCTURE.md
 ```
 
 禁止新增：
@@ -94,35 +93,38 @@ completion-xxx.md
 validation-xxx.md
 ```
 
-这些信息应归入 Phase / Acceptance / Error 的正式结构。
+这些信息应归入 Phase / Acceptance / Error / Long-term 的正式结构。
 
-## 5. 计划与事实分离
+## 6. 计划与事实分离
 
 ```text
 PHASE_x_y.md
-    = 计划、设计、Contract、任务拆解、验收标准
+    = 当前正式 Phase 的计划、设计、Contract、任务拆解、验收标准
 
 PHASE_x_y_ACCEPTANCE.md
-    = 实际实施范围、真实测试结果、已知问题、验收结论
+    = 当前/已关闭 Phase 的实际实施范围、真实测试结果、已知问题、验收结论
 
 PROJECT_STATUS.md
     = 当前状态与下一步
+
+05-long-term/LT-xx-*.md
+    = 跨 Phase 的未完成长期能力，不代表当前 Phase 已立项
 
 BACKEND_MODULE_MIGRATION_MAP.md
     = 架构迁移设计、目标映射与迁移规则；不虚构测试事实
 ```
 
-不得把未执行测试写成通过；不得把历史状态覆盖当前状态。
+不得把未执行测试写成通过；不得把历史状态覆盖当前状态；不得把长期 backlog 伪装成当前 Phase 任务。
 
-## 6. 历史资料
+## 7. 历史资料
 
 历史 Phase 23/24 等旧编号文档如果与当前 Phase 编号体系存在冲突，不直接删除事实，也不冒充当前 Phase。统一归入 `HISTORICAL_*` 文档，并明确历史基线。
 
-## 7. 错误编号
+## 8. 错误编号
 
 历史 `docs/error-tracking/` 中存在重复的 `002/003/004` 编号。迁移到 `04-errors/` 时重新分配唯一 `ERR-####`，同时在迁移矩阵中记录旧编号映射。
 
-## 8. 引用规则
+## 9. 引用规则
 
 文档之间只引用新的正式路径。迁移完成后，全仓搜索旧路径：
 
@@ -137,7 +139,7 @@ DEVELOPMENT_GUIDELINES.md
 
 不得残留正式运行入口引用。
 
-## 9. 修改流程
+## 10. 修改流程
 
 ```text
 最新 main
@@ -146,9 +148,9 @@ DEVELOPMENT_GUIDELINES.md
   ↓
 建立迁移矩阵
   ↓
-创建新文档
+创建/更新长期任务文档（如存在跨 Phase backlog）
   ↓
-合并/重写内容
+创建/更新当前 Phase / Acceptance / Error 文档
   ↓
 更新引用
   ↓
@@ -172,6 +174,7 @@ DEVELOPMENT_GUIDELINES.md
 - 对应 `PHASE_x_y.md`；
 - 对应 `PHASE_x_y_ACCEPTANCE.md`；
 - 已分析完成的 `04-errors/`；
+- `05-long-term/LT-xx-*.md`；
 - 新 Phase 的计划 / Acceptance 文档。
 
 除非测试反馈、代码修复或新的事实变化确实形成新的工程交付单元，否则不得为上述文档分别创建独立提交。
