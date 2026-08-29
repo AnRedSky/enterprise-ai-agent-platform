@@ -20,6 +20,8 @@ from app.models.webhook_integration import WebhookDestination, WebhookSubscripti
 class WebhookIntegrationService:
     """管理 Destination / Subscription，并将 Event fan-out 成独立 Delivery Fact。"""
 
+    SUPPORTED_PROVIDERS = frozenset({"webhook_http"})
+
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
@@ -30,10 +32,14 @@ class WebhookIntegrationService:
         endpoint_url: str,
         secret_ref: str | None = None,
         headers: dict | None = None,
+        provider: str = "webhook_http",
     ) -> WebhookDestination:
+        if provider not in self.SUPPORTED_PROVIDERS:
+            raise ValueError(f"不支持的 webhook provider: {provider}")
         item = WebhookDestination(
             tenant_id=tenant_id,
             name=name,
+            provider=provider,
             endpoint_url=endpoint_url,
             secret_ref=secret_ref,
             headers=headers or {},
@@ -44,12 +50,11 @@ class WebhookIntegrationService:
         await self.db.refresh(item)
         return item
 
-    async def list_destinations(self, tenant_id: uuid.UUID) -> list[WebhookDestination]:
-        result = await self.db.execute(
-            select(WebhookDestination)
-            .where(WebhookDestination.tenant_id == tenant_id)
-            .order_by(WebhookDestination.created_at, WebhookDestination.id)
-        )
+    async def list_destinations(self, tenant_id: uuid.UUID, provider: str | None = None) -> list[WebhookDestination]:
+        stmt = select(WebhookDestination).where(WebhookDestination.tenant_id == tenant_id)
+        if provider is not None:
+            stmt = stmt.where(WebhookDestination.provider == provider)
+        result = await self.db.execute(stmt.order_by(WebhookDestination.created_at, WebhookDestination.id))
         return list(result.scalars().all())
 
     async def create_subscription(
@@ -107,7 +112,9 @@ class WebhookIntegrationService:
                 WebhookSubscription.tenant_id == tenant_id,
                 WebhookSubscription.event_type == event.event_type,
                 WebhookSubscription.enabled.is_(True),
+                WebhookDestination.tenant_id == tenant_id,
                 WebhookDestination.enabled.is_(True),
+                WebhookDestination.provider.in_(self.SUPPORTED_PROVIDERS),
             )
             .order_by(WebhookSubscription.priority, WebhookSubscription.id)
         )
