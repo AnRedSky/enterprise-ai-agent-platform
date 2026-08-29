@@ -1,6 +1,6 @@
 """Runtime 查询 API 路由模块。
 
-模块职责：提供执行记录、事件时间线、工作流 Trace 与审计日志的 HTTP 查询接口。
+模块职责：提供执行记录、事件时间线、Workflow Trace、审计日志与 Durable Integration Event 运维查询接口。
 边界：仅负责协议参数、身份与租户上下文适配；查询业务规则统一由 RuntimeQueryService / WorkflowExecutionService 承担。
 关键依赖：FastAPI、SQLAlchemy AsyncSession，以及 canonical `app.dependencies.db.get_db` 数据库依赖。
 """
@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies.db import get_db
 from app.core.auth import bearer, current_claims
 from app.models.execution import Execution
-from app.schemas.runtime import AuditLogListResponse, ExecutionListResponse, ExecutionTimelineResponse, WorkflowTraceResponse
+from app.schemas.runtime import (
+    AuditLogListResponse,
+    ExecutionListResponse,
+    ExecutionTimelineResponse,
+    IntegrationEventListResponse,
+    WorkflowTraceResponse,
+)
 from app.services.runtime_query import RuntimeQueryService
 from app.services.workflow import WorkflowExecutionService
 
@@ -107,5 +113,33 @@ async def list_audit_logs(page: int = Query(1, ge=1), page_size: int = Query(20,
     actor_id, is_admin = _identity(claims)
     page, page_size, total, rows = await RuntimeQueryService(db).audit_logs(
         actor_id, is_admin, page, page_size, agent_id, tool_id, status, workflow_id, workflow_execution_id,
+    )
+    return {"items": rows, "page": page, "page_size": page_size, "total": total}
+
+
+@router.get("/integration-events", response_model=IntegrationEventListResponse)
+async def list_integration_events(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    event_type: str | None = None,
+    source: str | None = None,
+    status: str | None = None,
+    subject: str | None = None,
+    trace_id: str | None = None,
+    request_id: str | None = None,
+    claims: dict = Depends(_runtime_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """租户范围内查询 Durable Integration Event；调用方不能指定任意 tenant。"""
+    page, page_size, total, rows = await RuntimeQueryService(db).integration_events(
+        _tenant_id(claims),
+        page=page,
+        page_size=page_size,
+        event_type=event_type,
+        source=source,
+        status=status,
+        subject=subject,
+        trace_id=trace_id,
+        request_id=request_id,
     )
     return {"items": rows, "page": page, "page_size": page_size, "total": total}
