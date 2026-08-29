@@ -6,9 +6,9 @@ const { listAgents, listTools, executions } = vi.hoisted(() => ({
   listTools: vi.fn(),
   executions: vi.fn(),
 }));
-vi.mock("../../src/api/agents", () => ({ listAgents }));
-vi.mock("../../src/api/tools", () => ({ listTools }));
-vi.mock("../../src/api/runtime", () => ({ runtimeApi: { executions } }));
+vi.mock("@/api/agents", () => ({ listAgents }));
+vi.mock("@/api/tools", () => ({ listTools }));
+vi.mock("@/api/runtime", () => ({ runtimeApi: { executions } }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 
 import Dashboard from "../../src/views/dashboard/components/DashboardOverview.vue";
@@ -47,10 +47,11 @@ describe("DashboardOverview", () => {
     );
     const wrapper = mount(Dashboard, { global });
     await vi.waitFor(() => expect(executions).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(wrapper.text()).toContain("8"));
-    expect(wrapper.text()).toContain("2");
-    expect(wrapper.text()).toContain("1");
-    expect(wrapper.text()).toContain("1/2");
+    await vi.waitFor(() => expect(wrapper.get('[data-testid="metric-executions"]').text()).toBe("8"));
+    expect(wrapper.get('[data-testid="metric-agents"]').text()).toBe("2");
+    expect(wrapper.get('[data-testid="metric-published"]').text()).toBe("1");
+    expect(wrapper.get('[data-testid="metric-tools"]').text()).toBe("1/2");
+    expect(wrapper.get('[data-testid="metric-failed"]').text()).toBe("2");
     expect(wrapper.text()).toContain("最近执行");
     expect(wrapper.text()).toContain("execution-001");
     expect(wrapper.text()).toContain("Agent 管理");
