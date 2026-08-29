@@ -98,3 +98,30 @@ class WorkflowTraceItem(BaseModel):
 class WorkflowTraceResponse(BaseModel):
     execution_id: UUID
     items: list[WorkflowTraceItem]
+
+
+class IntegrationEventItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    event_type: str
+    schema_version: int
+    source: str
+    subject: str
+    idempotency_key: str
+    occurred_at: datetime
+    request_id: str | None = None
+    trace_id: str | None = None
+    payload: dict[str, Any]
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    status: str
+    attempt_count: int
+    next_attempt_at: datetime | None = None
+    last_attempt_at: datetime | None = None
+    delivered_at: datetime | None = None
+    last_error_code: str | None = None
+    created_at: datetime
+
+
+class IntegrationEventListResponse(PageMeta):
+    items: list[IntegrationEventItem]
