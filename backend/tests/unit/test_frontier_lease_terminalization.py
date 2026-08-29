@@ -1,13 +1,13 @@
 """Durable Frontier lease terminalization 回归测试。
 
 职责：验证 Runtime 已经把 WorkflowExecution 推进终态后，Frontier heartbeat 不会把正常 terminalization
-误判为 stale worker 并取消外层 Runtime。
+误判为失效 Worker 并取消外层 Runtime。
 边界：只覆盖 lease repository 的终态 fencing 语义，不替代 PostgreSQL Real API Runtime 验收。
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -63,8 +63,8 @@ async def test_terminal_execution_is_not_reported_as_lease_loss() -> None:
         frontier_id=uuid4(),
         worker_owner="worker:test",
         attempt=1,
-        lease_expires_at=__import__("datetime").datetime(2026, 8, 29, 12, 0, 1),
-        now=__import__("datetime").datetime(2026, 8, 29, 12, 0, 0),
+        lease_expires_at=datetime(2026, 8, 29, 12, 0, 1),
+        now=datetime(2026, 8, 29, 12, 0, 0),
     )
 
     assert owned is True
@@ -88,8 +88,8 @@ async def test_non_terminal_ownership_loss_still_reports_false() -> None:
         frontier_id=uuid4(),
         worker_owner="worker:test",
         attempt=1,
-        lease_expires_at=__import__("datetime").datetime(2026, 8, 29, 12, 0, 1),
-        now=__import__("datetime").datetime(2026, 8, 29, 12, 0, 0),
+        lease_expires_at=datetime(2026, 8, 29, 12, 0, 1),
+        now=datetime(2026, 8, 29, 12, 0, 0),
     )
 
     assert owned is False
