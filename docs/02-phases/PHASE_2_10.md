@@ -57,7 +57,7 @@
 必须验证 tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit，以及 Worker 后续网络投递边界；Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL，测试数据自动生成和清理。
 
 ## 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，企业级运维扩展切片已启动**。
+状态：**开发中，三维时间序列采样与 Scheduler 周期评估切片已完成**。
 
 ### I-1 时间序列 Metrics
 
@@ -65,7 +65,8 @@
 
 - `POST /api/v1/runtime/operations/metrics/snapshot` 固化当前指标快照；
 - `GET /api/v1/runtime/operations/metrics/series` 查询租户隔离的时间序列；
-- 当前 canonical 指标：Delivery Success Percent、Retry Count、Dead Letter Count、P95 Delivery Latency。
+- canonical 全局指标包括 Delivery Success Percent、Retry Count、Dead Letter Count、P95 Delivery Latency；
+- 三维样本额外使用 Provider / Destination / Event Type 规范维度。
 
 ### I-2 Provider Registry
 
@@ -91,7 +92,7 @@
 - 当前支持 `> >= < <= ==`；
 - 规则仅保存配置，告警评估继续基于可重算 Durable facts；
 - 生命周期评估只记录真正的 firing / recovery 状态转换，重复 firing 不重复生成通知事实；
-- 首次 normal 不产生通知转换，避免规则创建后立即产生无意义恢复事件；
+- firing/recovery 已统一发布为 `runtime.alert.firing` / `runtime.alert.recovery` Integration Event，通知层继续通过现有 Delivery 路径消费；
 - 所有生命周期转换进入通用 Runtime Operational Audit。
 
 ### I-5 Prometheus / OpenTelemetry Export
@@ -112,26 +113,33 @@
 - Provider 注册、Provider 健康探测、Alert Rule 管理及告警生命周期均记录 actor / action / resource / outcome；
 - Audit 与 Replay Audit 保持职责分离：Replay 继续使用 Webhook Delivery Audit，通用运维动作使用 Runtime Operational Audit。
 
-## 2.10-I 已完成切片
-
 ### I-7 三维时间序列采样
 
-状态：**已实现第一切片**。
+状态：**第一切片已实现**。
 
-- 新增 `RuntimeDimensionSampler`；
-- 从 Durable Event + Webhook Delivery facts 直接聚合 Provider / Destination / Event Type 三维样本；
+- `RuntimeDimensionSampler` 从 Durable Event + Webhook Delivery facts 直接聚合 Provider / Destination / Event Type 三维样本；
 - canonical Provider 固定为 `webhook_http`，Destination 使用稳定 UUID，Event Type 使用 Durable Event 原值；
-- 快照接口现在同时写入全局指标与三维指标样本；
+- 快照接口同时写入全局指标与三维指标样本；
 - 时间序列查询支持 `provider`、`destination_id`、`event_type` 三个规范维度过滤；
 - 不新增业务事实表，不复制 Delivery 状态机。
 
+### I-8 Scheduler Runtime Alert Evaluation
+
+状态：**第一切片已实现**。
+
+- `RuntimeAlertScheduler` 作为独立 Scheduler Service 周期任务运行；
+- 自动发现启用告警规则涉及的 tenant，并为每个 tenant 使用独立数据库 Session；
+- 每轮先从 Durable facts 生成指标样本，再调用现有 `RuntimeAlertEvaluator`；
+- firing / recovery 仍由 Evaluator 去重、审计并发布 Integration Event；
+- Scheduler 不直接执行通知网络请求，避免绕过现有 Delivery Worker。
+
 ## 2.10-I 下一切片
 
-1. 将 Alert Rule 评估接入 Scheduler 周期任务，并把 firing/recovery 转换接入统一 Integration Event Contract；
-2. 增加告警通知 Delivery 路由、去重键与通知失败审计；
+1. 将 `runtime.alert.firing/recovery` Integration Event 接入通知路由与 Delivery Destination 规则；
+2. 增加告警通知稳定幂等键、去重和通知失败审计的真实投递闭环；
 3. 增加 Prometheus canonical metric naming / label governance；
 4. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
-5. 完成 2.10-I Runtime Acceptance：registry + health + series + rules + lifecycle + exports + audit + tenant isolation。
+5. 完成 2.10-I Runtime Acceptance：registry + health + series + scheduler + lifecycle + exports + audit + tenant isolation。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改 Delivery 状态。
@@ -142,3 +150,4 @@
 - Export 不改变业务事实，也不得绕过 tenant boundary。
 - Operational Audit 必须不可变、可追溯，并记录 actor / action / resource / outcome。
 - Provider healthcheck 必须经过统一 SSRF/出口安全校验，不得使用未经约束的用户输入发起内网探测。
+- Scheduler Alert Evaluation 不直接执行通知网络请求，只负责指标采样、规则评估与 Integration Event 产生。

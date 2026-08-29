@@ -9,12 +9,14 @@ from .alerting import RuntimeAlertEvaluator
 from .destination_registry import DestinationRegistryService
 from .enterprise import RuntimeOperationsEnterpriseService
 from .provider_health import ProviderHealthResult, RuntimeProviderHealthService
+from .scheduler import RuntimeAlertScheduler
 from .service import RuntimeOperationsService
 
 __all__ = [
     "DestinationRegistryService",
     "ProviderHealthResult",
     "RuntimeAlertEvaluator",
+    "RuntimeAlertScheduler",
     "RuntimeOperationsEnterpriseService",
     "RuntimeOperationsService",
     "RuntimeProviderHealthService",
