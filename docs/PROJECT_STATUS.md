@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
-- 当前任务：**2.10-B Delivery Operations Query**
-- 下一任务：**2.10-C Retry / Replay Operations**
+- 当前任务：**2.10-E Operations Console / Observability 基础能力**
+- 最近完成：**2.10-C Retry / Replay Operations、2.10-D Delivery Audit Query 第一切片**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -19,7 +19,7 @@
 - Phase 2.9-C Reliable Delivery 已通过真实 PostgreSQL Gate；
 - Phase 2.9-D Webhook Provider / Destination / Subscription / Fan-out / Delivery Worker / Security / Audit / Replay 已完成 Real Acceptance；
 - Phase 2.9-E Runtime Integration 已完成 Workflow、Agent Tool、Retrieval、Model Provider、Scheduler 关键业务事实接入，并通过 Runtime Integration Real Acceptance；
-- Integration Event 已提供强制 tenant-scoped operations query API；
+- Integration Event 已提供 tenant-scoped operations query API；
 - Phase 2.9-D/E Real Acceptance 已验证真实 HTTP + PostgreSQL、tenant isolation、Webhook delivery/replay/audit 链路。
 
 ## 3. Phase 2.9 收口结论
@@ -55,36 +55,57 @@ Tenant-scoped Operations Query
 - occurred_from / occurred_to 时间范围过滤；
 - `GET /api/v1/runtime/integration-events/summary`；
 - summary 返回 total、status_counts、source_counts、generated_at；
-- summary 与列表使用相同 tenant scope 和过滤口径；
-- API Contract 与 Unit 覆盖认证、路由及聚合边界。
+- summary 与列表使用相同 tenant scope 和过滤口径。
 
 ### 2.10-B Delivery Operations Query
-状态：**第一实现已提交**。
+状态：**第一切片已实现**。
 
 已实现：
 - `GET /api/v1/runtime/integration-events/{integration_event_id}/deliveries`；
 - 强制 tenant + integration_event 双重范围；
 - 支持分页与 Delivery status 过滤；
-- 返回 lease owner / lease expiry、attempt、response status、last error、delivery timestamps 等运维事实；
-- 不改变 Delivery 状态，不绕过 Worker/Replay 领域服务；
-- API Contract 与 Unit 已加入路由、认证及 tenant/event scope 验证。
+- 返回 lease、attempt、response、error、delivery timestamps 等运维事实；
+- 查询不修改 Delivery 状态。
+
+### 2.10-C Retry / Replay Operations
+状态：**第一切片已实现**。
+
+已实现：
+- `POST /api/v1/runtime/integration-events/deliveries/{delivery_id}/replay`；
+- 仅 admin 可执行；
+- 强制 tenant + delivery scope；
+- 仅允许 `delivered` / `dead_letter` Delivery replay；pending/running 返回 409；
+- replay 后 Delivery 回到 `pending`，清理旧 lease、delivery timestamp 与错误状态；
+- 通过既有 Repository 写入不可变 `WebhookDeliveryAudit(action=replay)`；
+- API 不直接执行网络请求，由 Delivery Worker 后续领取。
+
+### 2.10-D Delivery Audit Query
+状态：**第一切片已实现**。
+
+已实现：
+- `GET /api/v1/runtime/integration-events/deliveries/{delivery_id}/audits`；
+- 强制 tenant + delivery scope；
+- 分页；
+- 可查询 delivered / retry / dead_letter / replay 等不可变运维事实。
 
 ## 5. Phase 2.10 顺序
 
 ```text
-2.10-A Integration Event Operations Query       ✅ 第一切片
+2.10-A Integration Event Operations Query       ✅
         ↓
-2.10-B Delivery Operations Query                🔄 第一实现已提交
+2.10-B Delivery Operations Query                ✅
         ↓
-2.10-C Retry / Replay Operations                ⏭ 下一任务
+2.10-C Retry / Replay Operations                ✅ 第一切片
         ↓
-2.10-D Tenant-scoped Operations Console        🔄 基础 UI 已实现
+2.10-D Delivery Audit Query                     ✅ 第一切片
         ↓
-2.10-E Observability / Metrics                  ⏳
+2.10-E Operations Console / Observability       🔄 下一任务
         ↓
-2.10-F Dead Letter Management                   ⏳
+2.10-F Metrics / SLO / Alerting                 ⏳
         ↓
-2.10-G Runtime Operational Acceptance           ⏳
+2.10-G Dead Letter Management                   ⏳
+        ↓
+2.10-H Runtime Operational Acceptance           ⏳
 ```
 
 ## 6. 长期未完成能力
@@ -92,9 +113,9 @@ Tenant-scoped Operations Query
 
 | ID | 长期能力 | 状态 |
 |---|---|---|
-| LT-01 | Enterprise Integration / Event Infrastructure | **Phase 2.9 已完成，Phase 2.10 Operations 开发中** |
+| LT-01 | Enterprise Integration / Event Infrastructure | **Phase 2.10 Operations 开发中** |
 | LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 |
-| LT-03 | Enterprise Operations Console | 开发中，Integration Event Operations 已启动 |
+| LT-03 | Enterprise Operations Console | 开发中 |
 | LT-04 | API / Developer Platform | 待立项 |
 | LT-05 | Observability / SRE | 待立项 |
 | LT-06 | Security / Secrets / Policy | 持续建设 |
@@ -103,4 +124,4 @@ Tenant-scoped Operations Query
 | LT-09 | Agent Asset / Marketplace | 候选 |
 | LT-10 | Production Deployment / HA / Operations | 待立项 |
 
-所有实现仍遵循 Contract → Migration → Backend → Unit/Integration/Contract → Real API → Acceptance；当前 2.10-A/B 均为只读 Operations Query，不引入数据库结构变更。
+所有实现仍遵循 Contract → Migration → Backend → Unit/Integration/Contract → Real API → Acceptance；当前 2.10-A/B/C/D 均不引入数据库结构变更。
