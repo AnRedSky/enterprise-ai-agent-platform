@@ -88,7 +88,7 @@ class WebhookDeliveryWorker:
                 status=status,
                 error_code=error_code,
                 error_message=error_message,
-                now=datetime.now(UTC),
+                now=datetime.now(UTC).replace(tzinfo=None),
             )
             await db.commit()
 
