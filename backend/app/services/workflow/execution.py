@@ -140,28 +140,76 @@ class WorkflowExecutionService:
         )
         return locked
 
-    async def _assert_no_active_frontiers_for_terminal_transition(self, execution: WorkflowExecution) -> None:
-        """终止 Execution 前证明不存在仍可消费的 Frontier，阻断通用状态入口绕过 Durable terminalization。
+    async def _terminalize_owned_frontier_for_execution(
+        self,
+        execution: WorkflowExecution,
+        target_status: str,
+        now: datetime,
+    ) -> None:
+        """在 Execution 终态事务内关闭当前 Worker 正在执行的唯一 Frontier。
 
         Args:
-            execution: 已通过 `_lock_execution` 获得行锁的当前 Execution。
+            execution: 已通过 Execution fencing 并持有行锁的 Execution。
+            target_status: Execution 即将进入的终态。
+            now: 本次终态事务使用的统一时间。
+
+        Returns:
+            None。Frontier 状态变更与 Execution 终态变更留在同一个事务。
 
         Raises:
-            HTTPException: 仍存在 pending、retry_wait、claimed 或 running Frontier 时拒绝终止。
+            HTTPException: 存在未由当前 Worker 持有的活动 Frontier，或当前 Frontier lease/generation 无效。
 
-        设计意图：Frontier progression 是 Success/Failure 的正式 Durable terminalization 边界；
-        通用 Execution.transition 不能在仍有活动 Frontier 时直接把 Execution 写成 completed/failed，
-        否则会留下“terminal Execution + 可消费 Frontier”的分叉 Durable 状态。
+        设计意图：Durable Worker 的 Runtime 必须先完成 Node/Execution 事实，再结束 Frontier；但 Runtime
+        的 Execution transition 与 Frontier completion 原本互相阻塞，导致“Runtime 已完成但 Frontier 仍
+        running”时无法提交任何一侧。这里在已经锁住 Execution 后，只允许关闭当前 Execution owner、当前
+        fencing generation、仍在有效 lease 内的 running Frontier，并与 Execution terminalization 共用一个
+        DB transaction，从根上消除 B2/B6 的 terminalization race。其他 pending/retry_wait/claimed/running
+        Frontier 仍然拒绝，避免把尚未执行的 sibling 错误标记为 completed/failed。
         """
         result = await self.db.execute(
-            select(WorkflowFrontier.id).where(
+            select(WorkflowFrontier)
+            .where(
                 WorkflowFrontier.tenant_id == execution.tenant_id,
                 WorkflowFrontier.execution_id == execution.id,
                 WorkflowFrontier.status.in_(("pending", "retry_wait", "claimed", "running")),
-            ).limit(1)
+            )
+            .with_for_update()
         )
-        if result.scalar_one_or_none() is not None:
-            raise HTTPException(409, "Execution 仍存在活动 Frontier，不允许直接进入 terminal 状态")
+        active_frontiers = list(result.scalars().all())
+        if not active_frontiers:
+            return
+        if len(active_frontiers) != 1:
+            raise HTTPException(409, "Execution 仍存在多个活动 Frontier，不允许直接进入 terminal 状态")
+        frontier = active_frontiers[0]
+        if frontier.status != "running":
+            raise HTTPException(409, "Execution 仍存在尚未执行的 Frontier，不允许直接进入 terminal 状态")
+        if frontier.worker_owner != execution.worker_owner:
+            raise HTTPException(409, "Frontier Worker ownership 已失效")
+        if int(frontier.attempt or 0) <= 0 or int(frontier.attempt or 0) != int(execution.worker_attempt or 0):
+            raise HTTPException(409, "Frontier fencing generation 已失效")
+        if frontier.worker_lease_expires_at is None or frontier.worker_lease_expires_at <= now:
+            raise HTTPException(409, "Frontier Worker lease 已失效")
+        frontier.status = target_status
+        frontier.completed_at = now if target_status in {"completed", "failed"} else None
+        frontier.worker_owner = None
+        frontier.worker_lease_expires_at = None
+
+    async def _assert_no_active_frontiers_for_terminal_transition(self, execution: WorkflowExecution, now: datetime,
+                                                                  target_status: str) -> None:
+        """终止 Execution 前验证 Frontier 生命周期，并原子关闭当前 Worker 的执行 Frontier。
+
+        Args:
+            execution: 已通过 `_lock_execution` 获得行锁的当前 Execution。
+            now: 本次 Execution terminalization 的统一时间。
+            target_status: 即将写入 Execution 的终态。
+
+        Returns:
+            None。当前 Worker 的唯一 running Frontier 会在同一事务中先进入相同终态。
+
+        Raises:
+            HTTPException: 存在未执行 sibling Frontier 或 ownership/fencing 不一致。
+        """
+        await self._terminalize_owned_frontier_for_execution(execution, target_status, now)
 
     def _validate_run_owner(self, execution: WorkflowExecution, worker_owner: str | None) -> None:
         """校验 Runtime 执行者是否与已认领 Execution 的 Worker owner 一致。"""
@@ -176,7 +224,7 @@ class WorkflowExecutionService:
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
                          error_code: str | None = None, error_message: str | None = None,
                          output_data: dict | None = None, actor_id: UUID | None = None) -> WorkflowExecution:
-        """推进 Execution 状态，并在终态转换时原子释放 Worker ownership。"""
+        """推进 Execution 状态，并在终态转换时原子释放 Worker ownership 与当前 Durable Frontier。"""
         if target_status not in self.EXECUTION_STATES:
             raise HTTPException(400, "不支持的 Execution 状态")
         execution = await self._lock_execution(execution)
@@ -185,9 +233,9 @@ class WorkflowExecutionService:
                    "completed": set(), "failed": set(), "cancelled": set()}
         if target_status not in allowed[current]:
             raise HTTPException(409, f"Execution 不允许从 {current} 转换到 {target_status}")
-        if target_status in {"completed", "failed"}:
-            await self._assert_no_active_frontiers_for_terminal_transition(execution)
         now = datetime.now(UTC).replace(tzinfo=None)
+        if target_status in {"completed", "failed"}:
+            await self._assert_no_active_frontiers_for_terminal_transition(execution, now, target_status)
         execution.status = target_status
         if node_id is not None:
             execution.current_node_id = node_id
