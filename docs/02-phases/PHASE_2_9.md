@@ -8,7 +8,7 @@
 - Phase 2.9-A Event Contract：已实现。
 - Phase 2.9-B Durable Event Persistence：已实现第一切片，数据库 Migration 已验收。
 - Phase 2.9-C Reliable Delivery：**第二切片已通过本地真实 PostgreSQL Gate**。
-- 当前任务：**2.9-D Webhook Integration 第一实现切片**。
+- 当前任务：**2.9-D Webhook Integration：Destination / Subscription / Fan-out Delivery Fact → Management API / Reliable Worker**。
 
 ## 3. 2.9-A Event Contract
 
@@ -57,31 +57,29 @@ Targeted delivery unit regression → 15 passed
 
 ## 6. 2.9-D Webhook Integration
 
-状态：**第一实现切片已开始**。
+### 6.1 Provider 第一切片
+已完成统一 Event → HTTP Webhook Provider：稳定 JSON envelope、事件身份头、幂等头、HMAC-SHA256 签名、HTTPX Client 注入和非 2xx 失败透传。
 
-本轮正式增加：
+入站 `WebhookTriggerService` 与出站 `WebhookProvider` 保持严格职责分离。
 
-```text
-backend/app/infrastructure/providers/webhook.py
-backend/tests/unit/test_webhook_provider.py
-```
+### 6.2 Destination / Subscription / Delivery Fact
+**已实现第一持久化切片。**
 
-Provider 第一切片能力：
-- 接收统一 `IntegrationEvent`；
-- 生成稳定 JSON envelope；
-- 输出 `X-Event-ID`、`X-Event-Type`、`X-Event-Schema-Version`；
-- 输出 `Idempotency-Key`；
-- 使用 HMAC-SHA256 对实际发送字节签名；
-- 输出 `X-Webhook-Signature: sha256=...`；
-- 注入 HTTPX Client，支持连接池复用与测试隔离；
-- 非 2xx 响应转换为异常，由上层 Durable Delivery 负责 retry/dead-letter。
+新增：
+- `webhook_destinations`：tenant-scoped endpoint、Secret 引用、启停状态；
+- `webhook_subscriptions`：Event Type → Destination 映射、启停状态、priority；
+- `webhook_deliveries`：每个 Event × Destination 独立投递事实；
+- Migration `0042_webhook_delivery_facts`；
+- `WebhookIntegrationService`：Destination / Subscription 管理与 tenant-scoped Fan-out 规划；
+- PostgreSQL 唯一约束 + `ON CONFLICT DO NOTHING`，保证重复规划幂等；
+- ORM Registry 已纳入新增模型。
 
-**重要架构边界：**现有 `WebhookTriggerService` 是入站 Trigger；新增 `WebhookProvider` 是出站 Integration Provider，两者不得合并，也不得复制 Trigger 生命周期实现。
+该层明确分离：Event Fact 描述“发生了什么”，Delivery Fact 描述“向哪个 Destination 投递及其生命周期”。不得使用 Event 的单一状态替代多 Destination 投递状态。
 
 ### 下一实现切片
-1. Webhook destination/subscription PostgreSQL 模型；
-2. tenant-scoped endpoint、Secret 引用和启停状态；
-3. Durable Event → destination 的正式编排；
+1. Destination / Subscription 管理 API；
+2. Delivery Worker 按 Destination 独立 Claim / lease / retry / dead-letter；
+3. Secret Resolver 抽象与运行时 Secret 获取；
 4. delivery audit / replay / 查询；
 5. endpoint allowlist / SSRF 与网络出口策略；
 6. Real HTTP + PostgreSQL Webhook Acceptance Gate。
@@ -96,5 +94,5 @@ Provider 第一切片能力：
 - 不修改已通过 Phase 2.8 B6 Gate 的 Delegation Runtime 主路径；
 - 不用 GitHub Actions 结果替代本地验收事实；
 - 涉及数据库必须先 Migration，再 Backend/Repository，再测试和 Real API；
-- Real Gate 不自动启动或停止任何服务；依赖服务由开发者按项目环境预先提供；
+- Real Gate 不自动启动或停止 API、Worker、Scheduler、Redis 或 PostgreSQL；依赖服务由开发者按项目环境预先提供；
 - 测试数据由脚本自动生成，不要求开发者手工填写租户、Event ID、幂等键或其他测试信息。
