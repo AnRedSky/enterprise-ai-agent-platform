@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
@@ -20,7 +21,13 @@ Sender = Callable[[WebhookDelivery, dict[str, Any]], Awaitable[int]]
 
 
 class WebhookDeliveryWorker:
-    """基于 PostgreSQL lease 的可恢复 Webhook Delivery Worker。"""
+    """基于 PostgreSQL lease 的可恢复 Webhook Delivery Worker。
+
+    `concurrency` 是单进程最大 in-flight delivery 数，也是 backpressure 边界。
+    Worker 不建立无界任务队列：只有存在空闲执行槽时才会继续 Claim。
+    """
+
+    DEFAULT_CONCURRENCY = 4
 
     def __init__(
         self,
@@ -29,12 +36,20 @@ class WebhookDeliveryWorker:
         sender: Sender | None = None,
         lease_seconds: int = 60,
         max_attempts: int = 5,
+        concurrency: int = DEFAULT_CONCURRENCY,
     ) -> None:
+        if lease_seconds <= 0:
+            raise ValueError("lease_seconds 必须大于 0")
+        if max_attempts <= 0:
+            raise ValueError("max_attempts 必须大于 0")
+        if concurrency <= 0:
+            raise ValueError("concurrency 必须大于 0")
         self.repository = repository or WebhookDeliveryRepository()
         self.owner = owner or f"webhook-worker-{uuid.uuid4().hex}"
         self.sender = sender
         self.lease_seconds = lease_seconds
         self.max_attempts = max_attempts
+        self.concurrency = concurrency
         self._running = True
 
     @staticmethod
@@ -84,16 +99,36 @@ class WebhookDeliveryWorker:
         return updated
 
     def stop(self) -> None:
-        """请求 Worker 停止。"""
+        """请求 Worker 停止；已有 in-flight delivery 会在 graceful shutdown 中完成。"""
         self._running = False
 
     async def run_forever(self, poll_interval: float = 0.2) -> None:
-        """持续消费 Webhook Delivery Fact。"""
-        import asyncio
+        """并发消费 Webhook Delivery Fact，并在停止时等待已领取任务完成。
 
+        backpressure 通过 `concurrency` 实现：任务集合永远不超过该上限。
+        stop() 后不再 Claim 新任务，但会 drain 已经领取的任务，避免把 lease 中任务
+        在正常退出时无谓地留给下一轮恢复。
+        """
         if poll_interval <= 0:
             raise ValueError("poll_interval 必须大于 0")
-        while self._running:
-            consumed = await self.deliver_once()
-            if not consumed:
-                await asyncio.sleep(poll_interval)
+
+        tasks: set[asyncio.Task[bool]] = set()
+        try:
+            while self._running or tasks:
+                while self._running and len(tasks) < self.concurrency:
+                    tasks.add(asyncio.create_task(self.deliver_once()))
+
+                if not tasks:
+                    break
+
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                tasks = set(pending)
+                idle = False
+                for task in done:
+                    if not task.result():
+                        idle = True
+                if idle and self._running:
+                    await asyncio.sleep(poll_interval)
+        finally:
+            if tasks:
+                await asyncio.gather(*tasks)
