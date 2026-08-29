@@ -43,7 +43,7 @@
             <template #default="{ row }"><el-tag size="small" :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template>
           </el-table-column>
           <el-table-column prop="agent_id" label="智能体" min-width="150"><template #default="{ row }">{{ row.agent_id || "-" }}</template></el-table-column>
-          <el-table-column prop="duration_ms" label="耗时" width="100"><template #default="{ row }">{{ row.duration_ms != null ? `${row.duration_ms} ms` : "-" }}</template></el-table-column>
+          <el-table-column prop="duration_ms" label="耗时" width="100"><template #default="{ row }">{{ row.duration_ms != null ? `${row.duration_ms} 毫秒` : "-" }}</template></el-table-column>
           <el-table-column label="开始时间" min-width="170"><template #default="{ row }">{{ formatTime(row.started_at) }}</template></el-table-column>
         </el-table>
         <el-empty v-else description="暂无运行记录" :image-size="72" />
@@ -99,6 +99,16 @@ const quickActions = [
   { path: "/runtime/audit", icon: "审", label: "审计日志", description: "追踪治理操作与运行审计" },
 ];
 
+const executionStatusText: Record<string, string> = {
+  completed: "已完成",
+  succeeded: "成功",
+  failed: "失败",
+  running: "运行中",
+  pending: "等待中",
+  cancelled: "已取消",
+  retrying: "重试中",
+};
+
 async function load() {
   loading.value = true;
   error.value = "";
@@ -117,16 +127,17 @@ async function load() {
     metrics.failedExecutions = failed.data.total;
     recentExecutions.value = executions.data.items;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "平台数据加载失败";
-    ElMessage.error("平台数据加载失败");
+    console.error("平台数据加载失败", e);
+    error.value = "平台数据加载失败，请稍后重试";
+    ElMessage.error("平台数据加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
 }
 
 function shortId(value?: string) { return value && value.length > 18 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value || "-"; }
-function formatTime(value?: string) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN", { hour12: false }); }
-function statusLabel(status: string) { return ({ completed: "已完成", succeeded: "成功", failed: "失败", running: "运行中", pending: "等待中", cancelled: "已取消" } as Record<string, string>)[status] || status; }
+function formatTime(value?: string) { if (!value) return "-"; const date = new Date(value); return Number.isNaN(date.getTime()) ? "时间格式异常" : date.toLocaleString("zh-CN", { hour12: false }); }
+function statusLabel(status: string) { return executionStatusText[status] || `未知状态（${status}）`; }
 function statusType(status: string) { return status === "failed" ? "danger" : status === "completed" || status === "succeeded" ? "success" : status === "cancelled" ? "warning" : "info"; }
 
 onMounted(load);

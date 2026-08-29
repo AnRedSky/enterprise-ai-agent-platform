@@ -75,11 +75,25 @@ describe("DashboardOverview", () => {
     expect(text).not.toContain("Tool 管理");
   });
 
-  it("renders a clear error when dashboard data fails", async () => {
-    listAgents.mockRejectedValue(new Error("network"));
+  it("does not expose backend exception text on the dashboard", async () => {
+    listAgents.mockRejectedValue(new Error("HTTP 502 Bad Gateway"));
     listTools.mockResolvedValue([]);
     executions.mockResolvedValue({ data: { total: 0, items: [] } });
     const wrapper = mount(Dashboard, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("network"));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("平台数据加载失败，请稍后重试"));
+    expect(wrapper.text()).not.toContain("HTTP 502 Bad Gateway");
+  });
+
+  it("renders unknown execution statuses as Chinese text while preserving the technical value", async () => {
+    listAgents.mockResolvedValue([]);
+    listTools.mockResolvedValue([]);
+    executions.mockImplementation(({ status }: { status?: string }) => Promise.resolve({
+      data: {
+        total: 1,
+        items: status === "failed" ? [] : [{ execution_id: "execution-unknown", status: "waiting_for_approval", started_at: "2026-08-29T08:00:00Z" }],
+      },
+    }));
+    const wrapper = mount(Dashboard, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("未知状态（waiting_for_approval）"));
   });
 });
