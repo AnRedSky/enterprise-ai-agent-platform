@@ -68,6 +68,25 @@ async def _wait_for_delegations_terminal(delegation_ids: list[uuid.UUID], timeou
     raise TimeoutError("Durable Worker 未在验收等待窗口内完成本次 Delegation 集合")
 
 
+async def _delegation_statuses(delegation_ids: list[uuid.UUID]) -> list[str]:
+    """读取本次验收 Delegation 状态，用于驱动有界的多 Worker dispatch drain。
+
+    Args:
+        delegation_ids: 本次验收创建的 Delegation 标识。
+
+    Returns:
+        list[str]: 按数据库返回顺序排列的 Delegation 当前状态。
+    """
+    async with SessionLocal() as db:
+        return list(
+            (
+                await db.execute(
+                    select(AgentDelegation.status).where(AgentDelegation.id.in_(delegation_ids))
+                )
+            ).scalars().all()
+        )
+
+
 @pytest.mark.asyncio
 async def test_delegation_is_consumed_by_multiple_worker_instances_through_durable_frontier() -> None:
     """验证多个 Worker 实例通过 Delegation Durable Frontier 消费任务，且每个 Delegation 只形成一个执行事实。"""
@@ -98,7 +117,20 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
     # 本验收同时存在父 Workflow 的普通 Frontier。若调用通用 claim_one_frontier()，Worker 可能合法地先消费父 Workflow，
     # 从而无法证明本轮正在验收的 Delegation 已被 Claim。这里直接调用正式 Delegation Frontier discovery 入口；该入口仍使用
     # 真实 PostgreSQL Claim、真实 Frontier lease 与真实 execute_frontier，不复制任何 Runtime 实现。
-    for _ in range(2):
+    #
+    # Claim 内部会提交事务并释放候选行锁，因此两个 Worker 在并发竞争时可能合法地命中同一个候选快照，
+    # 其中一个随后收到 409 并返回 None。固定执行两轮会把这种合法竞争误判成“只消费 2/4”。
+    # 这里改为在有界窗口内持续 drain，直到本测试创建的 Delegation 全部进入终态；不延长业务 timeout，
+    # 也不依赖后台 Scheduler，因此仍然只验证本次显式 Worker dispatch 边界。
+    deadline = asyncio.get_running_loop().time() + 10.0
+    delegation_ids = [uuid.UUID(item[0]) for item in fixtures]
+    while asyncio.get_running_loop().time() < deadline:
+        statuses = await _delegation_statuses(delegation_ids)
+        if len(statuses) == len(delegation_ids) and all(
+            status in {"completed", "failed", "cancelled"} for status in statuses
+        ):
+            break
+
         frontiers = await asyncio.gather(
             worker_a._claim_pending_delegation_frontier(),
             worker_b._claim_pending_delegation_frontier(),
@@ -106,14 +138,16 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
         pairs = [(worker, frontier) for worker, frontier in zip((worker_a, worker_b), frontiers) if frontier is not None]
         if pairs:
             await asyncio.gather(*(worker.execute_frontier(frontier) for worker, frontier in pairs))
+        else:
+            await asyncio.sleep(0.1)
 
-    await _wait_for_delegations_terminal([uuid.UUID(item[0]) for item in fixtures])
+    await _wait_for_delegations_terminal(delegation_ids)
 
     async with SessionLocal() as db:
         delegation_rows = (
             await db.execute(
                 select(AgentDelegation).where(
-                    AgentDelegation.id.in_([uuid.UUID(item[0]) for item in fixtures])
+                    AgentDelegation.id.in_(delegation_ids)
                 )
             )
         ).scalars().all()
