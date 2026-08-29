@@ -1,5 +1,6 @@
 """Enterprise Integration 领域入口。"""
 
+from app.services.integration.alert_lifecycle import AlertLifecycleService
 from app.services.integration.contract import IntegrationEvent
 from app.services.integration.delivery import IntegrationEventDeliveryService
 from app.services.integration.notification import NotificationRoutingService
@@ -13,19 +14,9 @@ from app.services.integration.webhook_delivery_repository import WebhookDelivery
 from app.services.integration.webhook_provider import WebhookDeliveryHTTPError, WebhookHTTPProvider
 
 __all__ = [
-    "IntegrationEvent",
-    "IntegrationEventDeliveryService",
-    "NotificationRoutingService",
-    "NotificationDispatcher",
-    "IntegrationEventRepository",
-    "WebhookIntegrationService",
-    "WebhookDeliveryRepository",
-    "WebhookDeliveryWorker",
-    "WebhookHTTPProvider",
-    "WebhookDeliveryHTTPError",
-    "WebhookEndpointPolicy",
-    "WebhookEndpointSecurityError",
-    "SecretResolver",
-    "EnvironmentSecretResolver",
-    "SecretResolutionError",
+    "AlertLifecycleService", "IntegrationEvent", "IntegrationEventDeliveryService",
+    "NotificationRoutingService", "NotificationDispatcher", "IntegrationEventRepository",
+    "WebhookIntegrationService", "WebhookDeliveryRepository", "WebhookDeliveryWorker",
+    "WebhookHTTPProvider", "WebhookDeliveryHTTPError", "WebhookEndpointPolicy",
+    "WebhookEndpointSecurityError", "SecretResolver", "EnvironmentSecretResolver", "SecretResolutionError",
 ]
