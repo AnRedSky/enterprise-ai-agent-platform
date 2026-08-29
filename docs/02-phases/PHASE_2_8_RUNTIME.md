@@ -41,35 +41,38 @@ B5 Real Gate                                     4 passed
 
 B5 已通过本地验收。
 
-## 4. B6 Multi-Worker Runtime 问题与修复
+## 4. B6 问题与实现
 
-B1 原实现只创建 `WorkflowExecution`，没有创建 `WorkflowFrontier`。默认 `run_worker.py` 已使用 Durable Frontier 作为唯一 dispatch 入口，因此 B2 直接调用 Runtime 的测试虽然能够执行，独立 Durable Frontier Worker 却无法发现 Delegation Execution。
+发现的工程缺口是：B1 Claim 创建 `WorkflowExecution` 后没有创建 `WorkflowFrontier`，而默认 `run_worker.py` 使用 Durable Frontier 作为唯一 dispatch 入口；同时原实现没有让默认 Worker 主动发现 pending Delegation。因此仅直接调用 Runtime 的测试无法证明真实 Worker 闭环。
 
-修复后的 Claim 闭环为：
+B6 现已形成完整链路：
 
 ```text
-Delegation Claim
+pending Delegation
     ↓
-WorkflowExecution
+Durable Frontier Worker 发现 pending Delegation
     ↓
-Durable Frontier(delegation.target)
-    ↓
-Durable Frontier Worker
-    ↓
-AgentDelegationRuntimeBridge
-    ↓
-既有 WorkflowRuntime
-    ↓
-Delegation terminalization
+claim_delegation()
+    ├── WorkflowExecution
+    └── Durable Frontier(delegation.target)
+            ↓
+      Durable Frontier Worker dispatch
+            ↓
+      AgentDelegationRuntimeBridge
+            ↓
+      既有 WorkflowRuntime
+            ↓
+      Delegation terminalization
 ```
 
-Frontier identity 使用 Delegation + Worker Execution generation 生成确定性 fingerprint，Claim、Worker Execution、Frontier 与 Claim Audit/Trace 在同一事务中提交。
+Delegation Claim 与 Frontier 创建在同一事务中提交；Frontier fingerprint 同时绑定 Delegation 与 Worker Execution generation。多 Worker 仍复用现有 PostgreSQL lease/fencing，不创建第二套队列或 Retry/Recovery 状态机。
 
 ## 5. B6 自动化验收
 
 新增：
 
 ```text
+backend/tests/unit/test_delegation_worker_dispatch.py
 backend/tests/api_real/test_agent_delegation_multi_worker_api.py
 backend/scripts/test/phase-2.8/06_delegation_multi_worker_runtime_gate.ps1
 ```
@@ -86,7 +89,7 @@ Gate 自动生成测试用户、Token、tenant、ID 与测试数据；Gate 本�
 验收顺序：
 
 ```text
-B6 targeted Unit/Contract
+B6 Claim + Worker dispatch Unit/Contract
     ↓
 Backend regression
     ↓
@@ -101,7 +104,9 @@ Delegation / Worker Execution / Frontier 终态闭环
 父 Workflow Execution 保持非终态
 ```
 
-测试使用两个 `WorkflowWorker` 实例、每个并发度 1，分两轮并发 dispatch，确保每轮最多由两个 Worker 各消费一个 Durable Frontier；所有 Delegation 必须最终完成，且每个 Delegation 只存在一个 Worker Execution。
+B6 Real Gate 必须实际证明 pending Delegation 能被默认 Worker 发现，并由现有 Durable Frontier + WorkflowRuntime 完成；每个 Delegation 只存在一个 Worker Execution，Frontier 与 Execution owner 一致，父 Execution 不被子任务终态直接终止。
+
+B6 代码完成后必须由开发者本地执行 Gate，实际通过后才能标记 B6 Passed 并进入 Phase 2.8 closure。
 
 ## 6. 下一步
 
@@ -112,5 +117,3 @@ Phase 2.8 closure
     ↓
 Phase 2.9 Enterprise Integration / Event Infrastructure Contract
 ```
-
-B6 代码完成后必须由开发者本地执行 Gate，实际通过后才能标记 B6 Passed 并进入 Phase 2.8 closure。

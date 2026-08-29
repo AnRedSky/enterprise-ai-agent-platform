@@ -1,8 +1,8 @@
 """Durable Frontier backed Workflow Worker。
 
-职责：将现有唯一 WorkflowExecution Runtime 接到 Durable Frontier，而不复制 Runtime 状态机。
-边界：Frontier 是 Worker 的 durable work item；WorkflowExecution 仍是实际 Runtime execution identity。
-关键依赖：PostgreSQL、WorkflowFrontier repository、WorkflowExecution ownership 与 LeaseAwareWorkflowWorker。
+职责：将现有唯一 WorkflowExecution Runtime 接到 Durable Frontier，并负责把待执行 Delegation 发现为同一 Frontier work item。
+边界：Frontier 是 Worker 的 durable work item；WorkflowExecution 仍是实际 Runtime execution identity；不复制 Delegation Runtime、Retry 或 Recovery 状态机。
+关键依赖：PostgreSQL、WorkflowFrontier repository、AgentDelegation Claim、WorkflowExecution ownership 与 LeaseAwareWorkflowWorker。
 """
 
 from __future__ import annotations
@@ -11,10 +11,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
 
 from app.infrastructure.db import SessionLocal
+from app.models.agent_delegation import AgentDelegation
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
+from app.services.agent_delegation.claim import claim_delegation
 from app.services.workflow.frontier_lease_repository import renew_owned_frontier_lease
 from app.services.workflow.frontier_repository import claim_next_frontier, transition_owned_frontier
 from app.services.workflow.governance import WorkflowGovernanceService
@@ -95,6 +98,52 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
             frontier.status = "running"
             await db.commit()
             return frontier
+
+    async def claim_one_pending_delegation(self, now: datetime | None = None) -> bool:
+        """将一个 pending Delegation 原子 Claim 为可由当前 Durable Frontier Worker 消费的 work item。
+
+        Args:
+            now: 可选当前时间，用于确定性测试；未提供时使用 UTC 当前时间。
+
+        Returns:
+            成功创建 Delegation Worker Execution/Frontier 时返回 True；没有可 Claim Delegation 时返回 False。
+
+        Raises:
+            HTTPException: Claim 过程出现需要向 Worker 调度层报告的 Delegation 领域错误。
+
+        设计意图：Delegation API 创建的是 durable pending fact，而默认 Worker 只消费 Durable Frontier。
+        Worker 每次 dispatch 在没有普通 Frontier 可消费时补做一次 Delegation Claim，把两者连接起来。
+        Claim 内部仍使用 Delegation 行锁与同事务 Frontier 创建，因此多 Worker 竞争不会产生重复 Worker Execution。
+        """
+        now = now or datetime.now(UTC)
+        now_naive = now.replace(tzinfo=None)
+        async with SessionLocal() as db:
+            candidate = (
+                await db.execute(
+                    select(AgentDelegation.id, AgentDelegation.tenant_id)
+                    .where(
+                        AgentDelegation.status == "pending",
+                        AgentDelegation.timeout_at > now_naive,
+                    )
+                    .order_by(AgentDelegation.created_at.asc(), AgentDelegation.id.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
+            ).first()
+            if candidate is None:
+                await db.rollback()
+                return False
+            try:
+                await claim_delegation(
+                    db=db,
+                    tenant_id=candidate.tenant_id,
+                    delegation_id=candidate.id,
+                    worker_owner=self.owner,
+                )
+            except HTTPException:
+                await db.rollback()
+                return False
+            return True
 
     async def _frontier_tenant_candidate(self, db, now: datetime) -> UUID:
         """获取最早且当前 Worker 真正可领取的 Frontier 所属租户。"""
@@ -211,12 +260,17 @@ class DurableFrontierWorkflowWorker(LeaseAwareWorkflowWorker):
                     await db.rollback()
 
     async def dispatch_once(self) -> int:
-        """批量消费 Durable Frontier；Frontier 是默认 Worker 的唯一调度入口。"""
+        """批量消费 Durable Frontier；无普通 Frontier 时发现一个 pending Delegation 后再消费其 Frontier。"""
         tasks: list[asyncio.Task[None]] = []
         for _ in range(self.concurrency):
             frontier = await self.claim_one_frontier()
             if frontier is None:
-                break
+                created = await self.claim_one_pending_delegation()
+                if not created:
+                    break
+                frontier = await self.claim_one_frontier()
+                if frontier is None:
+                    break
             tasks.append(asyncio.create_task(self.execute_frontier(frontier)))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)

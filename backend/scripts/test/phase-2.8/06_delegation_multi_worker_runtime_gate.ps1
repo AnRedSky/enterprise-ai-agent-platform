@@ -58,8 +58,8 @@ try {
     Write-Host "[0/4] Local prerequisite service verification (no service startup)"
     Assert-PrerequisiteServices
 
-    Write-Host "[1/4] Delegation Runtime Unit/Contract"
-    uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py tests/unit/test_agent_delegation_lifecycle.py tests/unit/test_agent_delegation_timeout.py
+    Write-Host "[1/4] Delegation Claim + Worker dispatch Unit/Contract"
+    uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py tests/unit/test_agent_delegation_lifecycle.py tests/unit/test_agent_delegation_timeout.py tests/unit/test_delegation_worker_dispatch.py
     Assert-ExitCode "B6 targeted unit gate failed."
 
     Write-Host "[2/4] Backend default regression"
