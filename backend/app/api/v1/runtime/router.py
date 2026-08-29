@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies.db import get_db
 from app.core.auth import bearer, current_claims
 from app.models.execution import Execution
-from app.models.webhook_delivery import WebhookDelivery
 from app.services.integration.webhook_delivery_repository import WebhookDeliveryRepository
 from app.schemas.runtime import (
     AuditLogListResponse,
@@ -125,18 +124,11 @@ async def list_audit_logs(page: int = Query(1, ge=1), page_size: int = Query(20,
 
 @router.get("/integration-events", response_model=IntegrationEventListResponse)
 async def list_integration_events(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    event_type: str | None = None,
-    source: str | None = None,
-    status: str | None = None,
-    subject: str | None = None,
-    trace_id: str | None = None,
-    request_id: str | None = None,
-    occurred_from: datetime | None = None,
-    occurred_to: datetime | None = None,
-    claims: dict = Depends(_runtime_claims),
-    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), event_type: str | None = None,
+    source: str | None = None, status: str | None = None, subject: str | None = None,
+    trace_id: str | None = None, request_id: str | None = None,
+    occurred_from: datetime | None = None, occurred_to: datetime | None = None,
+    claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db),
 ):
     """租户范围内查询 Durable Integration Event；调用方不能指定任意 tenant。"""
     page, page_size, total, rows = await RuntimeQueryService(db).integration_events(
@@ -164,12 +156,8 @@ async def integration_event_summary(
 
 @router.get("/integration-events/{integration_event_id}/deliveries", response_model=IntegrationEventDeliveryListResponse)
 async def integration_event_deliveries(
-    integration_event_id: UUID,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    status: str | None = None,
-    claims: dict = Depends(_runtime_claims),
-    db: AsyncSession = Depends(get_db),
+    integration_event_id: UUID, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+    status: str | None = None, claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db),
 ):
     """查询当前租户指定 Integration Event 的 Webhook Delivery 运维事实。"""
     page, page_size, total, rows = await RuntimeQueryService(db).integration_event_deliveries(
@@ -180,18 +168,14 @@ async def integration_event_deliveries(
 
 @router.post("/integration-events/deliveries/{delivery_id}/replay", response_model=IntegrationEventReplayResponse)
 async def replay_integration_event_delivery(
-    delivery_id: UUID,
-    claims: dict = Depends(_runtime_claims),
-    db: AsyncSession = Depends(get_db),
+    delivery_id: UUID, claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db),
 ):
     """重新排队已完成或死信的 Delivery；动作本身写入不可变审计事实。"""
     actor_id, is_admin = _identity(claims)
     if not is_admin:
         raise HTTPException(status_code=403, detail="delivery replay requires admin role")
-    actor = str(actor_id)
-    repository = WebhookDeliveryRepository()
     try:
-        record = await repository.replay(db, _tenant_id(claims), delivery_id, actor)
+        record = await WebhookDeliveryRepository().replay(db, _tenant_id(claims), delivery_id, str(actor_id))
     except ValueError as exc:
         await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -204,11 +188,8 @@ async def replay_integration_event_delivery(
 
 @router.get("/integration-events/deliveries/{delivery_id}/audits", response_model=WebhookDeliveryAuditListResponse)
 async def integration_event_delivery_audits(
-    delivery_id: UUID,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=100),
-    claims: dict = Depends(_runtime_claims),
-    db: AsyncSession = Depends(get_db),
+    delivery_id: UUID, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100),
+    claims: dict = Depends(_runtime_claims), db: AsyncSession = Depends(get_db),
 ):
     """查询指定 Delivery 的投递、失败、重试与 replay 审计。"""
     page, page_size, total, rows = await RuntimeQueryService(db).webhook_delivery_audits(
