@@ -56,6 +56,35 @@ export interface WebhookDeliveryAudit {
   created_at: string;
 }
 
+export interface IntegrationEvent {
+  id: string;
+  tenant_id: string;
+  event_type: string;
+  schema_version: number;
+  source: string;
+  subject: string;
+  idempotency_key: string;
+  occurred_at: string;
+  request_id: string | null;
+  trace_id: string | null;
+  payload: Record<string, unknown>;
+  metadata_json: Record<string, unknown>;
+  status: string;
+  attempt_count: number;
+  next_attempt_at: string | null;
+  last_attempt_at: string | null;
+  delivered_at: string | null;
+  last_error_code: string | null;
+  created_at: string;
+}
+
+export interface IntegrationEventListResponse {
+  items: IntegrationEvent[];
+  page: number;
+  page_size: number;
+  total: number;
+}
+
 export interface WebhookDestinationCreatePayload {
   name: string;
   endpoint_url: string;
@@ -91,5 +120,8 @@ export const integrationApi = {
   },
   replayDelivery(deliveryId: string) {
     return request.post<WebhookDelivery>(`/webhooks/deliveries/${deliveryId}/replay`);
+  },
+  integrationEvents(params?: Record<string, unknown>) {
+    return request.get<IntegrationEventListResponse>("/runtime/integration-events", { params });
   },
 };

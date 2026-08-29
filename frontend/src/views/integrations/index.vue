@@ -4,6 +4,7 @@ import { ElMessage } from "element-plus";
 import { Connection, Plus, Refresh, Link, Bell, CircleCheck, Warning } from "@element-plus/icons-vue";
 import { integrationApi, type WebhookDestination, type WebhookSubscription } from "@/api/integrations";
 import DeliveryConsole from "./DeliveryConsole.vue";
+import IntegrationEventConsole from "./IntegrationEventConsole.vue";
 
 const loading = ref(false);
 const activeTab = ref("destinations");
@@ -93,6 +94,10 @@ onMounted(loadData);
             <el-table-column label="更新时间" min-width="180"><template #default="scope">{{ formatTime(scope.row.updated_at) }}</template></el-table-column>
           </el-table>
           <div v-if="!destinations.length" class="empty-guidance"><Warning /> <span>请先创建至少一个 Destination，再建立事件订阅。</span></div>
+        </el-tab-pane>
+        <el-tab-pane name="events">
+          <template #label><span class="tab-label"><Connection /> 事件观察</span></template>
+          <IntegrationEventConsole />
         </el-tab-pane>
         <el-tab-pane name="deliveries">
           <template #label><span class="tab-label"><Connection /> 投递运维</span></template>
