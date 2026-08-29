@@ -16,7 +16,7 @@
 
 | ID | 能力 | 当前状态 | 说明 |
 |---|---|---|---|
-| LT-01 | Enterprise Integration / Event Infrastructure | 待立项 | 先盘点 Event/Webhook/Trigger/Audit/Trace/Outbox，冻结可靠事件 Contract |
+| LT-01 | Enterprise Integration / Event Infrastructure | **Phase 2.9 开发中** | 已完成统一 Event Contract 第一切片，后续进入 Durable Event Persistence |
 | LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 | 从现有 Tenant/RBAC 向企业身份体系扩展 |
 | LT-03 | Enterprise Operations Console | 待立项 | 完整运营、任务、Worker、Scheduler、故障处理控制台 |
 | LT-04 | API / Developer Platform | 待立项 | API 生命周期、SDK、Webhook、凭证、开发者治理 |
@@ -29,4 +29,8 @@
 
 ## 与当前 Phase 的关系
 
-当前 `main` 已完成 Phase 2.8 Multi-Agent Collaboration Runtime Integration。LT 文档只承接企业化能力缺口，不承接 B1-B6 已完成事项。LT-01 是下一阶段优先前置评估方向，但在 Contract 冻结前不直接开始 Kafka、MQ、Outbox 或 Event Bus 实现。
+当前 `main` 已完成 Phase 2.8 Multi-Agent Collaboration Runtime Integration，并已正式进入 Phase 2.9 Enterprise Integration / Event Infrastructure。
+
+LT-01 仍负责记录长期企业集成能力的完整缺口；Phase 2.9 只承接其中已经冻结并进入实现的工作。当前第一切片为统一 Event Contract，下一切片为 Durable Event Persistence。
+
+除非对应 Phase 有真实代码、测试和验收证据，其他 LT 项目仍保持“待立项”，不得提前写成开发中。

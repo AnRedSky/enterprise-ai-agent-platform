@@ -4,9 +4,9 @@
 
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration 已完成，正在文档收口**
-- 当前任务：**Phase 2.8 Closure / Phase 2.9 Contract 前置评估**
-- 下一主线：**Phase 2.9 Enterprise Integration / Event Infrastructure Contract**
+- 当前阶段：**Phase 2.9 Enterprise Integration / Event Infrastructure 开发中**
+- 当前任务：**2.9-A Event Contract 第一实现切片**
+- 下一任务：**2.9-B Durable Event Persistence**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -26,9 +26,11 @@
 - B5 Delegation Audit / Trace 基础闭环已实现，创建与取消事件已写入 AuditLog / WorkflowTraceEvent；
 - Worker shutdown AsyncEngine cancellation-safe disposal 已完成并通过 targeted Unit Gate；
 - B6 已补齐 Delegation 从 pending fact 到 Durable Frontier Worker dispatch 的正式运行链路；
-- B6 多 Worker contention、drain 时序、Worker shutdown cleanup 及 Windows PowerShell Worker/Scheduler 隔离检查已完成修复。
+- B6 多 Worker contention、drain 时序、Worker shutdown cleanup 及 Windows PowerShell Worker/Scheduler 隔离检查已完成修复；
+- Phase 2.8 Runtime Integration 已达到本地 Real Gate 收口条件；
+- Phase 2.9-A 已建立统一 Enterprise Integration Event Contract 第一实现切片。
 
-## 3. 最新本地验收证据
+## 3. 最新 Phase 2.8 验收基线
 
 最新开发者本地执行的正式 B6 Gate 已全部通过：
 
@@ -48,48 +50,64 @@
 [PASS] Phase 2.8 B6 multi-worker Delegation Runtime gate completed.
 ```
 
-因此 **B6 已达到本地 Real Gate 通过条件，Phase 2.8 Runtime Integration 已达到收口条件**。
+该结果继续作为 Phase 2.8 Runtime Integration 的历史验收基线；除非出现新的实际回归，不重复修改已经通过的 Claim、Worker dispatch、timeout/cancel 或 shutdown cleanup 路径。
 
-## 4. B6 实现与问题闭环
+## 4. Phase 2.9 当前实现
 
-B6 开发期间本地 Real Gate 暴露并完成以下工程问题修复：
+### 2.9-A Event Contract
 
-1. 多 Worker 两轮 dispatch 只消费部分 Delegation：根因是 PostgreSQL Claim contention 与固定轮次时序组合导致合法竞争被错误解释为任务未消费；已改为有界窗口内安全 drain；
-2. B2 Real API 测试绕过正式 Durable Frontier dispatch 边界：已改为通过正式 `WorkflowWorker` Frontier Claim / Execute 边界验证 Target Agent Runtime；
-3. Worker 关闭阶段 AsyncEngine / asyncpg connection close 在主 Task cancellation 下出现 `CancelledError`：已使用独立 cleanup Task + `asyncio.shield()` 保证底层连接池清理完成，并恢复原 cancellation 语义；
-4. Real Gate 存在外部 Worker/Scheduler 消费测试 Delegation 的环境污染风险：已增加项目路径感知的 Windows PowerShell 进程隔离检查；Gate 不自动启动、停止或重启服务；
-5. Windows PowerShell 进程检测曾存在正则字符串引用解析错误：已改为稳定的路径感知匹配实现。
+状态：**第一切片已实现，单元测试待开发者本地执行确认。**
 
-对应错误记录：
-
-- `docs/04-errors/2026-08-29-phase-2-8-b6-worker-entrypoint-and-delegation-runtime.md`
-- `docs/04-errors/2026-08-29-phase-2-8-b6-multi-worker-acceptance-contention.md`
-- `docs/04-errors/2026-08-29-worker-async-engine-shutdown-cancelled-error.md`
-
-B6 相关修复提交链已经完成闭环，最终以实际 Real Gate 通过结果作为验收依据，不以历史失败记录覆盖当前状态。
-
-## 5. Phase 2.8 当前阶段判断
+新增统一事件领域契约：
 
 ```text
-Phase 2.8-A Delegation Contract                    ✅ 完成
-B1 Atomic Claim                                    ✅ 完成
-B2 Worker Execution Bridge                         ✅ 完成
-B3 Completion/Failure Generation Fencing           ✅ 完成
-B4 Timeout / Cancel / Parent Semantics             ✅ 完成
-B5 Audit / Trace                                   ✅ 完成
-B6 Multi-Worker Durable Frontier Runtime            ✅ 完成
-Phase 2.8 Runtime Integration                      ✅ 收口
+backend/app/services/integration/
+├── __init__.py
+└── contract.py
 ```
 
-当前没有证据表明 B6 仍存在未解决的 Runtime 阻塞问题。除非出现新的实际回归，不再重复修改已经通过的 Claim、Worker dispatch、timeout/cancel 或 shutdown cleanup 路径。
+事件信封当前冻结以下字段：
 
-## 6. 长期未完成能力
+- `event_id`
+- `tenant_id`
+- `event_type`
+- `schema_version`
+- `source`
+- `subject`
+- `idempotency_key`
+- `occurred_at`
+- `request_id`
+- `trace_id`
+- `payload`
+- `metadata`
 
-长期企业化能力已从当前 Phase 文档中独立拆出，统一维护在 `docs/05-long-term/`，不作为 Phase 2.8 的未完成任务：
+幂等作用域：
+
+```text
+tenant_id + source + event_type + idempotency_key
+```
+
+该实现只承担领域 Contract 与校验，不包含数据库、HTTP、Scheduler、Worker 或消息中间件实现。
+
+对应测试：
+
+```text
+backend/tests/unit/test_integration_event_contract.py
+```
+
+### 2.9-B Durable Event Persistence
+
+下一任务：实现 PostgreSQL Durable Event Fact，并冻结状态机、投递次数、失败信息、下一次投递时间和数据库幂等唯一约束，然后建立 Alembic Migration。
+
+当前不得直接引入 Kafka、MQ、Event Bus 或第二套 Outbox。
+
+## 5. 长期未完成能力
+
+长期企业化能力继续独立维护在 `docs/05-long-term/`。
 
 | ID | 长期能力 | 状态 |
 |---|---|---|
-| LT-01 | Enterprise Integration / Event Infrastructure | 待立项 |
+| LT-01 | Enterprise Integration / Event Infrastructure | **Phase 2.9 开发中** |
 | LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 |
 | LT-03 | Enterprise Operations Console | 待立项 |
 | LT-04 | API / Developer Platform | 待立项 |
@@ -102,36 +120,29 @@ Phase 2.8 Runtime Integration                      ✅ 收口
 
 长期任务索引：`docs/05-long-term/README.md`。
 
-这些 LT 文档只记录企业级能力缺口、长期目标和拆解，不代表当前已经冻结 Contract 或已经进入开发。正式进入开发后，再建立对应 `docs/02-phases/PHASE_x_y.md`。
+## 6. Phase 2.9 开发顺序
 
-## 7. Phase 2.9 进入前置条件
+```text
+2.9-A Event Contract                         ✅ 第一切片实现
+        ↓
+2.9-B Durable Event Persistence              ⏳ 下一任务
+        ↓
+2.9-C Reliable Delivery                     ⏳
+        ↓
+2.9-D Webhook Integration                   ⏳
+        ↓
+2.9-E Runtime Integration                   ⏳
+```
 
-Phase 2.9 当前仍是**候选/前置评估状态**，尚未冻结 Contract，也未开始功能开发。进入正式开发前必须：
+每一步均必须遵循 Contract → Migration（如涉及数据库）→ Backend → Unit/Integration/Contract → Real API → Acceptance 的顺序。
 
-1. 盘点现有 Event、Webhook、Trigger、Audit、Trace、Outbox 等基础设施；
-2. 确认是否已有正式 Integration / Event Infrastructure 领域实现，禁止重复创建平行 Service / Repository / Runtime / Provider；
-3. 根据真实企业业务场景确定可靠性、幂等、投递、顺序、重试、隔离和可观测边界；
-4. 完成 Contract 决策后建立正式 `PHASE_2_9.md` 与对应 Acceptance 入口；
-5. 涉及数据库结构时必须 Migration-first，并实际验证 `uv run alembic upgrade head`；
-6. 遵循 Contract → Migration → Backend implementation → Unit/Integration/Contract → Real API → Acceptance 的工程顺序。
+## 7. 文档基线
 
-**不得因为 Phase 2.8 已收口而直接引入 Kafka、MQ、Event Bus 或 Outbox；技术选型必须从已冻结的业务 Contract 和真实可靠性需求出发。**
+- `docs/01-governance/DEVELOPMENT.md`：唯一工程开发准则；
+- `docs/02-phases/PHASE_2_9.md`：当前 Phase 2.9 开发计划与实现切片；
+- `docs/05-long-term/LT-01-ENTERPRISE-INTEGRATION-EVENT-INFRASTRUCTURE.md`：长期 LT-01 能力全量 backlog；
+- `docs/05-long-term/README.md`：长期任务索引；
+- `docs/03-acceptance/`：真实验收事实；
+- `docs/04-errors/`：已发生并完成分析的工程错误。
 
-## 8. 当前文档基线
-
-已完成本轮长期任务分类同步：
-
-- `docs/05-long-term/README.md`
-- `docs/05-long-term/LT-01-ENTERPRISE-INTEGRATION-EVENT-INFRASTRUCTURE.md`
-- `docs/05-long-term/LT-02-ENTERPRISE-IAM-SSO-IDENTITY.md`
-- `docs/05-long-term/LT-03-ENTERPRISE-OPERATIONS-CONSOLE.md`
-- `docs/05-long-term/LT-04-API-DEVELOPER-PLATFORM.md`
-- `docs/05-long-term/LT-05-OBSERVABILITY-SRE.md`
-- `docs/05-long-term/LT-06-SECURITY-SECRETS-POLICY.md`
-- `docs/05-long-term/LT-07-AGENT-EVALUATION-QUALITY.md`
-- `docs/05-long-term/LT-08-COST-QUOTA-BILLING.md`
-- `docs/05-long-term/LT-09-AGENT-ASSET-MARKETPLACE.md`
-- `docs/05-long-term/LT-10-PRODUCTION-DEPLOYMENT-HA-OPERATIONS.md`
-- `docs/01-governance/DOCUMENTATION.md`
-
-开发治理仍以 `docs/01-governance/DEVELOPMENT.md` 为唯一工程规则入口；文档分类与状态管理以 `docs/01-governance/DOCUMENTATION.md` 为准。
+当前长期任务与当前 Phase 已保持独立：LT-01 记录长期能力全貌，Phase 2.9 只记录已经正式立项并进入实现的任务。
