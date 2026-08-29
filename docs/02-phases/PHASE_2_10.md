@@ -35,65 +35,93 @@
 ## 2.10-F Metrics / SLO
 状态：**增强切片已实现**。
 
-新增：
 - `GET /api/v1/runtime/operations/dimensions`；
 - 按 Event Type + Destination 聚合 Delivery Durable Facts；
 - 当前 Webhook HTTP Provider 作为 canonical provider dimension `webhook_http`；
-- 返回状态分布、Retry、Dead Letter 和成功率；
-- 维度查询继续强制 tenant scope；
-- `GET /api/v1/runtime/operations/alerts` 提供可解释的 SLO / Retry / Dead Letter 告警评估。
-
-指标仍全部从 PostgreSQL Durable Event / Delivery facts 实时计算，不建立平行事实源。
-
-后续：时间序列、Provider 可配置注册表、Prometheus/OpenTelemetry export。
+- `GET /api/v1/runtime/operations/alerts` 提供确定性 SLO / Retry / Dead Letter 告警评估；
+- 指标仍全部从 PostgreSQL Durable Event / Delivery facts 实时计算，不建立平行业务事实源。
 
 ## 2.10-G Dead Letter Management
 状态：**增强切片已实现**。
 
-- tenant-scoped Dead Letter 查询；
-- 分页；
-- attempt / HTTP / error / lease / timestamps；
-- 单条 Replay；
-- 新增 `POST /api/v1/runtime/operations/dead-letters/replay` 批量 Replay；
-- 一次最多 100 个 Delivery ID；
+- tenant-scoped Dead Letter 查询与分页；
+- 单条 Replay 与最多 100 项批量 Replay；
 - 重复 ID 自动去重；
-- 每项独立处理，成功与拒绝结果分别返回；
-- Replay 仍只重新入队，不同步执行网络请求；
-- 每次成功 Replay 均通过 canonical Repository 产生不可变 Audit Fact。
-
-后续：人工关闭/归档、失败原因分类、重试策略诊断与批量操作审计摘要。
+- 每项独立处理并返回成功/拒绝结果；
+- Replay 只重新入队，不同步执行网络请求；
+- 每次成功 Replay 通过 canonical Repository 产生不可变 Audit Fact。
 
 ## 2.10-H Runtime Operational Acceptance
-状态：**Acceptance Gate 已实现，待本地 Real PostgreSQL 执行**。
+状态：**Acceptance Gate 已实现，按本地实际执行结果收口**。
 
-Acceptance 脚本：
+必须验证 tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit，以及 Worker 后续网络投递边界；Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL，测试数据自动生成和清理。
 
-`backend/scripts/test/phase-2.10/01_runtime_operations_real_gate.ps1`
+## 2.10-I Provider / Metrics / Alert / Export / Audit
+状态：**开发中，当前正式进入企业级运维扩展切片**。
 
-Acceptance 测试：
+### I-1 时间序列 Metrics
 
-`backend/tests/api_real/test_runtime_operations_acceptance.py`
+新增持久化 `runtime_metric_samples`，时间序列样本按 `tenant_id + metric_name + recorded_at` 索引；样本由既有 Durable Event / Delivery facts 聚合生成，不形成第二套业务事实源。
 
-必须一次性验证：
+- `POST /api/v1/runtime/operations/metrics/snapshot` 固化当前指标快照；
+- `GET /api/v1/runtime/operations/metrics/series` 查询租户隔离的时间序列；
+- 当前 canonical 指标：Delivery Success Percent、Retry Count、Dead Letter Count、P95 Delivery Latency。
 
-1. tenant A / B Event 隔离；
-2. Delivery 隔离；
-3. Dead Letter 隔离；
-4. Overview 只统计当前 tenant；
-5. Event Type + Destination dimension 只统计当前 tenant；
-6. SLO 来自真实 PostgreSQL Durable facts；
-7. SLO breach / retry / dead-letter 告警可解释；
-8. Dead Letter Replay 重新进入 `pending`；
-9. Replay Audit 可追溯且 tenant scoped；
-10. 后续 Worker 仍负责实际网络投递，不由 Operations API 直接调用 Webhook。
+### I-2 Provider Registry
 
-Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL；测试数据自动生成和清理，不要求人工填写测试信息。
+新增 `runtime_provider_registry`，提供 tenant-scoped Provider 元数据注册。
+
+- `GET/POST /api/v1/runtime/operations/providers`；
+- Provider 类型、名称、启用状态、健康状态和非敏感配置可持久化；
+- 禁止保存 `api_key/token/password/secret` 等明文凭据；Secret 继续由现有 Secret Resolver 体系管理；
+- Provider 注册表只描述适配器，不复制 Provider 实现。
+
+### I-3 Destination Registry
+
+既有 `WebhookDestination` 正式作为 Destination Registry 来源，通过 `GET /api/v1/runtime/operations/destinations` 提供运维视图；不再新增平行 Destination 表。
+
+### I-4 Alert Rule Management
+
+新增 `runtime_alert_rules`，支持 tenant-scoped 的指标、比较符、阈值、窗口和严重级别配置。
+
+- `GET/POST /api/v1/runtime/operations/alert-rules`；
+- 当前支持 `> >= < <= ==`；
+- 规则仅保存配置，告警评估继续基于可重算 Durable facts；
+- 所有创建动作进入通用 Runtime Operational Audit。
+
+### I-5 Prometheus / OpenTelemetry Export
+
+新增：
+
+- `GET /api/v1/runtime/operations/metrics/prometheus`：输出 Prometheus text exposition；
+- `GET /api/v1/runtime/operations/metrics/otlp`：输出 OTLP HTTP 指标结构；
+- 导出数据 tenant-scoped，且直接从 Durable facts 计算，避免导出缓存与业务事实漂移。
+
+当前实现不强制引入第三方 SDK，先稳定协议边界；后续接入 OpenTelemetry SDK 时保持现有导出 Contract 不变。
+
+### I-6 Operational Audit
+
+新增 `runtime_operation_audits` 通用运维审计事实，并提供：
+
+- `GET /api/v1/runtime/operations/audit`；
+- Provider 注册、Alert Rule 管理等配置变更记录 actor / action / resource / outcome；
+- Audit 与 Replay Audit 保持职责分离：Replay 继续使用 Webhook Delivery Audit，通用运维动作使用 Runtime Operational Audit。
+
+## 2.10-I 下一切片
+
+1. 将 Provider Registry 接入实际 Provider 健康探测与能力声明；
+2. 增加按 Provider / Destination / Event Type 的时间序列维度采样；
+3. 将 Alert Rule 接入 Scheduler 周期评估与通知 Delivery；
+4. 增加告警去重、恢复事件、告警生命周期和通知失败审计；
+5. 增加 Prometheus canonical metric naming / label governance；
+6. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
+7. 完成 2.10-I Runtime Acceptance：registry + series + rules + exports + audit + tenant isolation。
 
 ## 约束
-- Operations API 不绕过 Repository 直接修改投递状态。
-- 所有运维动作必须 tenant-scoped。
-- 查询无副作用。
-- Replay 只重新入队，不同步执行网络请求。
-- 所有 Replay 必须产生不可变审计事实。
-- Metrics 必须从已有 Durable Event / Delivery 事实聚合，不建立平行事实源。
-- 告警计算必须是确定性的、可解释的，并可从 Durable facts 重算。
+- Operations API 不绕过 Repository 直接修改 Delivery 状态。
+- 所有运维能力必须 tenant-scoped。
+- Metrics 不建立平行业务事实源。
+- Provider Registry 不保存明文 Secret，不复制 Provider 实现。
+- Destination Registry 复用既有 WebhookDestination。
+- Export 不改变业务事实，也不得绕过 tenant boundary。
+- Operational Audit 必须不可变、可追溯，并记录 actor / action / resource / outcome。

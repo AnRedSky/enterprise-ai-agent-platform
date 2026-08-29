@@ -6,6 +6,7 @@ from app.models.integration_event import IntegrationEventRecord  # noqa: F401
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion  # noqa: F401
 from app.models.model_provider import ModelProfile, ModelProvider  # noqa: F401
 from app.models.organization import Organization, OrganizationMembership  # noqa: F401
+from app.models.runtime_operations import RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry  # noqa: F401
 from app.models.usage import ModelUsageRecord  # noqa: F401
 from app.models.webhook_delivery import WebhookDelivery  # noqa: F401
 from app.models.webhook_delivery_audit import WebhookDeliveryAudit  # noqa: F401
