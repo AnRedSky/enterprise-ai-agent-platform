@@ -9,6 +9,7 @@
 - Phase 2.9-B Durable Event Persistence：已实现第一切片，数据库 Migration 已验收。
 - Phase 2.9-C Reliable Delivery：第二切片已通过本地真实 PostgreSQL Gate。
 - Phase 2.9-D Webhook Integration：Provider / Delivery Worker / Security / Audit / Replay 已落地，进入 Real Acceptance 收口。
+- Phase 2.9-E Runtime Integration：已启动，第一切片完成 Workflow / Agent / Scheduler 到统一 Durable Event Contract 的生产接入。
 
 ## 3. 2.9-A Event Contract
 状态：**已实现**。统一事件信封包含 `event_id`、`tenant_id`、`event_type`、`schema_version`、`source`、`subject`、`idempotency_key`、`occurred_at`、`request_id`、`trace_id`、`payload`、`metadata`。
@@ -84,7 +85,33 @@ Gate 不启动、不停止 API、Worker、Scheduler、Redis 或 PostgreSQL；测
 Worker 并发/backpressure/graceful shutdown 已完成并接入既有 Worker Service；剩余收口项是执行 `02_webhook_delivery_real_gate.ps1` 的真实 PostgreSQL + HTTP Acceptance，并根据结果修正实际运行环境问题。Real Gate 通过后 2.9-D 才标记为最终完成。
 
 ## 7. 2.9-E Runtime Integration
-待 2.9-D Real Acceptance 收口后，将 Workflow / Agent / Scheduler 关键业务事实接入统一 Event Contract，同时保持既有 Runtime 状态机和 Execution Fact 语义。
+
+### 7.1 事务内 Runtime Event Publisher
+**已实现第一切片。** 新增 `RuntimeIntegrationEventPublisher`，所有 Runtime Event 使用统一 `IntegrationEvent` Contract，并在产生业务事实的数据库事务内写入 `integration_events`；Publisher 不自行提交事务，唯一键冲突通过 savepoint + 查询收敛。
+
+### 7.2 Workflow Runtime
+**已接入第一关键事实：`workflow.execution.completed`。** Durable Frontier 最终完成并 terminalize Execution 时，同一事务同时持久化 Integration Event；事件包含 tenant、workflow、version、execution、frontier、worker attempt 等可审计上下文，幂等键为 `workflow-execution:{execution_id}:completed`。
+
+这保证 Webhook Delivery Worker 后续消费到的 Workflow completion event 与 Workflow Durable Fact 具有原子一致性，不存在“Execution 已完成但事件尚未持久化”的进程崩溃窗口。
+
+### 7.3 Agent Runtime
+**已接入第一生命周期切片。** `ObservabilityService` 在 Agent Execution 创建/完成阶段生产：
+- `agent.execution.started`；
+- `agent.execution.completed`；
+- `agent.execution.failed`。
+
+事件复用现有 request/trace/execution 标识，并通过 Agent owner → User → Tenant 解析租户，禁止生成无租户 Runtime Event。
+
+### 7.4 Scheduler Runtime
+**已接入 Scheduled Trigger dispatch 事实。** Scheduler 调用 `WorkflowTriggerService.invoke_scheduled` 创建 Durable Execution + Frontier 时，同时生成 `scheduler.trigger.dispatched`；事件与 Execution/Frontier 写入同一事务，幂等键复用 Scheduled Trigger slot idempotency key 空间。
+
+### 7.5 下一切片
+下一步不再扩展新的事件基础设施，而是继续补齐业务事实覆盖：
+1. Workflow `created / started / failed / cancelled / retry_requested / resume_requested`；
+2. Agent Tool / Retrieval / Model provider 关键事实与统一事件关联；
+3. Scheduler `lease / contention / misfire / recovery` 结果事件；
+4. Integration Event 查询/运维视图与 tenant-scoped replay 管理；
+5. Workflow / Agent / Scheduler event schema/version 的稳定文档与 Real Acceptance。
 
 ## 8. 开发边界
 - Redis、Kafka、MQ 不作为 Durable Event Fact；
