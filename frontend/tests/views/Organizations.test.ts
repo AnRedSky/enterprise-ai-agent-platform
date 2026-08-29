@@ -27,6 +27,18 @@ describe("Organizations management UI", () => {
     expect((wrapper.vm as any).organizations[0].name).toBe("Acme");
   });
 
+  it("uses Chinese wording while preserving technical identifiers", async () => {
+    const wrapper = mount(Organizations, { global });
+    await vi.waitFor(() => expect(api.listOrganizations).toHaveBeenCalled());
+    const text = wrapper.text();
+    expect(text).toContain("组织");
+    expect(text).toContain("创建组织");
+    expect(text).toContain("管理成员");
+    expect(text).toContain("Tenant ID");
+    expect(text).not.toContain("Organizations");
+    expect(text).not.toContain("Organization");
+  });
+
   it("creates an organization and reloads the list", async () => {
     api.createOrganization.mockResolvedValue({ id: "o2", tenant_id: "t1", name: "New Org", status: "active" });
     const wrapper = mount(Organizations, { global });
