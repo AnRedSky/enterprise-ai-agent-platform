@@ -4,6 +4,7 @@
 > 评估日期：2026-08-29
 > 目的：以真实企业产品场景为依据，对已确认能力缺口进行优先级排序，并形成后续阶段路线。
 > 规则：只有已进入正式 Phase 的范围才允许转化为开发任务；候选路线必须先完成 Contract 决策。
+> 长期未完成能力的独立任务记录统一位于 `docs/05-long-term/`，不与当前 Phase 文档混合。
 
 ## 1. 产品目标
 
@@ -19,7 +20,7 @@ Phase 2.8 已进一步完成受治理的 Multi-Agent Delegation Runtime：Delega
 
 **Phase 2.8 Multi-Agent Collaboration Runtime Integration 已完成；B6 Real Gate 已通过。当前工作进入 Phase 2.8 文档收口与 Phase 2.9 Contract 前置评估。**
 
-## 4. 优先级路线
+## 4. 当前 Phase 路线
 
 | Phase | 产品主题 | 当前状态 | 下一动作 |
 |---|---|---|---|
@@ -34,13 +35,32 @@ Phase 2.8 已进一步完成受治理的 Multi-Agent Delegation Runtime：Delega
 | **2.9** | **Enterprise Integration / Event Infrastructure** | **候选，尚未冻结 Contract** | **先做 Integration/Event 现状盘点与 Contract 决策** |
 | 2.10 | Agent Asset / Marketplace | 候选 | 明确资产所有权、版本、审批和跨组织共享后再立项 |
 
-## 5. Phase 2.8 当前开发边界
+## 5. 长期未完成能力
+
+以下能力已经确认属于企业化长期缺口，但尚未进入正式 Phase。每项均独立维护长期任务文档：
+
+| LT | 产品能力 | 状态 | 独立记录 |
+|---|---|---|---|
+| LT-01 | Enterprise Integration / Event Infrastructure | 待立项 | `docs/05-long-term/LT-01-ENTERPRISE-INTEGRATION-EVENT-INFRASTRUCTURE.md` |
+| LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 | `docs/05-long-term/LT-02-ENTERPRISE-IAM-SSO-IDENTITY.md` |
+| LT-03 | Enterprise Operations Console | 待立项 | `docs/05-long-term/LT-03-ENTERPRISE-OPERATIONS-CONSOLE.md` |
+| LT-04 | API / Developer Platform | 待立项 | `docs/05-long-term/LT-04-API-DEVELOPER-PLATFORM.md` |
+| LT-05 | Observability / SRE | 待立项 | `docs/05-long-term/LT-05-OBSERVABILITY-SRE.md` |
+| LT-06 | Security / Secrets / Policy | 待立项 | `docs/05-long-term/LT-06-SECURITY-SECRETS-POLICY.md` |
+| LT-07 | Agent Evaluation / Quality | 待立项 | `docs/05-long-term/LT-07-AGENT-EVALUATION-QUALITY.md` |
+| LT-08 | Cost / Quota / Billing | 待立项 | `docs/05-long-term/LT-08-COST-QUOTA-BILLING.md` |
+| LT-09 | Agent Asset / Marketplace | 候选 | `docs/05-long-term/LT-09-AGENT-ASSET-MARKETPLACE.md` |
+| LT-10 | Production Deployment / HA / Operations | 待立项 | `docs/05-long-term/LT-10-PRODUCTION-DEPLOYMENT-HA-OPERATIONS.md` |
+
+LT 文档是 backlog/长期设计记录，不等价于当前开发任务。只有正式立项并冻结 Contract 后，才转化为新的 `PHASE_x_y.md`。
+
+## 6. Phase 2.8 当前开发边界
 
 首版只支持一次 Workflow Execution 内受治理的 Agent Delegation：绑定 tenant、source/target Agent version、稳定 delegation identity；显式传递 input/context/tool refs；限制 depth、active count、timeout、model budget；复用既有 RBAC / Model Governance / Durable Execution；Worker completion 必须 generation fenced；不引入 MQ/Kafka、Marketplace、跨 tenant 调用、无限 spawning 或第二套 Retry / Recovery 状态机。
 
 详细 Contract：`docs/02-phases/PHASE_2_8_A_CONTRACT.md`。
 
-## 6. Phase 2.8 开发顺序与完成状态
+## 7. Phase 2.8 开发顺序与完成状态
 
 ```text
 Contract 冻结
@@ -56,7 +76,7 @@ B6 multi-worker Durable Frontier runtime    ✅
 Phase 2.8 Runtime Integration               ✅ 收口
 ```
 
-## 7. B6 实际验收证据
+## 8. B6 实际验收证据
 
 正式入口：
 
@@ -85,11 +105,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\06_
 
 B6 Gate 同时包含 Windows 外部 Worker/Scheduler 隔离检查。Gate 不启动、停止或重启本地服务，只检查前置环境并执行正式验收链路。
 
-## 8. B6 工程问题闭环
+## 9. B6 工程问题闭环
 
 B6 开发期间发现并修复了 PostgreSQL Claim contention 与固定轮次时序误判、旧 B2 Real API 绕过正式 Frontier dispatch、Worker shutdown AsyncEngine cancellation、外部 Worker/Scheduler 环境污染以及 Windows PowerShell 进程检测正则解析等问题。对应错误分析已进入 `docs/04-errors/`；最新状态不再存在已知 B6 Runtime blocker。
 
-## 9. Phase 2.9 进入前置条件
+## 10. Phase 2.9 进入前置条件
 
 Phase 2.9 不应直接开始功能编码。必须先完成：
 
@@ -102,6 +122,6 @@ Phase 2.9 不应直接开始功能编码。必须先完成：
 
 **Kafka、MQ、Outbox、Event Bus 等技术选型不得先于业务 Contract 决策。**
 
-## 10. 工程纪律
+## 11. 工程纪律
 
 所有实际完成度以代码、Phase、Acceptance 与本地测试证据为准。未执行的测试不得标记 Passed；Phase 完成、延期、阻塞或范围变更必须同步更新 Phase / Acceptance / Project Status / Error 文档；所有开发、修复与文档变更直接基于并提交 `main`，不创建功能分支。
