@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import AppShell from "@/components/AppShell.vue";
@@ -50,8 +50,8 @@ describe("AppShell", () => {
     expect(agentsItem).toBeDefined();
 
     await agentsItem!.trigger("click");
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
-
-    expect(router.currentRoute.value.path).toBe("/agents");
+    await vi.waitFor(() => {
+      expect(router.currentRoute.value.path).toBe("/agents");
+    });
   });
 });
