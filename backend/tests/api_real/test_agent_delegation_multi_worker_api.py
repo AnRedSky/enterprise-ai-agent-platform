@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
+from app.models.core import AuditLog
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow_worker import WorkflowWorker
 from tests.api_real.test_agent_delegation_bridge_api import _bind_deterministic_mock_profile, _create_delegation
@@ -67,24 +68,50 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
     worker_a.owner = f"b6-worker-a-{suffix}"
     worker_b.owner = f"b6-worker-b-{suffix}"
 
-    # 两轮并发 dispatch，每轮每个 Worker 最多领取一个 Frontier，避免单个 Worker 在一次 dispatch 中吞掉全部 fixture。
-    first_round = await asyncio.gather(
-        worker_a.dispatch_once(),
-        worker_b.dispatch_once(),
-    )
-    second_round = await asyncio.gather(
-        worker_a.dispatch_once(),
-        worker_b.dispatch_once(),
-    )
-    assert sum(first_round + second_round) == len(fixtures)
+    # 多 Worker 部署下允许其他已运行 Worker 同时消费 durable work item，因此不再把“本地两个 Worker 的 dispatch 返回值之和”等同于 Delegation 总消费数。
+    # 真正的一次性消费事实由 Delegation Claim AuditLog + worker_execution_id + Frontier attempt 共同证明。
+    dispatch_rounds = []
+    for _ in range(2):
+        dispatch_rounds.append(
+            await asyncio.gather(
+                worker_a.dispatch_once(),
+                worker_b.dispatch_once(),
+            )
+        )
 
     async with SessionLocal() as db:
-        for delegation_id, parent_execution_id in fixtures:
-            delegation = (
-                await db.execute(
-                    select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id))
+        delegation_rows = (
+            await db.execute(
+                select(AgentDelegation).where(
+                    AgentDelegation.id.in_([uuid.UUID(item[0]) for item in fixtures])
                 )
-            ).scalar_one()
+            )
+        ).scalars().all()
+        assert len(delegation_rows) == len(fixtures)
+
+        parent_ids = [uuid.UUID(item[1]) for item in fixtures]
+        claim_events = (
+            await db.execute(
+                select(AuditLog).where(
+                    AuditLog.workflow_execution_id.in_(parent_ids),
+                    AuditLog.action == "workflow.delegation.claimed",
+                    AuditLog.resource_type == "agent_delegation",
+                    AuditLog.resource_id.in_([item[0] for item in fixtures]),
+                )
+            )
+        ).scalars().all()
+        assert len(claim_events) == len(fixtures)
+        assert len({event.resource_id for event in claim_events}) == len(fixtures)
+        claim_owners = {
+            str((event.metadata_json or {}).get("worker_owner"))
+            for event in claim_events
+            if (event.metadata_json or {}).get("worker_owner")
+        }
+        assert worker_a.owner in claim_owners
+        assert worker_b.owner in claim_owners
+
+        for delegation_id, parent_execution_id in fixtures:
+            delegation = next(item for item in delegation_rows if item.id == uuid.UUID(delegation_id))
             assert delegation.status == "completed"
             assert delegation.worker_execution_id is not None
 
@@ -125,14 +152,5 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
             ).scalar_one()
             assert parent.status == "pending"
 
-        worker_execution_ids = [
-            delegation.worker_execution_id
-            for delegation in (
-                await db.execute(
-                    select(AgentDelegation).where(
-                        AgentDelegation.id.in_([uuid.UUID(item[0]) for item in fixtures])
-                    )
-                )
-            ).scalars().all()
-        ]
+        worker_execution_ids = [delegation.worker_execution_id for delegation in delegation_rows]
         assert len(worker_execution_ids) == len(set(worker_execution_ids))
