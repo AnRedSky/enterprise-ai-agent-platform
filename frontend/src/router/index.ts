@@ -17,6 +17,7 @@ const router = createRouter({
     { path: "/workflows/triggers", component: () => import("../views/workflow-triggers/index.vue") },
     { path: "/runtime", component: () => import("../views/runtime/index.vue") },
     { path: "/runtime/audit", component: () => import("../views/audit-log/index.vue") },
+    { path: "/integrations", component: () => import("../views/integrations/index.vue") },
   ],
 });
 
