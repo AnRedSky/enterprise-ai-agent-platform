@@ -57,7 +57,7 @@
 必须验证 tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit，以及 Worker 后续网络投递边界；Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL，测试数据自动生成和清理。
 
 ## 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，三维时间序列采样与 Scheduler 周期评估切片已完成**。
+状态：**开发中，三维时间序列采样、Scheduler 周期评估与通知路由编排切片已完成**。
 
 ### I-1 时间序列 Metrics
 
@@ -133,13 +133,24 @@
 - firing / recovery 仍由 Evaluator 去重、审计并发布 Integration Event；
 - Scheduler 不直接执行通知网络请求，避免绕过现有 Delivery Worker。
 
+### I-9 Notification Routing Runtime
+
+状态：**第一切片已实现**。
+
+- `RuntimeNotificationScheduler` 接入独立 Scheduler Service；
+- 自动发现存在 pending Durable Integration Event 的 tenant；
+- 每个 tenant 使用独立数据库 Session，调用既有 `NotificationDispatcher` 物化 Delivery Facts；
+- Routing 仍严格执行 tenant + event type + destination enabled + subscription filter 匹配；
+- Scheduler 只负责事件路由编排，不执行外部 HTTP，不修改 Integration Event 状态机；
+- Webhook Delivery Worker 继续负责 lease、网络发送、retry、dead-letter 和最终 Delivery Audit。
+
 ## 2.10-I 下一切片
 
-1. 将 `runtime.alert.firing/recovery` Integration Event 接入通知路由与 Delivery Destination 规则；
-2. 增加告警通知稳定幂等键、去重和通知失败审计的真实投递闭环；
+1. 将 Runtime Notification Routing 与 Webhook Delivery Worker 组成真实告警通知闭环，并验证 tenant isolation；
+2. 增加告警通知稳定幂等键、去重和通知失败审计的完整策略；
 3. 增加 Prometheus canonical metric naming / label governance；
 4. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
-5. 完成 2.10-I Runtime Acceptance：registry + health + series + scheduler + lifecycle + exports + audit + tenant isolation。
+5. 完成 2.10-I Runtime Acceptance：registry + health + series + scheduler + lifecycle + notification routing + exports + audit + tenant isolation。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改 Delivery 状态。
@@ -151,3 +162,4 @@
 - Operational Audit 必须不可变、可追溯，并记录 actor / action / resource / outcome。
 - Provider healthcheck 必须经过统一 SSRF/出口安全校验，不得使用未经约束的用户输入发起内网探测。
 - Scheduler Alert Evaluation 不直接执行通知网络请求，只负责指标采样、规则评估与 Integration Event 产生。
+- Scheduler Notification Routing 不直接执行通知网络请求，只负责 Durable Event → Delivery Fact 编排；实际网络投递必须由 Delivery Worker 完成。

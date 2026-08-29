@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
 - 当前任务：**2.10-I Provider / Metrics / Alert / Export / Operational Audit 企业级运维扩展**
-- 最近完成：**2.10-I Provider 注册、健康探测、告警生命周期、三维时间序列采样与 Scheduler 周期评估切片**
+- 最近完成：**2.10-I Provider 注册、健康探测、告警生命周期、三维时间序列采样、Scheduler 周期评估与 Notification Routing 编排切片**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -57,7 +57,7 @@
 验证范围：tenant isolation、Overview / Event / Delivery / Audit / Replay / Dead Letter / SLO，以及 Worker 网络投递边界。
 
 ### 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，三维时间序列采样与 Scheduler 周期评估切片已完成**。
+状态：**开发中，三维时间序列采样、Scheduler 周期评估与 Notification Routing 编排切片已完成**。
 
 已实现：
 
@@ -73,12 +73,14 @@
 - `runtime_alert_rules` tenant-scoped 告警规则；
 - Alert evaluator 基于 Runtime Operational Audit 实现 firing/recovery 生命周期去重，并发布统一 Integration Event；
 - `RuntimeAlertScheduler` 已接入独立 Scheduler Service，周期执行指标采样与告警评估；
+- `NotificationDispatcher` 已实现 Durable Event → Delivery Fact 路由；
+- `RuntimeNotificationScheduler` 已接入独立 Scheduler Service，按 tenant 周期物化通知 Delivery Facts；
 - Prometheus / OTLP Export；
 - Runtime Operational Audit 覆盖 Provider 创建、健康探测与 Alert 生命周期。
 
 尚未完成：
 
-- 告警 Integration Event → Notification Routing → Delivery Worker 的真实闭环验收；
+- 告警 Notification Routing → Webhook Delivery Worker 的真实闭环验收；
 - 告警通知稳定幂等键、去重和通知失败审计的完整策略；
 - Prometheus canonical label governance；
 - OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
@@ -109,15 +111,17 @@ Dimension Sampling                              ✅
         ↓
 Scheduler Alert Evaluation                     ✅
         ↓
-Integration Event → Notification Delivery     🚧
+Notification Routing Scheduler                 ✅
+        ↓
+Webhook Delivery Worker Real Closure           🚧
         ↓
 Prometheus / OTel Governance → Runtime Acceptance
 ```
 
 ## 5. 2.10-I 下一步
 
-1. 将 `runtime.alert.firing/recovery` Integration Event 接入现有 Notification Routing 与 Delivery Destination 规则；
-2. 完成告警通知稳定幂等键、去重、失败审计和实际 Worker 投递闭环；
+1. 完成 Runtime Notification Routing → Webhook Delivery Worker 的真实告警通知闭环与 tenant isolation 验收；
+2. 完成告警通知稳定幂等键、去重、失败审计和实际 Worker 投递策略；
 3. 增加 Prometheus canonical metric naming / label governance；
 4. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
 5. 完成 2.10-I Runtime Acceptance。
