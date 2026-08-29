@@ -24,6 +24,38 @@ export interface WebhookSubscription {
   updated_at: string;
 }
 
+export interface WebhookDelivery {
+  id: string;
+  tenant_id: string;
+  subscription_id: string;
+  destination_id: string;
+  integration_event_id: string;
+  status: string;
+  attempt_count: number;
+  next_attempt_at: string | null;
+  last_attempt_at: string | null;
+  delivered_at: string | null;
+  response_status_code: number | null;
+  last_error_code: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookDeliveryAudit {
+  id: string;
+  delivery_id: string;
+  integration_event_id: string;
+  action: string;
+  attempt_count: number;
+  status: string;
+  response_status_code: number | null;
+  error_code: string | null;
+  error_message: string | null;
+  actor: string;
+  created_at: string;
+}
+
 export interface WebhookDestinationCreatePayload {
   name: string;
   endpoint_url: string;
@@ -50,5 +82,14 @@ export const integrationApi = {
   },
   createSubscription(payload: WebhookSubscriptionCreatePayload) {
     return request.post<WebhookSubscription>("/webhooks/subscriptions", payload);
+  },
+  deliveries(params?: Record<string, unknown>) {
+    return request.get<WebhookDelivery[]>("/webhooks/deliveries", { params });
+  },
+  deliveryAudit(deliveryId: string, params?: Record<string, unknown>) {
+    return request.get<WebhookDeliveryAudit[]>(`/webhooks/deliveries/${deliveryId}/audit`, { params });
+  },
+  replayDelivery(deliveryId: string) {
+    return request.post<WebhookDelivery>(`/webhooks/deliveries/${deliveryId}/replay`);
   },
 };

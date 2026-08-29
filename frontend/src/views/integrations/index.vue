@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { Connection, Plus, Refresh, Link, Bell, CircleCheck, Warning } from "@element-plus/icons-vue";
 import { integrationApi, type WebhookDestination, type WebhookSubscription } from "@/api/integrations";
+import DeliveryConsole from "./DeliveryConsole.vue";
 
 const loading = ref(false);
 const activeTab = ref("destinations");
@@ -85,6 +86,10 @@ onMounted(loadData);
             <el-table-column label="状态" width="110"><template #default="scope"><el-tag :type="scope.row.enabled ? 'success' : 'info'">{{ scope.row.enabled ? "已启用" : "已停用" }}</el-tag></template></el-table-column>
             <el-table-column prop="updated_at" label="更新时间" min-width="180" />
           </el-table>
+        </el-tab-pane>
+        <el-tab-pane name="deliveries">
+          <template #label><span class="tab-label"><Connection /> 投递运维</span></template>
+          <DeliveryConsole />
         </el-tab-pane>
       </el-tabs>
     </el-card>
