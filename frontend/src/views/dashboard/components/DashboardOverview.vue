@@ -2,9 +2,9 @@
   <div class="page">
     <section class="hero">
       <div>
-        <p class="eyebrow">ENTERPRISE AI AGENT PLATFORM</p>
+        <p class="eyebrow">企业级智能体平台</p>
         <h1>平台工作台</h1>
-        <p class="subtitle">统一查看 Agent、Tool 与 Runtime 运行态，快速进入治理和故障处理入口。</p>
+        <p class="subtitle">统一查看智能体、工具和运行记录，快速进入治理与故障处理入口。</p>
       </div>
       <el-button :loading="loading" @click="load">刷新数据</el-button>
     </section>
@@ -26,7 +26,7 @@
       <el-card shadow="never" class="panel activity-panel">
         <template #header>
           <div class="panel-title">
-            <div><strong>最近执行</strong><span>Runtime 最近 8 条执行记录</span></div>
+            <div><strong>最近执行</strong><span>最近 8 条运行记录</span></div>
             <el-button link type="primary" @click="$router.push('/runtime')">查看全部</el-button>
           </div>
         </template>
@@ -42,11 +42,11 @@
           <el-table-column prop="status" label="状态" width="110">
             <template #default="{ row }"><el-tag size="small" :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template>
           </el-table-column>
-          <el-table-column prop="agent_id" label="Agent" min-width="150"><template #default="{ row }">{{ row.agent_id || "-" }}</template></el-table-column>
+          <el-table-column prop="agent_id" label="智能体" min-width="150"><template #default="{ row }">{{ row.agent_id || "-" }}</template></el-table-column>
           <el-table-column prop="duration_ms" label="耗时" width="100"><template #default="{ row }">{{ row.duration_ms != null ? `${row.duration_ms} ms` : "-" }}</template></el-table-column>
           <el-table-column label="开始时间" min-width="170"><template #default="{ row }">{{ formatTime(row.started_at) }}</template></el-table-column>
         </el-table>
-        <el-empty v-else description="暂无 Runtime 执行记录" :image-size="72" />
+        <el-empty v-else description="暂无运行记录" :image-size="72" />
       </el-card>
 
       <el-card shadow="never" class="panel actions-panel">
@@ -60,7 +60,7 @@
     </section>
 
     <section class="attention" v-if="metrics.failedExecutions > 0">
-      <el-alert title="Runtime 存在失败执行" :description="`当前共有 ${metrics.failedExecutions} 次失败执行，建议进入 Runtime 查看执行链路与错误信息。`" type="warning" show-icon :closable="false">
+      <el-alert title="存在失败的运行记录" :description="`当前共有 ${metrics.failedExecutions} 次失败运行记录，建议进入运行记录查看执行链路与错误信息。`" type="warning" show-icon :closable="false">
         <template #default><el-button type="warning" link @click="$router.push('/runtime')">立即处理</el-button></template>
       </el-alert>
     </section>
@@ -80,23 +80,23 @@ const recentExecutions = ref<Execution[]>([]);
 const metrics = reactive({ agents: 0, publishedAgents: 0, tools: 0, enabledTools: 0, executions: 0, failedExecutions: 0 });
 
 const metricCards = computed(() => [
-  { key: "agents", label: "Agent", value: metrics.agents, caption: `${metrics.publishedAgents} 个已发布`, description: "Agent 生命周期资产", type: "primary" as const },
-  { key: "published", label: "可运行 Agent", value: metrics.publishedAgents, caption: "Published", description: "当前可进入 Runtime 的 Agent", type: "success" as const },
-  { key: "tools", label: "Tool", value: `${metrics.enabledTools}/${metrics.tools}`, caption: "启用 / 总数", description: "Tool 治理与可用性", type: "info" as const },
-  { key: "executions", label: "Runtime", value: metrics.executions, caption: "累计执行", description: "系统执行记录总量", type: "info" as const },
-  { key: "failed", label: "失败执行", value: metrics.failedExecutions, caption: metrics.failedExecutions ? "需要关注" : "运行正常", description: "失败执行需要排查", type: metrics.failedExecutions ? "warning" as const : "success" as const },
+  { key: "agents", label: "智能体", value: metrics.agents, caption: `${metrics.publishedAgents} 个已发布`, description: "智能体生命周期资产", type: "primary" as const },
+  { key: "published", label: "可运行智能体", value: metrics.publishedAgents, caption: "已发布", description: "当前可进入运行环境的智能体", type: "success" as const },
+  { key: "tools", label: "工具", value: `${metrics.enabledTools}/${metrics.tools}`, caption: "启用 / 总数", description: "工具治理与可用性", type: "info" as const },
+  { key: "executions", label: "运行记录", value: metrics.executions, caption: "累计执行", description: "系统运行记录总量", type: "info" as const },
+  { key: "failed", label: "失败运行", value: metrics.failedExecutions, caption: metrics.failedExecutions ? "需要关注" : "运行正常", description: "失败运行需要排查", type: metrics.failedExecutions ? "warning" as const : "success" as const },
 ]);
 
 const recentFailedCount = computed(() => recentExecutions.value.filter((execution) => execution.status === "failed").length);
 const recentRunningCount = computed(() => recentExecutions.value.filter((execution) => execution.status === "running" || execution.status === "pending").length);
 
 const quickActions = [
-  { path: "/agents", icon: "AI", label: "Agent 管理", description: "创建、版本、发布与 Chat 调试" },
-  { path: "/tools", icon: "TO", label: "Tool 管理", description: "查看工具能力与启用状态" },
-  { path: "/knowledge", icon: "KB", label: "知识库", description: "管理知识资产与检索工作台" },
-  { path: "/workflows", icon: "WF", label: "工作流", description: "编排、发布与执行工作流" },
-  { path: "/runtime", icon: "RT", label: "Runtime", description: "检查执行、事件与 Trace" },
-  { path: "/runtime/audit", icon: "AU", label: "审计日志", description: "追踪治理操作与执行审计" },
+  { path: "/agents", icon: "智", label: "智能体管理", description: "创建、版本、发布与对话调试" },
+  { path: "/tools", icon: "工", label: "工具管理", description: "查看工具能力与启用状态" },
+  { path: "/knowledge", icon: "知", label: "知识库", description: "管理知识资产与检索工作台" },
+  { path: "/workflows", icon: "流", label: "工作流", description: "编排、发布与运行工作流" },
+  { path: "/runtime", icon: "运", label: "运行记录", description: "检查运行记录、事件与链路" },
+  { path: "/runtime/audit", icon: "审", label: "审计日志", description: "追踪治理操作与运行审计" },
 ];
 
 async function load() {
@@ -117,8 +117,8 @@ async function load() {
     metrics.failedExecutions = failed.data.total;
     recentExecutions.value = executions.data.items;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "Dashboard 数据加载失败";
-    ElMessage.error("Dashboard 数据加载失败");
+    error.value = e instanceof Error ? e.message : "平台数据加载失败";
+    ElMessage.error("平台数据加载失败");
   } finally {
     loading.value = false;
   }
