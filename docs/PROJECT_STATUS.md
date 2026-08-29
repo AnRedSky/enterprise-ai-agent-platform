@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
 - 当前任务：**2.10-I Provider / Metrics / Alert / Export / Operational Audit 企业级运维扩展**
-- 最近完成：**2.10-I Provider 健康探测、能力声明与告警生命周期去重切片**
+- 最近完成：**2.10-I Provider 注册、健康探测、告警生命周期与三维时间序列采样切片**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -57,12 +57,14 @@
 验证范围：tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit、Worker 网络投递边界。
 
 ### 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，Provider 健康与告警生命周期切片已完成**。
+状态：**开发中，三维时间序列采样切片已完成**。
 
 已实现：
 
 - `runtime_metric_samples` 时间序列指标持久化；
 - `/metrics/snapshot` 与 `/metrics/series`；
+- Provider / Destination / Event Type 三维时间序列采样；
+- 时间序列支持 `provider`、`destination_id`、`event_type` tenant-scoped 过滤；
 - `runtime_provider_registry` tenant-scoped Provider 元数据注册；
 - Provider capabilities 声明，最多 50 项；
 - Provider Registry 递归敏感字段拦截，禁止明文 Secret；
@@ -75,9 +77,9 @@
 
 尚未完成：
 
-- Provider / Destination / Event Type 时间序列维度采样；
 - Scheduler 周期告警评估；
 - firing/recovery → Integration Event → Notification Delivery 完整通知链；
+- 告警通知稳定幂等键、去重和失败审计；
 - Prometheus canonical label governance；
 - OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
 - 2.10-I Runtime Acceptance。
@@ -103,20 +105,22 @@
         ↓
 2.10-I Provider / Metrics / Alert / Export      🚧 开发中
         ↓
-Dimension Sampling → Scheduler Alert Evaluation → Notification Delivery
+Dimension Sampling                              ✅
+        ↓
+Scheduler Alert Evaluation                     🚧
+        ↓
+Integration Event → Notification Delivery     🚧
         ↓
 Prometheus / OTel Governance → Runtime Acceptance
 ```
 
 ## 5. 2.10-I 下一步
 
-1. 建立 Provider / Destination / Event Type 三维时间序列采样模型，并保持 Durable facts 为唯一业务事实源；
-2. 将 Alert Rule 评估接入 Scheduler 周期任务；
-3. 将 firing/recovery 转换发布为统一 Integration Event，并由现有 Delivery Worker 负责通知；
-4. 为通知建立稳定幂等键、去重和失败审计；
-5. 完成 Prometheus canonical metric naming / label governance；
-6. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
-7. 完成 2.10-I Runtime Acceptance。
+1. 将 Alert Rule 评估接入 Scheduler 周期任务，并把 firing/recovery 转换接入统一 Integration Event Contract；
+2. 增加告警通知 Delivery 路由、稳定幂等键、去重和通知失败审计；
+3. 增加 Prometheus canonical metric naming / label governance；
+4. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
+5. 完成 2.10-I Runtime Acceptance。
 
 ## 6. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`：

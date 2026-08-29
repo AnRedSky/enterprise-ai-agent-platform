@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.runtime_operations import RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry
 from app.models.webhook_integration import WebhookDestination
 from app.services.runtime_operations.service import RuntimeOperationsService
+from app.services.runtime_operations.sampling import RuntimeDimensionSampler
 
 
 class RuntimeOperationsEnterpriseService:
@@ -20,6 +21,7 @@ class RuntimeOperationsEnterpriseService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.metrics = RuntimeOperationsService(db)
+        self.dimension_sampler = RuntimeDimensionSampler(db)
 
     async def providers(self, tenant_id: UUID) -> list[RuntimeProviderRegistry]:
         return list((await self.db.execute(select(RuntimeProviderRegistry).where(RuntimeProviderRegistry.tenant_id == tenant_id).order_by(RuntimeProviderRegistry.name))).scalars().all())
@@ -83,6 +85,17 @@ class RuntimeOperationsEnterpriseService:
         return item
 
     async def snapshot(self, tenant_id: UUID, window_hours: int = 24) -> int:
+        """生成租户级及三维 Runtime 指标快照。
+
+        Args:
+            tenant_id: 目标租户标识。
+            window_hours: Durable facts 聚合窗口，限制由采样服务统一处理。
+
+        Returns:
+            本轮写入的 RuntimeMetricSample 数量。
+
+        设计意图：全局摘要和 Provider/Destination/Event Type 维度都从同一组 Durable facts 派生，避免指标层形成第二套业务事实。
+        """
         overview = await self.metrics.overview(tenant_id, window_hours=window_hours)
         now = datetime.now(UTC).replace(tzinfo=None)
         values = {
@@ -92,11 +105,30 @@ class RuntimeOperationsEnterpriseService:
             "runtime.delivery.p95_latency_ms": float(overview["slo"]["p95_delivery_latency_ms"] or 0.0),
         }
         self.db.add_all([RuntimeMetricSample(tenant_id=tenant_id, metric_name=name, value=value, dimensions={}, recorded_at=now) for name, value in values.items()])
-        return len(values)
+        return len(values) + await self.dimension_sampler.sample(tenant_id, window_hours=window_hours)
 
-    async def series(self, tenant_id: UUID, metric_name: str, window_minutes: int = 60) -> list[RuntimeMetricSample]:
+    async def series(self, tenant_id: UUID, metric_name: str, window_minutes: int = 60, *, dimension_key: str | None = None, dimension_value: str | None = None) -> list[RuntimeMetricSample]:
+        """按租户、指标和可选维度查询时间序列。
+
+        Args:
+            tenant_id: 目标租户标识。
+            metric_name: 指标名称。
+            window_minutes: 查询时间窗口，最大 10080 分钟。
+            dimension_key: 可选维度键，仅允许 provider、destination_id、event_type。
+            dimension_value: 与维度键匹配的字符串值。
+
+        Returns:
+            按记录时间升序排列的指标样本。
+        """
         since = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=min(max(window_minutes, 1), 10080))
-        return list((await self.db.execute(select(RuntimeMetricSample).where(RuntimeMetricSample.tenant_id == tenant_id, RuntimeMetricSample.metric_name == metric_name, RuntimeMetricSample.recorded_at >= since).order_by(RuntimeMetricSample.recorded_at))).scalars().all())
+        stmt = select(RuntimeMetricSample).where(RuntimeMetricSample.tenant_id == tenant_id, RuntimeMetricSample.metric_name == metric_name, RuntimeMetricSample.recorded_at >= since)
+        if dimension_key is not None:
+            if dimension_key not in {"provider", "destination_id", "event_type"}:
+                raise ValueError("unsupported metric dimension")
+            if dimension_value is None:
+                raise ValueError("dimension_value is required when dimension_key is provided")
+            stmt = stmt.where(RuntimeMetricSample.dimensions[dimension_key].as_string() == dimension_value)
+        return list((await self.db.execute(stmt.order_by(RuntimeMetricSample.recorded_at))).scalars().all())
 
     async def audit(self, tenant_id: UUID, actor: str, action: str, resource_type: str, resource_id: str | None, outcome: str, details: dict[str, Any]) -> RuntimeOperationAudit:
         item = RuntimeOperationAudit(tenant_id=tenant_id, actor=actor, action=action, resource_type=resource_type, resource_id=resource_id, outcome=outcome, details=details)

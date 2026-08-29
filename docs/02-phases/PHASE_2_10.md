@@ -112,14 +112,26 @@
 - Provider 注册、Provider 健康探测、Alert Rule 管理及告警生命周期均记录 actor / action / resource / outcome；
 - Audit 与 Replay Audit 保持职责分离：Replay 继续使用 Webhook Delivery Audit，通用运维动作使用 Runtime Operational Audit。
 
+## 2.10-I 已完成切片
+
+### I-7 三维时间序列采样
+
+状态：**已实现第一切片**。
+
+- 新增 `RuntimeDimensionSampler`；
+- 从 Durable Event + Webhook Delivery facts 直接聚合 Provider / Destination / Event Type 三维样本；
+- canonical Provider 固定为 `webhook_http`，Destination 使用稳定 UUID，Event Type 使用 Durable Event 原值；
+- 快照接口现在同时写入全局指标与三维指标样本；
+- 时间序列查询支持 `provider`、`destination_id`、`event_type` 三个规范维度过滤；
+- 不新增业务事实表，不复制 Delivery 状态机。
+
 ## 2.10-I 下一切片
 
-1. 增加按 Provider / Destination / Event Type 的时间序列维度采样；
-2. 将 Alert Rule 评估接入 Scheduler 周期任务，并把 firing/recovery 转换接入统一 Integration Event Contract；
-3. 增加告警通知 Delivery 路由、去重键与通知失败审计；
-4. 增加 Prometheus canonical metric naming / label governance；
-5. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
-6. 完成 2.10-I Runtime Acceptance：registry + health + series + rules + lifecycle + exports + audit + tenant isolation。
+1. 将 Alert Rule 评估接入 Scheduler 周期任务，并把 firing/recovery 转换接入统一 Integration Event Contract；
+2. 增加告警通知 Delivery 路由、去重键与通知失败审计；
+3. 增加 Prometheus canonical metric naming / label governance；
+4. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
+5. 完成 2.10-I Runtime Acceptance：registry + health + series + rules + lifecycle + exports + audit + tenant isolation。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改 Delivery 状态。

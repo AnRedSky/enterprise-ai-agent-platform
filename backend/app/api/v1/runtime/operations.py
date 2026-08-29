@@ -212,9 +212,23 @@ async def create_metrics_snapshot(claims: dict = Depends(_claims), db: AsyncSess
 
 
 @router.get("/metrics/series")
-async def metric_series(metric_name: str = Query(..., min_length=1, max_length=120), window_minutes: int = Query(60, ge=1, le=10080), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
-    rows = await RuntimeOperationsEnterpriseService(db).series(_tenant_id(claims), metric_name, window_minutes)
-    return {"items": rows, "metric_name": metric_name, "window_minutes": window_minutes}
+async def metric_series(
+    metric_name: str = Query(..., min_length=1, max_length=120),
+    window_minutes: int = Query(60, ge=1, le=10080),
+    dimension_key: str | None = Query(None, min_length=1, max_length=32),
+    dimension_value: str | None = Query(None, min_length=1, max_length=255),
+    claims: dict = Depends(_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询租户时间序列，可按规范维度进一步过滤。"""
+    try:
+        rows = await RuntimeOperationsEnterpriseService(db).series(
+            _tenant_id(claims), metric_name, window_minutes,
+            dimension_key=dimension_key, dimension_value=dimension_value,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"items": rows, "metric_name": metric_name, "window_minutes": window_minutes, "dimension_key": dimension_key, "dimension_value": dimension_value}
 
 
 @router.get("/metrics/prometheus")
