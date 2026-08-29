@@ -5,8 +5,7 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
-- 当前任务：**B4 Timeout / Cancel / Parent Semantics**
-- B2/B3 已由开发者本地实际验收通过；下一主线任务按 Roadmap 进入 B4。
+- 当前任务：**B5 Audit / Trace closure**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -20,113 +19,89 @@
 - B1 Atomic Claim 已完成并通过本地真实 HTTP + PostgreSQL 双 Worker 并发 Gate；
 - B2 Worker Execution Bridge 已完成，复用既有 Workflow Worker / WorkflowRuntime；
 - B3 Delegation completion/failure generation fencing 已完成；
+- B4 timeout / cancel / parent semantics 已完成并由开发者本地 Real Gate 验收通过；
 - Runtime Session / Execution terminalization / Model Profile Snapshot / Frontier heartbeat 锁序问题已完成修复；
-- Scheduler 对单节点顺序 Workflow 的空 `edges` 语义已与 DAG Runtime 对齐。
+- Scheduler 对单节点顺序 Workflow 的空 `edges` 语义已与 DAG Runtime 对齐；
+- B5 Delegation Audit / Trace 基础闭环已实现，创建与取消事件已写入 AuditLog / WorkflowTraceEvent。
 
 ## 3. 最新本地验收证据
 
-开发者在 `79d68c58` 基线执行：
+开发者在 `d5fd0639` 基线完成 B4：
 
 ```text
-B2 bridge Unit             3 passed
-Backend regression         853 passed, 3 skipped, 46 deselected
+B4 timeout Unit            25 passed
+Backend regression         858 passed, 3 skipped, 48 deselected
 Migration/head             0039_workflow_node_execution_tenant_trigger (head)
-B2 Real Gate               3 passed
-
-B3 Delegation lifecycle    30 passed
-Backend regression         853 passed, 3 skipped, 46 deselected
-Migration/head             0039_workflow_node_execution_tenant_trigger (head)
-B3 Real Gate               3 passed
-
-Workflow DAG contract      2 passed
+B4 Real Gate               5 passed
 ```
 
-因此此前反复出现的 `AgentDelegation.status == running`、Worker lease race、Frontier lock inversion 已不再是当前阻塞项。
-
-## 4. B4 实现
-
-### 4.1 Delegation timeout
-
-新增正式 timeout 运行时边界：
-
-- `timeout_at` 继续作为 Delegation 生命周期的唯一持久化时间边界；
-- Worker Runtime 使用 `min(Workflow Runtime timeout, Delegation remaining timeout)`；
-- Delegation timeout 触发时，子 Worker Execution 通过既有 Execution lifecycle 进入 `cancelled`；
-- Runtime Session 完整退出后，再使用独立 Session 将 Delegation 原子收敛为 `timed_out`；
-- timeout 不直接修改父 Workflow Execution；
-- 迟到 Worker completion/failure 因 Delegation 已进入终态而被 generation fencing 拒绝。
-
-### 4.2 Cancel
-
-现有 `POST /workflows/{execution_id}/delegations/{delegation_id}/cancel` 继续复用 Delegation lifecycle：
+B5 当前首次执行发现 Worker shutdown 单元测试阻塞：
 
 ```text
-pending → cancelled
-running → cancelled
+25 passed, 1 failed, 1 teardown error
 ```
 
-取消只结束 Delegation，不直接把父 Workflow Execution 推入 terminal 状态；重复取消 fail-closed。
+失败原因为测试直接 monkeypatch `AsyncEngine.dispose` 实例属性，而 `AsyncEngine.dispose` 为只读属性；同时实际运行 Worker 时观察到 asyncpg connection close 阶段 `CancelledError`。
 
-### 4.3 Parent semantics
+该问题已完成根因分析并在 `b789b4538f2a3e1b38dcb5ab40e22723bcd5e6cc` / `91972538cf87e70e496ef306d2294406056d7ce2` 修复：Worker 关闭路径增加 cancellation-safe engine disposal，测试改为替换正式关闭边界并覆盖取消后的二次 dispose。
 
-B4 明确保持：
+**以上修复尚未由本环境实际执行验证，因此不得标记 B5 Passed。**
+
+## 4. B5 目标
+
+B5 要求形成完整的父子审计与 Trace 闭环：
 
 ```text
-Worker completed / failed / timed_out / cancelled
-        ↓
-Delegation 自身终态
-        ↓
-父 Workflow Execution 继续由既有 Workflow / Execution / Retry / Recovery Contract 决定
+source execution
+  └── delegation
+        └── worker execution
+              └── trace
 ```
 
-禁止为 Multi-Agent 创建第二套父流程 Retry / Recovery 状态机。
+必须覆盖：
 
-## 5. B4 自动化验收
+1. created / running 生命周期事实；
+2. completed / failed / timed_out / cancelled 全终态 Audit / Trace；
+3. `trace_id`、父 Execution、Delegation、Worker Execution 的身份链路一致；
+4. generation fencing 后的迟到 completion/failure 不得覆盖终态；
+5. Audit/Trace metadata 不得写入 Secret / credential 原文；
+6. parent Execution 不被 Delegation 子任务终态直接终止。
+
+## 5. B5 自动化验收
 
 正式入口：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\04_delegation_timeout_cancel_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\05_delegation_audit_trace_gate.ps1
 ```
 
-Gate 不启动、重启或停止任何服务，只验证前置环境。测试用户、密码、Access Token、tenant、ID 与测试数据均由脚本自动生成。
+Gate 只验证本地前置服务，不启动、重启或停止服务；测试用户、Token、tenant、ID 与测试数据由 Gate 自动生成。
 
-Gate 顺序：
+验收顺序：
 
 ```text
 [0] prerequisite service verification
     ↓
-[1] Delegation timeout Unit
+[1] Worker shutdown + Delegation lifecycle Unit
     ↓
 [2] Backend default regression
     ↓
-[3] Alembic upgrade/head verification
+[3] Alembic upgrade/head
     ↓
-[4] Real HTTP + PostgreSQL B4 timeout/cancel/parent semantics
+[4] Real HTTP + PostgreSQL Delegation Audit/Trace closure
 ```
 
-B4 Real API 必须实际证明：
-
-1. cancel → Delegation `cancelled`；
-2. duplicate cancel → 409；
-3. timeout → Worker Execution `cancelled` + Delegation `timed_out`；
-4. timeout/cancel 均不终止父 Workflow Execution；
-5. timeout 后 stale completion 不得覆盖终态；
-6. PostgreSQL 持久化状态与 generation identity 一致。
+修复后的本地执行必须实际证明 Gate 全部通过后，才允许继续 Phase 2.8 closure。
 
 ## 6. 下一主线任务
-
-B4 验收通过后继续：
 
 ```text
 B5 Audit / Trace closure
     ↓
-Delegation multi-worker + PostgreSQL + Runtime acceptance
+Delegation 多 Worker + PostgreSQL + Runtime acceptance
     ↓
 Phase 2.8 closure
     ↓
 Phase 2.9 Enterprise Integration / Event Infrastructure Contract
 ```
-
-未执行的 B4 测试不得标记 Passed；Migration head 必须保持 `0039_workflow_node_execution_tenant_trigger`。
