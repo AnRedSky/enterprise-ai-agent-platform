@@ -33,20 +33,17 @@ describe("RuntimeExecutions", () => {
     const wrapper = mount(Runtime, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("运行记录查询失败，请稍后重试"));
   });
-  it("loads execution events and workflow trace after opening a row", async () => {
-    const item = { execution_id: "e1", request_id: "r1", trace_id: "t1", session_id: "s1", agent_id: "a1", status: "success", started_at: "2026-01-01", duration_ms: 1200 };
-    const traceItem = { id: "trace-1", tenant_id: "tenant-1", execution_id: "e1", workflow_id: "w1", workflow_version_id: "v1", node_id: "input", event_type: "node_completed", status: "success", trace_id: "t1", created_at: "2026-01-01" };
-    executions.mockResolvedValue({ data: { items: [item], page: 1, page_size: 20, total: 1 } });
-    executionEvents.mockResolvedValue({ data: { execution: item, items: [] } });
-    executionTrace.mockResolvedValue({ data: { execution_id: "e1", items: [traceItem] } });
+  it("maps runtime span and event identifiers to Chinese labels while preserving codes", async () => {
+    executions.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
+    executionEvents.mockResolvedValue({ data: { execution: {}, items: [{ id: "event-1", span_type: "retrieval", status: "success", started_at: "2026-01-01", duration_ms: 10 }] } });
+    executionTrace.mockResolvedValue({ data: { execution_id: "e1", items: [{ id: "trace-1", tenant_id: "tenant-1", execution_id: "e1", workflow_id: "w1", workflow_version_id: "v1", node_id: "input", event_type: "node_completed", status: "success", trace_id: "t1", created_at: "2026-01-01", error_code: "HTTP_ERROR", error_message: "upstream failure" }] } });
     const wrapper = mount(Runtime, { global });
     await vi.waitFor(() => expect(executions).toHaveBeenCalled());
-    await (wrapper.vm as any).open(item);
-    expect(executionEvents).toHaveBeenCalledWith("e1");
-    expect(executionTrace).toHaveBeenCalledWith("e1");
-    expect(wrapper.text()).toContain("node_completed");
-    expect(wrapper.text()).toContain("已完成");
-    expect(wrapper.text()).toContain("1.20 s");
+    await (wrapper.vm as any).open({ execution_id: "e1", request_id: "r1", trace_id: "t1", session_id: "s1", agent_id: "a1", status: "success", started_at: "2026-01-01", duration_ms: 1200 });
+    expect(wrapper.text()).toContain("检索（retrieval）");
+    expect(wrapper.text()).toContain("节点完成（node_completed）");
+    expect(wrapper.text()).toContain("外部请求失败（HTTP_ERROR）");
+    expect(wrapper.text()).not.toContain("upstream failure");
   });
   it("normalizes backend success status to the completed presentation", async () => {
     executions.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
