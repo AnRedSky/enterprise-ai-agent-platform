@@ -1,7 +1,6 @@
 $ErrorActionPreference = "Stop"
 $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-# phase-2.9 -> test -> scripts -> backend
-$BackendRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..\..")).Path
+$BackendRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..\..\..")).Path
 Set-Location $BackendRoot
 
 Write-Host "============================================================"
