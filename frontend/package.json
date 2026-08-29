@@ -8,6 +8,7 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:gate": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\test\\release\\01_frontend_regression_gate.ps1",
     "test:watch": "vitest",
     "test:e2e": "playwright test"
   },
