@@ -5,7 +5,7 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.8 Multi-Agent Collaboration / Runtime Integration**
-- 当前任务：**B5 Audit / Trace closure**
+- 当前任务：**B6 Delegation Multi-Worker Runtime acceptance**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -22,84 +22,87 @@
 - B4 timeout / cancel / parent semantics 已完成并由开发者本地 Real Gate 验收通过；
 - Runtime Session / Execution terminalization / Model Profile Snapshot / Frontier heartbeat 锁序问题已完成修复；
 - Scheduler 对单节点顺序 Workflow 的空 `edges` 语义已与 DAG Runtime 对齐；
-- B5 Delegation Audit / Trace 基础闭环已实现，创建与取消事件已写入 AuditLog / WorkflowTraceEvent。
+- B5 Delegation Audit / Trace 基础闭环已实现，创建与取消事件已写入 AuditLog / WorkflowTraceEvent；
+- Worker shutdown AsyncEngine cancellation-safe disposal 已完成并通过 B5 Unit Gate。
 
 ## 3. 最新本地验收证据
 
-开发者在 `d5fd0639` 基线完成 B4：
+开发者在 `352f737a` 基线完成 B5：
 
 ```text
-B4 timeout Unit            25 passed
-Backend regression         858 passed, 3 skipped, 48 deselected
-Migration/head             0039_workflow_node_execution_tenant_trigger (head)
-B4 Real Gate               5 passed
+B5 Worker shutdown + Delegation lifecycle Unit   27 passed
+Backend regression                                860 passed, 3 skipped, 50 deselected
+Migration/head                                   0039_workflow_node_execution_tenant_trigger (head)
+B5 Real Gate                                     4 passed
 ```
 
-B5 当前首次执行发现 Worker shutdown 单元测试阻塞：
+B5 已达到本地 Gate 通过条件，允许进入多 Worker Runtime acceptance。
+
+## 4. B6 实现目标
+
+此前 B1 Claim 创建 `WorkflowExecution` 后没有进入 Durable Frontier。由于默认 `run_worker.py` 使用 Durable Frontier 作为唯一 dispatch 入口，直接调用 `execute_claimed_execution()` 的测试可以通过，但独立 Worker 无法发现该 Delegation Execution。
+
+本任务已修复为：
 
 ```text
-25 passed, 1 failed, 1 teardown error
+Delegation Claim
+    ↓
+WorkflowExecution
+    ↓
+Durable Frontier(delegation.target)
+    ↓
+Durable Frontier Worker
+    ↓
+AgentDelegationRuntimeBridge
+    ↓
+既有 WorkflowRuntime
+    ↓
+Delegation terminalization
 ```
 
-失败原因为测试直接 monkeypatch `AsyncEngine.dispose` 实例属性，而 `AsyncEngine.dispose` 为只读属性；同时实际运行 Worker 时观察到 asyncpg connection close 阶段 `CancelledError`。
+Claim、Worker Execution、Frontier 与 Claim Audit/Trace 在同一事务中提交；Frontier fingerprint 同时绑定 Delegation 与 Worker Execution generation。
 
-该问题已完成根因分析并在 `b789b4538f2a3e1b38dcb5ab40e22723bcd5e6cc` / `91972538cf87e70e496ef306d2294406056d7ce2` 修复：Worker 关闭路径增加 cancellation-safe engine disposal，测试改为替换正式关闭边界并覆盖取消后的二次 dispose。
-
-**以上修复尚未由本环境实际执行验证，因此不得标记 B5 Passed。**
-
-## 4. B5 目标
-
-B5 要求形成完整的父子审计与 Trace 闭环：
-
-```text
-source execution
-  └── delegation
-        └── worker execution
-              └── trace
-```
-
-必须覆盖：
-
-1. created / running 生命周期事实；
-2. completed / failed / timed_out / cancelled 全终态 Audit / Trace；
-3. `trace_id`、父 Execution、Delegation、Worker Execution 的身份链路一致；
-4. generation fencing 后的迟到 completion/failure 不得覆盖终态；
-5. Audit/Trace metadata 不得写入 Secret / credential 原文；
-6. parent Execution 不被 Delegation 子任务终态直接终止。
-
-## 5. B5 自动化验收
+## 5. B6 自动化验收
 
 正式入口：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\05_delegation_audit_trace_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\06_delegation_multi_worker_runtime_gate.ps1
 ```
 
-Gate 只验证本地前置服务，不启动、重启或停止服务；测试用户、Token、tenant、ID 与测试数据由 Gate 自动生成。
+Gate 自动生成测试用户、Token、tenant、ID 与测试数据；Gate 本身不启动、重启或停止任何服务，只验证 PostgreSQL、Redis、Backend API 等本地前置服务。
 
 验收顺序：
 
 ```text
 [0] prerequisite service verification
     ↓
-[1] Worker shutdown + Delegation lifecycle Unit
+[1] Delegation Runtime Unit/Contract
     ↓
 [2] Backend default regression
     ↓
 [3] Alembic upgrade/head
     ↓
-[4] Real HTTP + PostgreSQL Delegation Audit/Trace closure
+[4] Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
 ```
 
-修复后的本地执行必须实际证明 Gate 全部通过后，才允许继续 Phase 2.8 closure。
+B6 Real Gate 必须实际证明：
+
+1. Delegation Claim 同事务创建 Durable Frontier；
+2. 两个独立 Worker 实例均可通过正式 `dispatch_once()` 消费 Delegation Frontier；
+3. Worker Execution、Frontier、Delegation 三者终态一致；
+4. 同一 Delegation 只有一个 `worker_execution_id`；
+5. Frontier 与 Execution 使用同一 worker owner；
+6. 父 Workflow Execution 不因子 Delegation 完成而进入终态；
+7. 真实 PostgreSQL 持久化链路成立。
+
+**B6 代码已实现，但本执行环境无法连接用户本地 PostgreSQL/Backend，因此不得预填 B6 Passed。**
 
 ## 6. 下一主线任务
 
 ```text
-B5 Audit / Trace closure
-    ↓
-Delegation 多 Worker + PostgreSQL + Runtime acceptance
+B6 Delegation Multi-Worker Runtime acceptance
     ↓
 Phase 2.8 closure
     ↓

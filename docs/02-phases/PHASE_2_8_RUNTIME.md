@@ -2,7 +2,7 @@
 
 ## 1. 当前状态
 
-Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现。B1 Atomic Delegation Claim、B2 Workflow Worker Execution Bridge、B3 generation-fenced completion/failure 已由开发者本地真实 PostgreSQL Gate 验收通过，当前进入 **B4 Timeout / Cancel / Parent semantics**。
+Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现。B1 Atomic Delegation Claim、B2 Workflow Worker Execution Bridge、B3 generation-fenced completion/failure、B4 timeout/cancel/parent semantics 与 B5 Audit/Trace 基础闭环均已实现并由开发者本地 Gate 验收通过，当前进入 **B6 Multi-Worker Runtime acceptance**。
 
 目标仍然是复用现有 Workflow Worker / Execution / lease / fencing / Runtime，不创建第二套 Worker、Retry 或 Recovery 状态机。
 
@@ -21,154 +21,96 @@ Phase 2.8-A Contract 已冻结，Delegation Domain + API + Migration 已实现�
 - B2 `AgentDelegationRuntimeBridge`，把已 Claim Delegation 显式装配到现有 Worker Runtime；
 - B3 completion/failure generation fencing；
 - B2/B3 Runtime Session、terminalization、lease race 与 frontier lock-order 问题修复；
+- B4 timeout/cancel/parent semantics；
+- B5 Delegation Audit/Trace 基础闭环；
+- Worker shutdown AsyncEngine cancellation-safe disposal；
 - Scheduler 单节点顺序 Workflow 的空 `edges` 语义修复。
 
 `0039_workflow_node_execution_tenant_trigger` 当前为数据库 head。
 
-## 3. Lifecycle Contract
+## 3. B5 本地验收
+
+开发者在 `352f737a` 基线完成 B5：
 
 ```text
-pending → running / cancelled
-running → completed / failed / timed_out / cancelled
-terminal → 不允许再次进入活动态
-Worker completion → running + 当前 worker_execution_id generation 必须一致
-timeout → now >= timeout_at
+B5 Worker shutdown + Delegation lifecycle Unit   27 passed
+Backend regression                                860 passed, 3 skipped, 50 deselected
+Migration/head                                   0039_workflow_node_execution_tenant_trigger (head)
+B5 Real Gate                                     4 passed
 ```
 
-## 4. B1/B2/B3 本地证据
+B5 已通过本地验收。
 
-最新开发者本地结果：
+## 4. B6 Multi-Worker Runtime 问题与修复
+
+B1 原实现只创建 `WorkflowExecution`，没有创建 `WorkflowFrontier`。默认 `run_worker.py` 已使用 Durable Frontier 作为唯一 dispatch 入口，因此 B2 直接调用 Runtime 的测试虽然能够执行，独立 Durable Frontier Worker 却无法发现 Delegation Execution。
+
+修复后的 Claim 闭环为：
 
 ```text
-B2 bridge Unit             3 passed
-Backend regression         853 passed, 3 skipped, 46 deselected
-Migration/head             0039_workflow_node_execution_tenant_trigger (head)
-B2 Real Gate               3 passed
-
-B3 lifecycle Unit          30 passed
-Backend regression         853 passed, 3 skipped, 46 deselected
-Migration/head             0039_workflow_node_execution_tenant_trigger (head)
-B3 Real Gate               3 passed
+Delegation Claim
+    ↓
+WorkflowExecution
+    ↓
+Durable Frontier(delegation.target)
+    ↓
+Durable Frontier Worker
+    ↓
+AgentDelegationRuntimeBridge
+    ↓
+既有 WorkflowRuntime
+    ↓
+Delegation terminalization
 ```
 
-此前 `AgentDelegation=running` 与 `WorkflowExecution=completed` 的 finalization race，以及 Frontier heartbeat `Frontier → Execution` 反向锁序导致的 PostgreSQL deadlock，已完成代码修复并通过当前 B2/B3 Gate。
+Frontier identity 使用 Delegation + Worker Execution generation 生成确定性 fingerprint，Claim、Worker Execution、Frontier 与 Claim Audit/Trace 在同一事务中提交。
 
-## 5. B4 Timeout / Cancel / Parent semantics
-
-### 5.1 Delegation timeout
-
-新增 `agent_delegation.timeout` 正式运行时规则：
-
-```text
-Workflow Runtime timeout
-        ↓
-Delegation remaining timeout
-        ↓
-取两者较小值
-        ↓
-Worker Runtime asyncio timeout
-        ↓
-子 Worker Execution → cancelled
-        ↓
-Runtime Session 完整退出
-        ↓
-独立 Delegation Session
-        ↓
-Delegation → timed_out
-```
-
-关键约束：
-
-1. `timeout_at` 是 Delegation 生命周期的持久化边界；
-2. Delegation timeout 不直接终止父 Workflow Execution；
-3. 子 Worker Execution 只使用既有 `WorkflowExecutionService.transition(..., "cancelled")`；
-4. Delegation `timed_out` 写入使用独立 Session，并继续验证 tenant + `worker_execution_id` generation；
-5. timeout 后任何迟到 completion/failure 都因 Delegation 已进入 terminal 状态而 fail-closed；
-6. 不新增第二套 Retry / Recovery 状态机。
-
-### 5.2 Cancel
-
-```text
-pending → cancelled
-running → cancelled
-```
-
-API 取消只修改 Delegation 生命周期，不直接把父 Workflow Execution 推入 terminal 状态。重复取消、终态取消均 fail-closed。
-
-### 5.3 Parent semantics
-
-```text
-Worker completed / failed / timed_out / cancelled
-        ↓
-Delegation 自身终态
-        ↓
-父 Workflow Execution 继续由既有 Workflow / Execution / Retry / Recovery Contract 决定
-```
-
-Worker failure、timeout、cancel 不允许绕过父 Execution 状态机直接写父 Execution terminal 状态。
-
-## 6. B4 自动化验收
+## 5. B6 自动化验收
 
 新增：
 
 ```text
-backend/app/services/agent_delegation/timeout.py
-backend/tests/unit/test_agent_delegation_timeout.py
-backend/tests/api_real/test_agent_delegation_b4_api.py
-backend/scripts/test/phase-2.8/04_delegation_timeout_cancel_gate.ps1
+backend/tests/api_real/test_agent_delegation_multi_worker_api.py
+backend/scripts/test/phase-2.8/06_delegation_multi_worker_runtime_gate.ps1
 ```
 
 正式入口：
 
 ```powershell
 cd backend
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\04_delegation_timeout_cancel_gate.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\06_delegation_multi_worker_runtime_gate.ps1
 ```
 
-Gate 只验证本地前置服务，不启动、重启或停止服务；测试用户、Token、tenant、ID 与测试数据均由 Gate 自动生成。
+Gate 自动生成测试用户、Token、tenant、ID 与测试数据；Gate 本身不启动、重启或停止任何服务，只验证本地 PostgreSQL、Redis、Backend API 前置条件。
 
 验收顺序：
 
 ```text
-B4 timeout Unit
+B6 targeted Unit/Contract
     ↓
 Backend regression
     ↓
 Alembic upgrade/head
     ↓
-真实 HTTP + PostgreSQL cancel
+真实 HTTP + PostgreSQL
     ↓
-真实 PostgreSQL Claim
+两个独立 Worker 实例 dispatch_once
     ↓
-真实 Worker Runtime timeout
+Delegation / Worker Execution / Frontier 终态闭环
     ↓
-验证 child cancelled + delegation timed_out
-    ↓
-验证 parent Execution 未进入 terminal
+父 Workflow Execution 保持非终态
 ```
 
-## 7. B5
+测试使用两个 `WorkflowWorker` 实例、每个并发度 1，分两轮并发 dispatch，确保每轮最多由两个 Worker 各消费一个 Durable Frontier；所有 Delegation 必须最终完成，且每个 Delegation 只存在一个 Worker Execution。
 
-B5 将在 B4 Real Gate 通过后进入：
-
-```text
-source execution
-  └── delegation
-        └── worker execution / trace
-```
-
-要求支持父子反查、completed/failed/timed_out/cancelled 全生命周期 Audit / Trace closure，metadata 不包含 Secret / credential 原文。
-
-## 8. 当前下一步
+## 6. 下一步
 
 ```text
-B4 Timeout / Cancel / Parent semantics
-    ↓
-B4 Real Gate 本地验收
-    ↓
-B5 Audit / Trace closure
-    ↓
-Delegation 多 Worker + PostgreSQL + Runtime acceptance
+B6 Multi-Worker Runtime acceptance
     ↓
 Phase 2.8 closure
+    ↓
+Phase 2.9 Enterprise Integration / Event Infrastructure Contract
 ```
+
+B6 代码完成后必须由开发者本地执行 Gate，实际通过后才能标记 B6 Passed 并进入 Phase 2.8 closure。

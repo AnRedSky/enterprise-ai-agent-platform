@@ -35,6 +35,7 @@
 | ERR-0027 | 2026-08-28 | Frontier completion 当前 lifecycle 与目标 lifecycle 混淆导致 stale Worker fencing 被遮蔽 |
 | ERR-0028 | 2026-08-28 | Phase 2.7 本地回归中的测试 Contract / Double 漂移 |
 | ERR-0029 | 2026-08-28 | B2 Synthetic Runtime 被 DAG Contract 错误拦截 |
+| ERR-0030 | 2026-08-29 | Delegation Claim 创建 Execution 后未进入 Durable Frontier |
 
 ## 迁移规则
 
