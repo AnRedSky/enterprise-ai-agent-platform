@@ -115,5 +115,9 @@ Phase 2.9 当前仍是**候选/前置评估状态**，尚未冻结 Contract，�
 - `docs/PRODUCT_DEVELOPMENT_MATRIX.md`
 - `docs/PRODUCT_ROADMAP.md`
 - `docs/02-phases/PHASE_2_8_A_CONTRACT.md`
+- `docs/03-acceptance/PHASE_2_8_ACCEPTANCE.md`
+- `docs/04-errors/2026-08-29-phase-2-8-b6-worker-entrypoint-and-delegation-runtime.md`
+- `docs/04-errors/2026-08-29-phase-2-8-b6-multi-worker-acceptance-contention.md`
+- `docs/04-errors/2026-08-29-worker-async-engine-shutdown-cancelled-error.md`
 
 开发治理仍以 `docs/01-governance/DEVELOPMENT.md` 为唯一工程规则入口；文档分类与状态管理以 `docs/01-governance/DOCUMENTATION.md` 为准。开发规则明确要求阶段状态变化同步更新 Phase、Acceptance、Project Status 与 Error 记录，并禁止使用未执行测试作为 Passed 证据。
