@@ -56,9 +56,13 @@ async def test_webhook_delivery_real_http_postgres_replay_and_audit() -> None:
     subscription_id = uuid.uuid4()
     delivery_id = uuid.uuid4()
     try:
-        endpoint = f"http://localhost:{port}/webhook"
+        # Bind and connect to the same IPv4 loopback address explicitly. Using `localhost`
+        # here can resolve to IPv6 (::1) on Windows while the ephemeral receiver is bound to
+        # 127.0.0.1, turning a deterministic local acceptance into an environment-dependent
+        # connection failure/retry that leaves the Delivery Fact pending.
+        endpoint = f"http://127.0.0.1:{port}/webhook"
         policy = WebhookEndpointPolicy(
-            allowed_hosts=frozenset({"localhost"}),
+            allowed_hosts=frozenset({"127.0.0.1"}),
             allowed_ports=frozenset({port}),
             allow_http=True,
         )
