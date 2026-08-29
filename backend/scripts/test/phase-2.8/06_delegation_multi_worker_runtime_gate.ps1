@@ -10,21 +10,34 @@ function Assert-ExitCode([string]$Message) {
 }
 
 function Assert-NoExternalWorkerProcesses {
+    $backendMarker = ($Backend -replace '\\', '/')
     $isWindowsHost = $env:OS -eq "Windows_NT"
     if ($isWindowsHost) {
         $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
             $commandLine = [string]$_.CommandLine
             if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
-            return ($commandLine -like '*run_worker.py*') -or ($commandLine -like '*run_scheduler.py*')
+            $normalized = $commandLine.Replace('\', '/')
+            $isBackendProcess = $normalized.IndexOf($backendMarker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            $isWorker = $normalized -match '(?i)(^|[\\/\s"''])(run_worker\.py)(?=$|[\s"''])'
+            $isScheduler = $normalized -match '(?i)(^|[\\/\s"''])(run_scheduler\.py)(?=$|[\s"''])'
+            return $isBackendProcess -and ($isWorker -or $isScheduler)
         })
     } elseif (Get-Command pgrep -ErrorAction SilentlyContinue) {
-        $processes = @(pgrep -af 'run_worker\.py|run_scheduler\.py' 2>$null)
+        $processes = @(pgrep -af "run_worker\.py|run_scheduler\.py" 2>$null)
     } else {
         return
     }
 
     if ($processes.Count -gt 0) {
-        throw "External Worker/Scheduler process detected. B6 Real API acceptance must run without background Worker/Scheduler consumers because they can legitimately claim the test-created Delegation before the explicit acceptance Workers. Stop the documented background processes and rerun the gate; the gate never starts or stops services."
+        Write-Host "Detected external service consumers:" -ForegroundColor Yellow
+        if ($isWindowsHost) {
+            foreach ($process in $processes) {
+                Write-Host ("  PID={0} Name={1} CommandLine={2}" -f $process.ProcessId, $process.Name, $process.CommandLine) -ForegroundColor Yellow
+            }
+        } else {
+            $processes | ForEach-Object { Write-Host ("  " + $_) -ForegroundColor Yellow }
+        }
+        throw "External Worker/Scheduler process detected. B6 Real API acceptance must run without background Worker/Scheduler consumers because they can legitimately claim the test-created Delegation before the explicit acceptance Workers. The gate never starts or stops services."
     }
 }
 
