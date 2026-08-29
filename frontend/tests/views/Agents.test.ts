@@ -102,10 +102,15 @@ describe("AgentWorkbench lifecycle", () => {
     expect(text).not.toContain("执行 ID");
   });
 
-  it("hides raw HTTP error text from the user-facing error area", async () => {
+  it("hides raw HTTP and backend error text from the user-facing error area", async () => {
     api.listAgents.mockRejectedValue(new Error("500 Internal Server Error"));
     const wrapper = mount(Agents, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("智能体列表加载失败，请刷新后重试"));
     expect(wrapper.text()).not.toContain("500 Internal Server Error");
+
+    api.listAgents.mockRejectedValue(new Error("provider unavailable"));
+    await (wrapper.vm as any).load();
+    expect(wrapper.text()).toContain("智能体列表加载失败，请刷新后重试");
+    expect(wrapper.text()).not.toContain("provider unavailable");
   });
 });
