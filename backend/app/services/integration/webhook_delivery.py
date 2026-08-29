@@ -15,20 +15,14 @@ from typing import Any
 from app.infrastructure.db import SessionLocal
 from app.models.webhook_delivery import WebhookDelivery
 from app.services.integration.webhook_delivery_repository import WebhookDeliveryRepository
+from app.services.integration.webhook_provider import WebhookDeliveryHTTPError
 
 
 Sender = Callable[[WebhookDelivery, dict[str, Any]], Awaitable[int]]
 
 
 class WebhookDeliveryWorker:
-    """基于 PostgreSQL lease 的可恢复 Webhook Delivery Worker。
-
-    `concurrency` 是单进程最大 in-flight delivery 数，也是 backpressure 边界。
-    Worker 不建立无界任务队列：只有存在空闲执行槽时才会继续 Claim。
-
-    ``tenant_id`` 可选；设置后 Worker 只领取该租户的 Delivery Fact，用于租户隔离的
-    Worker 池以及确定性的 tenant-scoped acceptance。未设置时保持平台级全局消费行为。
-    """
+    """基于 PostgreSQL lease 的可恢复 Webhook Delivery Worker。"""
 
     DEFAULT_CONCURRENCY = 4
 
@@ -64,7 +58,7 @@ class WebhookDeliveryWorker:
         return now + timedelta(seconds=min(max_seconds, base_seconds * (2 ** (attempt_count - 1))))
 
     async def deliver_once(self) -> bool:
-        """领取并投递一个 Delivery Fact；没有可领取任务返回 False。"""
+        """领取并投递一个 Delivery Fact；失败进入 retry/dead-letter 并留下审计事实。"""
         if self.sender is None:
             raise RuntimeError("WebhookDeliveryWorker 未配置 sender")
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -79,6 +73,7 @@ class WebhookDeliveryWorker:
             attempt_count = record.attempt_count
             payload = dict(record.integration_event.payload)
             destination = {
+                "provider": record.destination.provider,
                 "url": record.destination.endpoint_url,
                 "headers": dict(record.destination.headers or {}),
                 "secret_ref": record.destination.secret_ref,
@@ -88,10 +83,11 @@ class WebhookDeliveryWorker:
             status_code = await self.sender(record, {"payload": payload, "destination": destination})
         except Exception as exc:  # noqa: BLE001
             retry_at = self.retry_at(now, attempt_count) if attempt_count < self.max_attempts else None
+            response_status_code = exc.status_code if isinstance(exc, WebhookDeliveryHTTPError) else None
             async with SessionLocal() as db:
                 updated = await self.repository.mark_failed(
                     db, delivery_id, self.owner, datetime.now(UTC).replace(tzinfo=None),
-                    type(exc).__name__, str(exc), retry_at,
+                    type(exc).__name__, str(exc), retry_at, response_status_code,
                 )
                 await db.commit()
             return updated
@@ -104,28 +100,18 @@ class WebhookDeliveryWorker:
         return updated
 
     def stop(self) -> None:
-        """请求 Worker 停止；已有 in-flight delivery 会在 graceful shutdown 中完成。"""
         self._running = False
 
     async def run_forever(self, poll_interval: float = 0.2) -> None:
-        """并发消费 Webhook Delivery Fact，并在停止时等待已领取任务完成。
-
-        backpressure 通过 `concurrency` 实现：任务集合永远不超过该上限。
-        stop() 后不再 Claim 新任务，但会 drain 已经领取的任务，避免把 lease 中任务
-        在正常退出时无谓地留给下一轮恢复。
-        """
         if poll_interval <= 0:
             raise ValueError("poll_interval 必须大于 0")
-
         tasks: set[asyncio.Task[bool]] = set()
         try:
             while self._running or tasks:
                 while self._running and len(tasks) < self.concurrency:
                     tasks.add(asyncio.create_task(self.deliver_once()))
-
                 if not tasks:
                     break
-
                 done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                 tasks = set(pending)
                 idle = False
