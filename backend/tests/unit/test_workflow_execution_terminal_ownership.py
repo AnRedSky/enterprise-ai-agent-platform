@@ -12,8 +12,13 @@ from app.services.workflow.execution import WorkflowExecutionService
 
 
 class _Result:
+    """测试替身：同时提供单值查询与 Frontier 集合查询契约。"""
+
     def scalar_one_or_none(self):
         return None
+
+    def scalars(self):
+        return SimpleNamespace(all=lambda: [])
 
 
 class _FakeDb:
