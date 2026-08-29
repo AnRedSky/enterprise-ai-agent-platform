@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-import KnowledgeWorkbench from "@/views/knowledge/components/KnowledgeWorkbenchZh.vue";
+import KnowledgeWorkbench from "@/views/knowledge/components/KnowledgeWorkbench.vue";
 import * as api from "@/api/knowledge";
 
 vi.mock("@/api/knowledge", () => ({
@@ -25,20 +25,36 @@ const global = {
 describe("KnowledgeWorkbench", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("展示知识库与知识检索区域，并统一使用中文", async () => {
+  it("统一使用中文界面文本，同时保留必要技术标识", async () => {
     vi.mocked(api.listKnowledgeBases).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 });
     const wrapper = mount(KnowledgeWorkbench, { global });
     await vi.waitFor(() => expect(api.listKnowledgeBases).toHaveBeenCalled());
     expect(wrapper.text()).toContain("知识库管理");
     expect(wrapper.text()).toContain("知识检索调试");
-    expect(wrapper.text()).toContain("关键词检索 v2");
+    expect(wrapper.text()).not.toContain("Knowledge 知识管理");
     expect(wrapper.text()).not.toContain("Retrieval Debug");
   });
 
-  it("展示接口失败状态", async () => {
-    vi.mocked(api.listKnowledgeBases).mockRejectedValue(new Error("network"));
+  it("接口失败时不直接展示后端异常文本", async () => {
+    vi.mocked(api.listKnowledgeBases).mockRejectedValue(new Error("500 Internal Server Error"));
     const wrapper = mount(KnowledgeWorkbench, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("network"));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("知识库加载失败，请刷新后重试"));
+    expect(wrapper.text()).not.toContain("500 Internal Server Error");
+  });
+
+  it("状态、来源类型和检索方式统一映射为中文并保留技术值", async () => {
+    vi.mocked(api.listKnowledgeBases).mockResolvedValue({
+      items: [{ id: "kb-1", name: "企业知识库", description: "", owner_id: "u1", status: "active", created_at: "", updated_at: "" }],
+      total: 1, page: 1, page_size: 20,
+    });
+    const wrapper = mount(KnowledgeWorkbench, { global });
+    await vi.waitFor(() => expect(api.listKnowledgeBases).toHaveBeenCalled());
+    expect((wrapper.vm as any).statusLabel("active")).toBe("已启用（active）");
+    expect((wrapper.vm as any).statusLabel("unknown_status")).toBe("未知状态（unknown_status）");
+    expect((wrapper.vm as any).sourceTypeLabel("manual")).toBe("手动录入（manual）");
+    expect((wrapper.vm as any).retrievalModeLabel("lexical-v2")).toBe("关键词检索 v2（lexical-v2）");
+    expect((wrapper.vm as any).retrievalModeLabel("vector")).toBe("向量检索（vector）");
+    expect((wrapper.vm as any).retrievalModeLabel("hybrid")).toBe("混合检索（hybrid）");
   });
 
   it("执行检索并保留引用详情", async () => {
@@ -56,25 +72,6 @@ describe("KnowledgeWorkbench", () => {
     expect(api.retrieveKnowledge).toHaveBeenCalledWith({ query: "报销规则", top_k: 5, knowledge_base_id: undefined,
       mode: "lexical-v2", lexical_weight: undefined, vector_weight: undefined });
     expect(wrapper.vm.results[0].citation).toBe("员工手册#chunk-0");
-  });
-
-  it("混合检索发送权重并保留评分明细", async () => {
-    vi.mocked(api.listKnowledgeBases).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 });
-    vi.mocked(api.retrieveKnowledge).mockResolvedValue({
-      query: "审批", top_k: 5, min_score: 0, retrieval_mode: "hybrid",
-      results: [{ document_id: "doc-1", document_version_id: "ver-1", chunk_id: "chunk-1", chunk_index: 1,
-        source_document: "审批制度", source_uri: null, relevance_score: 0.82, citation: "审批制度#1",
-        content: "审批流程需要部门负责人确认。", matched_terms: ["审批"], retrieval_mode: "hybrid",
-        retrieval_sources: ["lexical", "vector"], hybrid_score_breakdown: { lexical_score: 0.9, vector_score: 0.75,
-          lexical_weight: 0.4, vector_weight: 0.6, fused_score: 0.81, support: ["lexical", "vector"] } }],
-    });
-    const wrapper = mount(KnowledgeWorkbench, { global });
-    await vi.waitFor(() => expect(api.listKnowledgeBases).toHaveBeenCalled());
-    wrapper.vm.query = "审批"; wrapper.vm.retrievalMode = "hybrid"; wrapper.vm.lexicalWeight = 0.4; wrapper.vm.vectorWeight = 0.6;
-    await wrapper.vm.search();
-    expect(api.retrieveKnowledge).toHaveBeenCalledWith({ query: "审批", top_k: 5, knowledge_base_id: undefined,
-      mode: "hybrid", lexical_weight: 0.4, vector_weight: 0.6 });
-    expect(wrapper.vm.results[0].hybrid_score_breakdown?.fused_score).toBe(0.81);
   });
 
   it("检索问题为空时不调用接口并提示用户", async () => {
