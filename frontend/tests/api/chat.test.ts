@@ -18,9 +18,7 @@ describe("streamChat", () => {
       ok,
       status,
       text: vi.fn().mockResolvedValue(ok ? "" : "provider failed"),
-      body: {
-        getReader: () => ({ read, releaseLock }),
-      },
+      body: { getReader: () => ({ read, releaseLock }) },
     } as unknown as Response;
   }
 
@@ -30,41 +28,26 @@ describe("streamChat", () => {
       "lo\"}\n\nevent: message\ndata: {\"type\":\"done\",\"execution_id\":\"e1\",\"latency_ms\":12}\n\n",
     ]));
     const events: unknown[] = [];
-
     await streamChat({ agent_id: "a1", input: "hello" }, (event) => events.push(event));
-
-    expect(events).toEqual([
-      { type: "delta", content: "hello" },
-      { type: "done", execution_id: "e1", latency_ms: 12 },
-    ]);
+    expect(events).toEqual([{ type: "delta", content: "hello" }, { type: "done", execution_id: "e1", latency_ms: 12 }]);
   });
 
   it("flushes a final SSE event without a trailing blank line", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([
-      "data: {\"type\":\"done\",\"execution_id\":\"e2\",\"latency_ms\":null}",
-    ]));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks(["data: {\"type\":\"done\",\"execution_id\":\"e2\",\"latency_ms\":null}"]));
     const events: unknown[] = [];
-
     await streamChat({ agent_id: "a1", input: "hello" }, (event) => events.push(event));
-
     expect(events).toEqual([{ type: "done", execution_id: "e2", latency_ms: null }]);
   });
 
   it("passes the abort signal to the real fetch request", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([]));
     const controller = new AbortController();
-
     await streamChat({ agent_id: "a1", input: "hello" }, vi.fn(), controller.signal);
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("/api/v1/agents/stream"),
-      expect.objectContaining({ signal: controller.signal }),
-    );
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/v1/agents/stream"), expect.objectContaining({ signal: controller.signal }));
   });
 
   it("converts backend HTTP errors to Chinese user-facing messages", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([], false, 502));
-
     try {
       await streamChat({ agent_id: "a1", input: "hello" }, vi.fn());
       throw new Error("expected streamChat to reject");
@@ -76,19 +59,14 @@ describe("streamChat", () => {
   });
 
   it("converts SSE error messages without hiding the technical error code", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([
-      "data: {\"type\":\"error\",\"code\":\"MODEL_TIMEOUT\",\"message\":\"HTTP 504 Gateway Timeout\"}\n\n",
-    ]));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks(["data: {\"type\":\"error\",\"code\":\"MODEL_TIMEOUT\",\"message\":\"HTTP 504 Gateway Timeout\"}\n\n"]));
     const events: unknown[] = [];
-
     await streamChat({ agent_id: "a1", input: "hello" }, (event) => events.push(event));
-
-    expect(events).toEqual([{ type: "error", code: "MODEL_TIMEOUT", message: "请求处理失败，请稍后重试" }]);
+    expect(events).toEqual([{ type: "error", code: "MODEL_TIMEOUT", message: "对话执行失败，请稍后重试" }]);
   });
 
   it("uses a Chinese fallback when the streaming response has no body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, status: 200, body: null } as Response);
-
     await expect(streamChat({ agent_id: "a1", input: "hello" }, vi.fn())).rejects.toThrow("对话响应暂时不可用，请稍后重试");
   });
 });

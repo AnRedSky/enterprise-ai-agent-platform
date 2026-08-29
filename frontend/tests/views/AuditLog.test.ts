@@ -15,7 +15,7 @@ const stubs = {
   "el-alert": { template: "<div class=\"alert\">审计日志查询失败</div>" },
   "el-empty": { template: "<div class=\"empty\">暂无审计日志</div>" },
   "el-table": { template: "<div class=\"table\"><slot/></div>" },
-  "el-table-column": { template: "<div><slot name=\"default\" :row=\"{ action: 'agent.execute', status: 'success' }"/></div>" },
+  "el-table-column": { props: ["label"], template: "<div><span>{{ label }}</span><slot name=\"default\" :row=\"{ action: 'agent.execute', status: 'success' }\" /></div>" },
   "el-pagination": { template: "<div/>" },
 };
 const global = { stubs, directives: { loading: () => undefined } };
