@@ -1,7 +1,7 @@
 """验证 Phase 2.10-I Alembic 分支在告警生命周期迁移前正确汇合。
 
-该测试只验证迁移拓扑，不复制生产业务规则；核心约束是 0045 必须等待两个 0044 分支完成，
-其中运行时运维分支负责创建 runtime_alert_rules。
+该测试验证迁移拓扑元数据，不复制生产业务规则；0045 通过 depends_on 等待
+Runtime Operations 分支先创建 runtime_alert_rules，再执行告警生命周期表创建。
 """
 
 from importlib.util import module_from_spec, spec_from_file_location
@@ -18,14 +18,12 @@ def _load_migration(filename: str):
     return module
 
 
-def test_alert_lifecycle_migration_joins_both_0044_branches():
-    """0045 必须在运行时运维与 Webhook Provider 两个 0044 分支完成后执行。"""
+def test_alert_lifecycle_migration_depends_on_runtime_operations_branch():
+    """0045 必须从 Webhook Provider 分支继续，并显式等待 Runtime Operations 分支。"""
     migration = _load_migration("0045_alert_lifecycle_notifications.py")
 
-    assert set(migration.down_revision) == {
-        "0044_runtime_operations_enterprise",
-        "0044_webhook_destination_provider",
-    }
+    assert migration.down_revision == "0044_webhook_destination_provider"
+    assert migration.depends_on == "0044_runtime_operations_enterprise"
 
 
 def test_alert_rule_escalation_remains_downstream_of_alert_lifecycle():

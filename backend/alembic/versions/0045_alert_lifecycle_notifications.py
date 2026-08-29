@@ -1,16 +1,15 @@
 """Phase 2.10-I 告警生命周期与通知编排事实持久化迁移。"""
+
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0045_alert_lifecycle_notifications"
-# 0045 同时依赖两个从 0043 分叉的 0044：运行时运维表提供 runtime_alert_rules，
-# Webhook Provider 迁移提供 webhook_destinations.provider；必须在两个分支均完成后创建通知表。
-down_revision = (
-    "0044_runtime_operations_enterprise",
-    "0044_webhook_destination_provider",
-)
+# 0045 只沿 Webhook Provider 分支继续，同时声明对 Runtime Operations 分支的
+# 强依赖。这样 Alembic 在从 0043 升级时会先完成两个 0044 分支，再创建依赖
+# runtime_alert_rules 的告警生命周期表，避免运行时外键引用不存在的表。
+down_revision = "0044_webhook_destination_provider"
 branch_labels = None
-depends_on = None
+depends_on = "0044_runtime_operations_enterprise"
 
 
 def upgrade() -> None:
