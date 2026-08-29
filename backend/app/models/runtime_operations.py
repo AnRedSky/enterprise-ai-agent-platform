@@ -1,26 +1,16 @@
-"""Runtime 运维企业扩展模型。
-
-职责：持久化 Provider 注册、告警规则、时间序列指标样本、告警生命周期、通知策略与通用运维审计事实。
-边界：只保存运维配置与事实，不执行 Provider 网络调用；Secret 只能保存引用，不保存明文凭据。
-"""
+"""Runtime 运维企业扩展模型。"""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
-
 from app.models.core import Base, utcnow_naive
-
 
 class RuntimeProviderRegistry(Base):
     __tablename__ = "runtime_provider_registry"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_runtime_provider_registry_tenant_name"),
-        Index("ix_runtime_provider_registry_tenant_enabled", "tenant_id", "enabled"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_runtime_provider_registry_tenant_name"), Index("ix_runtime_provider_registry_tenant_enabled", "tenant_id", "enabled"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -31,13 +21,9 @@ class RuntimeProviderRegistry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
-
 class RuntimeAlertRule(Base):
     __tablename__ = "runtime_alert_rules"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_runtime_alert_rule_tenant_name"),
-        Index("ix_runtime_alert_rule_tenant_enabled", "tenant_id", "enabled"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_runtime_alert_rule_tenant_name"), Index("ix_runtime_alert_rule_tenant_enabled", "tenant_id", "enabled"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -46,19 +32,14 @@ class RuntimeAlertRule(Base):
     threshold: Mapped[float] = mapped_column(Float, nullable=False)
     window_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="warning")
+    escalation: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
-
 class RuntimeAlertInstance(Base):
-    """规则 + routing identity 的持久化告警状态机实例。"""
     __tablename__ = "runtime_alert_instances"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "rule_id", "fingerprint", name="uq_runtime_alert_instance_identity"),
-        Index("ix_runtime_alert_instance_tenant_state", "tenant_id", "state", "updated_at"),
-        Index("ix_runtime_alert_instance_tenant_routing", "tenant_id", "routing_key", "state"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "rule_id", "fingerprint", name="uq_runtime_alert_instance_identity"), Index("ix_runtime_alert_instance_tenant_state", "tenant_id", "state", "updated_at"), Index("ix_runtime_alert_instance_tenant_routing", "tenant_id", "routing_key", "state"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     rule_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runtime_alert_rules.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -77,15 +58,9 @@ class RuntimeAlertInstance(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
-
 class RuntimeNotificationPolicy(Base):
-    """租户级通知策略；JSON 仅承载路由配置，不承载 Secret。"""
     __tablename__ = "runtime_notification_policies"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "name", name="uq_runtime_notification_policy_tenant_name"),
-        Index("ix_runtime_notification_policy_tenant_enabled", "tenant_id", "enabled"),
-        Index("ix_runtime_notification_policy_tenant_severity", "tenant_id", "severity", "enabled"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_runtime_notification_policy_tenant_name"), Index("ix_runtime_notification_policy_tenant_enabled", "tenant_id", "enabled"), Index("ix_runtime_notification_policy_tenant_severity", "tenant_id", "severity", "enabled"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -100,14 +75,9 @@ class RuntimeNotificationPolicy(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
-
 class RuntimeNotificationGroup(Base):
-    """告警通知聚合窗口。"""
     __tablename__ = "runtime_notification_groups"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "group_key", name="uq_runtime_notification_group_identity"),
-        Index("ix_runtime_notification_group_tenant_open", "tenant_id", "closed_at", "updated_at"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "group_key", name="uq_runtime_notification_group_identity"), Index("ix_runtime_notification_group_tenant_open", "tenant_id", "closed_at", "last_event_at"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     group_key: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -118,15 +88,9 @@ class RuntimeNotificationGroup(Base):
     event_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-
 class RuntimeNotificationDelivery(Base):
-    """Notification transition 到具体 Delivery Fact 的业务审计映射。"""
     __tablename__ = "runtime_notification_deliveries"
-    __table_args__ = (
-        UniqueConstraint("tenant_id", "dedup_key", name="uq_runtime_notification_delivery_dedup"),
-        Index("ix_runtime_notification_delivery_tenant_status", "tenant_id", "status", "created_at"),
-        Index("ix_runtime_notification_delivery_tenant_group", "tenant_id", "group_id", "created_at"),
-    )
+    __table_args__ = (UniqueConstraint("tenant_id", "dedup_key", name="uq_runtime_notification_delivery_dedup"), Index("ix_runtime_notification_delivery_tenant_status", "tenant_id", "status", "created_at"), Index("ix_runtime_notification_delivery_tenant_group", "tenant_id", "group_id", "created_at"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     alert_instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runtime_alert_instances.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -143,13 +107,9 @@ class RuntimeNotificationDelivery(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
 
-
 class RuntimeMetricSample(Base):
     __tablename__ = "runtime_metric_samples"
-    __table_args__ = (
-        Index("ix_runtime_metric_sample_tenant_metric_time", "tenant_id", "metric_name", "recorded_at"),
-        Index("ix_runtime_metric_sample_tenant_time", "tenant_id", "recorded_at"),
-    )
+    __table_args__ = (Index("ix_runtime_metric_sample_tenant_metric_time", "tenant_id", "metric_name", "recorded_at"), Index("ix_runtime_metric_sample_tenant_time", "tenant_id", "recorded_at"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     metric_name: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -157,13 +117,9 @@ class RuntimeMetricSample(Base):
     dimensions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, index=True)
 
-
 class RuntimeOperationAudit(Base):
     __tablename__ = "runtime_operation_audits"
-    __table_args__ = (
-        Index("ix_runtime_operation_audit_tenant_created", "tenant_id", "created_at"),
-        Index("ix_runtime_operation_audit_tenant_action", "tenant_id", "action", "created_at"),
-    )
+    __table_args__ = (Index("ix_runtime_operation_audit_tenant_created", "tenant_id", "created_at"), Index("ix_runtime_operation_audit_tenant_action", "tenant_id", "action", "created_at"))
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     actor: Mapped[str] = mapped_column(String(128), nullable=False)
