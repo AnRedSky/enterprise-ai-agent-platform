@@ -1,7 +1,7 @@
-"""Phase 2.10-I Runtime 运维企业能力服务。
+"""Runtime 运维企业扩展服务。
 
 职责：提供 Provider/Destination 注册查询、告警规则管理、时间序列样本、Prometheus/OpenTelemetry 导出与运维审计。
-边界：Provider 注册只保存元数据；Destination 复用既有 WebhookDestination；指标仍从 Durable facts 计算，不复制业务事实。
+边界：Provider 注册只保存适配器元数据；Destination 复用既有 WebhookDestination；指标仍从 Durable facts 计算。
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.runtime_operations import RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry
@@ -36,8 +36,8 @@ class RuntimeOperationsEnterpriseService:
             raise ValueError("provider config must not contain raw secrets")
         item = RuntimeProviderRegistry(tenant_id=tenant_id, name=name, provider_type=provider_type, config=config, enabled=True)
         self.db.add(item)
-        await self.audit(tenant_id, actor, "provider.create", "provider", str(item.id), "success", {"name": name, "provider_type": provider_type})
         await self.db.flush()
+        await self.audit(tenant_id, actor, "provider.create", "provider", str(item.id), "success", {"name": name, "provider_type": provider_type})
         return item
 
     async def destinations(self, tenant_id: UUID) -> list[WebhookDestination]:
@@ -104,11 +104,11 @@ class RuntimeOperationsEnterpriseService:
     async def otlp(self, tenant_id: UUID) -> dict[str, Any]:
         """输出可供 OTLP HTTP 适配层消费的结构化指标数据。"""
         overview = await self.metrics.overview(tenant_id)
-        now = datetime.now(UTC).isoformat()
-        datapoints = [
-            {"name": "runtime.delivery.success_percent", "value": overview["slo"]["delivery_success_percent"]},
-            {"name": "runtime.delivery.retry_count", "value": overview["deliveries"]["retry_count"]},
-            {"name": "runtime.delivery.dead_letter_count", "value": overview["deliveries"]["dead_letter_count"]},
-            {"name": "runtime.delivery.p95_latency_ms", "value": overview["slo"]["p95_delivery_latency_ms"] or 0},
+        timestamp = int(datetime.now(UTC).timestamp() * 1_000_000_000)
+        values = [
+            ("runtime.delivery.success_percent", overview["slo"]["delivery_success_percent"]),
+            ("runtime.delivery.retry_count", overview["deliveries"]["retry_count"]),
+            ("runtime.delivery.dead_letter_count", overview["deliveries"]["dead_letter_count"]),
+            ("runtime.delivery.p95_latency_ms", overview["slo"]["p95_delivery_latency_ms"] or 0),
         ]
-        return {"resourceMetrics": [{"resource": {"attributes": [{"key": "tenant.id", "value": {"stringValue": str(tenant_id)}}]}, "scopeMetrics": [{"scope": {"name": "enterprise-ai-agent-platform.runtime"}, "metrics": [{"name": item["name"], "gauge": {"dataPoints": [{"asDouble": item["value"], "timeUnixNano": str(int(datetime.fromisoformat(now).timestamp() * 1_000_000_000))}]}} for item in datapoints]}]}]}
+        return {"resourceMetrics": [{"resource": {"attributes": [{"key": "tenant.id", "value": {"stringValue": str(tenant_id)}}]}, "scopeMetrics": [{"scope": {"name": "enterprise-ai-agent-platform.runtime"}, "metrics": [{"name": name, "gauge": {"dataPoints": [{"asDouble": value, "timeUnixNano": str(timestamp)}]}} for name, value in values]}]}]}
