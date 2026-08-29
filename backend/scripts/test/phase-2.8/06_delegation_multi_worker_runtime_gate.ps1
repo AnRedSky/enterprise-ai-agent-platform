@@ -13,13 +13,13 @@ function Assert-NoExternalWorkerProcesses {
     $isWindowsHost = $env:OS -eq "Windows_NT"
     if ($isWindowsHost) {
         $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-            $_.CommandLine -and (
-                $_.CommandLine -match "(^|[\\/ ])run_worker\.py([ \"']|$)" -or
-                $_.CommandLine -match "(^|[\\/ ])run_scheduler\.py([ \"']|$)"
-            )
+            $commandLine = [string]$_.CommandLine
+            if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
+            return ($commandLine -match '(^|[\\/ ])run_worker\.py([\s\'"'"']|$)') -or
+                   ($commandLine -match '(^|[\\/ ])run_scheduler\.py([\s\'"'"']|$)')
         })
     } elseif (Get-Command pgrep -ErrorAction SilentlyContinue) {
-        $processes = @(pgrep -af "run_worker\.py|run_scheduler\.py" 2>$null)
+        $processes = @(pgrep -af 'run_worker\.py|run_scheduler\.py' 2>$null)
     } else {
         return
     }
