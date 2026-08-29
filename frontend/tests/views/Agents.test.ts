@@ -17,6 +17,7 @@ const stubs = {
   "el-dialog": { props: ["modelValue"], template: "<div><slot/><slot name=\"footer\"/></div>" },
   "el-form": { template: "<form><slot/></form>" }, "el-form-item": { template: "<div><slot/></div>" },
   "el-input": { template: "<input/>" }, "el-divider": { template: "<hr/>" }, "el-scrollbar": { template: "<div><slot/></div>" },
+  "el-tag": { template: "<span><slot/></span>" },
 };
 const global = { stubs, directives: { loading: () => undefined } };
 

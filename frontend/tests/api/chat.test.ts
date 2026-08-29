@@ -9,17 +9,17 @@ describe("streamChat", () => {
   function responseFromChunks(chunks: string[], ok = true) {
     const encoder = new TextEncoder();
     let index = 0;
+    const read = vi.fn(async () => {
+      if (index >= chunks.length) return { done: true, value: undefined };
+      return { done: false, value: encoder.encode(chunks[index++]) };
+    });
+    const releaseLock = vi.fn();
     return {
       ok,
       status: ok ? 200 : 502,
       text: vi.fn().mockResolvedValue(ok ? "" : "provider failed"),
       body: {
-        getReader: () => ({
-          read: vi.fn(async () => {
-            if (index >= chunks.length) return { done: true, value: undefined };
-            return { done: false, value: encoder.encode(chunks[index++]) };
-          }),
-        }),
+        getReader: () => ({ read, releaseLock }),
       },
     } as unknown as Response;
   }

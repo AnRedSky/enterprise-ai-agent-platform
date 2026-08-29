@@ -28,6 +28,7 @@ const STATUS_META: Record<RuntimeStatus, RuntimeStatusMeta> = {
 export function normalizeRuntimeStatus(value: unknown): RuntimeStatus {
   if (typeof value !== 'string') return 'unknown'
   const normalized = value.toLowerCase()
+  if (normalized === 'success' || normalized === 'succeeded') return 'completed'
   return normalized in STATUS_META ? (normalized as RuntimeStatus) : 'unknown'
 }
 

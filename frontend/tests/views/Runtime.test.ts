@@ -49,6 +49,13 @@ describe("RuntimeExecutions", () => {
     expect(wrapper.text()).toContain("已完成");
     expect(wrapper.text()).toContain("1.20 s");
   });
+  it("normalizes backend success status to the completed presentation", async () => {
+    executions.mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } });
+    const wrapper = mount(Runtime, { global });
+    await vi.waitFor(() => expect(executions).toHaveBeenCalled());
+    expect((wrapper.vm as any).getRuntimeStatusMeta("success").label).toBe("已完成");
+    expect((wrapper.vm as any).getRuntimeStatusMeta("succeeded").label).toBe("已完成");
+  });
   it("copies execution context without changing the backend identifier", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });

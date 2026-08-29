@@ -36,6 +36,7 @@ const stubs = {
   "el-option": { template: "<option><slot /></option>" },
   "el-input": { template: "<input />" },
   "el-tag": { template: "<span><slot /></span>" },
+  "el-empty": { props: ["description"], template: "<div>{{ description }}</div>" },
   "el-divider": { template: "<hr />" },
   "el-table": { template: "<div><slot /></div>" },
   // Element Plus 提供 row 给列的 scoped slot；测试桩保留该语义，确保治理断言覆盖真实列模板。
