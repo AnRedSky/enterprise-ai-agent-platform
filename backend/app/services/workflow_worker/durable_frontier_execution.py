@@ -1,7 +1,7 @@
 """Durable Frontier Runtime 异常收敛适配器。
 
 职责：把单个 Durable Frontier 接入现有 WorkflowRuntime 的 Planner / Node 执行能力，并将运行异常统一收敛到 Frontier Retry / Failed 生命周期。
-边界：不复制 Runtime、Planner、Checkpoint 或 Retry 算法；只编排一次 Frontier dispatch 及异常状态收敛。
+边界：不复制 Runtime、Planner、Checkpoint 或 Retry 算法；只编排一次 Frontier dispatch 及异常状态收敛。Delegation Worker Execution 交由唯一 Runtime Entry 处理目标 Agent Bridge 与 Delegation terminalization。
 关键依赖：DurableFrontierWorkflowWorker、WorkflowRuntime、WorkflowDagResumePlanner、WorkflowDagMultiFrontierExecutor、Frontier Repository、Frontier Progression、Frontier Retry Policy。
 """
 
@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, update
 
 from app.infrastructure.db import SessionLocal
+from app.models.agent_delegation import AgentDelegation
 from app.models.workflow import WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier, WorkflowNodeExecution
 from app.runtime.workflow import CircuitOpenError, WorkflowRuntime
@@ -31,7 +32,7 @@ from app.services.workflow_worker.frontier_runtime import DurableFrontierWorkflo
 
 
 class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
-    """以 Planner 输出作为单次 Frontier 执行边界，并统一收敛 Runtime 异常。"""
+    """以 Planner 输出作为普通 Workflow 单次 Frontier 执行边界，并统一收敛 Runtime 异常。"""
 
     @staticmethod
     def _bootstrap_fingerprint(execution_id, version_id, node_ids: tuple[str, ...]) -> str:
@@ -302,8 +303,37 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
             await db.rollback()
             return True
 
+    async def _is_delegation_frontier(self, frontier: WorkflowFrontier) -> bool:
+        """判断 Frontier 是否属于已 Claim Delegation，供默认 Worker 选择唯一 Runtime Entry。
+
+        Args:
+            frontier: 待执行的 Durable Frontier。
+
+        Returns:
+            该 Frontier 绑定 Worker Execution 的 Delegation 时返回 True，否则返回 False。
+
+        设计意图：Planner-driven Worker 负责普通 Workflow 的 Frontier Planner 编排；Delegation Worker
+        Execution 则必须进入 `runtime_entry.execute_claimed_execution`，因为该入口唯一负责
+        AgentDelegationRuntimeBridge、Delegation timeout 与 generation fencing。两者共享同一个 Worker、
+        Frontier、WorkflowRuntime 与 Lease，不产生第二套执行状态机。
+        """
+        async with SessionLocal() as db:
+            delegation_id = (
+                await db.execute(
+                    select(AgentDelegation.id).where(
+                        AgentDelegation.worker_execution_id == frontier.execution_id,
+                        AgentDelegation.tenant_id == frontier.tenant_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            await db.rollback()
+            return delegation_id is not None
+
     async def execute_frontier(self, frontier: WorkflowFrontier) -> None:
-        """执行一个 Durable Frontier，并通过统一 Progression primitive 完成成功提交。"""
+        """执行一个 Durable Frontier；Delegation 走唯一 Runtime Entry，普通 Workflow 走 Planner。"""
+        if await self._is_delegation_frontier(frontier):
+            await super().execute_frontier(frontier)
+            return
         if not await self._verify_frontier_consumption_ownership(frontier):
             return
         runtime_task = asyncio.current_task()
@@ -434,6 +464,7 @@ class PlannerDrivenDurableFrontierWorkflowWorker(DurableFrontierWorkflowWorker):
 
     @staticmethod
     async def _cancel_heartbeat(heartbeat: asyncio.Task[object]) -> None:
+        """取消 Frontier heartbeat 任务，并吞掉预期的取消异常。"""
         heartbeat.cancel()
         try:
             await heartbeat
