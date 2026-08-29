@@ -18,8 +18,8 @@ const stubs = {
   "el-alert": { template: "<div class=\"alert\"><slot/><span>{{ title }}</span><span>{{ description }}</span></div>", props: ["title", "description"] },
   "el-card": { template: "<div><slot name=\"header\"/><slot/></div>" },
   "el-tag": { template: "<span><slot/></span>" },
-  "el-table": { template: "<div><slot/></div>", props: ["data"] },
-  "el-table-column": { template: "<div><slot :row=\"data?.[0] || {}\"/></div>", props: ["data"] },
+  "el-table": { template: "<div class=\"table\">{{ JSON.stringify(data) }}</div>", props: ["data"] },
+  "el-table-column": { template: "<div />" },
   "el-empty": { template: "<div>{{ description }}</div>", props: ["description"] },
 };
 const global = { stubs, directives: { loading: () => undefined } };
@@ -52,7 +52,7 @@ describe("DashboardOverview", () => {
     expect(wrapper.text()).toContain("1");
     expect(wrapper.text()).toContain("1/2");
     expect(wrapper.text()).toContain("最近执行");
-    expect(wrapper.text()).toContain("execution");
+    expect(wrapper.text()).toContain("execution-001");
     expect(wrapper.text()).toContain("Agent 管理");
   });
 
