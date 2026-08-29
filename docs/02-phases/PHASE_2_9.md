@@ -8,7 +8,7 @@
 - Phase 2.9-A Event Contract：已实现。
 - Phase 2.9-B Durable Event Persistence：已实现第一切片，数据库 Migration 已验收。
 - Phase 2.9-C Reliable Delivery：第二切片已通过本地真实 PostgreSQL Gate。
-- Phase 2.9-D Webhook Integration：进入 Security / Audit / Replay / Real Acceptance 收口阶段。
+- Phase 2.9-D Webhook Integration：Provider / Delivery Worker / Security / Audit / Replay 已落地，进入 Real Acceptance 收口。
 
 ## 3. 2.9-A Event Contract
 状态：**已实现**。统一事件信封包含 `event_id`、`tenant_id`、`event_type`、`schema_version`、`source`、`subject`、`idempotency_key`、`occurred_at`、`request_id`、`trace_id`、`payload`、`metadata`。
@@ -26,6 +26,14 @@
 
 ### 6.2 Webhook Delivery Worker
 已实现 PostgreSQL `FOR UPDATE SKIP LOCKED` Claim、lease fencing、retry/backoff、dead-letter、独立 Worker 进程和 HTTP Provider。
+
+当前已进一步完成 Worker Runtime 工程化：
+- `concurrency` 参数限制单进程 in-flight Delivery 数量；
+- 不建立无界任务队列，空闲执行槽才允许继续 Claim，形成明确 backpressure 边界；
+- `stop()` 后不再领取新任务；
+- graceful shutdown 会 drain 已经 Claim 的 in-flight Delivery；
+- `WEBHOOK_WORKER_CONCURRENCY`、`WEBHOOK_WORKER_POLL_INTERVAL`、`WEBHOOK_WORKER_LEASE_SECONDS`、`WEBHOOK_WORKER_MAX_ATTEMPTS` 可通过环境配置；
+- 已接入既有 `run_worker.py` / Worker Service，同一 Worker 进程并行承载 Workflow Worker 与 Webhook Delivery Worker。
 
 ### 6.3 Secret Resolver
 **已实现。**
@@ -66,14 +74,14 @@
 Gate 顺序：
 1. 验证 `uv` 与 `.env.example`，不启动任何服务；
 2. Alembic upgrade/current；
-3. Security + Provider 单元回归；
-4. 真实 PostgreSQL + 本机 ephemeral HTTP receiver 验证 Worker、HMAC、状态落库、Audit、Replay；
+3. Security + Provider + Worker Runtime 单元回归；
+4. 真实 PostgreSQL + 本机 ephemeral HTTP receiver 验证 Worker、HMAC、状态落库、Audit、Replay、并发与 graceful drain；
 5. targeted integration regression。
 
 Gate 不启动、不停止 API、Worker、Scheduler、Redis 或 PostgreSQL；测试数据自动生成和清理，不要求人工填写测试信息。
 
 ### 6.7 当前收口项
-代码与 Gate 已落地；在开发机执行 `02_webhook_delivery_real_gate.ps1` 后，以真实 PostgreSQL 验收结果作为 2.9-D 最终完成依据。下一功能切片为 Worker 并发/backpressure/graceful shutdown 参数化及接入既有 Worker Runtime。
+Worker 并发/backpressure/graceful shutdown 已完成并接入既有 Worker Service；剩余收口项是执行 `02_webhook_delivery_real_gate.ps1` 的真实 PostgreSQL + HTTP Acceptance，并根据结果修正实际运行环境问题。Real Gate 通过后 2.9-D 才标记为最终完成。
 
 ## 7. 2.9-E Runtime Integration
 待 2.9-D Real Acceptance 收口后，将 Workflow / Agent / Scheduler 关键业务事实接入统一 Event Contract，同时保持既有 Runtime 状态机和 Execution Fact 语义。
