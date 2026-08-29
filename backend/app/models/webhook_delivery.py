@@ -1,7 +1,7 @@
 """Webhook delivery lifecycle model.
 
-职责：为每个 Durable Integration Event + Webhook Subscription 保存独立投递事实。
-边界：不执行网络请求；Worker 只根据此模型进行 Claim、重试和最终状态记录。
+职责：为每个 Durable Integration Event × Webhook Destination 保存独立投递事实。
+边界：不执行网络请求；Worker 根据此模型进行 Claim、lease、retry 和 dead-letter。
 """
 
 from __future__ import annotations
@@ -16,19 +16,20 @@ from app.models.core import Base, utcnow_naive
 
 
 class WebhookDelivery(Base):
-    """单个订阅目标的一次可靠 Webhook 投递事实。"""
+    """单个 Destination 的可靠 Webhook 投递事实。"""
 
     __tablename__ = "webhook_deliveries"
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id", "subscription_id", "integration_event_id",
-            name="uq_webhook_delivery_event_subscription",
+            "tenant_id", "destination_id", "integration_event_id",
+            name="uq_webhook_delivery_event_destination",
         ),
         Index(
             "ix_webhook_delivery_claimable",
             "tenant_id", "status", "next_attempt_at", "lease_expires_at",
         ),
         Index("ix_webhook_delivery_event", "tenant_id", "integration_event_id"),
+        Index("ix_webhook_delivery_destination", "tenant_id", "destination_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -37,6 +38,9 @@ class WebhookDelivery(Base):
     )
     subscription_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("webhook_subscriptions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    destination_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("webhook_destinations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     integration_event_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("integration_events.id", ondelete="CASCADE"), nullable=False, index=True
