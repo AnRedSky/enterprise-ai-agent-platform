@@ -19,6 +19,7 @@ from app.models.integration_event import IntegrationEventRecord
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization, OrganizationMembership
 from app.models.webhook_delivery import WebhookDelivery
+from app.models.webhook_delivery_audit import WebhookDeliveryAudit
 from app.models.workflow import Workflow
 from app.models.workflow_trace import WorkflowTraceEvent
 
@@ -136,24 +137,6 @@ class RuntimeQueryService:
     async def integration_events(self, tenant_id: UUID, *, page=1, page_size=20, event_type=None, source=None,
                                  status=None, subject=None, trace_id=None, request_id=None,
                                  occurred_from=None, occurred_to=None):
-        """查询当前租户的 Durable Integration Event。
-
-        Args:
-            tenant_id: 当前认证上下文中的租户标识。
-            page: 从 1 开始的页码。
-            page_size: 单页数量，最大 100。
-            event_type: 事件类型过滤。
-            source: 事件来源过滤。
-            status: 事件状态过滤。
-            subject: 业务主体过滤。
-            trace_id: 链路标识过滤。
-            request_id: 请求标识过滤。
-            occurred_from: 事件发生时间下界。
-            occurred_to: 事件发生时间上界。
-
-        Returns:
-            当前租户范围内的分页事件结果。
-        """
         page, page_size, offset = self._page(page, page_size)
         stmt = self._integration_event_filters(
             select(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id == tenant_id),
@@ -167,7 +150,6 @@ class RuntimeQueryService:
     async def integration_event_summary(self, tenant_id: UUID, *, event_type=None, source=None, status=None,
                                         subject=None, trace_id=None, request_id=None,
                                         occurred_from=None, occurred_to=None) -> dict[str, Any]:
-        """生成当前租户 Integration Event 的状态与来源摘要。"""
         base = self._integration_event_filters(
             select(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id == tenant_id),
             event_type=event_type, source=source, status=status, subject=subject,
@@ -184,18 +166,6 @@ class RuntimeQueryService:
         }
 
     async def integration_event_deliveries(self, tenant_id: UUID, integration_event_id: UUID, *, page=1, page_size=20, status=None):
-        """查询指定 Integration Event 的 Webhook Delivery 运维事实。
-
-        Args:
-            tenant_id: 当前认证上下文中的租户标识。
-            integration_event_id: 要诊断的 Durable Integration Event 标识。
-            page: 从 1 开始的页码。
-            page_size: 单页数量，最大 100。
-            status: 可选 Delivery 状态过滤。
-
-        Returns:
-            当前租户、指定事件的 Delivery 分页结果。
-        """
         page, page_size, offset = self._page(page, page_size)
         stmt = select(WebhookDelivery).where(
             WebhookDelivery.tenant_id == tenant_id,
@@ -206,5 +176,19 @@ class RuntimeQueryService:
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
         rows = (await self.db.execute(
             stmt.order_by(WebhookDelivery.updated_at.desc(), WebhookDelivery.id.desc()).offset(offset).limit(page_size)
+        )).scalars().all()
+        return page, page_size, total, rows
+
+    async def webhook_delivery_audits(self, tenant_id: UUID, delivery_id: UUID, *, page=1, page_size=50):
+        """查询指定 Delivery 的不可变投递/replay 审计，严格绑定 tenant。"""
+        page, page_size, offset = self._page(page, page_size)
+        stmt = select(WebhookDeliveryAudit).where(
+            WebhookDeliveryAudit.tenant_id == tenant_id,
+            WebhookDeliveryAudit.delivery_id == delivery_id,
+        )
+        total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+        rows = (await self.db.execute(
+            stmt.order_by(WebhookDeliveryAudit.created_at.desc(), WebhookDeliveryAudit.id.desc())
+            .offset(offset).limit(page_size)
         )).scalars().all()
         return page, page_size, total, rows
