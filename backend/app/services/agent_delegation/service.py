@@ -232,14 +232,50 @@ class AgentDelegationService:
         return item
 
     async def cancel(self, *, tenant_id: UUID, source_execution_id: UUID, delegation_id: UUID, actor_id: UUID, admin: bool) -> AgentDelegation:
-        """取消 pending/running Delegation；取消只改变 Delegation 自身，不直接终止父 Execution。"""
+        """取消 pending/running Delegation，并为终态变化补齐 Audit/Trace；取消只改变 Delegation 自身，不直接终止父 Execution。"""
         item = await self.get(tenant_id=tenant_id, source_execution_id=source_execution_id, delegation_id=delegation_id, actor_id=actor_id, admin=admin)
         try:
             validate_transition(item.status, "cancelled")
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
+
+        source = (
+            await self.db.execute(
+                select(WorkflowExecution).where(
+                    WorkflowExecution.id == source_execution_id,
+                    WorkflowExecution.tenant_id == tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if source is None:
+            raise HTTPException(409, "Delegation source Workflow Execution 不存在")
+
         item.status = "cancelled"
         item.ended_at = utcnow_naive()
+        self.db.add(AuditLog(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            workflow_id=source.workflow_id,
+            workflow_version_id=source.workflow_version_id,
+            workflow_execution_id=source.id,
+            action="workflow.delegation.cancelled",
+            resource_type="agent_delegation",
+            resource_id=str(item.id),
+            trace_id=item.trace_id,
+            status="cancelled",
+            metadata_json={"delegation_id": str(item.id)},
+        ))
+        self.db.add(WorkflowTraceEvent(
+            tenant_id=tenant_id,
+            execution_id=source.id,
+            workflow_id=source.workflow_id,
+            workflow_version_id=source.workflow_version_id,
+            event_type="agent.delegation.cancelled",
+            status="cancelled",
+            trace_id=item.trace_id,
+            actor_id=actor_id,
+            data={"delegation_id": str(item.id)},
+        ))
         await self.db.commit()
         await self.db.refresh(item)
         return item
