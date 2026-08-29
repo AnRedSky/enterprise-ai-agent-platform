@@ -1,7 +1,7 @@
 """Agent Delegation 多 Worker Runtime Real API 验收测试。
 
 职责：通过真实 HTTP + PostgreSQL 驱动多个独立 Worker 实例消费 Delegation Durable Frontier，验证 Claim、Frontier、WorkflowExecution 与 Delegation 终态形成完整闭环。
-边界：不复制 Worker Runtime；只装配真实测试数据并调用现有 WorkflowWorker claim/execute 入口。
+边界：不复制 Worker Runtime；只装配真实测试数据并调用现有 Delegation Frontier Claim / Execute 入口。
 关键依赖：真实 Backend HTTP、PostgreSQL、Mock Model Provider、Durable Frontier Worker。
 """
 
@@ -70,7 +70,7 @@ async def _wait_for_delegations_terminal(delegation_ids: list[uuid.UUID], timeou
 
 @pytest.mark.asyncio
 async def test_delegation_is_consumed_by_multiple_worker_instances_through_durable_frontier() -> None:
-    """验证多个 Worker 实例通过 Durable Frontier 消费 Delegation，且每个 Delegation 只形成一个执行事实。"""
+    """验证多个 Worker 实例通过 Delegation Durable Frontier 消费任务，且每个 Delegation 只形成一个执行事实。"""
     suffix = uuid.uuid4().hex[:10]
     fixtures: list[tuple[str, str]] = []
 
@@ -95,12 +95,13 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
     worker_a.owner = f"b6-worker-a-{suffix}"
     worker_b.owner = f"b6-worker-b-{suffix}"
 
-    # 每轮每个 Worker 只 Claim 一个 Frontier，再立即执行该 Frontier；这样验收真正覆盖多 Worker Claim/Execute，
-    # 同时避免把 dispatch_once 的返回值误认为异步 Runtime 已经完成。生产系统中的其他 Worker 仍可竞争这些 durable work item。
+    # 本验收同时存在父 Workflow 的普通 Frontier。若调用通用 claim_one_frontier()，Worker 可能合法地先消费父 Workflow，
+    # 从而无法证明本轮正在验收的 Delegation 已被 Claim。这里直接调用正式 Delegation Frontier discovery 入口；该入口仍使用
+    # 真实 PostgreSQL Claim、真实 Frontier lease 与真实 execute_frontier，不复制任何 Runtime 实现。
     for _ in range(2):
         frontiers = await asyncio.gather(
-            worker_a.claim_one_frontier(),
-            worker_b.claim_one_frontier(),
+            worker_a._claim_pending_delegation_frontier(),
+            worker_b._claim_pending_delegation_frontier(),
         )
         pairs = [(worker, frontier) for worker, frontier in zip((worker_a, worker_b), frontiers) if frontier is not None]
         if pairs:
