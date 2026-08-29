@@ -1,8 +1,7 @@
-"""Deterministic Runtime Operations alert evaluation.
+"""Runtime Operations 确定性告警评估。
 
-The evaluator deliberately operates only on tenant-scoped durable metric samples and
-alert rules. It does not send notifications or mutate Delivery state. A caller can
-publish a returned transition as an Integration Event through the normal event path.
+职责：基于租户时间序列样本评估告警规则，并只记录真正发生的状态转换。
+边界：不发送通知、不修改 Delivery/Integration Event 状态；通知层应消费返回的 firing/recovery transition。
 """
 
 from __future__ import annotations
@@ -27,17 +26,23 @@ OPERATORS: dict[str, Callable[[float, float], bool]] = {
 
 
 class RuntimeAlertEvaluator:
-    """Evaluate enabled rules using the newest sample in each rule window."""
+    """按最新样本评估启用规则，并提供去重后的生命周期转换。"""
 
     def __init__(self, db: AsyncSession):
         self.db = db
 
     async def evaluate(self, tenant_id: UUID, *, actor: str = "system") -> list[dict[str, Any]]:
-        """Evaluate all enabled rules for one tenant and return transition facts.
+        """评估单租户告警规则，仅返回状态发生变化的 firing/recovery 事实。
 
-        Rules with no sample in their window are ignored. The database is only used
-        for reading rules/samples and writing an operational audit for each firing or
-        recovery transition; no Delivery or Integration Event state is modified here.
+        Args:
+            tenant_id: 租户标识，所有规则、样本和历史状态均限定在该租户内。
+            actor: 写入运维审计的执行主体。
+
+        Returns:
+            发生生命周期变化的告警事实列表；首次进入 normal 不产生通知转换。
+
+        Raises:
+            无：非法规则会被安全跳过，不影响其他规则评估。
         """
         rules = list((await self.db.execute(
             select(RuntimeAlertRule)
@@ -63,6 +68,10 @@ class RuntimeAlertEvaluator:
             if sample is None:
                 continue
             firing = OPERATORS[rule.operator](float(sample.value), float(rule.threshold))
+            state = "firing" if firing else "normal"
+            previous = await self._latest_state(tenant_id, rule.id)
+            if previous == state or (previous is None and state == "normal"):
+                continue
             transition = {
                 "rule_id": rule.id,
                 "rule_name": rule.name,
@@ -71,7 +80,8 @@ class RuntimeAlertEvaluator:
                 "threshold": float(rule.threshold),
                 "operator": rule.operator,
                 "severity": rule.severity,
-                "state": "firing" if firing else "normal",
+                "state": state,
+                "transition": "firing" if state == "firing" else "recovery",
                 "evaluated_at": now,
                 "sample_id": sample.id,
             }
@@ -79,16 +89,31 @@ class RuntimeAlertEvaluator:
             await self._audit_transition(tenant_id, actor, transition)
         return transitions
 
+    async def _latest_state(self, tenant_id: UUID, rule_id: UUID) -> str | None:
+        """读取当前租户指定规则最近一次生命周期状态。"""
+        audit = await self.db.scalar(
+            select(RuntimeOperationAudit)
+            .where(
+                RuntimeOperationAudit.tenant_id == tenant_id,
+                RuntimeOperationAudit.action == "alert.transition",
+                RuntimeOperationAudit.resource_id == str(rule_id),
+            )
+            .order_by(RuntimeOperationAudit.created_at.desc(), RuntimeOperationAudit.id.desc())
+            .limit(1)
+        )
+        return audit.outcome if audit is not None else None
+
     async def _audit_transition(self, tenant_id: UUID, actor: str, transition: dict[str, Any]) -> None:
-        """Persist a compact, tenant-scoped operational evaluation fact."""
+        """持久化不可重复触发的告警生命周期转换事实。"""
         self.db.add(RuntimeOperationAudit(
             tenant_id=tenant_id,
             actor=actor,
-            action="alert.evaluate",
+            action="alert.transition",
             resource_type="alert_rule",
             resource_id=str(transition["rule_id"]),
             outcome=transition["state"],
             details={
+                "transition": transition["transition"],
                 "rule_name": transition["rule_name"],
                 "metric_name": transition["metric_name"],
                 "value": transition["value"],

@@ -30,14 +30,25 @@ class RuntimeOperationsEnterpriseService:
         return list((await self.db.execute(select(RuntimeProviderRegistry).where(RuntimeProviderRegistry.tenant_id == tenant_id).order_by(RuntimeProviderRegistry.name))).scalars().all())
 
     async def create_provider(self, tenant_id: UUID, name: str, provider_type: str, config: dict, actor: str) -> RuntimeProviderRegistry:
-        """创建 Provider 注册；config 仅允许非敏感元数据和 Secret 引用。"""
-        forbidden = {"api_key", "apikey", "token", "password", "secret", "secret_value"}
-        if any(key.lower() in forbidden for key in config):
+        """创建 Provider 注册；config 仅允许非敏感元数据、能力声明和 Secret 引用。"""
+        forbidden = {"api_key", "apikey", "token", "password", "secret", "secret_value", "authorization", "credential", "credentials"}
+
+        def contains_forbidden(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(str(key).lower() in forbidden or contains_forbidden(nested) for key, nested in value.items())
+            if isinstance(value, list):
+                return any(contains_forbidden(item) for item in value)
+            return False
+
+        if contains_forbidden(config):
             raise ValueError("provider config must not contain raw secrets")
+        capabilities = config.get("capabilities", [])
+        if not isinstance(capabilities, list) or len(capabilities) > 50 or any(not isinstance(item, str) or not item.strip() for item in capabilities):
+            raise ValueError("provider capabilities must be a list of up to 50 non-empty strings")
         item = RuntimeProviderRegistry(tenant_id=tenant_id, name=name, provider_type=provider_type, config=config, enabled=True)
         self.db.add(item)
         await self.db.flush()
-        await self.audit(tenant_id, actor, "provider.create", "provider", str(item.id), "success", {"name": name, "provider_type": provider_type})
+        await self.audit(tenant_id, actor, "provider.create", "provider", str(item.id), "success", {"name": name, "provider_type": provider_type, "capabilities": capabilities})
         return item
 
     async def destinations(self, tenant_id: UUID) -> list[WebhookDestination]:

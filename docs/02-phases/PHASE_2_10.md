@@ -57,7 +57,7 @@
 必须验证 tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit，以及 Worker 后续网络投递边界；Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL，测试数据自动生成和清理。
 
 ## 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，当前正式进入企业级运维扩展切片**。
+状态：**开发中，企业级运维扩展切片已启动**。
 
 ### I-1 时间序列 Metrics
 
@@ -73,8 +73,11 @@
 
 - `GET/POST /api/v1/runtime/operations/providers`；
 - Provider 类型、名称、启用状态、健康状态和非敏感配置可持久化；
-- 禁止保存 `api_key/token/password/secret` 等明文凭据；Secret 继续由现有 Secret Resolver 体系管理；
-- Provider 注册表只描述适配器，不复制 Provider 实现。
+- `POST /api/v1/runtime/operations/providers/{provider_id}/health` 对显式 HTTPS healthcheck endpoint 执行受控健康探测；
+- 健康探测禁止跟随重定向，并复用统一 SSRF / 出口安全策略；
+- Provider 可声明最多 50 项 `capabilities`，用于运维发现，不复制 Provider 实现；
+- 禁止保存 `api_key/token/password/secret` 等明文凭据，且敏感字段检查递归覆盖嵌套对象/数组；
+- Secret 继续由现有 Secret Resolver 体系管理。
 
 ### I-3 Destination Registry
 
@@ -87,7 +90,9 @@
 - `GET/POST /api/v1/runtime/operations/alert-rules`；
 - 当前支持 `> >= < <= ==`；
 - 规则仅保存配置，告警评估继续基于可重算 Durable facts；
-- 所有创建动作进入通用 Runtime Operational Audit。
+- 生命周期评估只记录真正的 firing / recovery 状态转换，重复 firing 不重复生成通知事实；
+- 首次 normal 不产生通知转换，避免规则创建后立即产生无意义恢复事件；
+- 所有生命周期转换进入通用 Runtime Operational Audit。
 
 ### I-5 Prometheus / OpenTelemetry Export
 
@@ -104,18 +109,17 @@
 新增 `runtime_operation_audits` 通用运维审计事实，并提供：
 
 - `GET /api/v1/runtime/operations/audit`；
-- Provider 注册、Alert Rule 管理等配置变更记录 actor / action / resource / outcome；
+- Provider 注册、Provider 健康探测、Alert Rule 管理及告警生命周期均记录 actor / action / resource / outcome；
 - Audit 与 Replay Audit 保持职责分离：Replay 继续使用 Webhook Delivery Audit，通用运维动作使用 Runtime Operational Audit。
 
 ## 2.10-I 下一切片
 
-1. 将 Provider Registry 接入实际 Provider 健康探测与能力声明；
-2. 增加按 Provider / Destination / Event Type 的时间序列维度采样；
-3. 将 Alert Rule 接入 Scheduler 周期评估与通知 Delivery；
-4. 增加告警去重、恢复事件、告警生命周期和通知失败审计；
-5. 增加 Prometheus canonical metric naming / label governance；
-6. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
-7. 完成 2.10-I Runtime Acceptance：registry + series + rules + exports + audit + tenant isolation。
+1. 增加按 Provider / Destination / Event Type 的时间序列维度采样；
+2. 将 Alert Rule 评估接入 Scheduler 周期任务，并把 firing/recovery 转换接入统一 Integration Event Contract；
+3. 增加告警通知 Delivery 路由、去重键与通知失败审计；
+4. 增加 Prometheus canonical metric naming / label governance；
+5. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
+6. 完成 2.10-I Runtime Acceptance：registry + health + series + rules + lifecycle + exports + audit + tenant isolation。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改 Delivery 状态。
@@ -125,3 +129,4 @@
 - Destination Registry 复用既有 WebhookDestination。
 - Export 不改变业务事实，也不得绕过 tenant boundary。
 - Operational Audit 必须不可变、可追溯，并记录 actor / action / resource / outcome。
+- Provider healthcheck 必须经过统一 SSRF/出口安全校验，不得使用未经约束的用户输入发起内网探测。

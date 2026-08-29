@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
 - 当前任务：**2.10-I Provider / Metrics / Alert / Export / Operational Audit 企业级运维扩展**
-- 最近完成：**2.10-H Runtime Operational Acceptance Gate 实现、2.10-F/G 增强切片**
+- 最近完成：**2.10-I Provider 健康探测、能力声明与告警生命周期去重切片**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -57,23 +57,32 @@
 验证范围：tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit、Worker 网络投递边界。
 
 ### 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中**。
+状态：**开发中，Provider 健康与告警生命周期切片已完成**。
 
-已实现第一批企业运维基础设施：
+已实现：
 
 - `runtime_metric_samples` 时间序列指标持久化；
 - `/metrics/snapshot` 与 `/metrics/series`；
 - `runtime_provider_registry` tenant-scoped Provider 元数据注册；
-- `/providers` Provider Registry API；
-- 既有 `WebhookDestination` 作为正式 Destination Registry 来源；
+- Provider capabilities 声明，最多 50 项；
+- Provider Registry 递归敏感字段拦截，禁止明文 Secret；
+- `POST /providers/{provider_id}/health` 受控 HTTPS healthcheck；
+- healthcheck 禁止跟随重定向并复用 SSRF/出口策略；
 - `runtime_alert_rules` tenant-scoped 告警规则；
-- `/alert-rules` Alert Rule 管理 API；
-- `/metrics/prometheus` Prometheus text export；
-- `/metrics/otlp` OTLP HTTP 指标结构导出；
-- `runtime_operation_audits` 通用运维审计事实与 `/audit` 查询；
-- Provider Registry 禁止保存明文 Secret；Destination 不创建平行注册表；Metrics 不建立平行业务事实源。
+- Alert evaluator 基于 Runtime Operational Audit 实现 firing/recovery 生命周期去重；
+- Prometheus / OTLP Export；
+- Runtime Operational Audit 覆盖 Provider 创建、健康探测与 Alert 生命周期。
 
-## 4. Phase 2.10 顺序
+尚未完成：
+
+- Provider / Destination / Event Type 时间序列维度采样；
+- Scheduler 周期告警评估；
+- firing/recovery → Integration Event → Notification Delivery 完整通知链；
+- Prometheus canonical label governance；
+- OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
+- 2.10-I Runtime Acceptance。
+
+## 4. 2.10 顺序
 
 ```text
 2.10-A Integration Event Operations Query       ✅
@@ -94,16 +103,18 @@
         ↓
 2.10-I Provider / Metrics / Alert / Export      🚧 开发中
         ↓
-Provider health + Alert lifecycle + OTel SDK + Runtime Acceptance
+Dimension Sampling → Scheduler Alert Evaluation → Notification Delivery
+        ↓
+Prometheus / OTel Governance → Runtime Acceptance
 ```
 
 ## 5. 2.10-I 下一步
 
-1. Provider Registry 接入真实 Provider 健康探测与能力声明；
-2. 增加 Provider / Destination / Event Type 时间序列维度采样；
-3. Alert Rule 接入 Scheduler 周期评估与通知 Delivery；
-4. 增加告警去重、恢复事件、生命周期及通知失败审计；
-5. 建立 Prometheus metric naming / label governance；
+1. 建立 Provider / Destination / Event Type 三维时间序列采样模型，并保持 Durable facts 为唯一业务事实源；
+2. 将 Alert Rule 评估接入 Scheduler 周期任务；
+3. 将 firing/recovery 转换发布为统一 Integration Event，并由现有 Delivery Worker 负责通知；
+4. 为通知建立稳定幂等键、去重和失败审计；
+5. 完成 Prometheus canonical metric naming / label governance；
 6. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
 7. 完成 2.10-I Runtime Acceptance。
 
@@ -116,7 +127,7 @@ Provider health + Alert lifecycle + OTel SDK + Runtime Acceptance
 | LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 |
 | LT-03 | Enterprise Operations Console | **基础控制台已实现，持续增强** |
 | LT-04 | API / Developer Platform | 待立项 |
-| LT-05 | Observability / SRE | **Metrics / SLO 基础与 Export 正在建设** |
+| LT-05 | Observability / SRE | **Metrics / SLO / Export 正在建设** |
 | LT-06 | Security / Secrets / Policy | 持续建设 |
 | LT-07 | Agent Evaluation / Quality | 待立项 |
 | LT-08 | Cost / Quota / Billing | 待立项 |
