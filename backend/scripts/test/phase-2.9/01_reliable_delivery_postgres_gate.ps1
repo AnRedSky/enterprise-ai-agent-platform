@@ -13,10 +13,23 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 # 项目统一使用 backend/.env.example 提供可复现的本地开发默认配置。
-# Settings 已将 .env.example 纳入默认配置加载链，因此 Gate 不再要求开发者额外创建、复制或手工填写 .env/.env.dev。
+# Gate 不要求开发者创建、复制或手工填写 .env/.env.dev；若版本库中的基线文件仅因本地工作区缺失，则自动从当前 HEAD 恢复。
 $envExampleFile = Join-Path $BackendRoot ".env.example"
 if (-not (Test-Path $envExampleFile)) {
-    throw "backend/.env.example was not found; the unified local configuration baseline is missing."
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw "backend/.env.example is missing and git is not available to restore the tracked configuration baseline."
+    }
+
+    & git ls-files --error-unmatch -- .env.example *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "backend/.env.example is not tracked by the current main checkout; synchronize main before running the Gate."
+    }
+
+    Write-Host "backend/.env.example is missing from the working tree; restoring the tracked main baseline automatically."
+    & git restore --source=HEAD -- .env.example
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $envExampleFile)) {
+        throw "Failed to restore backend/.env.example from the current main checkout."
+    }
 }
 
 Write-Host "Configuration policy: backend/.env.example is the unified local test configuration baseline."
