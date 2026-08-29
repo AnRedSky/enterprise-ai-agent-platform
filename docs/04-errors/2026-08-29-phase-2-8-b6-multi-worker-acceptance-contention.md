@@ -33,7 +33,7 @@ TimeoutError: Durable Worker 未在验收等待窗口内完成本次 Delegation 
 
 这不是通过增加业务 timeout 隐藏问题，也不是需要启动 Scheduler 的后台异步任务；验收测试本身必须在有界窗口内持续 drain 尚未消费的 Delegation。
 
-## 4. 修复
+## 4. 修复与验证
 
 将 B6 Real API 验收从固定两轮改为有界 drain：
 
@@ -44,10 +44,28 @@ TimeoutError: Durable Worker 未在验收等待窗口内完成本次 Delegation 
 5. 总窗口仍为 10 秒，不修改 Delegation 业务 timeout，不启动后台服务或 Scheduler；
 6. 最终仍由 `_wait_for_delegations_terminal()` 做终态断言，并继续验证每个 Delegation 只有一个 Worker Execution / Frontier 事实且两个 Worker owner 都实际参与 Claim。
 
-这样验收的是“多 Worker 在真实 PostgreSQL Claim contention 下最终 drain 全部 Delegation”的真实能力，而不是固定轮数下的偶然调度结果。
+后续开发者已重新执行正式 B6 Gate，并全部通过：
+
+```text
+Delegation Claim + Worker dispatch Unit/Contract
+38 passed in 1.08s
+
+Backend default regression
+870 passed, 3 skipped, 52 deselected in 34.61s
+
+Migration/head
+0039_workflow_node_execution_tenant_trigger (head)
+
+Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
+5 passed in 7.48s
+
+[PASS] Phase 2.8 B6 multi-worker Delegation Runtime gate completed.
+```
+
+该结果确认有界 drain 修复后，多 Worker 在真实 PostgreSQL Claim contention 下可以最终收敛全部 Delegation；本错误不再阻塞 Phase 2.8。
 
 ## 5. 状态
 
-**测试修复已提交，等待开发者本地重新执行 B6 Real Gate。**
+**已修复并已验证关闭。**
 
-在新的本地结果返回前，不将 Phase 2.8 标记为完成，也不提前进入 Phase 2.9。
+历史失败数据继续保留用于工程追溯，但当前阶段状态以最新 B6 Real Gate 通过结果为准。除非出现新的实际回归，不应重新恢复固定轮次假设。
