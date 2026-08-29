@@ -6,7 +6,7 @@ vi.mock("../../src/api/auth", () => ({ getToken: vi.fn(() => "test-token") }));
 describe("streamChat", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  function responseFromChunks(chunks: string[], ok = true) {
+  function responseFromChunks(chunks: string[], ok = true, status = 200) {
     const encoder = new TextEncoder();
     let index = 0;
     const read = vi.fn(async () => {
@@ -16,7 +16,7 @@ describe("streamChat", () => {
     const releaseLock = vi.fn();
     return {
       ok,
-      status: ok ? 200 : 502,
+      status,
       text: vi.fn().mockResolvedValue(ok ? "" : "provider failed"),
       body: {
         getReader: () => ({ read, releaseLock }),
@@ -62,15 +62,33 @@ describe("streamChat", () => {
     );
   });
 
-  it("surfaces backend HTTP errors instead of parsing them as SSE", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([], false));
+  it("converts backend HTTP errors to Chinese user-facing messages", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([], false, 502));
 
-    await expect(streamChat({ agent_id: "a1", input: "hello" }, vi.fn())).rejects.toThrow("provider failed");
+    try {
+      await streamChat({ agent_id: "a1", input: "hello" }, vi.fn());
+      throw new Error("expected streamChat to reject");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("服务暂时不可用，请稍后重试");
+      expect((error as Error).message).not.toContain("provider failed");
+    }
   });
 
-  it("rejects when the streaming response has no body", async () => {
+  it("converts SSE error messages without hiding the technical error code", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(responseFromChunks([
+      "data: {\"type\":\"error\",\"code\":\"MODEL_TIMEOUT\",\"message\":\"HTTP 504 Gateway Timeout\"}\n\n",
+    ]));
+    const events: unknown[] = [];
+
+    await streamChat({ agent_id: "a1", input: "hello" }, (event) => events.push(event));
+
+    expect(events).toEqual([{ type: "error", code: "MODEL_TIMEOUT", message: "请求处理失败，请稍后重试" }]);
+  });
+
+  it("uses a Chinese fallback when the streaming response has no body", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, status: 200, body: null } as Response);
 
-    await expect(streamChat({ agent_id: "a1", input: "hello" }, vi.fn())).rejects.toThrow("Chat response body is unavailable");
+    await expect(streamChat({ agent_id: "a1", input: "hello" }, vi.fn())).rejects.toThrow("对话响应暂时不可用，请稍后重试");
   });
 });
