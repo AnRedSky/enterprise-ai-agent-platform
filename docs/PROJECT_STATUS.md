@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.9 Enterprise Integration / Event Infrastructure 开发中**
-- 当前任务：**Phase 2.9-E Runtime Integration 第三切片**
-- 下一任务：**完成 Scheduler runtime facts wiring，并收口 Runtime Integration Acceptance**
+- 当前任务：**Phase 2.9-E Runtime Integration Acceptance 收口准备**
+- 下一任务：**Runtime Integration Real Acceptance + 2.9-D Webhook Real Acceptance 统一收口**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -21,8 +21,9 @@
 - Phase 2.9-E Runtime Integration 已完成 Workflow Governance 事件桥接；
 - Agent Tool Runtime 已增加统一 Integration Event 发布能力；
 - Knowledge Retrieval 已增加统一 Integration Event 发布入口；
-- Model Provider Runtime Event helper 已进入统一 Publisher；
-- Scheduler lease / contention / misfire / recovery 事件模型已进入统一 Publisher，下一切片完成 Scheduler Runtime 实际事务接入。
+- Model Provider Runtime 已增加事务内 invocation event boundary；
+- Scheduler Runtime 已把 lease acquired、dispatch、misfire、recovery、failure facts 写入 Durable Integration Event；lease acquired 与 lease claim 在同一数据库事务中提交；
+- Integration Event 已提供强制 tenant-scoped operations query API 与分页/事件类型/source/status/subject/trace/request 过滤。
 
 ## 3. Phase 2.8 验收基线
 开发者本地正式 B6 Gate 已全部通过：38 个 Unit/Contract 测试、870 个 Backend 回归测试（3 skipped）、Migration head 0039、5 个 Real HTTP + PostgreSQL 多 Worker 测试全部通过。
@@ -42,7 +43,7 @@
 状态：**实现链路已完成，Real Acceptance 待最终收口**。
 
 ### 2.9-E Runtime Integration
-状态：**第三实现切片开发中**。
+状态：**核心业务事实接入完成，进入 Acceptance 收口阶段**。
 
 统一入口：
 
@@ -71,40 +72,46 @@ Agent     → agent.execution.started
             agent.model.failed
 
 Scheduler → scheduler.trigger.dispatched
-            scheduler.lease.*
+            scheduler.lease.acquired
+            scheduler.dispatched
             scheduler.contention
             scheduler.misfire
             scheduler.recovery
+            scheduler.failed
 ```
 
-### Agent Tool
-`ToolRuntimeService` 现在可以通过注入 `RuntimeIntegrationEventPublisher`，在 Tool 成功/失败后写入 Durable Integration Event。事件只携带 execution/agent/tool 身份与错误码，不携带 authorization、token、prompt、Tool result 等敏感内容。
-
-### Agent Retrieval
-`KnowledgeRetrievalService` 增加可选 Runtime Integration Publisher，并支持由 Agent Runtime 显式提供 `tenant_id / execution_id / agent_id / knowledge_base_id`，从而在检索完成后产生 tenant-scoped Retrieval business fact。检索内容本身不进入事件 payload。
+### Agent Tool / Retrieval
+Tool 与 Retrieval 已具备统一 publisher 接口；事件 payload 仅记录运行身份、来源和计数/错误码，不写入 authorization、token、prompt、completion 或检索正文等敏感内容。
 
 ### Model Provider
-Publisher 已提供 `publish_agent_model()`，用于统一记录 Provider/Profile 调用成功或失败事实；事件不写入 prompt/completion 等模型内容。下一步将其接入实际 Model Provider invocation transaction。
+新增 `ModelProviderInvocationService` 作为实际 Provider invocation boundary：调用 `ModelProvider.complete()` 成功/失败后，在当前数据库事务内写入 `agent.model.succeeded` / `agent.model.failed`。调用方负责最终 commit，Invocation Service 不自行提交事务。
 
 ### Scheduler
-Publisher 已提供 lease / contention / misfire / recovery / dispatched 等标准化事件接口。Scheduler Runtime 当前已有 PostgreSQL lease、slot、contention、misfire/recovery 计算与 dispatch 事务边界；下一切片将把这些实际状态转换接入同一事务内 Durable Integration Event，保持 Scheduler 业务事实与 Event 原子提交。
+`ScheduledTriggerScheduler.tick_once()` 已注入 `RuntimeIntegrationEventPublisher`。lease acquisition 与 `scheduler.lease.acquired` 同事务提交；创建 Execution 后产生 `scheduler.dispatched`；发生 misfire 时产生 `scheduler.misfire` 与 `scheduler.recovery`；异常释放 lease 后产生 `scheduler.failed`。事件幂等键沿用 trigger/slot 空间，避免多实例重复事实。
 
-## 5. 下一任务
+### Integration Operations View
+新增：
 
-1. Scheduler Runtime 实际接入 `lease.claimed / lease.released / contention / misfire / recovery`；
-2. Model Provider invocation 实际接入 succeeded/failed/timeout facts；
-3. Retrieval Runtime 的 Agent transaction caller 全链路接入；
-4. Integration Event tenant-scoped query / operations view；
-5. schema/version 固化；
-6. Runtime Integration Real Acceptance；
-7. 与此同时收口 2.9-D Webhook Real Acceptance。
+```text
+GET /api/v1/runtime/integration-events
+```
+
+查询始终使用当前 JWT `tenant_id`，客户端不能指定任意 tenant；支持分页以及 `event_type / source / status / subject / trace_id / request_id` 过滤。该接口为后续管理后台 Runtime/Event Operations View 提供稳定查询边界。
+
+## 5. Acceptance 收口任务
+
+1. Runtime Integration Real Acceptance：验证 Workflow / Agent Tool / Retrieval / Model Provider / Scheduler 关键事实真实写入 PostgreSQL Durable Event；
+2. Tenant isolation Acceptance：验证不同 tenant 无法读取彼此 Integration Event；
+3. Webhook Real Acceptance：验证 Runtime Event → Fan-out → Delivery Worker → retry/dead-letter/audit/replay 全链路；
+4. schema/version 稳定化，并冻结 Phase 2.9 Event Contract；
+5. Acceptance 全部通过后，Phase 2.9 进入完成评审，并转入后续 Enterprise Operations / IAM / Observability 等长期任务。
 
 ## 6. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`：
 
 | ID | 长期能力 | 状态 |
 |---|---|---|
-| LT-01 | Enterprise Integration / Event Infrastructure | **Phase 2.9 开发中** |
+| LT-01 | Enterprise Integration / Event Infrastructure | **Phase 2.9 Acceptance 收口中** |
 | LT-02 | Enterprise IAM / SSO / Identity Federation | 待立项 |
 | LT-03 | Enterprise Operations Console | 待立项 |
 | LT-04 | API / Developer Platform | 待立项 |
@@ -126,7 +133,7 @@ Publisher 已提供 lease / contention / misfire / recovery / dispatched 等标�
         ↓
 2.9-D Webhook Integration                   🔄 Real Acceptance 收口
         ↓
-2.9-E Runtime Integration                   🔄 第三切片开发中
+2.9-E Runtime Integration                   🔄 Acceptance 收口准备
 ```
 
 所有实现仍遵循 Contract → Migration → Backend → Unit/Integration/Contract → Real API → Acceptance。
