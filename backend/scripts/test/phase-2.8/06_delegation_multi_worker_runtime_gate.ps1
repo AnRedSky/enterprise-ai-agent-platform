@@ -59,7 +59,7 @@ try {
     Assert-PrerequisiteServices
 
     Write-Host "[1/4] Delegation Claim + Worker dispatch Unit/Contract"
-    uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py tests/unit/test_agent_delegation_lifecycle.py tests/unit/test_agent_delegation_timeout.py tests/unit/test_delegation_worker_dispatch.py
+    uv run pytest -q tests/unit/test_agent_delegation_runtime_bridge.py tests/unit/test_agent_delegation_lifecycle.py tests/unit/test_agent_delegation_timeout.py tests/unit/test_delegation_worker_dispatch.py tests/unit/test_workflow_worker_entrypoint.py
     Assert-ExitCode "B6 targeted unit gate failed."
 
     Write-Host "[2/4] Backend default regression"
