@@ -17,6 +17,7 @@ from app.models.core import AuditLog
 from app.models.model_provider import ModelProfile
 from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trace import WorkflowTraceEvent
+from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 from app.services.usage_accounting import UsageAccountingService
 
 
@@ -52,6 +53,27 @@ class WorkflowGovernanceService:
         )
         self.db.add(event)
         await self.db.flush()
+
+        # Workflow 治理审计与 Durable Integration Event 必须处于同一业务事务。
+        # completion 已由 Frontier terminalization 发布，避免产生重复 Integration Event。
+        if action != "workflow.execution.completed" and action.startswith("workflow.execution."):
+            payload: dict[str, Any] = {
+                "execution_id": str(execution.id),
+                "workflow_id": str(execution.workflow_id),
+                "workflow_version_id": str(execution.workflow_version_id),
+                "status": status,
+                "error_code": error_code,
+                "metadata": metadata or {},
+            }
+            await RuntimeIntegrationEventPublisher(self.db).publish(
+                tenant_id=execution.tenant_id,
+                event_type=action,
+                source=RuntimeIntegrationEventPublisher.SOURCE_WORKFLOW,
+                subject=str(execution.id),
+                idempotency_key=f"workflow-execution:{execution.id}:audit:{action}",
+                payload=payload,
+                trace_id=str(execution.id),
+            )
         return event
 
     async def trace(
