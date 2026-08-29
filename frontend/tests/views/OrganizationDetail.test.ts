@@ -42,6 +42,20 @@ describe("OrganizationDetail management UI", () => {
     expect((wrapper.vm as any).canTransferOwner).toBe(true);
   });
 
+  it("uses Chinese wording while preserving technical identifiers", async () => {
+    const wrapper = mount(OrganizationDetail, { global });
+    await vi.waitFor(() => expect(api.listMembers).toHaveBeenCalled());
+    const text = wrapper.text();
+    expect(text).toContain("返回组织列表");
+    expect(text).toContain("模型提供方 / 模型配置");
+    expect(text).toContain("添加成员");
+    expect(text).toContain("User ID");
+    expect(text).not.toContain("Organizations");
+    expect(text).not.toContain("Organization");
+    expect(text).not.toContain("Admin");
+    expect(text).not.toContain("Member");
+  });
+
   it("uses the dedicated owner transfer contract", async () => {
     api.transferOwner.mockResolvedValue({ ...admin, role: "owner" });
     const wrapper = mount(OrganizationDetail, { global });
