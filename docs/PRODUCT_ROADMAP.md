@@ -13,9 +13,11 @@
 
 已完成并保持稳定的核心能力包括 Auth / RBAC / Tenant / Organization、Agent / Version / Runtime / Session、Model Gateway、Tool Runtime、Memory、Observability / Audit / Trace、Knowledge / RAG、Workflow / Execution Governance / Reliability / Circuit Breaker、Manual / Scheduled / Webhook Trigger、Vue 管理与调试界面、Model Provider / Profile Governance、Provider routing / governed fallback、Durable usage / cost accounting、Durable Scheduler，以及 Phase 2.7 Advanced Workflow Orchestration 的 Conditional Branching、Multi-frontier、Durable Resume、Recovery / Replay、Worker fencing、Frontier terminalization 与 checkpoint lifecycle guard。
 
+Phase 2.8 已进一步完成受治理的 Multi-Agent Delegation Runtime：Delegation Durable Entity、Atomic Claim、既有 Workflow Worker bridge、generation-fenced completion/failure、timeout/cancel/parent semantics、Audit/Trace closure，以及多 Worker Durable Frontier acceptance。
+
 ## 3. 当前正式阶段
 
-**Phase 2.7 主线生产实现已完成；当前主线进入 Phase 2.8 Multi-Agent Collaboration Runtime Integration，B1/B2/B3 已通过开发者本地实际验收，当前正在实现 B4。**
+**Phase 2.8 Multi-Agent Collaboration Runtime Integration 已完成；B6 Real Gate 已通过。当前工作进入 Phase 2.8 文档收口与 Phase 2.9 Contract 前置评估。**
 
 ## 4. 优先级路线
 
@@ -27,9 +29,9 @@
 | 2.4 | Durable Scheduler | 已完成主线收口 | 仅回归 |
 | 2.5 | Scheduler → Worker Execution Decoupling | 已正式关闭 | 仅回归 |
 | 2.6 | Durable Execution Checkpoint Foundation | 已正式关闭 | 仅回归 |
-| 2.7 | Advanced Workflow Orchestration | 主线生产实现完成，验收收口 | 完成必要 Frontend / Browser 验收 |
-| **2.8** | **Multi-Agent Collaboration** | **B1/B2/B3 已完成，本轮进入 B4** | **B4 → B5 → 多 Worker + PostgreSQL + Runtime acceptance** |
-| 2.9 | Enterprise Integration / Event Infrastructure | 候选 | 2.8 后按真实吞吐/可靠性需求评估 |
+| 2.7 | Advanced Workflow Orchestration | 主线生产实现完成 | 仅必要发布验收 |
+| **2.8** | **Multi-Agent Collaboration** | **Runtime Integration 完成；B6 Real Gate 已通过** | **文档/Acceptance 收口** |
+| **2.9** | **Enterprise Integration / Event Infrastructure** | **候选，尚未冻结 Contract** | **先做 Integration/Event 现状盘点与 Contract 决策** |
 | 2.10 | Agent Asset / Marketplace | 候选 | 明确资产所有权、版本、审批和跨组织共享后再立项 |
 
 ## 5. Phase 2.8 当前开发边界
@@ -38,37 +40,68 @@
 
 详细 Contract：`docs/02-phases/PHASE_2_8_A_CONTRACT.md`。
 
-## 6. Phase 2.8 开发顺序
+## 6. Phase 2.8 开发顺序与完成状态
 
 ```text
 Contract 冻结
     ↓
-Domain + API + Migration              ✅
-B1 Atomic Delegation Claim            ✅
-B2 Existing Worker Execution bridge   ✅
-B3 generation-fenced completion       ✅
-B4 timeout / cancel / parent semantics ← 当前
-B5 Audit / Trace closure
+Domain + API + Migration                    ✅
+B1 Atomic Delegation Claim                  ✅
+B2 Existing Worker Execution bridge         ✅
+B3 generation-fenced completion/failure     ✅
+B4 timeout / cancel / parent semantics      ✅
+B5 Audit / Trace closure                   ✅
+B6 multi-worker Durable Frontier runtime    ✅
     ↓
-Real API + PostgreSQL + multi-worker acceptance
-    ↓
-Backend Regression
-    ↓
-Frontend / Browser E2E（如范围需要）
+Phase 2.8 Runtime Integration               ✅ 收口
 ```
 
-## 7. B4 交付定义
+## 7. B6 实际验收证据
 
-B4 必须证明：
+正式入口：
 
-1. Delegation timeout 与既有 Workflow Runtime timeout 取有效最短边界；
-2. timeout 后子 Worker Execution 使用既有 Execution lifecycle 结束，不继续占用 Worker lease；
-3. Delegation 独立收敛为 `timed_out`；
-4. cancel 后 Delegation 为 `cancelled`，重复 cancel fail-closed；
-5. timeout / cancel 不直接修改父 Workflow Execution terminal 状态；
-6. timeout / cancel 后迟到 Worker completion/failure 被 generation fencing 拒绝；
-7. 不引入新的 Retry / Recovery 状态机。
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.8\06_delegation_multi_worker_runtime_gate.ps1
+```
 
-## 8. 工程纪律
+实际结果：
 
-所有实际完成度以代码、Phase、Acceptance 与本地测试证据为准。未执行的测试不得标记 Passed；新增 Migration 必须实际 `alembic upgrade head`；Phase 完成、延期、阻塞或范围变更必须同步更新 Phase / Acceptance / Project Status / Error 文档。
+```text
+[1/4] Delegation Claim + Worker dispatch Unit/Contract
+38 passed in 1.08s
+
+[2/4] Backend default regression
+870 passed, 3 skipped, 52 deselected in 34.61s
+
+[3/4] Migration/head verification
+0039_workflow_node_execution_tenant_trigger (head)
+
+[4/4] Real HTTP + PostgreSQL multi-worker Durable Frontier Runtime
+5 passed in 7.48s
+
+[PASS] Phase 2.8 B6 multi-worker Delegation Runtime gate completed.
+```
+
+B6 Gate 同时包含 Windows 外部 Worker/Scheduler 隔离检查。Gate 不启动、停止或重启本地服务，只检查前置环境并执行正式验收链路。
+
+## 8. B6 工程问题闭环
+
+B6 开发期间发现并修复了 PostgreSQL Claim contention 与固定轮次时序误判、旧 B2 Real API 绕过正式 Frontier dispatch、Worker shutdown AsyncEngine cancellation、外部 Worker/Scheduler 环境污染以及 Windows PowerShell 进程检测正则解析等问题。对应错误分析已进入 `docs/04-errors/`；最新状态不再存在已知 B6 Runtime blocker。
+
+## 9. Phase 2.9 进入前置条件
+
+Phase 2.9 不应直接开始功能编码。必须先完成：
+
+1. 盘点现有 Event、Webhook、Trigger、Audit、Trace、Outbox 等实现；
+2. 检查是否已有正式 Integration / Event Infrastructure 领域模块，避免复制第二套 Service / Repository / Runtime / Provider；
+3. 根据真实企业业务场景确定可靠性、交付语义、幂等、重试、顺序性、隔离和可观测边界；
+4. 只有 Contract 冻结后，才创建正式 Phase 2.9 文档和开发任务；
+5. 涉及数据库结构时必须 Migration-first，并通过真实 `alembic upgrade head` 验证；
+6. 按既定顺序进入 Backend Domain / API → Unit / Integration / Contract → Real API → Frontend / E2E（如范围需要）→ Acceptance。
+
+**Kafka、MQ、Outbox、Event Bus 等技术选型不得先于业务 Contract 决策。**
+
+## 10. 工程纪律
+
+所有实际完成度以代码、Phase、Acceptance 与本地测试证据为准。未执行的测试不得标记 Passed；Phase 完成、延期、阻塞或范围变更必须同步更新 Phase / Acceptance / Project Status / Error 文档；所有开发、修复与文档变更直接基于并提交 `main`，不创建功能分支。
