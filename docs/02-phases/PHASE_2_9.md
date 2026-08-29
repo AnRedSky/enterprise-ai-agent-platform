@@ -8,8 +8,9 @@
 
 - Phase 2.8 Multi-Agent Collaboration / Runtime Integration：已完成并通过本地 B6 Real Gate。
 - Phase 2.9-A Event Contract：已实现。
-- Phase 2.9-B Durable Event Persistence：已实现第一切片。
-- 当前任务：**2.9-C Reliable Delivery**。
+- Phase 2.9-B Durable Event Persistence：已实现第一切片，数据库 Migration 已由开发者本地升级至 `0041`。
+- Phase 2.9-C Reliable Delivery：已实现第一切片；本地定向测试曾因错误数据库 import 在 collection 阶段失败，现已修复，待开发者重新执行定向测试确认。
+- 当前任务：**2.9-C Reliable Delivery 第二切片：真实 PostgreSQL 并发验收**。
 
 ## 3. 2.9-A Event Contract
 
@@ -23,7 +24,7 @@ tenant_id + source + event_type + idempotency_key
 
 ## 4. 2.9-B Durable Event Persistence
 
-状态：**已实现第一切片，待开发者本地数据库验收**。
+状态：**已实现第一切片；本地 Migration 已验收，完整 Regression 仍以开发者最新执行结果为准**。
 
 实现：
 
@@ -38,9 +39,9 @@ backend/tests/unit/test_integration_event_persistence.py
 
 ## 5. 2.9-C Reliable Delivery
 
-状态：**实现第一切片，待开发者本地验收**。
+状态：**第一切片已实现；进入第二切片真实并发验收**。
 
-本轮新增：
+实现：
 
 ```text
 backend/app/services/integration/delivery.py
@@ -59,11 +60,38 @@ backend/tests/unit/test_integration_event_delivery.py
 - 使用 capped exponential backoff；
 - 超过最大尝试次数进入 `dead_letter`；
 - 外部 Sender 通过依赖注入提供，当前不绑定 Webhook/MQ Provider；
-- PostgreSQL 保持 Durable Event Fact 唯一事实源。
+- PostgreSQL 保持 Durable Event Fact 唯一事实源；
+- Delivery Service 使用正式数据库基础设施入口 `app.infrastructure.db`，不再引用不存在的旧 `app.core.database` 路径；
+- 定向单元测试已增加无事件、成功投递和失败重试编排覆盖。
 
-### 验收要求
+### 已处理的本地反馈
 
-开发者本地执行：
+开发者首次执行 2.9-C 定向测试时，三个测试模块均在 collection 阶段因：
+
+```text
+ModuleNotFoundError: No module named 'app.core.database'
+```
+
+而失败。根因是 Delivery Service 错误引用不存在的旧数据库模块；现已修正为 `from app.infrastructure.db import SessionLocal`。该错误已单独记录至：
+
+```text
+docs/04-errors/2026-08-29-phase-2-9-delivery-database-import.md
+```
+
+### 当前第二切片验收目标
+
+必须使用真实 PostgreSQL 验证：
+
+1. 两个或以上 Worker 并发 Claim 时同一 Event 只能被一个租约持有者领取；
+2. Worker 在租约内成功投递后只产生一个 `delivered` 事实；
+3. Worker 崩溃/租约过期后事件可以被另一 Worker 恢复；
+4. Sender 临时失败进入 retry，并按退避时间重新变为可领取状态；
+5. 达到最大尝试次数后进入 `dead_letter`；
+6. 不同 tenant 之间不能互相 Claim Event；
+7. 失去租约的旧 Worker 不能覆盖新 Worker 的最终状态；
+8. 整个过程不依赖后台 Scheduler 自动消费测试数据。
+
+### 当前验收命令
 
 ```powershell
 cd backend
@@ -73,7 +101,7 @@ uv run alembic current
 uv run pytest -q
 ```
 
-Migration 应从 `0040_integration_events` 升级到 `0041_integration_event_delivery_lease`。Real API/并发数据库验收尚待补充，不得仅凭单元测试标记为完成。
+Real API / 真实 PostgreSQL 并发验收应在专用 Gate 中执行；不得仅凭单元测试标记 2.9-C 完成。
 
 ## 6. 2.9-D Webhook Integration
 
@@ -89,4 +117,6 @@ Migration 应从 `0040_integration_events` 升级到 `0041_integration_event_del
 - 不复制已有 Webhook / Trigger / Audit / Trace 实现；
 - 不修改已通过 Phase 2.8 B6 Gate 的 Delegation Runtime 主路径；
 - 不用 GitHub Actions 结果替代本地验收事实；
-- 涉及数据库必须先 Migration，再 Backend/Repository，再测试和 Real API。
+- 涉及数据库必须先 Migration，再 Backend/Repository，再测试和 Real API；
+- Real Gate 不自动启动或停止 Worker、Scheduler、API、PostgreSQL、Redis 等服务；依赖服务必须由开发者按项目环境预先提供，Gate 只负责检查前置条件并执行测试；
+- 测试数据由脚本自动生成，不要求开发者手工填写租户、Event ID、幂等键或其他测试信息。
