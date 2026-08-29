@@ -4,44 +4,59 @@
 
 形成 `Workflow → Version → Trigger → Execution → Runtime` 的完整前端业务闭环，优先消费后端已经实现并稳定提供的 HTTP Contract，不在前端虚构后端尚未提供的生命周期能力。
 
-## 本轮 Contract 核对
+## 本轮已实施
 
-后端 Workflow API 已提供：
+### Workflow 生命周期
 
-- `GET /workflows`
-- `POST /workflows`
-- `GET /workflows/{workflow_id}`
-- `PATCH /workflows/{workflow_id}`
-- `DELETE /workflows/{workflow_id}`
-- `GET /workflows/{workflow_id}/versions`
-- `POST /workflows/{workflow_id}/versions`
-- `POST /workflows/{workflow_id}/versions/{version_id}/publish`
-- Workflow Trigger CRUD
-- Scheduled Trigger Scheduler 状态查询
-- Trigger Invoke
-- Workflow Execution 创建、运行、取消、重试、恢复
-- Execution Node 与 Runtime Trace 查询
+- Workflow 详情接入 `PATCH /workflows/{workflow_id}`，支持名称与描述编辑。
+- 已归档 Workflow 进入只读状态，不允许编辑、创建版本或发布。
+- Workflow 删除仅开放给 `draft` 状态；`published` / `archived` 前端明确阻止删除并给出原因。
+- 删除操作必须经过危险操作确认，并在成功后清理当前选择、版本和运行记录状态。
+- 已发布 Workflow 不覆盖当前生效定义；流程定义修改统一通过创建新 Version，再发布新 Version 完成切换。
+- 发布按钮按 Workflow / Version 状态约束：已归档 Workflow、已发布 Version、当前生效 Version 均不可重复发布。
 
-## 已落实
+### Trigger → Runtime
 
-`frontend/src/api/workflows.ts` 已覆盖 Workflow 单体查询、更新和删除 Contract。此前已覆盖的 Version、Trigger、Scheduler、Execution、Trace API 保持不变。
+- Manual Trigger Invoke 成功后，前端直接跳转 `/runtime`，携带 `execution_id`、`workflow_id` 和 `source=workflow-trigger` 查询参数。
+- Invoke 继续使用前端生成的 `Idempotency-Key`，避免重复点击产生非预期重复执行。
+- Runtime 页面已具备工作流 Trace 展示能力，后续继续接入查询参数自动定位 Execution。
 
-特别约束：
+## 生命周期状态规则
 
-1. 前端不实现 Scheduler 调度算法；仅展示后端持久化调度状态。
-2. Webhook Secret 不回显后端 secret_hash，仅展示配置状态。
-3. Trigger Invoke 使用 `Idempotency-Key`，避免用户重复操作产生非预期重复执行。
-4. Execution 的 retry/resume/cancel 仍由后端决定合法状态，前端只提供状态约束后的操作入口。
-5. 错误区域不得直接展示原始 HTTP/后端内部错误文本。
+| 状态 | 编辑元数据 | 创建新版本 | 发布版本 | 删除 |
+|---|---:|---:|---:|---:|
+| draft | 是 | 是 | 是 | 是 |
+| published | 是 | 是 | 按版本约束 | 否 |
+| archived | 否 | 否 | 否 | 否 |
+
+> 前端状态约束只负责用户入口和 UX；最终合法性仍由后端 Contract 决定，不能将前端判断视为安全边界。
+
+## 本轮设计决策
+
+1. **删除优先保守**：已发布或已归档资源不提供删除入口，避免误操作破坏可追溯生命周期。
+2. **发布不可逆入口需确认**：发布属于影响运行环境的治理操作，必须二次确认。
+3. **已发布定义不原地编辑**：通过新 Version 保证当前生效版本稳定，并保留版本审计链。
+4. **Trigger Invoke 以 Execution 为结果实体**：调用成功后不在 Trigger 页面停留展示临时结果，而是直接进入 Runtime Execution 上下文。
+5. **后端是最终状态机**：前端只做已知状态的按钮约束，不复制后端状态机、Scheduler 或 Worker 规则。
+
+## 专项测试计划
+
+主线开发完成前不执行全量 `npm test`。本阶段完成后新增/维护专项测试覆盖：
+
+- Workflow 编辑成功、校验失败、后端失败。
+- draft 可删除；published / archived 删除入口受限。
+- 删除危险操作确认的确认与取消路径。
+- 已发布 Version / 当前生效 Version 不重复发布。
+- archived Workflow 不允许创建新 Version。
+- Manual Trigger Invoke 成功后携带正确 Execution 上下文跳转 Runtime。
+- Invoke 失败时不发生错误跳转。
 
 ## 下一步
 
-1. Workflow 页面接入 `get/update/delete` 生命周期操作。
-2. Workflow 页面完善发布前后的状态约束和危险操作确认。
-3. Trigger 页面继续补齐名称/config 更新能力，并统一中文状态展示。
-4. 将 Trigger Invoke 结果直接关联到 Runtime Execution 详情。
-5. 增加 P2 专项 View/API 测试入口；主线完成前不执行全量回归。
-6. 最终统一验证 Workflow、Trigger、Runtime 的端到端业务闭环。
+1. Trigger 页面补齐 Trigger 名称与 Config 更新入口，并继续遵循后端状态约束。
+2. Runtime 接收 `execution_id` 查询参数并自动打开对应 Execution 详情，形成真正的 Trigger → Runtime 直接定位。
+3. Workflow 页面补齐版本发布后的 Trigger 可用性联动展示。
+4. 完成 P2 Workflow / Trigger / Runtime 主线后，再按阶段执行专项测试，最后执行完整回归与手动验收。
 
 ## 完成标准
 
