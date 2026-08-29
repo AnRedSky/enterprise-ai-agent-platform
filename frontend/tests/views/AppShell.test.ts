@@ -32,10 +32,10 @@ describe("AppShell", () => {
     const wrapper = mount(AppShell, { global: { plugins: [router] } });
 
     expect(wrapper.text()).toContain("Enterprise AI");
-    expect(wrapper.text()).toContain("Agent 中心");
-    expect(wrapper.text()).toContain("知识中心");
+    expect(wrapper.text()).toContain("Agent 管理");
+    expect(wrapper.text()).toContain("知识库");
     expect(wrapper.text()).toContain("工作流");
-    expect(wrapper.text()).toContain("组织与模型");
+    expect(wrapper.text()).toContain("组织管理");
     expect(wrapper.text()).toContain("user-001");
     expect(wrapper.text()).toContain("管理员");
   });

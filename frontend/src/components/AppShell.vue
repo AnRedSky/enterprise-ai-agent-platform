@@ -73,6 +73,10 @@ function navigate(path: string) {
   void router.push(path);
 }
 
+function handleMenuSelect(index: string) {
+  navigate(index);
+}
+
 function logout() {
   clearSession();
   void router.replace({ path: "/login", query: { redirect: route.fullPath } });
@@ -87,7 +91,7 @@ function logout() {
         <div v-if="!collapsed" class="brand-copy"><strong>Enterprise AI</strong><span>Agent Platform</span></div>
       </div>
       <el-scrollbar class="nav-scroll">
-        <el-menu :default-active="activeMenu" :collapse="collapsed" router class="app-menu">
+        <el-menu :default-active="activeMenu" :collapse="collapsed" class="app-menu" @select="handleMenuSelect">
           <template v-for="item in navigation" :key="item.path">
             <el-sub-menu v-if="item.children" :index="item.path">
               <template #title><el-icon><component :is="item.icon" /></el-icon><span>{{ item.label }}</span></template>
