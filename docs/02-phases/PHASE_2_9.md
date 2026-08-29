@@ -74,6 +74,8 @@ Targeted delivery unit regression → 15 passed
 - PostgreSQL 唯一约束 + `ON CONFLICT DO NOTHING`，保证重复规划幂等；
 - ORM Registry 已纳入新增模型。
 
+本轮修复了一个运行时完整性缺陷：ORM Registry 已先行引用 Webhook 模型，但模型文件未进入主分支，导致 API/Worker 导入阶段直接触发 `ModuleNotFoundError`。现已补齐 `WebhookDestination`、`WebhookSubscription`、`WebhookDelivery` 模型，并使表名、Destination 关联和 Migration revision 与本阶段 Fan-out 契约一致，同时增加模型注册回归测试。
+
 该层明确分离：Event Fact 描述“发生了什么”，Delivery Fact 描述“向哪个 Destination 投递及其生命周期”。不得使用 Event 的单一状态替代多 Destination 投递状态。
 
 ### 下一实现切片
