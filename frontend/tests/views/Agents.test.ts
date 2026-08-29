@@ -78,7 +78,7 @@ describe("AgentWorkbench lifecycle", () => {
     expect((wrapper.vm as any).statusLabel("published")).toBe("已发布");
     expect((wrapper.vm as any).statusLabel("draft")).toBe("草稿");
     expect((wrapper.vm as any).statusLabel("archived")).toBe("已归档");
-    expect((wrapper.vm as any).statusLabel("unknown_status")).toBe("unknown_status");
+    expect((wrapper.vm as any).statusLabel("unknown_status")).toBe("未知状态（unknown_status）");
     expect(agent.status).toBe("published");
   });
 
@@ -100,5 +100,12 @@ describe("AgentWorkbench lifecycle", () => {
     expect(text).not.toContain("链路追踪 ID");
     expect(text).not.toContain("会话 ID");
     expect(text).not.toContain("执行 ID");
+  });
+
+  it("hides raw HTTP error text from the user-facing error area", async () => {
+    api.listAgents.mockRejectedValue(new Error("500 Internal Server Error"));
+    const wrapper = mount(Agents, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("智能体列表加载失败，请刷新后重试"));
+    expect(wrapper.text()).not.toContain("500 Internal Server Error");
   });
 });
