@@ -6,7 +6,7 @@ Set-Location $BackendRoot
 Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Phase 2.10-I Runtime Notification Lifecycle Real Gate"
 Write-Host "============================================================"
-Write-Host "[0/6] Local precondition checks"
+Write-Host "[0/7] Local precondition checks"
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw "uv was not found." }
 if (-not (Test-Path (Join-Path $BackendRoot ".env.example"))) { throw "backend/.env.example was not found." }
 Write-Host "Configuration baseline: backend/.env.example"
@@ -37,7 +37,7 @@ function Test-WorkerAvailable {
     return $true
 }
 
-Write-Host "[1/6] Migration/head verification"
+Write-Host "[1/7] Migration/head verification"
 & uv run alembic heads
 if ($LASTEXITCODE -ne 0) { throw "Alembic heads check failed." }
 & uv run alembic upgrade head
@@ -45,11 +45,28 @@ if ($LASTEXITCODE -ne 0) { throw "Alembic upgrade head failed." }
 & uv run alembic current
 if ($LASTEXITCODE -ne 0) { throw "Alembic current check failed." }
 
-Write-Host "[2/6] Targeted migration/runtime test collection"
-& uv run pytest -q tests/unit/test_migration_graph.py tests/api_real/test_alert_notification_runtime_acceptance.py --collect-only --tb=short
+Write-Host "[2/7] Runtime unit regression collection"
+& uv run pytest -q `
+    tests/unit/test_migration_graph.py `
+    tests/unit/test_webhook_delivery_repository.py `
+    tests/unit/test_webhook_delivery_worker.py `
+    tests/unit/test_integration_publisher.py `
+    tests/unit/test_alert_lifecycle_tenant_scope.py `
+    --tb=short
+if ($LASTEXITCODE -ne 0) { throw "Runtime unit regression failed." }
+
+Write-Host "[3/7] Targeted migration/runtime test collection"
+& uv run pytest -q `
+    tests/unit/test_migration_graph.py `
+    tests/unit/test_webhook_delivery_repository.py `
+    tests/unit/test_webhook_delivery_worker.py `
+    tests/unit/test_integration_publisher.py `
+    tests/unit/test_alert_lifecycle_tenant_scope.py `
+    tests/api_real/test_alert_notification_runtime_acceptance.py `
+    --collect-only --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Runtime Notification test collection failed." }
 
-Write-Host "[3/6] Runtime service checks (no automatic startup)"
+Write-Host "[4/7] Runtime service checks (no automatic startup)"
 $schedulerReady = Test-SchedulerAvailable
 $workerReady = Test-WorkerAvailable
 if (-not ($schedulerReady -and $workerReady)) {
@@ -58,15 +75,15 @@ if (-not ($schedulerReady -and $workerReady)) {
     exit 0
 }
 
-Write-Host "[4/6] Alert -> Notification -> Worker Runtime Acceptance"
+Write-Host "[5/7] Alert -> Notification -> Worker Runtime Acceptance"
 & uv run pytest -q -m real_api tests/api_real/test_alert_notification_runtime_acceptance.py --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Alert Notification Runtime Acceptance failed." }
 
-Write-Host "[5/6] Migration graph regression"
+Write-Host "[6/7] Migration graph regression"
 & uv run pytest -q tests/unit/test_migration_graph.py --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Migration graph regression failed." }
 
-Write-Host "[6/6] Runtime lifecycle handoff"
+Write-Host "[7/7] Runtime lifecycle handoff"
 Write-Host "Verified lifecycle: Alert Evaluation -> Firing/Recovery -> Policy -> Group/Dedup/Cooldown -> Provider Routing -> Worker -> Outcome -> Fallback -> SLO/Metrics -> Audit."
 Write-Host "[PASS] Phase 2.10-I Runtime Notification Lifecycle Real Gate completed."
 Write-Host "[INFO] This gate never starts or stops services and automatically generates all test identities and business data."
