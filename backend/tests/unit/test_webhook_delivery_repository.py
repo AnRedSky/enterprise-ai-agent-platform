@@ -140,3 +140,43 @@ async def test_mark_failed_keeps_pending_before_max_attempts() -> None:
     assert record.next_attempt_at == retry_at
     assert record.lease_owner is None
     assert record.lease_expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_replay_resets_retry_budget_and_requires_tenant_scope() -> None:
+    """验证 dead-letter replay 恢复完整 retry budget，并继续受 tenant 边界保护。"""
+    tenant_id = uuid4()
+    delivery_id = uuid4()
+    record = SimpleNamespace(
+        id=delivery_id,
+        tenant_id=tenant_id,
+        integration_event_id=uuid4(),
+        attempt_count=5,
+        status="dead_letter",
+        consumer_group="phase-2.10-i",
+        lease_owner="stale-worker",
+        lease_expires_at=datetime.now(UTC).replace(tzinfo=None),
+        next_attempt_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=1),
+        delivered_at=datetime.now(UTC).replace(tzinfo=None),
+        response_status_code=503,
+        last_error_code="RuntimeError",
+        last_error_message="provider unavailable",
+    )
+    db = _FakeDb(record)
+
+    replayed = await WebhookDeliveryRepository().replay(db, tenant_id, delivery_id, "operator")
+
+    assert replayed is record
+    assert record.status == "pending"
+    assert record.attempt_count == 0
+    assert record.next_attempt_at is None
+    assert record.lease_owner is None
+    assert record.lease_expires_at is None
+    assert record.delivered_at is None
+    assert record.response_status_code is None
+    assert record.last_error_code is None
+    assert record.last_error_message is None
+    db.flush.assert_awaited()
+    assert db.add.call_count == 1
+    assert db.statement is not None
+    assert tenant_id in db.statement.compile().params.values()
