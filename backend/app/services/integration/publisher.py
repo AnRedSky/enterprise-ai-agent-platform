@@ -31,6 +31,20 @@ class RuntimeIntegrationEventPublisher:
         self.db = db
         self.repository = IntegrationEventRepository()
 
+    @staticmethod
+    def _normalize_occurred_at(value: datetime | None) -> datetime:
+        """将 Runtime 的业务时间统一转换为带 UTC 时区的 datetime。
+
+        Runtime 数据库模型历史上使用 naive UTC 时间，而 IntegrationEvent 契约明确要求
+        timezone-aware 时间。因此发布边界把 naive 时间解释为 UTC，并把有时区时间统一
+        转换为 UTC，避免不同 Runtime 调用方因时间表示不一致而无法构造事件。
+        """
+        if value is None:
+            return datetime.now(UTC)
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
     async def publish(
         self,
         *,
@@ -55,7 +69,7 @@ class RuntimeIntegrationEventPublisher:
             payload=payload,
             request_id=request_id,
             trace_id=trace_id,
-            occurred_at=occurred_at or datetime.now(UTC),
+            occurred_at=self._normalize_occurred_at(occurred_at),
             metadata=metadata or {},
         )
         try:
