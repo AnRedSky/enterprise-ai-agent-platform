@@ -55,7 +55,7 @@ class OperatorActionGovernanceService:
         "run": {"pending"},
         "cancel": {"pending", "running"},
         "retry": {"failed"},
-        "resume": {"pending", "running", "failed", "cancelled"},
+        "resume": {"failed"},
     }
 
     @classmethod
@@ -220,13 +220,27 @@ class OperatorActionGovernanceService:
         return workflow, trigger
 
     async def execution_availability(self, execution_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool) -> dict[str, Any]:
-        """返回 Workflow Execution 的全部 Operator Action 可用性。"""
+        """返回 Workflow Execution 的全部 Operator Action 可用性，并对 Resume 复用正式恢复评估。"""
         execution = await self._execution(execution_id, tenant_id, actor_id, is_admin)
+        actions = [self.availability("workflow_execution", action, execution.status) for action in ("run", "cancel", "retry", "resume")]
+        resume = next(item for item in actions if item["action"] == "resume")
+        if execution.status == "failed":
+            execution_service = WorkflowExecutionService(self.db)
+            checkpoint = await execution_service.checkpoint.latest(execution.id)
+            assessment = execution_service.checkpoint_recovery.assess(
+                execution_id=execution.id,
+                workflow_version_id=execution.workflow_version_id,
+                execution_status=execution.status,
+                worker_owner=execution.worker_owner,
+                checkpoint=checkpoint,
+            )
+            resume["allowed"] = assessment.eligible
+            resume["reason_code"] = "AVAILABLE" if assessment.eligible else assessment.reason_code.upper()
         return {
             "resource_type": "workflow_execution",
             "resource_id": execution.id,
             "status": execution.status,
-            "actions": [self.availability("workflow_execution", action, execution.status) for action in ("run", "cancel", "retry", "resume")],
+            "actions": actions,
         }
 
     async def trigger_availability(self, trigger_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool) -> dict[str, Any]:
@@ -257,6 +271,17 @@ class OperatorActionGovernanceService:
         definition = self.validate_request("workflow_execution", action, confirm=confirm, idempotency_key=idempotency_key)
         execution = await self._execution(execution_id, tenant_id, actor_id, is_admin)
         available = self.availability("workflow_execution", action, execution.status)
+        if action == "resume" and execution.status == "failed":
+            execution_service = WorkflowExecutionService(self.db)
+            checkpoint = await execution_service.checkpoint.latest(execution.id)
+            assessment = execution_service.checkpoint_recovery.assess(
+                execution_id=execution.id,
+                workflow_version_id=execution.workflow_version_id,
+                execution_status=execution.status,
+                worker_owner=execution.worker_owner,
+                checkpoint=checkpoint,
+            )
+            available["allowed"] = assessment.eligible
         if not available["allowed"]:
             raise HTTPException(status_code=409, detail="当前 Workflow Execution 状态不允许执行该 Operator Action")
         idempotency_record = None
