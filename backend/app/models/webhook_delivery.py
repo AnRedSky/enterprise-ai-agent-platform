@@ -25,7 +25,7 @@ class WebhookDelivery(Base):
             name="uq_webhook_delivery_event_destination",
         ),
         Index(
-            "ix_webhook_delivery_claimable",
+            "ix_webhook_delivery_claimable_v2",
             "tenant_id", "consumer_group", "status", "next_attempt_at", "lease_expires_at",
         ),
         Index("ix_webhook_delivery_event", "tenant_id", "integration_event_id"),
