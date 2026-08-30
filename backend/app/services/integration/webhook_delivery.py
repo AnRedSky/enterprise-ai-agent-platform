@@ -27,6 +27,7 @@ class WebhookDeliveryWorker:
     """基于 PostgreSQL lease 的可恢复 Webhook Delivery Worker。"""
 
     DEFAULT_CONCURRENCY = 4
+    DEFAULT_CONSUMER_GROUP = "default"
 
     def __init__(
         self,
@@ -37,6 +38,7 @@ class WebhookDeliveryWorker:
         max_attempts: int = 5,
         concurrency: int = DEFAULT_CONCURRENCY,
         tenant_id: uuid.UUID | None = None,
+        consumer_group: str = DEFAULT_CONSUMER_GROUP,
     ) -> None:
         if lease_seconds <= 0:
             raise ValueError("lease_seconds 必须大于 0")
@@ -44,6 +46,9 @@ class WebhookDeliveryWorker:
             raise ValueError("max_attempts 必须大于 0")
         if concurrency <= 0:
             raise ValueError("concurrency 必须大于 0")
+        consumer_group = consumer_group.strip()
+        if not consumer_group or len(consumer_group) > 128:
+            raise ValueError("consumer_group 必须为 1..128 个字符")
         self.repository = repository or WebhookDeliveryRepository()
         self.owner = owner or f"webhook-worker-{uuid.uuid4().hex}"
         self.sender = sender
@@ -51,6 +56,7 @@ class WebhookDeliveryWorker:
         self.max_attempts = max_attempts
         self.concurrency = concurrency
         self.tenant_id = tenant_id
+        self.consumer_group = consumer_group
         self._running = True
 
     @staticmethod
@@ -82,7 +88,7 @@ class WebhookDeliveryWorker:
     ) -> None:
         """在独立事务中记录 Notification 结果，使 Worker 状态作为权威事实。"""
         async with SessionLocal() as db:
-            lifecycle = AlertLifecycleService(db, actor=self.owner)
+            lifecycle = AlertLifecycleService(db, actor=self.owner, consumer_group=self.consumer_group)
             await lifecycle.record_delivery_outcome(
                 delivery_id,
                 status=status,
@@ -99,7 +105,7 @@ class WebhookDeliveryWorker:
         now = datetime.now(UTC).replace(tzinfo=None)
         async with SessionLocal() as db:
             record = await self.repository.claim_next(
-                db, now, self.owner, self.lease_seconds, self.max_attempts, self.tenant_id
+                db, now, self.owner, self.lease_seconds, self.max_attempts, self.tenant_id, self.consumer_group
             )
             if record is None:
                 return False
