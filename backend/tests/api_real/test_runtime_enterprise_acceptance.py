@@ -11,6 +11,7 @@ import uuid
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.resources import Resource
 from sqlalchemy import delete
 
 from app.infrastructure.db.session import SessionLocal
@@ -96,7 +97,7 @@ async def test_runtime_enterprise_registry_metrics_export_audit_are_tenant_scope
             }
             telemetry_reader = InMemoryMetricReader()
             telemetry_provider = MeterProvider(
-                resource=resource_from_contract(tenant_a),
+                resource=Resource.create(RuntimeMetricContract.otel_resource(tenant_a)),
                 metric_readers=[telemetry_reader],
             )
             telemetry = RuntimeTelemetry(telemetry_provider)
@@ -107,7 +108,8 @@ async def test_runtime_enterprise_registry_metrics_export_audit_are_tenant_scope
             assert telemetry_resource["service.name"] == RuntimeMetricContract.SERVICE_NAME
             assert telemetry_resource["tenant.id"] == str(tenant_a)
             telemetry_names = {metric.name for metric in telemetry_data.resource_metrics[0].scope_metrics[0].metrics}
-            assert telemetry_names == set(RuntimeMetricContract.OTLP_NAMES)
+            assert telemetry_names == set(canonical_values)
+            assert telemetry_names.issubset(RuntimeMetricContract.OTLP_NAMES)
             for metric in telemetry_data.resource_metrics[0].scope_metrics[0].metrics:
                 point = next(iter(metric.data.data_points))
                 assert point.attributes == {"tenant_id": str(tenant_a)}
@@ -124,17 +126,6 @@ async def test_runtime_enterprise_registry_metrics_export_audit_are_tenant_scope
             await db.execute(delete(RuntimeProviderRegistry).where(RuntimeProviderRegistry.tenant_id.in_([tenant_a, tenant_b])))
             await db.execute(delete(Tenant).where(Tenant.id.in_([tenant_a, tenant_b])))
             await db.commit()
-
-
-def resource_from_contract(tenant_id: uuid.UUID):
-    """构造与 RuntimeMetricContract 完全一致的 SDK Resource，避免测试复制第二套服务标识。"""
-    from opentelemetry.sdk.resources import Resource
-
-    return Resource.create({
-        "service.name": RuntimeMetricContract.SERVICE_NAME,
-        "service.version": RuntimeMetricContract.SERVICE_VERSION,
-        "tenant.id": str(tenant_id),
-    })
 
 
 @pytest.mark.asyncio
