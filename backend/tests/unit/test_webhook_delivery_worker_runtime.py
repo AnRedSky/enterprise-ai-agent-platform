@@ -8,6 +8,8 @@ from app.services.integration.webhook_delivery import WebhookDeliveryWorker
 
 
 class _RuntimeProbeWorker(WebhookDeliveryWorker):
+    """用于验证 Worker 并发编排的确定性测试替身。"""
+
     def __init__(self, jobs: int, **kwargs: object) -> None:
         super().__init__(sender=lambda *_: _never_called(), **kwargs)
         self.jobs = jobs
@@ -17,6 +19,9 @@ class _RuntimeProbeWorker(WebhookDeliveryWorker):
 
     async def deliver_once(self) -> bool:
         if self.jobs <= 0:
+            # 真实 Worker 在队列暂时为空时必须继续轮询；测试替身没有真实队列，
+            # 因此显式停止运行循环，避免把“无任务”误测成永久运行。
+            self.stop()
             await asyncio.sleep(0)
             return False
         self.jobs -= 1
