@@ -17,7 +17,7 @@ from app.core.auth import bearer, current_claims
 from app.dependencies.db import get_db
 from app.services.runtime_operations.global_operations import GlobalRuntimeOperationsService
 
-router = APIRouter(prefix="/api/v1/runtime", tags=["runtime"])
+router = APIRouter(tags=["runtime"])
 
 
 def _claims(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
