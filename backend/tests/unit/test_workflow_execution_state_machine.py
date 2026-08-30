@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -34,6 +35,7 @@ def _db() -> AsyncMock:
     db.add = Mock()
     db.refresh = AsyncMock()
     db.execute = AsyncMock(return_value=_result())
+    db.begin_nested = Mock(return_value=nullcontext())
     return db
 
 
