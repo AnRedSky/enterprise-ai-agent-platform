@@ -191,12 +191,28 @@ class AlertLifecycleService:
         await self.db.flush()
         return records
 
-    async def record_delivery_outcome(self, webhook_delivery_id: uuid.UUID, *, status: str, error_code: str | None = None, error_message: str | None = None, now: datetime | None = None) -> RuntimeNotificationDelivery | None:
+    async def record_delivery_outcome(
+        self,
+        tenant_id: uuid.UUID,
+        webhook_delivery_id: uuid.UUID,
+        *,
+        status: str,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        now: datetime | None = None,
+    ) -> RuntimeNotificationDelivery | None:
+        """在显式 tenant 边界内同步 Worker 投递结果，防止仅凭 delivery ID 修改其他租户事实。
+
+        参数 args：tenant_id 为 Worker 已领取事实所属租户；webhook_delivery_id 为 Delivery ID；status 为通知生命周期状态。
+        return：更新后的 Notification Delivery；不存在或不属于该租户时返回 None。
+        重要副作用：更新 Notification Delivery、追加 Runtime Audit / Metric，并在 dead-letter 时触发下一 Provider 的 fallback。
+        """
         if status not in self.NOTIFICATION_STATUSES:
             raise ValueError(f"unsupported notification status: {status}")
         now = now or datetime.now(UTC).replace(tzinfo=None)
         record = await self.db.scalar(select(RuntimeNotificationDelivery).where(
-            RuntimeNotificationDelivery.webhook_delivery_id == webhook_delivery_id
+            RuntimeNotificationDelivery.tenant_id == tenant_id,
+            RuntimeNotificationDelivery.webhook_delivery_id == webhook_delivery_id,
         ).order_by(RuntimeNotificationDelivery.created_at.desc()))
         if record is None:
             return None
