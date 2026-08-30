@@ -48,7 +48,30 @@ class RuntimeMetricContract:
     @staticmethod
     def _escape_label(value: str) -> str:
         """转义 Prometheus 标签值中的反斜杠、引号和换行符。"""
-        return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+    @classmethod
+    def _validate_values(cls, values: Mapping[str, float | int | None]) -> None:
+        """校验输入指标全部属于 canonical contract。
+
+        Args:
+            values: 待导出的 canonical 指标和值。
+
+        Returns:
+            无返回值；输入合法时正常返回。
+
+        Raises:
+            KeyError: 输入包含未定义指标时抛出。
+        """
+        unknown = set(values) - set(cls.PROMETHEUS_NAMES)
+        if unknown:
+            raise KeyError(f"unsupported runtime metrics: {sorted(unknown)}")
+
+    @classmethod
+    def _canonical_items(cls, values: Mapping[str, float | int | None]):
+        """按 canonical 定义顺序返回本次实际提供的指标，允许合法子集导出。"""
+        cls._validate_values(values)
+        return ((name, values[name]) for name in cls.PROMETHEUS_NAMES if name in values)
 
     @classmethod
     def prometheus(cls, tenant_id: UUID, values: Mapping[str, float | int | None]) -> str:
@@ -56,7 +79,7 @@ class RuntimeMetricContract:
 
         Args:
             tenant_id: 当前租户标识，只允许作为唯一业务标签输出。
-            values: 内部 canonical 指标名与数值。
+            values: 内部 canonical 指标名与数值，可为完整集合或合法子集。
 
         Returns:
             Prometheus text exposition 内容。
@@ -64,13 +87,10 @@ class RuntimeMetricContract:
         Raises:
             KeyError: 出现未定义的 Runtime 指标名时抛出。
         """
-        unknown = set(values) - set(cls.PROMETHEUS_NAMES)
-        if unknown:
-            raise KeyError(f"unsupported runtime metrics: {sorted(unknown)}")
         label = cls._escape_label(str(tenant_id))
         return "\n".join(
-            f"{cls.PROMETHEUS_NAMES[name]}{{tenant_id=\"{label}\"}} {cls._number(values[name])}"
-            for name in cls.PROMETHEUS_NAMES
+            f"{cls.PROMETHEUS_NAMES[name]}{{tenant_id=\"{label}\"}} {cls._number(value)}"
+            for name, value in cls._canonical_items(values)
         ) + "\n"
 
     @classmethod
@@ -79,7 +99,7 @@ class RuntimeMetricContract:
 
         Args:
             tenant_id: 当前租户标识，写入 Resource 属性而不是业务 metric label。
-            values: 内部 canonical 指标名与数值。
+            values: 内部 canonical 指标名与数值，可为完整集合或合法子集。
 
         Returns:
             符合 OTLP HTTP JSON 结构的指标对象。
@@ -87,20 +107,17 @@ class RuntimeMetricContract:
         Raises:
             KeyError: 出现未定义的 Runtime 指标名时抛出。
         """
-        unknown = set(values) - set(cls.OTLP_NAMES)
-        if unknown:
-            raise KeyError(f"unsupported runtime metrics: {sorted(unknown)}")
         timestamp = str(time.time_ns())
         metrics = [
             {
                 "name": name,
                 "gauge": {
                     "dataPoints": [
-                        {"asDouble": cls._number(values[name]), "timeUnixNano": timestamp}
+                        {"asDouble": cls._number(value), "timeUnixNano": timestamp}
                     ]
                 },
             }
-            for name in cls.OTLP_NAMES
+            for name, value in cls._canonical_items(values)
         ]
         return {
             "resourceMetrics": [
