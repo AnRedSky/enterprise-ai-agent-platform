@@ -25,14 +25,10 @@
 
 ## 当前主线
 
-当前主线：**P1.1 深度交互与可观测性工作台**。
+当前主线：**Phase 2.10-II Enterprise Operations Console / Operator Governance**。
 
-P1.3 Runtime ↔ Workflow 生命周期双向深链代码已实现，但本地完整验收仍需实际执行。
+Phase 2.10-I Runtime Notification Lifecycle、Metrics、Telemetry、Audit 已由 Backend Real Gate 收口；前端现有 Runtime、Workflow、Agent、Trigger 与 Audit 能力作为本阶段统一操作治理的既有入口，不再重复实现相同业务 Contract。
 
-FE-P1-04 Element Plus `v-loading` 生产入口注册已实现，并保留本地验收进行中状态。
+第一前端工作项：对齐 Backend Operator Action Contract，统一展示操作可用性、权限拒绝、状态冲突、幂等结果和审计关联；前端不得复制 Workflow / Trigger 状态机或后端权限判断。
 
-本轮继续推进 Audit 可观测性体验加固：基于真实 `/runtime/audit-logs` Contract 增加有限状态筛选、错误恢复、Empty 恢复动作、Execution 真实 ID 深链及窄屏适配；同时提供 `npm run test:local:full` 统一本地回归入口。详见 `07-testing-regression/AUDIT_LOG_UX_AND_LOCAL_REGRESSION.md`。
-
-本轮 Full Vitest 回归发现的测试语法阻断、UI 文本契约漂移、异步竞态及第三方组件 stub 噪声已统一记录于 `07-testing-regression/FULL_VITEST_REGRESSION_REMEDIATION_2026-08-30.md`。
-
-后续继续完成 Agent 调试上下文、Trigger 操作面板及 P1.1 核心闭环验收。
+现有 P1.1 Runtime 深链、Agent 调试上下文、Workflow 生命周期、Trigger 操作和 Audit 可观测性继续作为回归基线；后续增强必须围绕统一 Operator Action Governance 进行。

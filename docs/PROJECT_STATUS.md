@@ -3,9 +3,9 @@
 ## 1. 当前基线
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
-- 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
-- 当前任务：**2.10-I Runtime Notification Lifecycle / Provider / Metrics / Alert / Export / Operational Audit**
-- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization、tenant/consumer-group Claim isolation、Claim competition、Canonical Metrics Export Contract、Runtime Telemetry SDK Contract 与 Runtime Acceptance Gate 收口**
+- 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
+- 当前任务：**Operator Action Governance**
+- 最近完成：**Phase 2.10-I Runtime Notification Lifecycle / Provider / Metrics / Alert / Export / Operational Audit 全链路收口**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -13,131 +13,77 @@
 - Phase 2.7 Advanced Workflow 主线生产能力完成；
 - Durable Workflow / Resume / Frontier / Scheduler 基础设施完成；
 - Phase 2.8 Delegation Contract、Durable Entity、Claim、Worker Bridge、generation fencing、timeout/cancel、Audit/Trace、B6 multi-worker Runtime 已完成并通过本地 Real Gate；
-- Phase 2.9-A Event Contract 已实现；
-- Phase 2.9-B Durable Event Persistence 已实现；
-- Phase 2.9-C Reliable Delivery 已通过真实 PostgreSQL Gate；
-- Phase 2.9-D Webhook Provider / Destination / Subscription / Fan-out / Delivery Worker / Security / Audit / Replay 已完成 Real Acceptance；
-- Phase 2.9-E Runtime Integration 已完成关键业务事实接入，并通过 Runtime Integration Real Acceptance；
+- Phase 2.9-A Event Contract、2.9-B Durable Event Persistence、2.9-C Reliable Delivery、2.9-D Webhook Integration、2.9-E Runtime Integration 已完成对应真实验收；
 - Phase 2.10-A/B/C/D Event、Delivery、Replay、Audit 运维能力已实现；
 - Phase 2.10-E Operations Console 第一切片已实现；
 - Phase 2.10-F Metrics / SLO 已增强到 Event Type + Destination + Provider 维度及确定性告警；
 - Phase 2.10-G Dead Letter 已增强到批量 Replay；
-- Phase 2.10-H Runtime Operational Acceptance Gate 已实现。
+- Phase 2.10-H Runtime Operational Acceptance Gate 已实现；
+- Phase 2.10-I Runtime Notification Lifecycle、Worker tenant/consumer-group Claim isolation、Retry/Dead Letter/Fallback、SLO/Metrics、Canonical Metrics Export、OpenTelemetry SDK Telemetry、Operational Audit 已完成，并已通过本地实际 Real Gate。
 
-## 3. Phase 2.10-I 当前实现
+## 3. Phase 2.10-I 收口证据
 
-### Provider / Metrics / Alert / Export / Audit 基础
-状态：**基础切片与 Runtime Lifecycle 已实现，正在收口企业观测出口与统一 Acceptance。**
+开发者本地反馈确认：
 
-已实现：
-- `runtime_metric_samples` 时间序列指标持久化；
-- Provider / Destination / Event Type 三维时间序列采样；
-- `runtime_provider_registry` tenant-scoped Provider 元数据注册与健康探测；
-- `runtime_alert_rules` tenant-scoped 告警规则；
-- Runtime Alert Scheduler 周期指标采样与告警评估；
-- Alert firing/recovery 生命周期实例、severity、routing key、escalation；
-- Notification Policy、grouping、cooldown 与稳定 dedup key；
-- Provider ordered routing 与 terminal failure fallback；
-- WebhookDeliveryWorker 将 delivered/retrying/failed/dead_letter 回写 Notification Delivery；
-- terminal `dead_letter` 才允许 Provider fallback，避免 retry 中提前切换；
-- fallback exhausted 保持 Notification `dead_letter`，同时产生 `notification.fallback.exhausted` Audit 与 `notification.dlq` Metric；
-- Notification Delivery 使用 PostgreSQL 幂等冲突收敛，避免并发重复记录；
-- Alert Notification 专用 routing 不再被通用 Notification Scheduler 绕过 Policy 重复路由；`alert.*` 由 AlertLifecycleService 独占编排；
-- Notification-level SLO / Metrics / Operational Audit 已有正式聚合入口；
-- Prometheus / OTLP Export；
-- Runtime Operational Audit 覆盖 Provider、Alert、Notification Delivery 生命周期；
-- Runtime Operations 基础服务提供 tenant-scoped `audit_list()` 正式查询入口，Enterprise Service 复用该入口；
-- `RuntimeMetricContract` 统一维护 Prometheus / OTLP / OpenTelemetry SDK 的 canonical metric names、service Resource 与 tenant metric attribute contract；
-- `RuntimeTelemetry` 使用进程级 SDK Resource，tenant 仅作为唯一 Metric observation 维度，避免共享 MeterProvider 跨租户污染；
-- SDK 多租户隔离与 Contract 一致性已补充 unit / Real Acceptance 覆盖。
+```text
+Runtime targeted unit：13 passed
+Runtime / Enterprise Real API Acceptance：6 passed
+Phase 2.10-I Runtime Lifecycle Gate：completed
+```
 
-### Worker / Scheduler 生命周期回归
-状态：**已完成**。
-
-- Worker 入口生命周期测试已保持 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约；
-- Scheduler Service 生命周期测试已覆盖 Scheduled Trigger、Workflow Recovery、Runtime Alert、Runtime Notification 四个后台循环；
-- 单元测试不再因未 Mock Runtime Scheduler 而创建真实数据库连接；
-- 已消除 `Connection._cancel was never awaited` 异步资源警告；
-- 错误记录：`docs/04-errors/2026-08-30-scheduler-lifecycle-test-async-connection-warning.md`。
-
-### Workflow Governance 单元测试回归
-状态：**已完成**。
-
-- AsyncSession `begin_nested()` 测试替身已与异步上下文管理器协议保持一致；
-- Workflow Governance 状态机回归不再产生事务 Mock 类型错误；
-- 根因与修复记录：`docs/04-errors/2026-08-30-workflow-governance-asyncsession-context-mock.md`。
-
-### Runtime Notification Lifecycle Acceptance
-状态：**已通过本地实际 Real Gate。**
-
-真实验收脚本：
-`backend/scripts/test/phase-2.10/03_alert_notification_lifecycle_real_gate.ps1`
-
-当前 Gate 已验证：
+最终 Gate 已验证：
 
 ```text
 Alert Evaluation
-    ↓
-Firing / Recovery
-    ↓
-Notification Policy
-    ↓
-Grouping / Dedup / Cooldown
-    ↓
-Provider Routing
-    ↓
-Worker Claim
-    ↓
-Claim Competition
-    ↓
-Notification Delivery Outcome
-    ↓
-Retry / Dead Letter / Fallback
-    ↓
-SLO / Metrics
-    ↓
-Audit
+→ Firing / Recovery
+→ Notification Policy
+→ Group / Dedup / Cooldown
+→ Provider Routing
+→ Worker Claim
+→ Claim Competition
+→ Outcome
+→ Retry / Dead Letter
+→ Fallback / Fallback Exhaustion
+→ SLO / Metrics
+→ Prometheus / OTLP Export
+→ Audit
 ```
 
-Gate 只负责服务状态探测、测试上下文自动生成、验收执行与清理，不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis 等服务；测试数据由脚本自动创建和清理，不要求手工填写测试信息。
+Gate 只负责服务状态探测、测试上下文自动生成、验收执行与清理，不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis；测试数据自动创建和清理，不要求手工填写测试信息。
 
-## 4. 最近本地回归基线
+## 4. Phase 2.10-II 当前任务
 
-已反馈并通过：
+### II-01 Operator Action Governance
+状态：**下一开发切片，Contract 冻结与实现启动。**
+
+目标：
+- Workflow Execution Run / Cancel / Retry / Resume 统一操作治理；
+- Trigger Enable / Disable / Delete / Invoke 统一操作治理；
+- 后端统一返回操作可用性、权限与状态校验结果；
+- 高风险操作具备确认、幂等与 Operational Audit；
+- 所有操作保留真实 resource ID，并可回到 Runtime / Audit 诊断路径；
+- 前端不得复制状态机、权限判断或业务计算。
+
+正式阶段文档：`docs/02-phases/PHASE_2_10_II.md`
+
+## 5. 长期任务推进
+
+LT-01 Enterprise Integration / Event Infrastructure：**核心 Event / Delivery / Webhook / Runtime Integration 已完成当前主线，Phase 2.10-I 已完成运维收口，后续转为回归维护。**
+
+LT-03 Enterprise Operations Console：**进入 Phase 2.10-II 开发，优先完成 Operator Action Governance，再推进 Global Runtime Operations、Worker/Scheduler Diagnostics、Audit/Trace Correlation 与 Controlled Batch Operations。**
+
+LT-02 / LT-04 / LT-05 / LT-06 / LT-07 / LT-08 / LT-09 / LT-10：继续保持待立项或候选状态；不得在没有正式 Phase、Contract、代码和验收证据前提前标记为开发中。
+
+## 6. 下一执行顺序
 
 ```text
-uv run pytest -q
-944 passed, 3 skipped, 63 deselected
+① Phase 2.10-II Operator Action Contract
+② Backend Domain / API Contract
+③ Database Migration（如 Contract 需要持久化结构）
+④ Unit / Integration / Real API
+⑤ Frontend API Types / UI
+⑥ Backend + Frontend Regression
+⑦ Browser E2E（范围需要时）
+⑧ 更新 Phase / Acceptance / Long-term Status
+⑨ 原子提交 main
 ```
-
-Runtime targeted unit：
-
-```text
-23 passed
-```
-
-Runtime Notification Acceptance：
-
-```text
-2 passed
-```
-
-Phase 2.10-I Real Gate：
-
-```text
-Runtime Notification Lifecycle Real Gate completed.
-```
-
-当前反馈中的 Scheduler `RuntimeWarning` 已通过 `uv run pytest -q -W error::RuntimeWarning tests/unit/test_service_entrypoints.py` 验证为 4 passed，随后全量回归 944 passed 且无 warnings。
-
-## 5. 2.10-I 下一切片
-
-1. 建立 Provider Registry / Alert Rule / Metrics Snapshot / Series / Prometheus / OTLP / Operational Audit 的统一真实 PostgreSQL Acceptance；
-2. 将统一 Real Gate 纳入 canonical Runtime Metric Contract 回归，并持续验证 tenant boundary；
-3. **已完成**：接入 OpenTelemetry SDK 标准 Meter / Resource，在不改变 `RuntimeMetricContract` 业务指标名、标签和 tenant boundary 的前提下建立 SDK 观测层；
-4. **已完成**：增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
-5. **已完成**：完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
-6. 完成 2.10-I Runtime Acceptance 全链路 Gate，并以最新代码重新执行本地 unit / Real API / Gate 回归。
-
-## 6. 长期未完成能力
-长期企业化能力独立维护在 `docs/05-long-term/`。
