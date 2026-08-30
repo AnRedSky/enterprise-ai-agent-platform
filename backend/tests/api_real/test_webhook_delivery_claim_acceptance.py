@@ -37,7 +37,8 @@ async def _create_delivery(tenant_id: uuid.UUID, suffix: str, consumer_group: st
         ))
         db.add(IntegrationEventRecord(
             id=event_id, tenant_id=tenant_id, event_type="runtime.claim", source="acceptance",
-            subject=str(delivery_id), idempotency_key=f"claim:{suffix}", occurred_at=datetime.now(UTC),
+            subject=str(delivery_id), idempotency_key=f"claim:{suffix}",
+            occurred_at=datetime.now(UTC).replace(tzinfo=None),
             payload={"suffix": suffix}, metadata_json={}, status="pending",
         ))
         db.add(WebhookDelivery(
