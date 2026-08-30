@@ -4,6 +4,7 @@ export type Execution = {
   execution_id: string; request_id: string; trace_id: string; session_id?: string; agent_id?: string;
   agent_version?: string; model_id?: string; status: string; started_at: string; ended_at?: string;
   duration_ms?: number; error_code?: string; workflow_id?: string; workflow_version_id?: string;
+  retry_of_execution_id?: string; resume_of_execution_id?: string; resume_checkpoint_sequence?: number;
 };
 export type Event = {
   id: string; execution_id: string; trace_id: string; span_type: string; status: string;
