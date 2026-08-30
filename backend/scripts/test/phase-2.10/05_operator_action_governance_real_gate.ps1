@@ -32,7 +32,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "[4/5] Operator Action real PostgreSQL acceptance"
-uv run pytest -q -m real_api tests/api_real/test_operator_action_governance_acceptance.py --tb=short
+uv run pytest -q -m real_api tests/api_real/test_operator_action_governance_acceptance.py tests/api_real/test_operator_action_execution_acceptance.py --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Operator Action Real Acceptance failed." }
 
 Write-Host "[5/5] Service startup boundary"
