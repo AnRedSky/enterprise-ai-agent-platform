@@ -2,7 +2,7 @@
 
 测试范围：API 应用不再创建 Scheduler；Scheduler Service 独立入口只负责生命周期编排，并复用正式
 `ScheduledTriggerScheduler`、`WorkflowRecoveryScheduler`、`RuntimeAlertScheduler` 与
-`RuntimeNotificationScheduler` 实现，不复制调度、恢复、告警或通知路由业务规则。
+`RuntimeNotificationScheduler` 实现，同时统一管理 Runtime Telemetry 生命周期。
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -168,3 +168,41 @@ async def test_scheduler_service_identity_is_not_configuration_switch():
     fake_recovery_scheduler.stop.assert_called_once()
     fake_alert_scheduler.stop.assert_called_once()
     fake_notification_scheduler.stop.assert_called_once()
+    fake_scheduler.run_forever.assert_awaited_once()
+    fake_recovery_scheduler.run_forever.assert_awaited_once()
+    fake_alert_scheduler.run_forever.assert_awaited_once()
+    fake_notification_scheduler.run_forever.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_service_owns_runtime_telemetry_lifecycle():
+    """Scheduler Service 必须创建、注入并在退出时关闭唯一 Telemetry Provider。"""
+    fake_scheduler = MagicMock()
+    fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("telemetry-stop"))
+    fake_scheduler.stop = MagicMock()
+
+    fake_recovery_scheduler = MagicMock()
+    fake_recovery_scheduler.run_forever = AsyncMock()
+    fake_recovery_scheduler.stop = MagicMock()
+
+    fake_alert_scheduler = MagicMock()
+    fake_alert_scheduler.run_forever = AsyncMock()
+    fake_alert_scheduler.stop = MagicMock()
+    fake_notification_scheduler = MagicMock()
+    fake_notification_scheduler.run_forever = AsyncMock()
+    fake_notification_scheduler.stop = MagicMock()
+
+    telemetry = MagicMock()
+    with patch.object(scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler), patch.object(
+        scheduler_entrypoint, "WorkflowRecoveryScheduler", return_value=fake_recovery_scheduler
+    ), patch.object(
+        scheduler_entrypoint, "RuntimeAlertScheduler", return_value=fake_alert_scheduler
+    ), patch.object(
+        scheduler_entrypoint, "RuntimeNotificationScheduler", return_value=fake_notification_scheduler
+    ), patch.object(scheduler_entrypoint, "RuntimeTelemetry", return_value=telemetry) as telemetry_factory:
+        with pytest.raises(RuntimeError, match="telemetry-stop"):
+            await scheduler_entrypoint.run_scheduler_service()
+
+    telemetry_factory.assert_called_once_with()
+    fake_alert_scheduler.set_telemetry.assert_called_once_with(telemetry)
+    telemetry.shutdown.assert_called_once()
