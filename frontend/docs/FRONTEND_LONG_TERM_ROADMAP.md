@@ -1,74 +1,132 @@
 # 前端长期优化路线图
 
-## 当前执行原则
+## 1. 总体原则
 
-前端不追赶尚未稳定的后端功能。以远端 `main` 为基线，按后端 Contract、测试和真实验收成熟度决定前端开发顺序。当前 2.10-A～H 已完成，2.10-I 仍在开发中；因此当前前端主线优先补齐已有稳定业务闭环。
+前端以远端 `main` 的稳定 Backend Contract 为事实基线，不追赶尚未完成 Runtime Acceptance 的后端能力。优化目标从“页面可用”逐步提升到“业务闭环、可观测、可诊断、可治理、可持续演进”。
 
-## 执行优先级
+## 2. 当前阶段：P1.1
 
-| 优先级 | 领域 | 前端目标 | 前置条件 |
+当前重点是 **Runtime 可观测性工作台 + Agent 对话调试 + Workflow 生命周期 UI 的深度交互**。
+
+### P1.1 目标
+
+- Runtime：Tab 化、按需加载、Execution 深链、事件/Trace/Audit/Workflow 上下文联动；
+- Agent：真实 Agent + Published Version 调试上下文，模型、版本、System Prompt 和 Runtime 入口可追溯；
+- Workflow：真实 Workflow / WorkflowExecution 生命周期展示，Run / Cancel / Retry / Resume 与 Runtime Execution 形成连续旅程；
+- 全部上下文使用真实资源 ID，不复制后端状态机。
+
+## 3. 阶段路线
+
+| 阶段 | 目标 | 主要内容 | 进入条件 |
 |---|---|---|---|
-| P0 | Agent | 创建、版本、发布、运行调试、运行标识关联 | 已稳定 Agent Contract |
-| P0 | Workflow | 编排、校验、发布、执行、Trace | 已稳定 Workflow/Runtime Contract |
-| P0 | Runtime | Execution、Event、Trace、Audit 完整链路 | Runtime Integration 已验收 |
-| P0 | Knowledge | 知识资产、检索、Agent 关联 | Knowledge API 稳定 |
-| P0 | Tool | 工具配置、关联、调用结果 | Tool API 稳定 |
-| P1 | Organization | 成员、角色、权限和 tenant 边界 | IAM/Organization Contract 稳定 |
-| P1 | Model Provider | Provider、Model 配置及 Agent 使用关系 | Provider Contract 稳定 |
-| P1 | Audit | 跨领域治理证据链 | Audit Contract 稳定 |
-| P1 | Integration | Event、Delivery、Replay、Dead Letter、Audit | 2.10-A～H 稳定能力 |
-| P2 | 2.10-I | Provider Health、Alert、Notification、Metrics、Export | 对应后端 Runtime Acceptance 完成 |
-| P3 | 企业体验 | Design System、E2E、性能、无障碍、搜索、通知中心 | 核心业务闭环稳定 |
+| P0 | 核心业务闭环 | Agent → Workflow → Runtime → Trace/Audit | Backend 核心 Contract 稳定 |
+| P1 | 企业级体验 | 状态完整性、错误边界、统一 UI、响应式、E2E | 核心闭环可用 |
+| P1.1 | 深度可观测交互 | Runtime Tab、按需加载、Agent Debug、Workflow Execution 联动 | 当前执行阶段 |
+| P2 | 2.10-I 前端化 | Provider、Health、Alert、Notification、Metrics、Export | Backend Runtime Acceptance 完成 |
+| P3 | 平台化 | Design System、搜索、通知中心、权限矩阵、无障碍、性能 | 核心领域稳定 |
+| P4 | 运营智能化 | 趋势分析、异常关联、跨资源诊断、运营驾驶舱 | P2/P3 稳定 |
 
-## 阶段目标
+## 4. P1.1 后续拆解
 
-### 阶段 A：核心业务闭环
+### P1.1-A Runtime 工作台
 
-完成 Agent → Workflow → Runtime 的前端连续旅程。重点不是视觉重做，而是保证用户可以从资产配置进入真实执行，并获得可追踪的 Execution / Trace / Audit 信息。
+1. 完成健康概览与 Execution Tab 的清晰边界；
+2. Execution 列表分页、筛选、刷新与深链；
+3. Execution 详情按需加载 Event / Trace / Audit / Workflow；
+4. 状态变化只以 Backend Contract 为准；
+5. 诊断上下文可以从 Runtime 反向进入 Agent / Workflow。
 
-### 阶段 B：能力依赖完善
+### P1.1-B Agent 调试
 
-完成 Knowledge / Tool 与 Agent、Runtime 的关联；保证知识检索和工具调用结果能够在运行记录中解释。
+1. Agent 列表与 Published Version 统一上下文；
+2. 对话调试显示版本、模型和必要运行元数据；
+3. 调试请求产生的 Runtime Execution 可直接追踪；
+4. 从 Execution 返回 Agent 时保持上下文；
+5. 失败场景提供可恢复操作和诊断信息，但不泄漏原始异常。
 
-### 阶段 C：企业治理
+### P1.1-C Workflow 生命周期
 
-完成 Organization / Model Provider / Audit / Integration 的稳定功能闭环，并建立 tenant、权限、审计和可靠投递的统一页面语言。
+1. Workflow 状态与最近 Execution 同屏；
+2. Pending / Running / Completed / Failed / Cancelled 等状态统一映射；
+3. Run / Cancel / Retry / Resume 调用正式 API；
+4. 操作完成后刷新真实 Execution 状态；
+5. Execution → Runtime → Trace / Audit 保持可追溯。
 
-### 阶段 D：新后端能力前端化
+## 5. P2：2.10-I 后端稳定后的前端化
 
-待 2.10-I Runtime Acceptance 完成后，再实施 Provider Registry / Health、Alert、Notification Routing、Provider fallback、SLO、Route Metrics、Export 等页面能力。前端不得以 Mock 或猜测 Contract 提前标记完成。
-
-### 阶段 E：生产级体验
-
-在核心功能稳定后，统一 Design Token、公共组件、响应式、无障碍、性能预算和 Playwright 关键用户旅程。
-
-## 每个迭代周期
+不得提前通过 Mock 标记完成。后端 Acceptance 稳定后按以下顺序：
 
 ```text
-1. 同步远端 main
-2. 核对后端 Contract / Tests / Acceptance
-3. 选取一个最小业务切片
-4. API Types
-5. UI / Component
-6. Vitest
-7. targeted test
-8. 全量 npm test
-9. npm run build
-10. npm run test:gate
-11. 必要时 Real API / E2E
-12. 更新 frontend/docs
-13. 一个原子提交
+Provider Registry / Health
+        ↓
+Alert Rule / Firing / Recovery
+        ↓
+Notification Routing / Provider fallback
+        ↓
+Delivery / Idempotency / Failure Audit
+        ↓
+SLO / Route Metrics
+        ↓
+Scheduler Operations
+        ↓
+Prometheus / OpenTelemetry / Export
 ```
 
-## 质量目标
+## 6. P3：企业级平台能力
 
-- 用户可见文本统一通俗中文；技术标识在诊断场景保留。
-- 不直接展示 `error.message`、HTTP 原文或异常堆栈。
-- 每个页面具备 Loading / Empty / Error / Success / Permission 状态。
-- API 类型、页面行为和测试与 Backend Contract 可追溯。
-- 核心业务页面逐步达到桌面端 1440 / 1280 / 1024、平板 768、移动端 390 的响应式验收。
-- 核心用户旅程具备真实前后端 E2E 证据。
+- Design Token + 公共组件版本治理；
+- 页面级权限与 tenant-aware UI；
+- 全局搜索、命令面板、通知中心；
+- Playwright 核心用户旅程；
+- 1440 / 1280 / 1024 / 768 / 390 响应式矩阵；
+- 键盘操作、语义结构、对比度等无障碍验收；
+- 首屏、路由切换、列表渲染、Bundle 等性能预算。
 
-## 任务状态规则
+## 7. P4：运营与诊断智能化
 
-任务状态只允许使用：`待实施`、`进行中`、`阻塞`、`已完成`。状态变更必须基于实际代码与测试事实，并同步更新任务执行台账和必要 Phase/Acceptance 文档。
+长期目标不是增加图表数量，而是减少定位问题的路径：
+
+```text
+异常
+ ↓
+资源
+ ↓
+Execution
+ ↓
+Event / Trace
+ ↓
+Agent / Workflow / Provider
+ ↓
+Audit / Delivery
+ ↓
+可执行恢复动作
+```
+
+最终形成跨 Agent、Workflow、Runtime、Integration 的统一诊断工作台。
+
+## 8. 每轮交付质量门槛
+
+每轮必须遵循：
+
+1. 同步远端 `main`；
+2. 核对 Backend Contract / Tests / Acceptance；
+3. 检索已有实现和文档，避免重复能力；
+4. 实现最小业务切片；
+5. targeted Vitest；
+6. 全量 `npm test`；
+7. `npm run build`；
+8. `npm run test:gate`；
+9. 必要时 Real API / Browser E2E；
+10. 更新 `frontend/docs`；
+11. 一个语义单一的原子提交。
+
+## 9. 长期质量指标
+
+- Contract 漂移：0；
+- 未处理页面状态：0；
+- 用户可见原始后端错误：0；
+- 新增重复 API / 状态机 / Provider：0；
+- 核心旅程真实 E2E 覆盖率持续提升；
+- 关键页面响应式验收覆盖 1440 / 1280 / 1024 / 768 / 390；
+- 高风险操作均具备权限与确认保护；
+- 关键诊断链路可从资源追踪到 Execution / Trace / Audit。
