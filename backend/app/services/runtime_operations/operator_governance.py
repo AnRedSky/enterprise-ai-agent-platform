@@ -154,20 +154,7 @@ class OperatorActionGovernanceService:
         action: str,
         idempotency_key: str,
     ) -> OperatorActionIdempotency | None:
-        """原子登记 Operator Action 幂等键，并返回已有结果记录。
-
-        Args:
-            tenant_id: 身份上下文中的租户标识。
-            actor_id: 当前操作人。
-            resource_type: 资源类型。
-            resource_id: 目标资源标识。
-            action: 运维动作。
-            idempotency_key: 调用方提供的唯一幂等键。
-        Returns:
-            新建时返回 None；已存在时返回已有幂等事实。
-        Raises:
-            HTTPException: 同一幂等键被用于其他资源或动作时返回 409。
-        """
+        """原子登记 Operator Action 幂等键，并返回已有结果记录。"""
         statement = pg_insert(OperatorActionIdempotency).values(
             tenant_id=tenant_id,
             actor_id=actor_id,
@@ -190,19 +177,16 @@ class OperatorActionGovernanceService:
             raise HTTPException(status_code=409, detail="Idempotency-Key 已用于其他 Operator Action")
         return existing
 
-    async def _reuse_or_raise(self, record: OperatorActionIdempotency | None) -> Any | None:
-        """处理已存在的幂等事实，避免重复执行同一高风险操作。"""
+    async def _reuse_or_raise(self, record: OperatorActionIdempotency | None) -> WorkflowExecution | None:
+        """处理已存在的幂等事实，避免重复执行同一可重试操作。"""
         if record is None:
             return None
         if record.status != "succeeded" or record.result_resource_id is None:
             raise HTTPException(status_code=409, detail="相同 Idempotency-Key 的 Operator Action 已在处理中或此前失败")
-        if record.resource_type == "workflow_execution":
-            result = (await self.db.execute(select(WorkflowExecution).where(
-                WorkflowExecution.tenant_id == record.tenant_id,
-                WorkflowExecution.id == record.result_resource_id,
-            ))).scalar_one_or_none()
-        else:
-            result = None
+        result = (await self.db.execute(select(WorkflowExecution).where(
+            WorkflowExecution.tenant_id == record.tenant_id,
+            WorkflowExecution.id == record.result_resource_id,
+        ))).scalar_one_or_none()
         if result is None:
             raise HTTPException(status_code=409, detail="Operator Action 幂等结果已失效")
         return result
