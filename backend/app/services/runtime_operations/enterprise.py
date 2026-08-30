@@ -137,7 +137,8 @@ class RuntimeOperationsEnterpriseService:
         return item
 
     async def audit_list(self, tenant_id: UUID, limit: int = 100) -> list[RuntimeOperationAudit]:
-        return list((await self.db.execute(select(RuntimeOperationAudit).where(RuntimeOperationAudit.tenant_id == tenant_id).order_by(RuntimeOperationAudit.created_at.desc()).limit(min(max(limit, 1), 1000)))).scalars().all())
+        """复用 Runtime 基础服务的 tenant-scoped Audit 查询，避免形成第二套查询规则。"""
+        return await self.metrics.audit_list(tenant_id, limit=limit)
 
     async def prometheus(self, tenant_id: UUID) -> str:
         """按规范指标名和唯一 tenant_id 标签导出 Prometheus 数据。"""
