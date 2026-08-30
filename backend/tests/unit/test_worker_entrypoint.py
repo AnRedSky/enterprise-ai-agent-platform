@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -18,18 +18,31 @@ from app.entrypoints import worker as worker_entrypoint
 
 @pytest.mark.asyncio
 async def test_run_worker_service_disposes_database_engine_after_worker_stops(monkeypatch) -> None:
-    """验证 Worker 主循环结束后释放 AsyncEngine。"""
-    worker = worker_entrypoint.WorkflowWorker()
-    worker.run_forever = AsyncMock(return_value=None)
-    worker.stop = lambda: None
+    """验证两个 Worker 主循环结束后释放 AsyncEngine。"""
+    workflow_worker = MagicMock()
+    workflow_worker.owner = "workflow-test-owner"
+    workflow_worker.run_forever = AsyncMock(return_value=None)
+    workflow_worker.stop = MagicMock()
+
+    webhook_worker = MagicMock()
+    webhook_worker.owner = "webhook-test-owner"
+    webhook_worker.concurrency = 4
+    webhook_worker.run_forever = AsyncMock(return_value=None)
+    webhook_worker.stop = MagicMock()
+
     dispose = AsyncMock(return_value=None)
 
-    monkeypatch.setattr(worker_entrypoint, "WorkflowWorker", lambda: worker)
+    monkeypatch.setattr(worker_entrypoint, "WorkflowWorker", lambda: workflow_worker)
+    monkeypatch.setattr(worker_entrypoint, "WebhookDeliveryWorker", lambda **_: webhook_worker)
+    monkeypatch.setattr(worker_entrypoint, "WebhookHTTPProvider", lambda: SimpleNamespace(send=AsyncMock()))
     monkeypatch.setattr(worker_entrypoint, "_dispose_database_engine", dispose)
 
     await worker_entrypoint.run_worker_service()
 
-    worker.run_forever.assert_awaited_once()
+    workflow_worker.run_forever.assert_awaited_once()
+    webhook_worker.run_forever.assert_awaited_once_with(0.2)
+    workflow_worker.stop.assert_called_once()
+    webhook_worker.stop.assert_called_once()
     dispose.assert_awaited_once()
 
 
