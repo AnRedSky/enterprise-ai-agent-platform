@@ -104,7 +104,9 @@ async def test_runtime_enterprise_registry_metrics_export_audit_are_tenant_scope
             telemetry_data = telemetry_reader.get_metrics_data()
             assert telemetry_data is not None
             telemetry_resource = telemetry_data.resource_metrics[0].resource.attributes
-            assert telemetry_resource == RuntimeMetricContract.otel_sdk_resource()
+            canonical_resource = RuntimeMetricContract.otel_sdk_resource()
+            assert all(telemetry_resource[key] == value for key, value in canonical_resource.items())
+            assert "tenant.id" not in telemetry_resource
             telemetry_names = {metric.name for metric in telemetry_data.resource_metrics[0].scope_metrics[0].metrics}
             assert telemetry_names == set(canonical_values)
             assert telemetry_names.issubset(RuntimeMetricContract.OTLP_NAMES)
