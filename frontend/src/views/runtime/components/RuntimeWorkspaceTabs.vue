@@ -1,12 +1,27 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import RuntimeExecutions from "./RuntimeExecutions.vue";
 import RuntimeObservabilityOverview from "./RuntimeObservabilityOverview.vue";
 
 const route = useRoute();
 const router = useRouter();
-const activeTab = ref(typeof route.query.execution_id === "string" || typeof route.query.status === "string" ? "executions" : "overview");
+
+const runtimeContextKeys = [
+  "execution_id",
+  "status",
+  "agent_id",
+  "workflow_id",
+  "trace_id",
+  "request_id",
+  "source",
+] as const;
+
+function hasRuntimeContext() {
+  return runtimeContextKeys.some((key) => typeof route.query[key] === "string" && route.query[key]);
+}
+
+const activeTab = ref(hasRuntimeContext() ? "executions" : "overview");
 const executionsMounted = ref(activeTab.value === "executions");
 
 const tabTitle = computed(() => activeTab.value === "overview" ? "运行健康" : activeTab.value === "executions" ? "Execution 运行中心" : "诊断路径");
@@ -16,11 +31,20 @@ function selectTab(value: string) {
   if (value === "executions") executionsMounted.value = true;
 }
 
+function syncRouteContext() {
+  if (hasRuntimeContext()) {
+    executionsMounted.value = true;
+    activeTab.value = "executions";
+  }
+}
+
 function openExecutions(status?: string) {
   executionsMounted.value = true;
   activeTab.value = "executions";
   void router.replace({ path: "/runtime", query: status ? { status } : undefined });
 }
+
+watch(() => route.query, syncRouteContext, { deep: true });
 </script>
 
 <template>
