@@ -4,7 +4,7 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**Operator Action Governance**
+- 当前任务：**II-01 Backend Operator Action Governance**
 - 最近完成：**Phase 2.10-I Runtime Notification Lifecycle / Provider / Metrics / Alert / Export / Operational Audit 全链路收口**
 
 开发严格基于远端 `main`，不创建功能分支。
@@ -54,15 +54,24 @@ Gate 只负责服务状态探测、测试上下文自动生成、验收执行与
 ## 4. Phase 2.10-II 当前任务
 
 ### II-01 Operator Action Governance
-状态：**下一开发切片，Contract 冻结与实现启动。**
+状态：**Backend Contract / Domain Adapter / API Contract 已实现，等待本地 Unit / Migration / Real API 验证。**
 
-目标：
-- Workflow Execution Run / Cancel / Retry / Resume 统一操作治理；
-- Trigger Enable / Disable / Delete / Invoke 统一操作治理；
-- 后端统一返回操作可用性、权限与状态校验结果；
-- 高风险操作具备确认、幂等与 Operational Audit；
-- 所有操作保留真实 resource ID，并可回到 Runtime / Audit 诊断路径；
-- 前端不得复制状态机、权限判断或业务计算。
+已实现：
+- Workflow Execution Run / Cancel / Retry / Resume 统一 Operator Action API；
+- Trigger Enable / Disable / Delete / Invoke 统一 Operator Action API；
+- 后端统一返回操作可用性、状态与治理属性；
+- 高风险操作统一要求 `confirm=true`；
+- Retry / Trigger Invoke 要求 `Idempotency-Key`；
+- 新增 tenant-scoped Operator Action 幂等持久化事实；
+- Operator Action 复用现有 `WorkflowExecutionService` / `WorkflowTriggerService`，不复制生命周期状态机；
+- Operator Action 结果写入现有 `AuditLog`，保留 actor、tenant、resource、action、outcome 与 Execution 关联；
+- 已新增 Unit / API Contract 测试与独立 Unit Gate；
+- Unit Gate 不自动启动或停止任何服务，也不要求人工填写测试数据。
+
+尚未宣称完成：
+- 本地 Alembic `upgrade head` 尚未由本轮开发反馈确认；
+- 本地 Unit / API Contract 尚未由本轮开发反馈确认；
+- Real API / Browser Acceptance 尚未执行。
 
 正式阶段文档：`docs/02-phases/PHASE_2_10_II.md`
 
@@ -70,19 +79,19 @@ Gate 只负责服务状态探测、测试上下文自动生成、验收执行与
 
 LT-01 Enterprise Integration / Event Infrastructure：**核心 Event / Delivery / Webhook / Runtime Integration 已完成当前主线，Phase 2.10-I 已完成运维收口，后续转为回归维护。**
 
-LT-03 Enterprise Operations Console：**进入 Phase 2.10-II 开发，优先完成 Operator Action Governance，再推进 Global Runtime Operations、Worker/Scheduler Diagnostics、Audit/Trace Correlation 与 Controlled Batch Operations。**
+LT-03 Enterprise Operations Console：**进入 Phase 2.10-II 开发，当前正在完成 II-01 Operator Action Governance，随后推进 Global Runtime Operations、Worker/Scheduler Diagnostics、Audit/Trace Correlation 与 Controlled Batch Operations。**
 
 LT-02 / LT-04 / LT-05 / LT-06 / LT-07 / LT-08 / LT-09 / LT-10：继续保持待立项或候选状态；不得在没有正式 Phase、Contract、代码和验收证据前提前标记为开发中。
 
 ## 6. 下一执行顺序
 
 ```text
-① Phase 2.10-II Operator Action Contract
-② Backend Domain / API Contract
-③ Database Migration（如 Contract 需要持久化结构）
-④ Unit / Integration / Real API
+① 本地 Alembic upgrade head
+② II-01 Unit / API Contract
+③ II-01 Real API tenant boundary / confirmation / idempotency / audit
+④ Backend Regression
 ⑤ Frontend API Types / UI
-⑥ Backend + Frontend Regression
+⑥ Frontend Regression / Build
 ⑦ Browser E2E（范围需要时）
 ⑧ 更新 Phase / Acceptance / Long-term Status
 ⑨ 原子提交 main
