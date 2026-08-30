@@ -9,6 +9,60 @@ export type RuntimeOperationsOverview = {
   slo: { target_percent: number; delivery_success_percent: number; error_budget_percent: number; p95_delivery_latency_ms: number | null };
 };
 
+export type RuntimeGlobalFilters = {
+  workflow_id: string | null;
+  agent_id: string | null;
+  trigger_id: string | null;
+  execution_id: string | null;
+  execution_status: string | null;
+};
+
+export type RuntimeGlobalExecution = {
+  id: string;
+  workflow_id: string;
+  workflow_name: string;
+  status: string;
+  current_node_id: string | null;
+  worker_owner: string | null;
+  worker_attempt: number | null;
+  worker_lease_expires_at: string | null;
+  error_code: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string;
+};
+
+export type RuntimeGlobalPosture = {
+  window_hours: number;
+  since: string;
+  generated_at: string;
+  filters: RuntimeGlobalFilters;
+  executions: {
+    total: number;
+    status_counts: Record<string, number>;
+    active_count: number;
+    recovery_count: number;
+    items: RuntimeGlobalExecution[];
+  };
+  workflows: { total: number; status_counts: Record<string, number> };
+  triggers: { total: number; status_counts: Record<string, number>; scheduled_enabled: number };
+  worker: {
+    liveness: "unknown" | string;
+    liveness_reason_code: string;
+    running_frontiers: number;
+    pending_frontiers: number;
+    leased_frontiers: number;
+    expired_leases: number;
+    active_worker_owners: number;
+  };
+  scheduler: {
+    liveness: "unknown" | string;
+    liveness_reason_code: string;
+    enabled_scheduled_triggers: number;
+    durable_frontier_backlog: number;
+  };
+};
+
 export type RuntimeProvider = {
   id: string; name: string; provider_type: string; enabled: boolean;
   config?: Record<string, unknown>; status?: string; last_checked_at?: string;
@@ -30,8 +84,19 @@ export type RuntimeDeadLetter = Record<string, unknown> & { id: string; integrat
 
 type ListResponse<T> = { items: T[] };
 
+type GlobalRuntimeQuery = {
+  window_hours?: number;
+  workflow_id?: string;
+  agent_id?: string;
+  trigger_id?: string;
+  execution_id?: string;
+  execution_status?: string;
+  limit?: number;
+};
+
 export const runtimeOperationsApi = {
   overview(windowHours: number) { return request.get<RuntimeOperationsOverview>("/runtime/operations/overview", { params: { window_hours: windowHours } }); },
+  global(query: GlobalRuntimeQuery = {}) { return request.get<RuntimeGlobalPosture>("/runtime/global", { params: query }); },
   dimensions(windowHours: number) { return request.get<Record<string, unknown>>("/runtime/operations/dimensions", { params: { window_hours: windowHours } }); },
   alerts(windowHours: number) { return request.get<ListResponse<RuntimeAlert>>("/runtime/operations/alerts", { params: { window_hours: windowHours } }); },
   providers() { return request.get<ListResponse<RuntimeProvider>>("/runtime/operations/providers"); },
