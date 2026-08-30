@@ -81,7 +81,10 @@ def test_runtime_telemetry_keeps_multiple_tenants_isolated() -> None:
         (str(tenant_a), 2.0),
         (str(tenant_b), 5.0),
     }
-    assert all(point.attributes.keys() == RuntimeMetricContract.OTEL_METRIC_ATTRIBUTES for point in points)
+    assert all(
+        tuple(point.attributes.keys()) == RuntimeMetricContract.OTEL_METRIC_ATTRIBUTES
+        for point in points
+    )
     telemetry.shutdown()
 
 
