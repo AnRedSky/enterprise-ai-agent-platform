@@ -24,7 +24,7 @@ uv run pytest -q tests/unit/test_operator_action_governance.py tests/api_contrac
 if ($LASTEXITCODE -ne 0) { throw "Operator Action unit/contract tests failed." }
 
 Write-Host "[3/5] Database availability probe"
-uv run python -c "import asyncio; from app.infrastructure.db.session import SessionLocal; async def main(): async with SessionLocal() as db: await db.execute(__import__('sqlalchemy').text('SELECT 1')); print('[PASS] PostgreSQL is available.'); asyncio.run(main())"
+uv run alembic current
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[NOT EXECUTED] PostgreSQL is not available; Real Acceptance was not executed."
     Write-Host "[INFO] No service is started automatically and no manual test data is required."
