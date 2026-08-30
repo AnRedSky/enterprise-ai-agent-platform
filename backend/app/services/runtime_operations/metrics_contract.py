@@ -27,6 +27,22 @@ class RuntimeMetricContract:
     SERVICE_NAME = "enterprise-ai-agent-platform.runtime"
     SERVICE_VERSION = "0.1.0"
 
+    @classmethod
+    def otel_resource(cls, tenant_id: UUID) -> dict[str, str]:
+        """构造唯一规范的 OpenTelemetry Resource 属性集合。
+
+        Args:
+            tenant_id: 当前租户标识，作为 Resource 的 tenant.id 属性写入。
+
+        Returns:
+            包含 service.name、service.version 和 tenant.id 的 Resource 属性。
+        """
+        return {
+            "service.name": cls.SERVICE_NAME,
+            "service.version": cls.SERVICE_VERSION,
+            "tenant.id": str(tenant_id),
+        }
+
     @staticmethod
     def _number(value: float | int | None) -> float:
         """校验并规范化导出数值。
@@ -119,14 +135,14 @@ class RuntimeMetricContract:
             }
             for name, value in cls._canonical_items(values)
         ]
+        resource = cls.otel_resource(tenant_id)
         return {
             "resourceMetrics": [
                 {
                     "resource": {
                         "attributes": [
-                            {"key": "service.name", "value": {"stringValue": cls.SERVICE_NAME}},
-                            {"key": "service.version", "value": {"stringValue": cls.SERVICE_VERSION}},
-                            {"key": "tenant.id", "value": {"stringValue": str(tenant_id)}},
+                            {"key": key, "value": {"stringValue": value}}
+                            for key, value in resource.items()
                         ]
                     },
                     "scopeMetrics": [

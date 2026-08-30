@@ -79,6 +79,14 @@ $schedulerReady = Test-SchedulerAvailable
 $workerReady = Test-WorkerAvailable
 if (-not ($schedulerReady -and $workerReady)) {
     Write-Host "[NOT EXECUTED] Runtime Notification Lifecycle Real Acceptance was not executed because required services were not already running."
+    Write-Host "[INFO] Standard manual prerequisites (run outside this gate; no test data entry is required):"
+    if (-not $schedulerReady) {
+        Write-Host "       Scheduler: cd backend; uv run python scripts/dev/run_scheduler.py"
+    }
+    if (-not $workerReady) {
+        Write-Host "       Worker:    cd backend; uv run python scripts/dev/run_worker.py"
+    }
+    Write-Host "[INFO] API/PostgreSQL/Redis must likewise already be available according to the local development environment."
     Write-Host "[INFO] This gate never starts or stops services and never requires manual test data entry."
     exit 0
 }
