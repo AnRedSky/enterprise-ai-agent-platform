@@ -22,7 +22,7 @@ const activeIndex = computed(() => { const status = selectedWorkflow.value?.stat
 async function load() {
   loading.value = true; error.value = false;
   try {
-    workflows.value = await workflowApi.list();
+    workflows.value = (await workflowApi.list()).data;
     const routeWorkflowId = typeof route.query.workflow_id === "string" ? route.query.workflow_id : "";
     selectedWorkflowId.value = routeWorkflowId && workflows.value.some((item) => item.id === routeWorkflowId) ? routeWorkflowId : workflows.value[0]?.id || "";
     await loadExecutions();
@@ -33,7 +33,7 @@ async function load() {
 async function loadExecutions() {
   if (!selectedWorkflowId.value) { executions.value = []; return; }
   try {
-    executions.value = (await workflowApi.listExecutions(selectedWorkflowId.value)).sort((a, b) => b.created_at.localeCompare(a.created_at));
+    executions.value = (await workflowApi.listExecutions(selectedWorkflowId.value)).data.sort((a, b) => b.created_at.localeCompare(a.created_at));
   } catch (err) { console.warn("工作流运行状态加载失败", err); executions.value = []; }
 }
 
