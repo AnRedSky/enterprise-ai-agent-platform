@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -10,7 +11,9 @@ from app.services.workflow import WorkflowExecutionService
 
 @pytest.mark.asyncio
 async def test_cancel_allows_pending_and_running_only():
-    db = AsyncMock(); db.add = Mock()
+    db = AsyncMock()
+    db.add = Mock()
+    db.begin_nested = Mock(return_value=nullcontext())
     service = WorkflowExecutionService(db)
     actor_id = uuid4()
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="pending")
