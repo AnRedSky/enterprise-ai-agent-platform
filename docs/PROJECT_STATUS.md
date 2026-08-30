@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
 - 当前任务：**2.10-I Runtime Notification Lifecycle / Provider / Metrics / Alert / Export / Operational Audit**
-- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization、tenant/consumer-group Claim isolation、Claim competition 与 Runtime Acceptance Gate 收口**
+- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization、tenant/consumer-group Claim isolation、Claim competition、Canonical Metrics Export Contract 与 Runtime Acceptance Gate 收口**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -27,7 +27,7 @@
 ## 3. Phase 2.10-I 当前实现
 
 ### Provider / Metrics / Alert / Export / Audit 基础
-状态：**基础切片与 Runtime Lifecycle 已实现，继续进入观测出口与全链路 Acceptance 收口**。
+状态：**基础切片与 Runtime Lifecycle 已实现，正在收口企业观测出口与统一 Acceptance。**
 
 已实现：
 - `runtime_metric_samples` 时间序列指标持久化；
@@ -64,7 +64,7 @@
 - 根因与修复记录：`docs/04-errors/2026-08-30-workflow-governance-asyncsession-context-mock.md`。
 
 ### Runtime Notification Lifecycle Acceptance
-状态：**已通过本地实际 Real Gate**。
+状态：**已通过本地实际 Real Gate。**
 
 真实验收脚本：
 `backend/scripts/test/phase-2.10/03_alert_notification_lifecycle_real_gate.ps1`
@@ -103,19 +103,19 @@ Gate 只负责服务状态探测、测试上下文自动生成、验收执行与
 
 ```text
 uv run pytest -q
-940 passed, 3 skipped, 63 deselected
+944 passed, 3 skipped, 63 deselected
 ```
 
 Runtime targeted unit：
 
 ```text
-15 passed
+23 passed
 ```
 
 Runtime Notification Acceptance：
 
 ```text
-1 passed
+2 passed
 ```
 
 Phase 2.10-I Real Gate：
@@ -124,15 +124,16 @@ Phase 2.10-I Real Gate：
 Runtime Notification Lifecycle Real Gate completed.
 ```
 
-当前已知的全量回归唯一警告已定位为 Scheduler 生命周期测试未 Mock 新增 Runtime Scheduler，并已在本次提交修复；需要开发者本地再次执行 `uv run pytest -q` 确认无警告。
+当前反馈中的 Scheduler `RuntimeWarning` 已通过 `uv run pytest -q -W error::RuntimeWarning tests/unit/test_service_entrypoints.py` 验证为 4 passed，随后全量回归 944 passed 且无 warnings。
 
 ## 5. 2.10-I 下一切片
 
-1. 接入 OpenTelemetry SDK 标准 Meter / Resource，并保持 `RuntimeMetricContract` 的现有业务指标名与 tenant boundary；
-2. 增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
-3. 完成 Provider health / registry / metrics series / alert scheduler / notification routing 的统一 Real PostgreSQL Acceptance；
-4. 完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
-5. 完成 2.10-I Runtime Acceptance 全链路 Gate。
+1. 建立 Provider Registry / Alert Rule / Metrics Snapshot / Series / Prometheus / OTLP / Operational Audit 的统一真实 PostgreSQL Acceptance；
+2. 将统一 Real Gate 纳入 canonical Runtime Metric Contract 回归，并持续验证 tenant boundary；
+3. 接入 OpenTelemetry SDK 标准 Meter / Resource，在不改变 `RuntimeMetricContract` 业务指标名、标签和 tenant boundary 的前提下建立 SDK 观测层；
+4. 增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
+5. 完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
+6. 完成 2.10-I Runtime Acceptance 全链路 Gate。
 
 ## 6. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`。
