@@ -53,6 +53,7 @@ Write-Host "[2/8] Runtime unit regression"
     tests/unit/test_integration_publisher.py `
     tests/unit/test_alert_lifecycle_tenant_scope.py `
     tests/unit/test_runtime_metric_contract.py `
+    tests/unit/test_runtime_telemetry.py `
     --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Runtime unit regression failed." }
 
@@ -64,7 +65,9 @@ Write-Host "[3/8] Targeted migration/runtime test collection"
     tests/unit/test_integration_publisher.py `
     tests/unit/test_alert_lifecycle_tenant_scope.py `
     tests/unit/test_runtime_metric_contract.py `
+    tests/unit/test_runtime_telemetry.py `
     tests/api_real/test_alert_notification_runtime_acceptance.py `
+    tests/api_real/test_runtime_notification_fallback_exhausted_acceptance.py `
     tests/api_real/test_webhook_delivery_claim_acceptance.py `
     tests/api_real/test_runtime_operations_acceptance.py `
     tests/api_real/test_runtime_enterprise_acceptance.py `
@@ -83,6 +86,7 @@ if (-not ($schedulerReady -and $workerReady)) {
 Write-Host "[5/8] Alert -> Notification -> Worker Runtime Acceptance"
 & uv run pytest -q -m real_api `
     tests/api_real/test_alert_notification_runtime_acceptance.py `
+    tests/api_real/test_runtime_notification_fallback_exhausted_acceptance.py `
     tests/api_real/test_webhook_delivery_claim_acceptance.py `
     tests/api_real/test_runtime_operations_acceptance.py `
     tests/api_real/test_runtime_enterprise_acceptance.py `
@@ -94,10 +98,10 @@ Write-Host "[6/8] Migration graph regression"
 if ($LASTEXITCODE -ne 0) { throw "Migration graph regression failed." }
 
 Write-Host "[7/8] Runtime metric export regression"
-& uv run pytest -q tests/unit/test_runtime_metric_contract.py --tb=short
+& uv run pytest -q tests/unit/test_runtime_metric_contract.py tests/unit/test_runtime_telemetry.py --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Runtime metric export regression failed." }
 
 Write-Host "[8/8] Runtime lifecycle handoff"
-Write-Host "Verified lifecycle: Alert Evaluation -> Firing/Recovery -> Policy -> Group/Dedup/Cooldown -> Provider Routing -> Worker -> Claim Competition -> Outcome -> Fallback -> SLO/Metrics -> Prometheus/OTLP Export -> Audit."
+Write-Host "Verified lifecycle: Alert Evaluation -> Firing/Recovery -> Policy -> Group/Dedup/Cooldown -> Provider Routing -> Worker -> Claim Competition -> Outcome -> Retry/Dead Letter -> Fallback/Fallback Exhaustion -> SLO/Metrics -> Prometheus/OTLP Export -> Audit."
 Write-Host "[PASS] Phase 2.10-I Runtime Notification Lifecycle Real Gate completed."
 Write-Host "[INFO] This gate never starts or stops services and automatically generates all test identities and business data."
