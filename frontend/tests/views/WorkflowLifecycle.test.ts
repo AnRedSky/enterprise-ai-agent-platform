@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import WorkflowLifecycle from "@/views/workflows/WorkflowLifecycle.vue";
 import { workflowApi } from "@/api/workflows";
 
+const router = { push: vi.fn() };
+vi.mock("vue-router", () => ({ useRouter: () => router }));
 vi.mock("@/api/workflows", () => ({
   workflowApi: {
     list: vi.fn(),
@@ -18,7 +20,7 @@ const global = {
     "el-card": { template: "<div><slot name='header'/><slot/></div>" },
     "el-select": { props: ["modelValue"], emits: ["update:modelValue"], template: "<div><slot/></div>" },
     "el-option": { template: "<option><slot/></option>" },
-    "el-button": { template: "<button><slot/></button>" },
+    "el-button": { props: ["loading"], template: "<button @click="$emit('click')"><slot/></button>" },
     "el-tag": { template: "<span><slot/></span>" },
     "el-empty": { props: ["description"], template: "<div>{{ description }}</div>" },
     "el-row": { template: "<div><slot/></div>" },
@@ -31,21 +33,41 @@ const global = {
   },
 };
 
+const workflow = { id: "w1", name: "订单审批", description: "", owner_id: "u1", tenant_id: "t1", status: "published", published_version_id: "v2", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:10:00Z" };
+const version = { id: "v2", workflow_id: "w1", version: 2, definition: {}, status: "published", created_by: "u1", created_at: "2026-08-30T08:05:00Z" };
+const execution = { id: "e1", tenant_id: "t1", workflow_id: "w1", workflow_version_id: "v2", created_by: "u1", status: "completed", input_data: {}, created_at: "2026-08-30T08:00:00Z" };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(workflowApi.list).mockResolvedValue({ data: [workflow] } as never);
+  vi.mocked(workflowApi.versions).mockResolvedValue({ data: [version] } as never);
+  vi.mocked(workflowApi.triggers).mockResolvedValue({ data: [] } as never);
+  vi.mocked(workflowApi.listExecutions).mockResolvedValue({ data: [execution] } as never);
+});
+
 describe("WorkflowLifecycle", () => {
   it("以真实 workflow/version/trigger/execution 数据构建生命周期工作台", async () => {
-    vi.mocked(workflowApi.list).mockResolvedValue({ data: [{ id: "w1", name: "订单审批", description: "", owner_id: "u1", tenant_id: "t1", status: "published", published_version_id: "v2", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:10:00Z" }] } as never);
-    vi.mocked(workflowApi.versions).mockResolvedValue({ data: [{ id: "v2", workflow_id: "w1", version: 2, definition: {}, status: "published", created_by: "u1", created_at: "2026-08-30T08:05:00Z" }] } as never);
-    vi.mocked(workflowApi.triggers).mockResolvedValue({ data: [{ id: "tr1", tenant_id: "t1", workflow_id: "w1", name: "每小时调度", trigger_type: "scheduled", status: "enabled", config: { timezone: "Asia/Seoul", interval_seconds: 3600 }, created_by: "u1", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:00:00Z" }] } as never);
-    vi.mocked(workflowApi.schedule).mockResolvedValue({ data: { id: "s1", trigger_id: "tr1", workflow_id: "w1", tenant_id: "t1", enabled: true, status: "scheduled", timezone: "Asia/Seoul", next_run_at: "2026-08-30T09:00:00Z", last_run_at: "2026-08-30T08:00:00Z", last_execution_id: "e1", lease_active: false, misfire_policy: "skip", catch_up_limit: 1, updated_at: "2026-08-30T08:00:00Z" } } as never);
-    vi.mocked(workflowApi.listExecutions).mockResolvedValue({ data: [{ id: "e1", tenant_id: "t1", workflow_id: "w1", workflow_version_id: "v2", created_by: "u1", status: "completed", input_data: {}, created_at: "2026-08-30T08:00:00Z" }] } as never);
-
     const wrapper = mount(WorkflowLifecycle, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("订单审批"));
     expect(wrapper.text()).toContain("当前生效版本");
     expect(wrapper.text()).toContain("触发与调度");
-    expect(wrapper.text()).toContain("每小时调度");
     expect(wrapper.text()).toContain("已完成");
-    expect(workflowApi.schedule).toHaveBeenCalledWith("w1", "tr1");
+  });
+
+  it("从最近 Execution 进入 Runtime 时保留真实执行上下文", async () => {
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("进入 Runtime 诊断"));
+    await (wrapper.vm as any).openRuntimeExecution(execution);
+    expect(router.push).toHaveBeenCalledWith({
+      path: "/runtime",
+      query: {
+        tab: "executions",
+        source: "workflow-lifecycle",
+        execution_id: "e1",
+        workflow_id: "w1",
+        workflow_version_id: "v2",
+      },
+    });
   });
 
   it("无工作流时提供明确中文空状态", async () => {

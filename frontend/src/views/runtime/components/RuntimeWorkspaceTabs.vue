@@ -12,6 +12,7 @@ const runtimeContextKeys = [
   "status",
   "agent_id",
   "workflow_id",
+  "workflow_version_id",
   "trace_id",
   "request_id",
   "source",

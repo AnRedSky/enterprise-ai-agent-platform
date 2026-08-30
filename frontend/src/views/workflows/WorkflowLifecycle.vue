@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowTrigger, type SchedulerStatus, type WorkflowVersion } from "@/api/workflows";
 
+const router = useRouter();
 const workflows = ref<Workflow[]>([]);
 const versions = ref<WorkflowVersion[]>([]);
 const triggers = ref<WorkflowTrigger[]>([]);
@@ -76,6 +78,32 @@ async function selectWorkflow(id: string) {
   await loadDetails(id);
 }
 
+function openRuntimeExecution(execution: WorkflowExecution) {
+  void router.push({
+    path: "/runtime",
+    query: {
+      tab: "executions",
+      source: "workflow-lifecycle",
+      execution_id: execution.id,
+      workflow_id: execution.workflow_id,
+      workflow_version_id: execution.workflow_version_id,
+    },
+  });
+}
+
+function openScheduledExecution(executionId?: string | null) {
+  if (!executionId) return;
+  void router.push({
+    path: "/runtime",
+    query: {
+      tab: "executions",
+      source: "workflow-lifecycle",
+      execution_id: executionId,
+      ...(selected.value ? { workflow_id: selected.value.id } : {}),
+    },
+  });
+}
+
 onMounted(load);
 </script>
 
@@ -131,6 +159,7 @@ onMounted(load);
               <div class="muted">创建于 {{ formatTime(latestExecution.created_at) }}</div>
               <div v-if="latestExecution.current_node_id" class="muted">当前节点：{{ latestExecution.current_node_id }}</div>
               <div v-if="latestExecution.error_code" class="error-code">错误代码：{{ latestExecution.error_code }}</div>
+              <div class="execution-actions"><el-button size="small" type="primary" plain @click="openRuntimeExecution(latestExecution)">进入 Runtime 诊断</el-button></div>
             </template>
             <el-empty v-else description="暂无运行记录" />
           </el-card>
@@ -145,7 +174,7 @@ onMounted(load);
           <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ displayStatus(row.status) }}</el-tag></template></el-table-column>
           <el-table-column label="下次运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.next_run_at) : '-' }}</template></el-table-column>
           <el-table-column label="最近运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.last_run_at) : '-' }}</template></el-table-column>
-          <el-table-column label="最近 Execution" min-width="180"><template #default="{ row }">{{ schedules[row.id]?.last_execution_id || '-' }}</template></el-table-column>
+          <el-table-column label="最近 Execution" min-width="220"><template #default="{ row }"><el-button v-if="schedules[row.id]?.last_execution_id" link type="primary" @click="openScheduledExecution(schedules[row.id]?.last_execution_id)">{{ schedules[row.id]?.last_execution_id }}</el-button><span v-else>-</span></template></el-table-column>
         </el-table>
         <el-empty v-else description="暂无触发器，发布工作流后可配置手动、定时或 Webhook 入口。" />
       </el-card>
@@ -156,5 +185,5 @@ onMounted(load);
 </template>
 
 <style scoped>
-.lifecycle-page{padding:24px 32px;background:#f7f8fa;min-height:100%}.page-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:16px}.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;color:#667085}.page-header h1{margin:5px 0;font-size:24px;color:#101828}.page-header p{margin:0;color:#667085;font-size:13px}.workflow-selector{display:flex;align-items:center;gap:12px;margin-bottom:16px}.workflow-selector .el-select{width:320px}.identifier,.muted{font-size:12px;color:#667085}.lifecycle-card{display:flex;align-items:center;gap:4px;padding:18px;margin-bottom:16px;background:#fff;border:1px solid #eaecf0;border-radius:10px}.step{position:relative;display:flex;align-items:center;gap:7px;flex:1;color:#98a2b3;font-size:12px}.step strong{color:#667085}.step.done strong,.step.active strong{color:#1d2939}.step-index{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;border:1px solid #d0d5dd;font-size:11px}.step.done .step-index{background:#ecfdf3;border-color:#abefc6;color:#067647}.step.active .step-index{border-color:#84adff;color:#175cd3}.step i{margin-left:auto;font-style:normal;color:#98a2b3}.card-header{display:flex;justify-content:space-between;align-items:center}.card-header span{font-size:12px;color:#667085}.execution-line{display:flex;align-items:center;gap:10px;margin-bottom:8px}.execution-line strong{font-size:12px;word-break:break-all}.error-code{margin-top:10px;font-size:12px;color:#b42318}.trigger-card{margin-top:16px}.lifecycle-page>.el-alert{margin-top:16px}@media(max-width:900px){.lifecycle-page{padding:16px}.page-header{flex-direction:column}.workflow-selector{flex-wrap:wrap}.workflow-selector .el-select{width:100%}.lifecycle-card{display:grid;grid-template-columns:1fr 1fr}.step i{display:none}}
+.lifecycle-page{padding:24px 32px;background:#f7f8fa;min-height:100%}.page-header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:16px}.eyebrow{font-size:11px;font-weight:700;letter-spacing:.08em;color:#667085}.page-header h1{margin:5px 0;font-size:24px;color:#101828}.page-header p{margin:0;color:#667085;font-size:13px}.workflow-selector{display:flex;align-items:center;gap:12px;margin-bottom:16px}.workflow-selector .el-select{width:320px}.identifier,.muted{font-size:12px;color:#667085}.lifecycle-card{display:flex;align-items:center;gap:4px;padding:18px;margin-bottom:16px;background:#fff;border:1px solid #eaecf0;border-radius:10px}.step{position:relative;display:flex;align-items:center;gap:7px;flex:1;color:#98a2b3;font-size:12px}.step strong{color:#667085}.step.done strong,.step.active strong{color:#1d2939}.step-index{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;border:1px solid #d0d5dd;font-size:11px}.step.done .step-index{background:#ecfdf3;border-color:#abefc6;color:#067647}.step.active .step-index{border-color:#84adff;color:#175cd3}.step i{margin-left:auto;font-style:normal;color:#98a2b3}.card-header{display:flex;justify-content:space-between;align-items:center}.card-header span{font-size:12px;color:#667085}.execution-line{display:flex;align-items:center;gap:10px;margin-bottom:8px}.execution-line strong{font-size:12px;word-break:break-all}.execution-actions{display:flex;justify-content:flex-end;margin-top:12px}.error-code{margin-top:10px;font-size:12px;color:#b42318}.trigger-card{margin-top:16px}.lifecycle-page>.el-alert{margin-top:16px}@media(max-width:900px){.lifecycle-page{padding:16px}.page-header{flex-direction:column}.workflow-selector{flex-wrap:wrap}.workflow-selector .el-select{width:100%}.lifecycle-card{display:grid;grid-template-columns:1fr 1fr}.step i{display:none}.execution-actions{justify-content:flex-start}}
 </style>
