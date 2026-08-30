@@ -31,6 +31,7 @@ pytestmark = pytest.mark.real_api
 @pytest.mark.asyncio
 async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_scoped() -> None:
     suffix = uuid.uuid4().hex[:12]
+    consumer_group = f"phase-2.10-i-{suffix}"
     tenant_a = uuid.uuid4()
     tenant_b = uuid.uuid4()
     rule_id = uuid.uuid4()
@@ -81,7 +82,9 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             )
             db.add(sample)
             await db.flush()
-            lifecycle = AlertLifecycleService(db, actor=f"acceptance-{suffix}")
+            lifecycle = AlertLifecycleService(
+                db, actor=f"acceptance-{suffix}", consumer_group=consumer_group,
+            )
             instance = await lifecycle.evaluate_rule(rule, sample, now=sample.recorded_at)
             await db.commit()
 
@@ -94,6 +97,7 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             )).scalars().all())
             assert len(deliveries) == 1
             assert len(notifications) == 1
+            assert deliveries[0].consumer_group == consumer_group
             assert notifications[0].provider == "webhook_http"
             assert notifications[0].status == "planned"
             assert notifications[0].alert_instance_id == instance.id
@@ -108,7 +112,8 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             return 200
 
         first = WebhookDeliveryWorker(
-            owner=f"acceptance-primary-{suffix}", sender=sender, max_attempts=1, tenant_id=tenant_a,
+            owner=f"acceptance-primary-{suffix}", sender=sender, max_attempts=1,
+            tenant_id=tenant_a, consumer_group=consumer_group,
         )
         assert await first.deliver_once() is True
 
@@ -116,6 +121,7 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             first_delivery = await db.scalar(select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_a))
             assert first_delivery is not None
             assert first_delivery.status == "dead_letter"
+            assert first_delivery.consumer_group == consumer_group
             first_notification = await db.scalar(select(RuntimeNotificationDelivery).where(
                 RuntimeNotificationDelivery.webhook_delivery_id == first_delivery.id,
             ))
@@ -128,9 +134,13 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             assert fallback is not None
             assert fallback.provider == "webhook_http_fallback"
             assert fallback.status == "planned"
+            fallback_delivery = await db.get(WebhookDelivery, fallback.webhook_delivery_id)
+            assert fallback_delivery is not None
+            assert fallback_delivery.consumer_group == consumer_group
 
         second = WebhookDeliveryWorker(
-            owner=f"acceptance-fallback-{suffix}", sender=sender, max_attempts=1, tenant_id=tenant_a,
+            owner=f"acceptance-fallback-{suffix}", sender=sender, max_attempts=1,
+            tenant_id=tenant_a, consumer_group=consumer_group,
         )
         assert await second.deliver_once() is True
 
@@ -160,7 +170,7 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
                         "notification.fallback.routed",
                     ]),
                 )
-            )).scalars().all())
+            )).scalars().all()
             assert {item.action for item in audits} >= {
                 "notification.delivery.dead_letter", "notification.delivery.delivered", "notification.fallback.routed",
             }
