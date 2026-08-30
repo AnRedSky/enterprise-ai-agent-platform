@@ -26,10 +26,11 @@ class WebhookDelivery(Base):
         ),
         Index(
             "ix_webhook_delivery_claimable",
-            "tenant_id", "status", "next_attempt_at", "lease_expires_at",
+            "tenant_id", "consumer_group", "status", "next_attempt_at", "lease_expires_at",
         ),
         Index("ix_webhook_delivery_event", "tenant_id", "integration_event_id"),
         Index("ix_webhook_delivery_destination", "tenant_id", "destination_id", "status"),
+        Index("ix_webhook_delivery_consumer_group", "tenant_id", "consumer_group", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -45,6 +46,7 @@ class WebhookDelivery(Base):
     integration_event_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("integration_events.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    consumer_group: Mapped[str] = mapped_column(String(128), nullable=False, default="default", index=True)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
