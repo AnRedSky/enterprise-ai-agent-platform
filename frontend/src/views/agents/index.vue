@@ -1,4 +1,5 @@
 <script setup lang="ts">
-import AgentWorkbench from "./components/AgentWorkbench.vue";
+import AgentWorkbench from './components/AgentWorkbench.vue';
+import AgentDebugExperience from './components/AgentDebugExperience.vue';
 </script>
-<template><AgentWorkbench /></template>
+<template><AgentDebugExperience /><AgentWorkbench /></template>
