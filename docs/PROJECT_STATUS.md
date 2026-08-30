@@ -48,12 +48,21 @@
 - Runtime Operational Audit 覆盖 Provider、Alert、Notification Delivery 生命周期。
 
 ### Worker 生命周期测试修复
-状态：**已修复，等待本地实际回归执行**。
+状态：**已修复，等待本地回归结果**。
 
 - 修复 `tests/unit/test_worker_entrypoint.py` 对 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约缺失的 Mock；
-- 测试替身现在显式保留 `DEFAULT_CONCURRENCY=4`，并验证 Worker 构造参数；
+- 测试显式保留生产构造器需要的类级默认值，并验证 sender / concurrency / lease / max_attempts 参数；
 - 根因与修复记录：`docs/04-errors/2026-08-30-worker-entrypoint-test-mock-class-attribute.md`；
 - 不修改生产 Worker 默认并发行为，不增加兼容层。
+
+### Workflow Governance 单元测试回归
+状态：**已修复，等待本地回归结果**。
+
+- Backend default regression 在 724 个测试通过后发现 `test_cancel_allows_pending_and_running_only` 的 AsyncSession 事务上下文 Mock 契约缺失；
+- 修复 `db.begin_nested()` 的测试替身，使其保持 `AsyncSession.begin_nested()` 的异步上下文管理器调用协议；
+- 生产 `RuntimeIntegrationEventPublisher` 不修改；
+- 根因与修复记录：`docs/04-errors/2026-08-30-workflow-governance-asyncsession-context-mock.md`；
+- 本次修复与错误记录作为同一原子提交进入 `main`。
 
 ### Runtime Notification Lifecycle Acceptance
 状态：**Gate 已实现，等待本地实际执行结果收口**。
@@ -89,7 +98,7 @@ Gate 只负责服务状态探测、测试上下文自动生成、验收执行与
 
 ## 4. 2.10-I 下一步
 
-1. 本地执行 Worker 生命周期单元回归与 Backend default regression；
+1. 本地执行 Worker 生命周期单元回归、Workflow Governance 单元回归与 Backend default regression；
 2. 执行 Runtime Notification Lifecycle Real Gate，验证真实 PostgreSQL / Scheduler / Worker 闭环；
 3. 完成 fallback exhausted → Notification DLQ 的真实失败链路验收；
 4. 完成 Alert → Notification → Provider → Destination Metrics 的维度聚合核验；
