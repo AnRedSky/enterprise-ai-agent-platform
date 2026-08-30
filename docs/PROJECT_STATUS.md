@@ -4,7 +4,7 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**II-02 Global Runtime Operations Backend**
+- 当前任务：**II-02 Global Runtime Operations**
 - 最近完成：**II-01 Backend Operator Action Governance** 与 Phase 2.10-I Runtime Notification Lifecycle 全链路收口。
 
 开发严格基于远端 `main`，不创建功能分支。
@@ -56,7 +56,7 @@ II-01 的核心约束已经落地：
 ## 5. Phase 2.10-II 当前任务
 
 ### II-02 Global Runtime Operations
-状态：**Backend Domain / API Contract 已开始实现，等待本地 Unit / Real API 验证。**
+状态：**Backend Domain / API Contract 与 Frontend API Types / Operations UI 已实现，等待本地 Frontend / Backend 验证。**
 
 已实现：
 - `GlobalRuntimeOperationsService`：只读聚合现有 Workflow / Execution / Frontier / Trigger Durable facts；
@@ -67,13 +67,17 @@ II-01 的核心约束已经落地：
 - `workflow_id` / `agent_id` / `trigger_id` / `execution_id` / `execution_status` 关联查询 Contract；
 - `/api/v1/runtime/global` read-only API；
 - Worker / Scheduler process liveness 在没有 durable heartbeat fact 时明确返回 `unknown + NO_DURABLE_HEARTBEAT_FACT`，不伪造服务健康状态；
-- Unit / API Contract / PostgreSQL Real Acceptance 测试；
-- 独立 Unit Gate / Real Gate，均不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis，Acceptance 数据自动生成和清理。
+- Frontend `runtimeOperationsApi.global` 类型化接入 Backend Contract；
+- `/runtime/operations/global` 全局 Runtime Operations 只读页面；
+- Frontend Component Contract 测试与独立 Phase 2.10-II Frontend Gate；
+- Backend Unit / API Contract / PostgreSQL Real Acceptance 测试；
+- Backend 独立 Unit / Real Gate，均不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis，Acceptance 数据自动生成和清理。
 
 当前未宣称：
-- II-02 本地 Unit / Real API 尚未由本轮开发反馈执行；
-- Frontend API Types / Operations UI 尚未接入 II-02 Contract；
-- Browser E2E 尚未执行。
+- II-02 Frontend Unit / Build 尚未由本轮开发反馈执行；
+- II-02 Backend Unit / Real API 尚未由本轮开发反馈执行；
+- Browser E2E 尚未执行；
+- II-02 尚未标记 Acceptance Passed。
 
 正式阶段文档：`docs/02-phases/PHASE_2_10_II.md`
 
@@ -81,19 +85,18 @@ II-01 的核心约束已经落地：
 
 LT-01 Enterprise Integration / Event Infrastructure：**核心 Event / Delivery / Webhook / Runtime Integration 已完成当前主线，Phase 2.10-I 已完成运维收口，后续转为回归维护。**
 
-LT-03 Enterprise Operations Console：**Phase 2.10-II 正在推进；II-01 已完成，当前进入 II-02 Global Runtime Operations，随后推进 II-03 Worker/Scheduler Diagnostics、II-04 Audit/Trace Correlation、II-05 Controlled Batch Operations。**
+LT-03 Enterprise Operations Console：**Phase 2.10-II 正在推进；II-01 已完成，II-02 Backend 与 Frontend 第一切片已实现，当前进入本地验证与后续 II-02 联调。随后推进 II-03 Worker/Scheduler Diagnostics、II-04 Audit/Trace Correlation、II-05 Controlled Batch Operations。**
 
 LT-02 / LT-04 / LT-05 / LT-06 / LT-07 / LT-08 / LT-09 / LT-10：继续保持待立项或候选状态；不得在没有正式 Phase、Contract、代码和验收证据前提前标记为开发中。
 
 ## 7. 下一执行顺序
 
 ```text
-① II-02 Unit / API Contract
-② II-02 Real PostgreSQL / tenant boundary
+① II-02 Frontend targeted Unit / Build
+② II-02 Backend Unit / Real PostgreSQL / tenant boundary
 ③ Backend Regression
-④ Frontend API Types / Operations UI
-⑤ Frontend Regression / Build
-⑥ Browser E2E（范围需要时）
-⑦ II-02 Acceptance
-⑧ 进入 II-03 Worker / Scheduler Diagnostics
+④ Frontend Regression / Build
+⑤ Browser E2E（范围需要时）
+⑥ II-02 Acceptance
+⑦ 进入 II-03 Worker / Scheduler Diagnostics
 ```

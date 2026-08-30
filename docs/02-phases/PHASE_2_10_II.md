@@ -8,9 +8,9 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；当前推进 II-02 Global Runtime Operations Backend。**
+**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Backend Domain / API Contract 与 Frontend Operations 第一切片已实现，当前进入本地验证与联调。**
 
-Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification Lifecycle 收口。II-01 已通过本地 Alembic、Unit/API Contract、Real PostgreSQL Acceptance 与完整 Backend Regression；当前进入 II-02。
+Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification Lifecycle 收口。II-01 已通过本地 Alembic、Unit/API Contract、Real PostgreSQL Acceptance 与完整 Backend Regression；当前推进 II-02。
 
 ## 3. 第一切片：Operator Action Governance
 
@@ -32,7 +32,7 @@ Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification L
 
 ## 4. 第二切片：II-02 Global Runtime Operations
 
-### 4.1 当前实现
+### 4.1 Backend / Frontend 实现
 
 新增 `GlobalRuntimeOperationsService`，只读聚合现有 Durable Workflow / Execution / Frontier / Trigger facts，不创建第二套生命周期状态机。
 
@@ -46,9 +46,12 @@ Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification L
 - Scheduler durable backlog 与 enabled scheduled trigger 统计；
 - `workflow_id` / `agent_id` / `trigger_id` / `execution_id` / `execution_status` 关联查询参数；
 - Worker / Scheduler process liveness 明确返回 `unknown + NO_DURABLE_HEARTBEAT_FACT`，禁止从业务活动伪造进程健康状态；
-- 新增 `/api/v1/runtime/global` read-only API Contract；
-- 新增 Unit、API Contract 与 PostgreSQL Real Acceptance；
-- 新增独立 Unit / Real Gate，均禁止自动启动或停止服务，Acceptance 数据自动创建和清理。
+- `/api/v1/runtime/global` read-only API Contract；
+- Frontend `runtimeOperationsApi.global` 类型化接入；
+- `/runtime/operations/global` 全局 Runtime Operations 只读页面；
+- Unit / API Contract / PostgreSQL Real Acceptance 测试；
+- Frontend Component Contract 测试与独立 Frontend Gate；
+- Backend / Frontend Gate 均禁止自动启动或停止服务，测试数据自动创建和清理。
 
 ### 4.2 设计边界
 
@@ -73,10 +76,11 @@ Runtime Operations UI / Diagnostics
 5. Worker posture 只读取 Durable Frontier claim facts。
 6. 当前没有 scheduler/worker heartbeat durable contract 时，必须报告 `unknown`，不得把“有数据活动”解释为服务存活。
 7. Agent correlation 只复用现有 `WorkflowVersion.definition.agent_id`，不新增第二套 Agent 关联事实。
+8. Frontend 只消费 Backend Contract，不在页面复制状态聚合、tenant scope 或生命周期规则。
 
 ### 4.3 当前验证状态
 
-代码与测试已提交到 `main`，但本轮尚未在用户本地环境执行 II-02 Unit / Real Gate，因此 **暂不得标记 Acceptance Passed**。
+代码、测试与 Frontend UI 已提交到 `main`，但本轮尚未在用户本地环境执行 II-02 Frontend / Backend Gate，因此 **暂不得标记 Acceptance Passed**。
 
 ## 5. 后续切片
 
