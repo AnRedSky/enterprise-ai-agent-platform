@@ -28,7 +28,7 @@ pytestmark = pytest.mark.real_api
 async def test_runtime_operations_real_postgres_end_to_end_and_tenant_isolation() -> None:
     suffix = uuid.uuid4().hex[:12]
     tenant_a, tenant_b = uuid.uuid4(), uuid.uuid4()
-    event_a, event_b = uuid.uuid4(), uuid.uuid4()
+    event_a, event_dead_a, event_b = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     destination_a, destination_b = uuid.uuid4(), uuid.uuid4()
     subscription_a, subscription_b = uuid.uuid4(), uuid.uuid4()
     delivered_id, dead_id, foreign_dead_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -42,10 +42,11 @@ async def test_runtime_operations_real_postgres_end_to_end_and_tenant_isolation(
                 WebhookDestination(id=destination_b, tenant_id=tenant_b, name=f"ops-b-{suffix}", endpoint_url="https://example.invalid/b", headers={}, enabled=True),
                 WebhookSubscription(id=subscription_a, tenant_id=tenant_a, destination_id=destination_a, event_type="orders.completed", priority=1, enabled=True, filter_config={}),
                 WebhookSubscription(id=subscription_b, tenant_id=tenant_b, destination_id=destination_b, event_type="orders.completed", priority=1, enabled=True, filter_config={}),
-                IntegrationEventRecord(id=event_a, tenant_id=tenant_a, event_type="orders.completed", schema_version=1, source="acceptance", subject="order:a", idempotency_key=f"ops-a-{suffix}", occurred_at=now, request_id=f"req-a-{suffix}", trace_id=f"trace-a-{suffix}", payload={"fixture": suffix}, metadata_json={}, status="published", attempt_count=0),
+                IntegrationEventRecord(id=event_a, tenant_id=tenant_a, event_type="orders.completed", schema_version=1, source="acceptance", subject="order:a", idempotency_key=f"ops-a-{suffix}", occurred_at=now, request_id=f"req-a-{suffix}", trace_id=f"trace-a-{suffix}", payload={"fixture": suffix, "delivery": "delivered"}, metadata_json={}, status="published", attempt_count=0),
+                IntegrationEventRecord(id=event_dead_a, tenant_id=tenant_a, event_type="orders.completed", schema_version=1, source="acceptance", subject="order:a-dead", idempotency_key=f"ops-a-dead-{suffix}", occurred_at=now, request_id=f"req-a-dead-{suffix}", trace_id=f"trace-a-dead-{suffix}", payload={"fixture": suffix, "delivery": "dead_letter"}, metadata_json={}, status="published", attempt_count=0),
                 IntegrationEventRecord(id=event_b, tenant_id=tenant_b, event_type="orders.completed", schema_version=1, source="acceptance", subject="order:b", idempotency_key=f"ops-b-{suffix}", occurred_at=now, request_id=f"req-b-{suffix}", trace_id=f"trace-b-{suffix}", payload={"fixture": suffix}, metadata_json={}, status="published", attempt_count=0),
                 WebhookDelivery(id=delivered_id, tenant_id=tenant_a, subscription_id=subscription_a, destination_id=destination_a, integration_event_id=event_a, status="delivered", attempt_count=1, last_attempt_at=now - timedelta(seconds=20), delivered_at=now - timedelta(seconds=10)),
-                WebhookDelivery(id=dead_id, tenant_id=tenant_a, subscription_id=subscription_a, destination_id=destination_a, integration_event_id=event_a, status="dead_letter", attempt_count=3, last_attempt_at=now - timedelta(seconds=5), last_error_code="HTTP_500", last_error_message="acceptance failure"),
+                WebhookDelivery(id=dead_id, tenant_id=tenant_a, subscription_id=subscription_a, destination_id=destination_a, integration_event_id=event_dead_a, status="dead_letter", attempt_count=3, last_attempt_at=now - timedelta(seconds=5), last_error_code="HTTP_500", last_error_message="acceptance failure"),
                 WebhookDelivery(id=foreign_dead_id, tenant_id=tenant_b, subscription_id=subscription_b, destination_id=destination_b, integration_event_id=event_b, status="dead_letter", attempt_count=3, last_attempt_at=now, last_error_code="HTTP_500", last_error_message="foreign tenant"),
             ])
             await db.commit()
@@ -53,7 +54,7 @@ async def test_runtime_operations_real_postgres_end_to_end_and_tenant_isolation(
         async with SessionLocal() as db:
             service = RuntimeOperationsService(db)
             overview = await service.overview(tenant_a, window_hours=24)
-            assert overview["events"]["total"] == 1
+            assert overview["events"]["total"] == 2
             assert overview["deliveries"]["total"] == 2
             assert overview["deliveries"]["dead_letter_count"] == 1
             assert overview["slo"]["target_percent"] == 99.0
