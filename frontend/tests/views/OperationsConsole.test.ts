@@ -32,9 +32,9 @@ beforeEach(() => {
 describe("Runtime Operations Console", () => {
   it("renders backend 2.10-I operational facts", async () => {
     const wrapper = mountConsole();
-    await vi.waitFor(() => expect(wrapper.text()).toContain("Runtime 企业运维中心"));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("99.50%"));
+    expect(wrapper.text()).toContain("Runtime 企业运维中心");
     expect(wrapper.text()).toContain("投递成功率");
-    expect(wrapper.text()).toContain("99.50%");
     expect(runtimeOperationsApi.providers).toHaveBeenCalled();
     expect(runtimeOperationsApi.alertRules).toHaveBeenCalled();
   });

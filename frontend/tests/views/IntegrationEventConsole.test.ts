@@ -5,20 +5,10 @@ import IntegrationEventConsole from "@/views/integrations/IntegrationEventConsol
 import { integrationApi } from "@/api/integrations";
 
 vi.mock("@/api/integrations", () => ({ integrationApi: { integrationEvents: vi.fn() } }));
-
 const components = { ElAlert, ElButton, ElDivider, ElDrawer, ElEmpty, ElForm, ElInput, ElOption, ElPagination, ElSelect, ElTable, ElTableColumn, ElTag };
-
-function mountConsole() {
-  return mount(IntegrationEventConsole, { global: { components, directives: { loading: () => undefined } } });
-}
-
+function mountConsole() { return mount(IntegrationEventConsole, { global: { components, directives: { loading: () => undefined } } }); }
 const event = {
-  id: "e1", tenant_id: "t1", event_type: "workflow.execution.completed", schema_version: 1,
-  source: "workflow", subject: "execution:ex1", idempotency_key: "workflow:ex1:completed",
-  occurred_at: "2026-08-29T08:00:00Z", request_id: "req1", trace_id: "trace1",
-  payload: { execution_id: "ex1", status: "completed" }, metadata_json: {}, status: "delivered",
-  attempt_count: 1, next_attempt_at: null, last_attempt_at: "2026-08-29T08:00:01Z",
-  delivered_at: "2026-08-29T08:00:01Z", last_error_code: null, created_at: "2026-08-29T08:00:00Z",
+  id: "e1", tenant_id: "t1", event_type: "workflow.execution.completed", schema_version: 1, source: "workflow", subject: "execution:ex1", idempotency_key: "workflow:ex1:completed", occurred_at: "2026-08-29T08:00:00Z", request_id: "req1", trace_id: "trace1", payload: { execution_id: "ex1", status: "completed" }, metadata_json: {}, status: "delivered", attempt_count: 1, next_attempt_at: null, last_attempt_at: "2026-08-29T08:00:01Z", delivered_at: "2026-08-29T08:00:01Z", last_error_code: null, created_at: "2026-08-29T08:00:00Z",
 };
 
 describe("IntegrationEventConsole", () => {
@@ -26,9 +16,8 @@ describe("IntegrationEventConsole", () => {
     vi.mocked(integrationApi.integrationEvents).mockResolvedValue({ data: { items: [event], page: 1, page_size: 20, total: 1 } } as never);
     const wrapper = mountConsole();
     await vi.waitFor(() => expect(wrapper.text()).toContain("workflow.execution.completed"));
-    expect(wrapper.text()).toContain("delivered");
+    expect(wrapper.text()).toContain("已送达");
     expect(integrationApi.integrationEvents).toHaveBeenCalledWith({ page: 1, page_size: 20 });
-
     const inputs = wrapper.findAll("input");
     await inputs[0].setValue("scheduler.dispatched");
     const queryButton = wrapper.findAll("button").find((button) => button.text() === "查询");
@@ -43,7 +32,7 @@ describe("IntegrationEventConsole", () => {
     const row = wrapper.find("tbody tr");
     await row.trigger("click");
     await vi.waitFor(() => expect(wrapper.text()).toContain('"execution_id": "ex1"'));
-    expect(wrapper.text()).toContain("Idempotency Key");
+    expect(wrapper.text()).toContain("幂等标识");
     expect(wrapper.text()).toContain("trace1");
   });
 });

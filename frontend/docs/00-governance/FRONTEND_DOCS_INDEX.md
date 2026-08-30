@@ -33,4 +33,6 @@ FE-P1-04 Element Plus `v-loading` 生产入口注册已实现，并保留本地�
 
 本轮继续推进 Audit 可观测性体验加固：基于真实 `/runtime/audit-logs` Contract 增加有限状态筛选、错误恢复、Empty 恢复动作、Execution 真实 ID 深链及窄屏适配；同时提供 `npm run test:local:full` 统一本地回归入口。详见 `07-testing-regression/AUDIT_LOG_UX_AND_LOCAL_REGRESSION.md`。
 
+本轮 Full Vitest 回归发现的测试语法阻断、UI 文本契约漂移、异步竞态及第三方组件 stub 噪声已统一记录于 `07-testing-regression/FULL_VITEST_REGRESSION_REMEDIATION_2026-08-30.md`。
+
 后续继续完成 Agent 调试上下文、Trigger 操作面板及 P1.1 核心闭环验收。
