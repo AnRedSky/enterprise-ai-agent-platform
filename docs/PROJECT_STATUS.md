@@ -47,6 +47,14 @@
 - Prometheus / OTLP Export；
 - Runtime Operational Audit 覆盖 Provider、Alert、Notification Delivery 生命周期。
 
+### Worker 生命周期测试修复
+状态：**已修复，等待本地实际回归执行**。
+
+- 修复 `tests/unit/test_worker_entrypoint.py` 对 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约缺失的 Mock；
+- 测试替身现在显式保留 `DEFAULT_CONCURRENCY=4`，并验证 Worker 构造参数；
+- 根因与修复记录：`docs/04-errors/2026-08-30-worker-entrypoint-test-mock-class-attribute.md`；
+- 不修改生产 Worker 默认并发行为，不增加兼容层。
+
 ### Runtime Notification Lifecycle Acceptance
 状态：**Gate 已实现，等待本地实际执行结果收口**。
 
@@ -77,16 +85,17 @@ SLO / Metrics
 Operational Audit
 ```
 
-Gate 自动启动/停止 Scheduler 与 Worker；测试自动创建 loopback HTTP receiver、tenant、rule、policy、destination、subscription 及清理数据，不要求手工填写测试信息。
+Gate 只负责服务状态探测、测试上下文自动生成、验收执行与清理，不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis 等服务；测试数据由脚本自动创建和清理，不要求手工填写测试信息。
 
 ## 4. 2.10-I 下一步
 
-1. 本地执行 Runtime Notification Lifecycle Real Gate，并根据真实 PostgreSQL / Worker 结果修复剩余问题；
-2. 完成 fallback exhausted → Notification DLQ 的真实失败链路验收；
-3. 完成 Alert → Notification → Provider → Destination Metrics 的维度聚合核验；
-4. 完成 Prometheus canonical label governance；
-5. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
-6. 完成 2.10-I 全链路 Real PostgreSQL Acceptance。
+1. 本地执行 Worker 生命周期单元回归与 Backend default regression；
+2. 执行 Runtime Notification Lifecycle Real Gate，验证真实 PostgreSQL / Scheduler / Worker 闭环；
+3. 完成 fallback exhausted → Notification DLQ 的真实失败链路验收；
+4. 完成 Alert → Notification → Provider → Destination Metrics 的维度聚合核验；
+5. 完成 Prometheus canonical label governance；
+6. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
+7. 完成 2.10-I 全链路 Real PostgreSQL Acceptance。
 
 ## 5. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`。
