@@ -1,6 +1,6 @@
 """Runtime OpenTelemetry 观测适配。
 
-职责：将 RuntimeMetricContract 的规范指标值桥接到 OpenTelemetry SDK Meter，并固定 service / tenant Resource 边界。
+职责：将 RuntimeMetricContract 的规范指标值桥接到 OpenTelemetry SDK Meter，并固定 service / tenant 维度边界。
 边界：不读取数据库、不替代 RuntimeMetricContract，也不负责 Prometheus / OTLP 网络导出；指标事实仍由 Runtime Operations Service 维护。
 关键依赖：opentelemetry-api、opentelemetry-sdk。
 """
@@ -22,18 +22,20 @@ class RuntimeTelemetry:
     """提供与 RuntimeMetricContract 对齐的 OpenTelemetry Meter。"""
 
     def __init__(self, provider: MeterProvider | None = None) -> None:
-        """创建 Runtime Meter，并固定服务 Resource。
+        """创建 Runtime Meter，并固定进程级 Service Resource。
 
         Args:
             provider: 可选 SDK MeterProvider；未提供时创建独立 Provider，便于测试与显式生命周期管理。
+
+        Returns:
+            无返回值。
+
+        设计意图：MeterProvider 在进程生命周期内共享，因此只写入 canonical 的进程级
+        Resource；tenant.id 不进入共享 Provider Resource，而是由 Metric observation
+        的唯一 tenant_id 维度承载，避免多租户互相覆盖。
         """
         self.provider = provider or MeterProvider(
-            resource=Resource.create(
-                {
-                    "service.name": RuntimeMetricContract.SERVICE_NAME,
-                    "service.version": RuntimeMetricContract.SERVICE_VERSION,
-                }
-            )
+            resource=Resource.create(RuntimeMetricContract.otel_sdk_resource())
         )
         self.meter = self.provider.get_meter(RuntimeMetricContract.SERVICE_NAME)
         self._values: dict[tuple[str, str], float] = {}
@@ -48,10 +50,10 @@ class RuntimeTelemetry:
         }
 
     def _callback(self, metric_name: str) -> Callable[[object], list[Observation]]:
-        """创建单指标观察回调，保持 tenant 作为唯一业务维度。"""
+        """创建单指标观察回调，保持 tenant_id 为唯一业务维度。"""
         def observe(_options: object) -> list[Observation]:
             return [
-                Observation(value, {"tenant_id": tenant_id})
+                Observation(value, {RuntimeMetricContract.OTEL_METRIC_ATTRIBUTES[0]: tenant_id})
                 for (name, tenant_id), value in self._values.items()
                 if name == metric_name
             ]
