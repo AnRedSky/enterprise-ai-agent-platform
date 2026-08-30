@@ -63,6 +63,7 @@ Write-Host "[3/7] Targeted migration/runtime test collection"
     tests/unit/test_integration_publisher.py `
     tests/unit/test_alert_lifecycle_tenant_scope.py `
     tests/api_real/test_alert_notification_runtime_acceptance.py `
+    tests/api_real/test_webhook_delivery_claim_acceptance.py `
     --collect-only --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Runtime Notification test collection failed." }
 
@@ -76,7 +77,10 @@ if (-not ($schedulerReady -and $workerReady)) {
 }
 
 Write-Host "[5/7] Alert -> Notification -> Worker Runtime Acceptance"
-& uv run pytest -q -m real_api tests/api_real/test_alert_notification_runtime_acceptance.py --tb=short
+& uv run pytest -q -m real_api `
+    tests/api_real/test_alert_notification_runtime_acceptance.py `
+    tests/api_real/test_webhook_delivery_claim_acceptance.py `
+    --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Alert Notification Runtime Acceptance failed." }
 
 Write-Host "[6/7] Migration graph regression"
@@ -84,6 +88,6 @@ Write-Host "[6/7] Migration graph regression"
 if ($LASTEXITCODE -ne 0) { throw "Migration graph regression failed." }
 
 Write-Host "[7/7] Runtime lifecycle handoff"
-Write-Host "Verified lifecycle: Alert Evaluation -> Firing/Recovery -> Policy -> Group/Dedup/Cooldown -> Provider Routing -> Worker -> Outcome -> Fallback -> SLO/Metrics -> Audit."
+Write-Host "Verified lifecycle: Alert Evaluation -> Firing/Recovery -> Policy -> Group/Dedup/Cooldown -> Provider Routing -> Worker -> Claim Competition -> Outcome -> Fallback -> SLO/Metrics -> Audit."
 Write-Host "[PASS] Phase 2.10-I Runtime Notification Lifecycle Real Gate completed."
 Write-Host "[INFO] This gate never starts or stops services and automatically generates all test identities and business data."
