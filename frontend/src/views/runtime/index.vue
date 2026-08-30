@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import RuntimeExecutions from './components/RuntimeExecutions.vue';
-import RuntimeObservabilityOverview from './components/RuntimeObservabilityOverview.vue';
+import RuntimeWorkspaceTabs from './components/RuntimeWorkspaceTabs.vue';
 </script>
-<template><RuntimeObservabilityOverview /><RuntimeExecutions /></template>
+
+<template><RuntimeWorkspaceTabs /></template>
