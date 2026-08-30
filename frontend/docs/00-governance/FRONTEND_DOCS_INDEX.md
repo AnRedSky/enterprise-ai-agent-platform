@@ -27,4 +27,6 @@
 
 当前主线：**P1.1 深度交互与可观测性工作台**。
 
-重点：Runtime Tab/按需加载/深链、Agent 调试上下文、Workflow 生命周期与真实 Execution 联动。
+本轮推进 **P1.3 Runtime ↔ Workflow 生命周期双向深链**：Workflow 生命周期页面可从真实 `workflow_id` 恢复上下文；Runtime 在存在真实 Workflow 上下文时可返回生命周期页面。详见 `04-workflow/P1.3-RUNTIME-WORKFLOW-BIDIRECTIONAL-DEEPLINK.md`。
+
+后续继续完成 Agent 调试上下文、Trigger 操作面板及 P1.1 核心闭环验收。

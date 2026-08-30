@@ -4,23 +4,29 @@
 
 ## 1. 当前基线
 
-- 远端 `main`：`c0271fc1def0dfb713ebf5f38d75430100b4bf0b`（2026-08-30，Runtime integration event timestamp normalization）。
-- 当前前端基线提交：`6577871376b460ac42509e836339d6ccf0135c4d`，基于上述 `main`，完成 Runtime deep link 与 execution context 对齐。
-- `frontend` 当前仅比最新 `main` 超前 1 个前端提交，未落后 `main`。
-- 本轮文档治理目标：统一 `frontend/docs` 文档职责、索引、状态和提交规则。
+- 远端 `main`：`214ea176e30487312cc31197c0849089ac9be7e6`（2026-08-30，Runtime Notification fallback exhausted real gate）。
+- 本轮开发基于最新 `main` 继续推进 P1.1/P1.3，不创建新的功能分支。
+- `main` 已包含此前 Workflow 生命周期身份修复：Workflow 页面展示真实 `Workflow.name`，并为单元测试注册 `v-loading` 指令。
+- 本轮无法访问用户 Windows 本地 Node 工作区，因此测试状态必须保持未验收，不得以远端代码存在替代本地通过证据。
 
-## 2. 当前主线：P1.1
+## 2. 当前主线：P1.1 / P1.3
 
-**P1.1 深度交互与可观测性工作台** 是当前前端执行指针，重点为：
+**P1.1 深度交互与可观测性工作台** 当前继续收敛 Runtime / Agent / Workflow 诊断闭环。
 
-1. Runtime Tab 化、Execution 按需加载；
-2. Runtime 深链恢复 `execution_id` / `workflow_id` / `source` 上下文；
-3. Agent 调试上下文读取真实 Agent 与 Published Version；
-4. Workflow 生命周期以真实 Workflow / Execution 状态驱动；
-5. Retry / Resume / Cancel / Run 仅调用现有生命周期接口；
-6. Runtime / Agent / Workflow 诊断上下文保持可追溯。
+### 本轮 P1.3：Runtime ↔ Workflow 双向深链
 
-本轮前端已完成 Runtime deep-link context linkage；其余 P1.1 项目必须继续以源码和 Backend Contract 验证，不以文档代替实现。
+状态：**进行中**。
+
+已实现：
+
+1. Workflow 生命周期页面读取真实 `workflow_id` query；
+2. query ID 必须先在 `GET /workflows` 返回集合中确认，再加载版本/触发器/Execution；
+3. Runtime 在存在真实 `workflow_id` 时显示“返回 Workflow 生命周期”；
+4. Runtime → Workflow 仅携带 `workflow_id` 与 `source=runtime`；
+5. Workflow → Runtime 继续携带真实 `execution_id` / `workflow_id` / `workflow_version_id`；
+6. Vitest 覆盖双向深链及无上下文安全回退。
+
+未完成：本地 targeted/full Vitest、build、test gate、真实 API 与 Browser E2E 尚未执行。
 
 ## 3. 长期任务队列
 
@@ -96,20 +102,21 @@ targeted test → npm test → npm run build → npm run test:gate
 
 ## 5. 当前测试事实
 
-本轮文档治理提交前不宣称前端全量测试通过。此前本地执行 `npx vitest run tests/views/WorkflowLifecycle.test.ts` 曾因项目依赖未正确安装导致 `vitest/config` 与 `@vitejs/plugin-vue` 无法解析，并触发 npx 临时安装提示。该事实说明后续应先恢复项目正式依赖，再使用 `package.json` 正式测试入口，不应使用 npx 临时下载作为验收环境。
+用户最新本地反馈中的 `WorkflowLifecycle.test.ts` 为 3 个测试 2 通过、1 失败；失败原因是未渲染 `Workflow.name`，并存在 `Failed to resolve directive: loading` 警告。此前远端提交已完成对应修复。本轮又增加 P1.3 双向深链测试，但当前环境无法执行用户 Windows 本地测试，因此不宣称通过。
 
-下一轮测试必须至少执行：
+本地验收至少执行：
 
 ```powershell
 cd frontend
-npm install
-npm test -- tests/views/WorkflowLifecycle.test.ts
+npm ci
+npm test -- tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeWorkspaceTabs.test.ts
 npm test
 npm run build
 npm run test:gate
+npm run test:e2e
 ```
 
-涉及真实后端时，再执行对应 Real API / Browser E2E。所有结果必须记录实际输出与日期。
+需要真实后端时再执行对应 Real API / Browser E2E。没有实际执行证据，不得把计划或代码检查结果写成“通过”。
 
 ## 6. 完成定义
 

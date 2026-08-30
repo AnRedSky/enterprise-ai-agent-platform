@@ -4,7 +4,8 @@ import WorkflowLifecycle from "@/views/workflows/WorkflowLifecycle.vue";
 import { workflowApi } from "@/api/workflows";
 
 const router = { push: vi.fn() };
-vi.mock("vue-router", () => ({ useRouter: () => router }));
+const route = { query: {} as Record<string, string> };
+vi.mock("vue-router", () => ({ useRouter: () => router, useRoute: () => route }));
 vi.mock("@/api/workflows", () => ({
   workflowApi: {
     list: vi.fn(),
@@ -31,9 +32,7 @@ const global = {
     "el-table-column": { template: "<span/>" },
     "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
   },
-  directives: {
-    loading: () => undefined,
-  },
+  directives: { loading: () => undefined },
 };
 
 const workflow = { id: "w1", name: "订单审批", description: "", owner_id: "u1", tenant_id: "t1", status: "published", published_version_id: "v2", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:10:00Z" };
@@ -42,6 +41,7 @@ const execution = { id: "e1", tenant_id: "t1", workflow_id: "w1", workflow_versi
 
 beforeEach(() => {
   vi.clearAllMocks();
+  route.query = {};
   vi.mocked(workflowApi.list).mockResolvedValue({ data: [workflow] } as never);
   vi.mocked(workflowApi.versions).mockResolvedValue({ data: [version] } as never);
   vi.mocked(workflowApi.triggers).mockResolvedValue({ data: [] } as never);
@@ -55,6 +55,15 @@ describe("WorkflowLifecycle", () => {
     expect(wrapper.text()).toContain("当前生效版本");
     expect(wrapper.text()).toContain("触发与调度");
     expect(wrapper.text()).toContain("已完成");
+  });
+
+  it("从 Workflow 深链进入时按真实 workflow_id 恢复工作流上下文", async () => {
+    route.query = { workflow_id: "w1", source: "runtime" };
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("订单审批"));
+    expect((wrapper.vm as { selectedId: string }).selectedId).toBe("w1");
+    expect(workflowApi.versions).toHaveBeenCalledWith("w1");
+    expect(workflowApi.listExecutions).toHaveBeenCalledWith("w1");
   });
 
   it("从最近 Execution 进入 Runtime 时保留真实执行上下文", async () => {

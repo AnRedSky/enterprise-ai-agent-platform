@@ -41,6 +41,7 @@ const tabTitle = computed(() => activeTab.value === "overview" ? "运行健康" 
 const contextItems = computed(() => runtimeContextKeys
   .map((key) => ({ key, value: queryValue(key) }))
   .filter((item): item is { key: RuntimeContextKey; value: string } => Boolean(item.value)));
+const workflowContext = computed(() => queryValue("workflow_id"));
 
 function routeQuery(extra: Record<string, string | undefined> = {}) {
   const query: Record<string, string> = {};
@@ -82,6 +83,15 @@ function openDiagnostics() {
   void router.replace({ path: "/runtime", query: routeQuery({ tab: "diagnostics" }) });
 }
 
+function openWorkflowLifecycle() {
+  const workflowId = workflowContext.value;
+  if (!workflowId) return;
+  void router.replace({
+    path: "/workflows/lifecycle",
+    query: { workflow_id: workflowId, source: "runtime" },
+  });
+}
+
 watch(() => route.query, syncRouteContext, { deep: true });
 </script>
 
@@ -94,6 +104,7 @@ watch(() => route.query, syncRouteContext, { deep: true });
         <p>从健康概览进入 Execution，再按需展开时间线、Trace、Audit 与 Workflow 关系。</p>
       </div>
       <div class="heading-context">
+        <el-button v-if="workflowContext" size="small" plain @click="openWorkflowLifecycle">返回 Workflow 生命周期</el-button>
         <el-tag effect="plain">{{ tabTitle }}</el-tag>
         <el-tag v-if="contextItems.length" type="info" effect="plain">已携带 {{ contextItems.length }} 项上下文</el-tag>
       </div>

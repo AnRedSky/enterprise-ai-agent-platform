@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowTrigger, type SchedulerStatus, type WorkflowVersion } from "@/api/workflows";
 
+const route = useRoute();
 const router = useRouter();
 const workflows = ref<Workflow[]>([]);
 const versions = ref<WorkflowVersion[]>([]);
 const triggers = ref<WorkflowTrigger[]>([]);
 const schedules = ref<Record<string, SchedulerStatus>>({});
 const executions = ref<WorkflowExecution[]>([]);
-const selectedId = ref("");
+const selectedId = ref(typeof route.query.workflow_id === "string" ? route.query.workflow_id : "");
 const loading = ref(false);
 const detailLoading = ref(false);
 
@@ -39,7 +40,9 @@ async function load() {
   loading.value = true;
   try {
     workflows.value = (await workflowApi.list()).data;
-    if (!selectedId.value && workflows.value.length) selectedId.value = workflows.value[0].id;
+    const requestedId = typeof route.query.workflow_id === "string" ? route.query.workflow_id : "";
+    if (requestedId && workflows.value.some((item) => item.id === requestedId)) selectedId.value = requestedId;
+    else if (!selectedId.value || !workflows.value.some((item) => item.id === selectedId.value)) selectedId.value = workflows.value[0]?.id || "";
     if (selectedId.value) await loadDetails(selectedId.value);
   } catch {
     ElMessage.error("工作流生命周期数据加载失败，请刷新后重试");

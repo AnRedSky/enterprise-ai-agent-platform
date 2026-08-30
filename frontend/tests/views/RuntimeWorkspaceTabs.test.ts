@@ -26,7 +26,7 @@ const global = {
     "el-tag": { template: "<span><slot /></span>" },
     "el-skeleton": { template: "<div />" },
     "el-alert": { template: "<div><slot /></div>" },
-    "el-button": { template: "<button><slot /></button>" },
+    "el-button": { template: "<button @click="$emit('click')"><slot/></button>" },
   },
 };
 
@@ -49,6 +49,26 @@ describe("RuntimeWorkspaceTabs", () => {
     const wrapper = mount(RuntimeWorkspaceTabs, { global });
 
     expect((wrapper.vm as { activeTab: string }).activeTab).toBe("executions");
+  });
+
+  it("returns to Workflow lifecycle with the real workflow context", () => {
+    route.query = { workflow_id: "workflow-1", execution_id: "execution-1", source: "workflow-lifecycle" };
+    const wrapper = mount(RuntimeWorkspaceTabs, { global });
+
+    (wrapper.vm as { openWorkflowLifecycle: () => void }).openWorkflowLifecycle();
+
+    expect(replace).toHaveBeenCalledWith({
+      path: "/workflows/lifecycle",
+      query: { workflow_id: "workflow-1", source: "runtime" },
+    });
+  });
+
+  it("does not create a Workflow lifecycle link without workflow context", () => {
+    const wrapper = mount(RuntimeWorkspaceTabs, { global });
+
+    (wrapper.vm as { openWorkflowLifecycle: () => void }).openWorkflowLifecycle();
+
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("restores a valid tab from a deep link", () => {
