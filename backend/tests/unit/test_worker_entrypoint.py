@@ -31,15 +31,23 @@ async def test_run_worker_service_disposes_database_engine_after_worker_stops(mo
     webhook_worker.stop = MagicMock()
 
     dispose = AsyncMock(return_value=None)
+    webhook_worker_factory = MagicMock(return_value=webhook_worker)
+    webhook_worker_factory.DEFAULT_CONCURRENCY = 4
 
     monkeypatch.setattr(worker_entrypoint, "WorkflowWorker", lambda: workflow_worker)
-    monkeypatch.setattr(worker_entrypoint, "WebhookDeliveryWorker", lambda **_: webhook_worker)
+    monkeypatch.setattr(worker_entrypoint, "WebhookDeliveryWorker", webhook_worker_factory)
     monkeypatch.setattr(worker_entrypoint, "WebhookHTTPProvider", lambda: SimpleNamespace(send=AsyncMock()))
     monkeypatch.setattr(worker_entrypoint, "_dispose_database_engine", dispose)
 
     await worker_entrypoint.run_worker_service()
 
     workflow_worker.run_forever.assert_awaited_once()
+    webhook_worker_factory.assert_called_once_with(
+        sender=webhook_worker_factory.call_args.kwargs["sender"],
+        concurrency=4,
+        lease_seconds=60,
+        max_attempts=5,
+    )
     webhook_worker.run_forever.assert_awaited_once_with(0.2)
     workflow_worker.stop.assert_called_once()
     webhook_worker.stop.assert_called_once()
