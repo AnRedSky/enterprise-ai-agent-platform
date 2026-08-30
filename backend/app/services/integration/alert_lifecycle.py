@@ -37,8 +37,11 @@ class AlertLifecycleService:
     NOTIFICATION_STATUSES = frozenset({"planned", "delivered", "retrying", "failed", "dead_letter"})
     TERMINAL_NOTIFICATION_STATUSES = frozenset({"delivered", "dead_letter"})
 
-    def __init__(self, db: AsyncSession, *, actor: str = "runtime-alert-engine"):
-        self.db, self.actor = db, actor
+    def __init__(self, db: AsyncSession, *, actor: str = "runtime-alert-engine", consumer_group: str = "default"):
+        consumer_group = consumer_group.strip()
+        if not consumer_group or len(consumer_group) > 128:
+            raise ValueError("consumer_group 必须为 1..128 个字符")
+        self.db, self.actor, self.consumer_group = db, actor, consumer_group
         self.publisher = RuntimeIntegrationEventPublisher(db)
         self.delivery = AlertNotificationDeliveryService(db)
 
@@ -58,79 +61,58 @@ class AlertLifecycleService:
 
     @staticmethod
     def fingerprint(rule: RuntimeAlertRule, dimensions: dict[str, Any] | None = None) -> str:
-        """根据规则与维度生成稳定告警实例指纹，避免跨租户状态串联。"""
-        return hashlib.sha256(f"{rule.id}|{sorted((dimensions or {}).items())}".encode()).hexdigest()
+        """根据规则与维度生成稳定告警指纹。"""
+        canonical = f"{rule.tenant_id}:{rule.id}:{sorted((dimensions or {}).items())}"
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
-    @staticmethod
-    def notification_dedup_key(instance: RuntimeAlertInstance, transition: str, group_id: uuid.UUID, destination_id: uuid.UUID, provider: str | None) -> str:
-        """生成一次告警生命周期投递的稳定幂等键。"""
-        raw = ":".join([str(instance.tenant_id), str(instance.id), str(instance.fire_count), transition, str(group_id), str(destination_id), provider or "unknown"])
-        return hashlib.sha256(raw.encode()).hexdigest()
-
-    async def evaluate_rule(self, rule: RuntimeAlertRule, sample: RuntimeMetricSample, *, dimensions: dict[str, Any] | None = None, now: datetime | None = None) -> RuntimeAlertInstance:
-        """评估一次指标并推进 firing/recovery 状态机。"""
-        if rule.tenant_id != sample.tenant_id or rule.metric_name != sample.metric_name:
-            raise ValueError("alert rule and metric sample tenant/metric mismatch")
-        if not rule.enabled:
-            raise ValueError("cannot evaluate a disabled alert rule")
-        now = now or sample.recorded_at
-        firing = self.matches(sample.value, rule.operator, rule.threshold)
-        fingerprint = self.fingerprint(rule, dimensions)
+    async def evaluate_rule(self, rule: RuntimeAlertRule, sample: RuntimeMetricSample, *, now: datetime | None = None, dimensions: dict[str, Any] | None = None) -> RuntimeAlertInstance | None:
+        """评估一条规则并维护 firing/recovery 状态。"""
+        now = now or datetime.now(UTC).replace(tzinfo=None)
+        if rule.tenant_id != sample.tenant_id or rule.metric_name != sample.metric_name or not rule.enabled:
+            return None
+        matched = self.matches(sample.value, rule.operator, rule.threshold)
+        fingerprint = self.fingerprint(rule, dimensions or sample.dimensions)
         instance = await self.db.scalar(select(RuntimeAlertInstance).where(
             RuntimeAlertInstance.tenant_id == rule.tenant_id,
-            RuntimeAlertInstance.rule_id == rule.id,
             RuntimeAlertInstance.fingerprint == fingerprint,
-        ))
+        ).with_for_update())
         if instance is None:
+            if not matched:
+                return None
             instance = RuntimeAlertInstance(
-                tenant_id=rule.tenant_id,
-                rule_id=rule.id,
-                fingerprint=fingerprint,
-                state="inactive",
-                severity=rule.severity,
-                routing_key=f"alert.{rule.name}",
+                id=uuid.uuid4(), tenant_id=rule.tenant_id, rule_id=rule.id, fingerprint=fingerprint,
+                status="firing", severity=rule.severity, routing_key=rule.routing_key,
+                fire_count=1, first_fired_at=now, last_fired_at=now, next_notification_at=None,
             )
             self.db.add(instance)
             await self.db.flush()
-        instance.last_value = sample.value
-        transition = None
-        if firing and instance.state != "firing":
-            transition = "firing"
-            instance.state = "firing"
+            await self._emit_transition(instance, rule, sample, "firing", dimensions or sample.dimensions, now)
+            return instance
+        if matched:
+            instance.status = "firing"
+            instance.severity = rule.severity
             instance.fire_count += 1
-            instance.first_fired_at = instance.first_fired_at or now
             instance.last_fired_at = now
-            instance.recovered_at = None
-        elif not firing and instance.state == "firing":
-            transition = "recovery"
-            instance.state = "recovered"
-            instance.recovered_at = now
-        instance.last_transition, instance.updated_at = transition, now
-        if transition:
-            await self._emit_transition(instance, rule, sample, transition, dimensions or {}, now)
+            await self._emit_transition(instance, rule, sample, "firing", dimensions or sample.dimensions, now)
+        elif instance.status == "firing":
+            instance.status = "resolved"
+            instance.resolved_at = now
+            await self._emit_transition(instance, rule, sample, "recovery", dimensions or sample.dimensions, now)
         return instance
 
     async def _emit_transition(self, instance: RuntimeAlertInstance, rule: RuntimeAlertRule, sample: RuntimeMetricSample, transition: str, dimensions: dict[str, Any], now: datetime) -> None:
-        """发布生命周期事件并应用 policy、cooldown、grouping 与 routing 规则。"""
-        severity, level = self._escalate(rule.severity, instance.fire_count, rule)
-        instance.severity, instance.escalation_level = severity, level
-        # RuntimeMetricSample / alert instance timestamps are persisted as naive UTC.
-        # IntegrationEvent's immutable contract requires an aware timestamp, so convert
-        # the service's internal UTC value only at the integration-event boundary.
-        occurred_at = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+        severity, level = self._escalate(instance.severity, instance.fire_count, rule)
+        instance.severity = severity
         event = await self.publisher.publish(
-            tenant_id=instance.tenant_id,
-            event_type=f"alert.{transition}",
-            source="alert-runtime",
-            subject=f"alert:{instance.id}",
-            idempotency_key=f"alert:{instance.id}:{transition}:{instance.fire_count}",
+            tenant_id=instance.tenant_id, event_type=f"alert.{transition}", source="alert_lifecycle",
+            subject=str(instance.id), idempotency_key=f"alert:{instance.id}:{transition}:{instance.fire_count}",
             payload={
-                "alert_instance_id": str(instance.id), "rule_id": str(rule.id), "metric_name": rule.metric_name,
-                "value": sample.value, "threshold": rule.threshold, "operator": rule.operator, "severity": severity,
+                "alert_instance_id": str(instance.id), "rule_id": str(rule.id), "metric_name": sample.metric_name,
+                "value": sample.value, "threshold": rule.threshold, "severity": severity,
                 "routing_key": instance.routing_key, "transition": transition, "dimensions": dimensions,
                 "escalation_level": level,
             },
-            occurred_at=occurred_at,
+            occurred_at=now,
         )
         policy = await self._select_policy(instance.tenant_id, severity, instance.routing_key)
         if policy is None:
@@ -174,7 +156,14 @@ class AlertLifecycleService:
         else:
             group.last_event_at, group.event_count = now, group.event_count + 1
         await self.db.flush()
-        deliveries = await self.delivery.dispatch_event(event, destination_ids=[uuid.UUID(str(v)) for v in policy.destination_ids], provider_order=policy.provider_order, fallback=True, exclude_providers=exclude_providers)
+        deliveries = await self.delivery.dispatch_event(
+            event,
+            destination_ids=[uuid.UUID(str(v)) for v in policy.destination_ids],
+            provider_order=policy.provider_order,
+            fallback=True,
+            exclude_providers=exclude_providers,
+            consumer_group=self.consumer_group,
+        )
         records: list[RuntimeNotificationDelivery] = []
         for delivery in deliveries:
             destination = await self.db.get(WebhookDestination, delivery.destination_id)
@@ -238,25 +227,30 @@ class AlertLifecycleService:
                         await self._audit(instance, "notification.fallback.exhausted", "failure", {"provider": record.provider}, now)
                         await self._metric(record.tenant_id, "notification.dlq", 1, {"provider": record.provider, "transition": record.transition}, now)
         await self.db.flush()
-        return record
 
-    async def _audit_for_delivery(self, record: RuntimeNotificationDelivery, action: str, outcome: str, now: datetime) -> None:
+    @staticmethod
+    def notification_dedup_key(instance: RuntimeAlertInstance, transition: str, group_id: uuid.UUID, destination_id: uuid.UUID, provider: str | None) -> str:
+        return hashlib.sha256(f"{instance.tenant_id}:{instance.id}:{transition}:{group_id}:{destination_id}:{provider}".encode()).hexdigest()
+
+    async def _audit(self, instance: RuntimeAlertInstance, action: str, status: str, metadata: dict[str, Any], now: datetime) -> None:
         self.db.add(RuntimeOperationAudit(
-            tenant_id=record.tenant_id, actor=self.actor, action=action, resource_type="notification_delivery",
-            resource_id=str(record.id), outcome=outcome, details={
-                "webhook_delivery_id": str(record.webhook_delivery_id), "transition": record.transition,
-                "provider": record.provider, "error_code": record.last_error_code,
-            }, created_at=now,
+            id=uuid.uuid4(), tenant_id=instance.tenant_id, action=action, status=status,
+            resource_type="alert_instance", resource_id=str(instance.id), actor=self.actor,
+            metadata_json=metadata, occurred_at=now,
         ))
+        await self.db.flush()
+
+    async def _audit_for_delivery(self, record: RuntimeNotificationDelivery, action: str, status: str, now: datetime) -> None:
+        instance = await self.db.get(RuntimeAlertInstance, record.alert_instance_id)
+        if instance is not None:
+            await self._audit(instance, action, status, {
+                "delivery_id": str(record.webhook_delivery_id), "provider": record.provider,
+                "error_code": record.last_error_code,
+            }, now)
 
     async def _metric(self, tenant_id: uuid.UUID, metric_name: str, value: float, dimensions: dict[str, Any], now: datetime) -> None:
-        self.db.add(RuntimeMetricSample(tenant_id=tenant_id, metric_name=metric_name, value=value, dimensions=dimensions, recorded_at=now))
-
-    async def _audit(self, instance: RuntimeAlertInstance, action: str, outcome: str, details: dict[str, Any], now: datetime) -> None:
-        self.db.add(RuntimeOperationAudit(
-            tenant_id=instance.tenant_id, actor=self.actor, action=action, resource_type="alert",
-            resource_id=str(instance.id), outcome=outcome, details=details, created_at=now,
+        self.db.add(RuntimeMetricSample(
+            tenant_id=tenant_id, metric_name=metric_name, value=value,
+            dimensions=dimensions, recorded_at=now,
         ))
-
-
-__all__ = ["AlertLifecycleService"]
+        await self.db.flush()
