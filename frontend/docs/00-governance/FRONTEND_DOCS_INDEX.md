@@ -27,6 +27,8 @@
 
 当前主线：**P1.1 深度交互与可观测性工作台**。
 
-本轮推进 **P1.3 Runtime ↔ Workflow 生命周期双向深链**：Workflow 生命周期页面可从真实 `workflow_id` 恢复上下文；Runtime 在存在真实 Workflow 上下文时可返回生命周期页面。详见 `04-workflow/P1.3-RUNTIME-WORKFLOW-BIDIRECTIONAL-DEEPLINK.md`。
+最近已完成 P1.3 Runtime ↔ Workflow 生命周期双向深链的代码实现；由于本地 targeted/full Vitest、build、test gate 与 Browser E2E 尚未取得实际执行证据，仍按准则保持验收进行中。
+
+本轮继续推进 **FE-P1-04 Element Plus 未解析组件/指令警告治理**：应用入口统一注册官方 `v-loading` 指令，业务页面继续使用标准 Element Plus Loading 语义，并新增启动层回归测试。详见 `07-testing-regression/ELEMENT_PLUS_LOADING_DIRECTIVE_REGRESSION.md`。
 
 后续继续完成 Agent 调试上下文、Trigger 操作面板及 P1.1 核心闭环验收。

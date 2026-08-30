@@ -4,16 +4,16 @@
 
 ## 1. 当前基线
 
-- 远端 `main`：`214ea176e30487312cc31197c0849089ac9be7e6`（2026-08-30，Runtime Notification fallback exhausted real gate）。
-- 本轮开发基于最新 `main` 继续推进 P1.1/P1.3，不创建新的功能分支。
-- `main` 已包含此前 Workflow 生命周期身份修复：Workflow 页面展示真实 `Workflow.name`，并为单元测试注册 `v-loading` 指令。
-- 本轮无法访问用户 Windows 本地 Node 工作区，因此测试状态必须保持未验收，不得以远端代码存在替代本地通过证据。
+- 远端 `main`：`fc8a21b28bb88198a1a95538b3c69914a881c824`（2026-08-30，Runtime canonical metric subset acceptance tests）。
+- `frontend` 已快进同步到该 `main`，本轮后续实现直接基于此基线，不创建新的功能分支。
+- `main` 已包含此前 Workflow 生命周期身份修复：Workflow 页面展示真实 `Workflow.name`，并为单元测试注册 `v-loading` 指令桩。
+- 用户本地此前存在 Node 依赖目录不完整的问题：`node_modules` 存在但 `node_modules/.bin/vite.cmd` 不存在；`npm ci` 因 Windows `@esbuild/win32-x64/esbuild.exe` 文件锁返回 EPERM，故本地验证仍需重新安装依赖后执行。
 
-## 2. 当前主线：P1.1 / P1.3
+## 2. 当前主线：P1.1 / P1.3 / P1 稳定性
 
 **P1.1 深度交互与可观测性工作台** 当前继续收敛 Runtime / Agent / Workflow 诊断闭环。
 
-### 本轮 P1.3：Runtime ↔ Workflow 双向深链
+### P1.3：Runtime ↔ Workflow 双向深链
 
 状态：**进行中**。
 
@@ -27,6 +27,19 @@
 6. Vitest 覆盖双向深链及无上下文安全回退。
 
 未完成：本地 targeted/full Vitest、build、test gate、真实 API 与 Browser E2E 尚未执行。
+
+### FE-P1-04：Element Plus 未解析组件/指令警告治理
+
+状态：**进行中**。
+
+本轮已实现：
+
+1. 应用入口 `frontend/src/main.ts` 导入 Element Plus 官方 `vLoading`；
+2. 通过 `app.directive("loading", vLoading)` 全局注册；
+3. 新增 `frontend/tests/main.test.ts` 验证启动层注册行为；
+4. 新增回归文档 `frontend/docs/07-testing-regression/ELEMENT_PLUS_LOADING_DIRECTIVE_REGRESSION.md`。
+
+未完成：本地 targeted/full Vitest、build、test gate 与 Browser E2E 尚未执行。
 
 ## 3. 长期任务队列
 
@@ -49,7 +62,7 @@
 - FE-P1-01：统一 Loading / Empty / Error / Success / Permission 状态。
 - FE-P1-02：统一错误分类与用户提示隔离。
 - FE-P1-03：统一中文状态映射，未知值安全回退。
-- FE-P1-04：清理 Element Plus 未解析组件警告。
+- FE-P1-04：清理 Element Plus 未解析组件警告（本轮继续）。
 - FE-P1-05：统一 PageHeader / Toolbar / MetricCard / DataTable / DetailPanel 等公共模式。
 - FE-P1-06：建立 1440 / 1280 / 1024 / 768 / 390 响应式验收矩阵。
 - FE-P1-07：补充核心页面 Playwright 用户旅程。
@@ -102,14 +115,16 @@ targeted test → npm test → npm run build → npm run test:gate
 
 ## 5. 当前测试事实
 
-用户最新本地反馈中的 `WorkflowLifecycle.test.ts` 为 3 个测试 2 通过、1 失败；失败原因是未渲染 `Workflow.name`，并存在 `Failed to resolve directive: loading` 警告。此前远端提交已完成对应修复。本轮又增加 P1.3 双向深链测试，但当前环境无法执行用户 Windows 本地测试，因此不宣称通过。
+用户此前本地 `WorkflowLifecycle.test.ts` 为 3 个测试 2 通过、1 失败；失败原因是旧版本未渲染 `Workflow.name`，并存在 `Failed to resolve directive: loading` 警告。远端代码已修复 Workflow 名称测试，并在本次 FE-P1-04 中补齐生产入口 `v-loading` 注册。
+
+用户最新环境又反馈 `npm run dev` 无法找到 `vite`，随后 `npm ci` 因 Windows `esbuild.exe` 文件锁 EPERM 中断。因此当前不能宣称本地测试通过；必须先解除文件锁、清理 `node_modules` 并执行 `npm ci`。
 
 本地验收至少执行：
 
 ```powershell
 cd frontend
 npm ci
-npm test -- tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeWorkspaceTabs.test.ts
+npm test -- tests/main.test.ts tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeWorkspaceTabs.test.ts
 npm test
 npm run build
 npm run test:gate
