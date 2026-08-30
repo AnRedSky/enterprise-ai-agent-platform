@@ -47,6 +47,17 @@ def test_prometheus_rejects_non_finite_values() -> None:
         RuntimeMetricContract.prometheus(uuid4(), {"runtime.delivery.success_percent": float("nan")})
 
 
+def test_prometheus_accepts_a_canonical_metric_subset() -> None:
+    """Prometheus 可以导出合法 canonical 子集，不得因其他指标未采样而 KeyError。"""
+    tenant_id = uuid4()
+    output = RuntimeMetricContract.prometheus(
+        tenant_id, {"runtime.delivery.success_percent": 100.0}
+    )
+    assert output.strip() == (
+        f'runtime_delivery_success_percent{{tenant_id="{tenant_id}"}} 100.0'
+    )
+
+
 def test_otlp_uses_resource_tenant_attribute_and_canonical_names() -> None:
     """OTLP 将 tenant 放在 Resource 属性中，并保持内部 canonical 指标名不变。"""
     tenant_id = uuid4()
@@ -63,3 +74,14 @@ def test_otlp_uses_resource_tenant_attribute_and_canonical_names() -> None:
     assert [item["name"] for item in metrics] == list(RuntimeMetricContract.OTLP_NAMES)
     assert all("tenant_id" not in item for item in metrics)
     assert all("timeUnixNano" in item["gauge"]["dataPoints"][0] for item in metrics)
+
+
+def test_otlp_accepts_a_canonical_metric_subset() -> None:
+    """OTLP 可以导出合法 canonical 子集，并保持 tenant 只存在于 Resource。"""
+    tenant_id = uuid4()
+    payload = RuntimeMetricContract.otlp(
+        tenant_id, {"runtime.delivery.success_percent": 100.0}
+    )
+    metrics = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+    assert [item["name"] for item in metrics] == ["runtime.delivery.success_percent"]
+    assert metrics[0]["gauge"]["dataPoints"][0]["asDouble"] == 100.0
