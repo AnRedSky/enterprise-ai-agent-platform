@@ -37,7 +37,7 @@ async def test_claim_next_scopes_claim_to_tenant_and_consumer_group() -> None:
     record = SimpleNamespace(
         id=uuid4(), tenant_id=tenant_id, integration_event_id=uuid4(), attempt_count=0,
         status="pending", lease_owner=None, lease_expires_at=None,
-        last_error_code=None, last_error_message=None,
+        last_error_code=None, last_error_message=None, response_status_code=None,
     )
     db = _FakeDb(record)
     now = datetime.now(UTC).replace(tzinfo=None)
