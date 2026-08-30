@@ -1,15 +1,13 @@
-"""Enterprise Runtime Global Operations posture.
+"""企业运行时全局运维视图。
 
-This module provides a read-only, tenant-scoped operational view across the
-existing durable Workflow / Execution / Frontier / Trigger facts. It does not
-introduce a second lifecycle, scheduler, or worker state machine.
+本模块基于现有持久化 Workflow / Execution / Frontier / Trigger 事实提供只读、租户隔离的运行时视图，
+不新增第二套生命周期、调度器或 Worker 状态机。
 
-Important boundary:
-- WorkflowExecutionService remains the authority for execution lifecycle.
-- WorkflowTriggerService remains the authority for trigger lifecycle.
-- WorkflowFrontier is the durable worker-claim fact source.
-- There is currently no durable scheduler/worker heartbeat fact, so process
-  liveness is reported as ``unknown`` instead of being inferred from activity.
+边界说明：
+- WorkflowExecutionService 仍是执行生命周期的唯一权威入口。
+- WorkflowTriggerService 仍是触发器生命周期的唯一权威入口。
+- WorkflowFrontier 是 Worker 抢占事实的持久化来源。
+- 当前没有持久化 Scheduler / Worker 心跳事实，因此进程存活状态只能报告为 ``unknown``，不能从活动事实推断。
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import Workflow, WorkflowVersion
@@ -27,7 +25,7 @@ from app.models.workflow_trigger import WorkflowTrigger
 
 
 class GlobalRuntimeOperationsService:
-    """Build a read-only global runtime posture from canonical durable facts."""
+    """基于规范化持久化事实构建只读的全局运行时运维视图。"""
 
     MAX_WINDOW_HOURS = 168
     MAX_ITEMS = 100
@@ -47,11 +45,25 @@ class GlobalRuntimeOperationsService:
 
     @staticmethod
     def _agent_filter(agent_id: UUID | None):
+        """按 WorkflowVersion.definition 中的规范 agent_id 字段筛选执行。
+
+        参数:
+            agent_id: 可选的 Agent 标识；为空时不增加筛选条件。
+
+        返回:
+            SQLAlchemy 表达式；为空输入返回 ``None``。
+
+        说明:
+            ``agent_id`` 是 WorkflowVersion.definition 的固定协议字段，不是独立 Agent
+            生命周期表。这里使用固定 SQL 标识表达 JSON key，避免 PostgreSQL 编译时把
+            ``agent_id`` 变成绑定参数，从而保持查询契约和 SQL 可观测性稳定；外部值仍
+            通过 SQLAlchemy 绑定参数传入，不拼接用户输入。
+        """
         if agent_id is None:
             return None
         return WorkflowExecution.workflow_version_id.in_(
             select(WorkflowVersion.id).where(
-                WorkflowVersion.definition["agent_id"].as_string() == str(agent_id),
+                WorkflowVersion.definition.op("->>")(literal_column("'agent_id'")) == str(agent_id),
             )
         )
 
@@ -67,18 +79,23 @@ class GlobalRuntimeOperationsService:
         execution_status: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """Return the tenant's global runtime posture.
+        """返回租户的全局运行时状态。
 
-        Filters are applied server-side and always retain the tenant boundary.
-        ``workflow_id``, ``agent_id``, ``trigger_id`` and ``execution_id`` are
-        correlation filters; ``execution_status`` is an execution-state filter.
+        参数:
+            tenant_id: 当前查询的租户边界。
+            window_hours: 执行与 Worker frontier 的时间窗口，自动限制在 1~168 小时。
+            workflow_id: 可选 Workflow 关联筛选。
+            agent_id: 可选 Agent 关联筛选。
+            trigger_id: 可选 Trigger 关联筛选。
+            execution_id: 可选 Execution 关联筛选。
+            execution_status: 可选执行状态筛选。
+            limit: 最近执行明细最大返回数量，自动限制在 1~100。
 
-        Agent correlation uses the canonical WorkflowVersion definition field
-        ``agent_id`` when present. No separate Agent lifecycle is introduced.
+        返回:
+            包含 execution、workflow、trigger、worker、scheduler 状态以及过滤条件的只读快照。
 
-        Worker posture is derived from durable frontier claims. Scheduler
-        posture intentionally reports process liveness as ``unknown`` because
-        the current platform has no durable scheduler heartbeat contract.
+        异常:
+            当 ``execution_status`` 不属于规范执行状态集合时抛出 ``ValueError``。
         """
         window_hours, since = self._window(window_hours)
         limit = min(max(limit, 1), self.MAX_ITEMS)
