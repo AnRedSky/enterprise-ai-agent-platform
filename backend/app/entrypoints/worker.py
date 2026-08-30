@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 
 from app.infrastructure.db.session import engine
 from app.services.integration.webhook_delivery import WebhookDeliveryWorker
@@ -38,6 +39,23 @@ def _positive_float_env(name: str, default: float) -> float:
     return parsed
 
 
+def _optional_uuid_env(name: str) -> uuid.UUID | None:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        return uuid.UUID(value.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} 必须是有效 UUID") from exc
+
+
+def _consumer_group_env(name: str = "WEBHOOK_WORKER_CONSUMER_GROUP") -> str:
+    value = os.getenv(name, WebhookDeliveryWorker.DEFAULT_CONSUMER_GROUP).strip()
+    if not value or len(value) > 128:
+        raise ValueError(f"{name} 必须为 1..128 个字符")
+    return value
+
+
 async def _dispose_database_engine() -> None:
     """在 Worker 事件循环关闭前可靠释放 SQLAlchemy 异步连接池。"""
     dispose_task = asyncio.create_task(engine.dispose())
@@ -64,6 +82,8 @@ async def run_worker_service() -> None:
         concurrency=_positive_int_env("WEBHOOK_WORKER_CONCURRENCY", WebhookDeliveryWorker.DEFAULT_CONCURRENCY),
         lease_seconds=_positive_int_env("WEBHOOK_WORKER_LEASE_SECONDS", 60),
         max_attempts=_positive_int_env("WEBHOOK_WORKER_MAX_ATTEMPTS", 5),
+        tenant_id=_optional_uuid_env("WEBHOOK_WORKER_TENANT_ID"),
+        consumer_group=_consumer_group_env(),
     )
     webhook_poll_interval = _positive_float_env("WEBHOOK_WORKER_POLL_INTERVAL", 0.2)
     workflow_task = asyncio.create_task(workflow_worker.run_forever())
@@ -75,6 +95,8 @@ async def run_worker_service() -> None:
                 "worker_owner": workflow_worker.owner,
                 "webhook_worker_owner": webhook_worker.owner,
                 "webhook_concurrency": webhook_worker.concurrency,
+                "webhook_tenant_id": str(webhook_worker.tenant_id) if webhook_worker.tenant_id else None,
+                "webhook_consumer_group": webhook_worker.consumer_group,
             },
         )
         await asyncio.gather(workflow_task, webhook_task)
@@ -88,6 +110,7 @@ async def run_worker_service() -> None:
             extra={
                 "worker_owner": workflow_worker.owner,
                 "webhook_worker_owner": webhook_worker.owner,
+                "webhook_consumer_group": webhook_worker.consumer_group,
             },
         )
 
