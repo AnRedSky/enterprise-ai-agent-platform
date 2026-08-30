@@ -159,6 +159,7 @@ class WebhookDeliveryRepository:
         return True
 
     async def replay(self, db: AsyncSession, tenant_id: uuid.UUID, delivery_id: uuid.UUID, actor: str) -> WebhookDelivery | None:
+        """在租户边界内重置已完成或死信 Delivery，并为新一轮投递恢复完整 retry budget。"""
         result = await db.execute(
             select(WebhookDelivery)
             .where(WebhookDelivery.id == delivery_id, WebhookDelivery.tenant_id == tenant_id)
@@ -170,10 +171,12 @@ class WebhookDeliveryRepository:
         if record.status not in {"delivered", "dead_letter"}:
             raise ValueError("只有 delivered 或 dead_letter Delivery 才允许 replay")
         record.status = "pending"
+        record.attempt_count = 0
         record.next_attempt_at = None
         record.lease_owner = None
         record.lease_expires_at = None
         record.delivered_at = None
+        record.response_status_code = None
         record.last_error_code = None
         record.last_error_message = None
         await self._audit(db, record, "replay", actor, "pending")
