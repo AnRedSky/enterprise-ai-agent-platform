@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.runtime_operations import RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry
 from app.models.webhook_integration import WebhookDestination
+from app.services.runtime_operations.metrics_contract import RuntimeMetricContract
 from app.services.runtime_operations.service import RuntimeOperationsService
 from app.services.runtime_operations.sampling import RuntimeDimensionSampler
 
@@ -139,22 +140,23 @@ class RuntimeOperationsEnterpriseService:
         return list((await self.db.execute(select(RuntimeOperationAudit).where(RuntimeOperationAudit.tenant_id == tenant_id).order_by(RuntimeOperationAudit.created_at.desc()).limit(min(max(limit, 1), 1000)))).scalars().all())
 
     async def prometheus(self, tenant_id: UUID) -> str:
+        """按规范指标名和唯一 tenant_id 标签导出 Prometheus 数据。"""
         overview = await self.metrics.overview(tenant_id)
         values = {
-            "runtime_delivery_success_percent": overview["slo"]["delivery_success_percent"],
-            "runtime_delivery_retry_count": overview["deliveries"]["retry_count"],
-            "runtime_delivery_dead_letter_count": overview["deliveries"]["dead_letter_count"],
-            "runtime_delivery_p95_latency_ms": overview["slo"]["p95_delivery_latency_ms"] or 0,
+            "runtime.delivery.success_percent": overview["slo"]["delivery_success_percent"],
+            "runtime.delivery.retry_count": overview["deliveries"]["retry_count"],
+            "runtime.delivery.dead_letter_count": overview["deliveries"]["dead_letter_count"],
+            "runtime.delivery.p95_latency_ms": overview["slo"]["p95_delivery_latency_ms"],
         }
-        return "\n".join(f"{name}{{tenant_id=\"{tenant_id}\"}} {value}" for name, value in values.items()) + "\n"
+        return RuntimeMetricContract.prometheus(tenant_id, values)
 
     async def otlp(self, tenant_id: UUID) -> dict[str, Any]:
+        """按统一 Resource 属性生成 OTLP HTTP 指标结构。"""
         overview = await self.metrics.overview(tenant_id)
-        timestamp = int(datetime.now(UTC).timestamp() * 1_000_000_000)
-        values = [
-            ("runtime.delivery.success_percent", overview["slo"]["delivery_success_percent"]),
-            ("runtime.delivery.retry_count", overview["deliveries"]["retry_count"]),
-            ("runtime.delivery.dead_letter_count", overview["deliveries"]["dead_letter_count"]),
-            ("runtime.delivery.p95_latency_ms", overview["slo"]["p95_delivery_latency_ms"] or 0),
-        ]
-        return {"resourceMetrics": [{"resource": {"attributes": [{"key": "tenant.id", "value": {"stringValue": str(tenant_id)}}]}, "scopeMetrics": [{"scope": {"name": "enterprise-ai-agent-platform.runtime"}, "metrics": [{"name": name, "gauge": {"dataPoints": [{"asDouble": value, "timeUnixNano": str(timestamp)}]}} for name, value in values]}]}]}
+        values = {
+            "runtime.delivery.success_percent": overview["slo"]["delivery_success_percent"],
+            "runtime.delivery.retry_count": overview["deliveries"]["retry_count"],
+            "runtime.delivery.dead_letter_count": overview["deliveries"]["dead_letter_count"],
+            "runtime.delivery.p95_latency_ms": overview["slo"]["p95_delivery_latency_ms"],
+        }
+        return RuntimeMetricContract.otlp(tenant_id, values)

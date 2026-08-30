@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
 - 当前任务：**2.10-I Runtime Notification Lifecycle / Provider / Metrics / Alert / Export / Operational Audit**
-- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization 与 Runtime Acceptance Gate 实现切片**
+- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization、tenant/consumer-group Claim isolation、Claim competition 与 Runtime Acceptance Gate 收口**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -27,7 +27,7 @@
 ## 3. Phase 2.10-I 当前实现
 
 ### Provider / Metrics / Alert / Export / Audit 基础
-状态：**已实现基础切片，继续进入 Runtime Lifecycle 收口**。
+状态：**基础切片与 Runtime Lifecycle 已实现，继续进入观测出口与全链路 Acceptance 收口**。
 
 已实现：
 - `runtime_metric_samples` 时间序列指标持久化；
@@ -47,35 +47,34 @@
 - Prometheus / OTLP Export；
 - Runtime Operational Audit 覆盖 Provider、Alert、Notification Delivery 生命周期。
 
-### Worker 生命周期测试修复
-状态：**已修复，等待本地回归结果**。
+### Worker / Scheduler 生命周期回归
+状态：**已完成**。
 
-- 修复 `tests/unit/test_worker_entrypoint.py` 对 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约缺失的 Mock；
-- 测试显式保留生产构造器需要的类级默认值，并验证 sender / concurrency / lease / max_attempts 参数；
-- 根因与修复记录：`docs/04-errors/2026-08-30-worker-entrypoint-test-mock-class-attribute.md`；
-- 不修改生产 Worker 默认并发行为，不增加兼容层。
+- Worker 入口生命周期测试已保持 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约；
+- Scheduler Service 生命周期测试已覆盖 Scheduled Trigger、Workflow Recovery、Runtime Alert、Runtime Notification 四个后台循环；
+- 单元测试不再因未 Mock Runtime Scheduler 而创建真实数据库连接；
+- 已消除 `Connection._cancel was never awaited` 异步资源警告；
+- 错误记录：`docs/04-errors/2026-08-30-scheduler-lifecycle-test-async-connection-warning.md`。
 
 ### Workflow Governance 单元测试回归
-状态：**已修复，等待本地回归结果**。
+状态：**已完成**。
 
-- Backend default regression 在 724 个测试通过后发现 `test_cancel_allows_pending_and_running_only` 的 AsyncSession 事务上下文 Mock 契约缺失；
-- 修复 `db.begin_nested()` 的测试替身，使其保持 `AsyncSession.begin_nested()` 的异步上下文管理器调用协议；
-- 生产 `RuntimeIntegrationEventPublisher` 不修改；
-- 根因与修复记录：`docs/04-errors/2026-08-30-workflow-governance-asyncsession-context-mock.md`；
-- 本次修复与错误记录作为同一原子提交进入 `main`。
+- AsyncSession `begin_nested()` 测试替身已与异步上下文管理器协议保持一致；
+- Workflow Governance 状态机回归不再产生事务 Mock 类型错误；
+- 根因与修复记录：`docs/04-errors/2026-08-30-workflow-governance-asyncsession-context-mock.md`。
 
 ### Runtime Notification Lifecycle Acceptance
-状态：**Gate 已实现，等待本地实际执行结果收口**。
+状态：**已通过本地实际 Real Gate**。
 
 真实验收脚本：
 `backend/scripts/test/phase-2.10/03_alert_notification_lifecycle_real_gate.ps1`
 
-验证链路：
+当前 Gate 已验证：
 
 ```text
 Alert Evaluation
     ↓
-Alert Firing / Recovery
+Firing / Recovery
     ↓
 Notification Policy
     ↓
@@ -83,28 +82,57 @@ Grouping / Dedup / Cooldown
     ↓
 Provider Routing
     ↓
-WebhookDeliveryWorker
+Worker Claim
+    ↓
+Claim Competition
     ↓
 Notification Delivery Outcome
     ↓
-Fallback / Retry / DLQ
+Retry / Dead Letter / Fallback
     ↓
 SLO / Metrics
     ↓
-Operational Audit
+Audit
 ```
 
 Gate 只负责服务状态探测、测试上下文自动生成、验收执行与清理，不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis 等服务；测试数据由脚本自动创建和清理，不要求手工填写测试信息。
 
-## 4. 2.10-I 下一步
+## 4. 最近本地回归基线
 
-1. 本地执行 Worker 生命周期单元回归、Workflow Governance 单元回归与 Backend default regression；
-2. 执行 Runtime Notification Lifecycle Real Gate，验证真实 PostgreSQL / Scheduler / Worker 闭环；
-3. 完成 fallback exhausted → Notification DLQ 的真实失败链路验收；
-4. 完成 Alert → Notification → Provider → Destination Metrics 的维度聚合核验；
-5. 完成 Prometheus canonical label governance；
-6. 接入 OpenTelemetry SDK 标准 Meter / Resource / tenant-safe attributes；
-7. 完成 2.10-I 全链路 Real PostgreSQL Acceptance。
+已反馈并通过：
 
-## 5. 长期未完成能力
+```text
+uv run pytest -q
+940 passed, 3 skipped, 63 deselected
+```
+
+Runtime targeted unit：
+
+```text
+15 passed
+```
+
+Runtime Notification Acceptance：
+
+```text
+1 passed
+```
+
+Phase 2.10-I Real Gate：
+
+```text
+Runtime Notification Lifecycle Real Gate completed.
+```
+
+当前已知的全量回归唯一警告已定位为 Scheduler 生命周期测试未 Mock 新增 Runtime Scheduler，并已在本次提交修复；需要开发者本地再次执行 `uv run pytest -q` 确认无警告。
+
+## 5. 2.10-I 下一切片
+
+1. 接入 OpenTelemetry SDK 标准 Meter / Resource，并保持 `RuntimeMetricContract` 的现有业务指标名与 tenant boundary；
+2. 增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
+3. 完成 Provider health / registry / metrics series / alert scheduler / notification routing 的统一 Real PostgreSQL Acceptance；
+4. 完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
+5. 完成 2.10-I Runtime Acceptance 全链路 Gate。
+
+## 6. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`。

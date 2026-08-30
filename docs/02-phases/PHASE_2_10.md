@@ -57,7 +57,7 @@
 必须验证 tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit，以及 Worker 后续网络投递边界；Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL，测试数据自动生成和清理。
 
 ## 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，三维时间序列采样、Scheduler 周期评估与通知路由编排切片已完成**。
+状态：**开发中，Runtime Lifecycle、Worker tenant/consumer-group 隔离、Claim 竞争与三维时间序列采样切片已完成，进入指标出口规范化与 SDK 观测能力收口**。
 
 ### I-1 时间序列 Metrics
 
@@ -103,7 +103,7 @@
 - `GET /api/v1/runtime/operations/metrics/otlp`：输出 OTLP HTTP 指标结构；
 - 导出数据 tenant-scoped，且直接从 Durable facts 计算，避免导出缓存与业务事实漂移。
 
-当前实现不强制引入第三方 SDK，先稳定协议边界；后续接入 OpenTelemetry SDK 时保持现有导出 Contract 不变。
+当前阶段完成 canonical metric naming / label governance：Prometheus 使用固定的规范指标名与唯一 `tenant_id` 标签，OTLP 使用 `service.name`、`service.version`、`tenant.id` Resource 属性；导出值统一拒绝 NaN / Infinity，并对 Prometheus 标签值执行安全转义。该 Contract 集中维护在 `RuntimeMetricContract`，后续接入 OpenTelemetry SDK 时不得改变现有业务指标名与租户边界。
 
 ### I-6 Operational Audit
 
@@ -146,22 +146,43 @@
 
 ### I-10 Worker Lifecycle Regression
 
-状态：**单元测试修复完成，等待本地回归结果**。
+状态：**已完成**。
 
-- 修复 Worker 入口生命周期测试中对 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约的 Mock 缺失；
-- 测试显式保留生产构造器需要的类级默认值，并验证 sender / concurrency / lease / max_attempts 参数；
-- 错误记录：`docs/04-errors/2026-08-30-worker-entrypoint-test-mock-class-attribute.md`；
-- Runtime Real Gate 继续禁止自动启动服务，仅检查 Scheduler / Worker 是否已经由开发者启动；测试身份与业务数据自动生成，不要求人工填写。
+- Scheduler Service 生命周期测试已覆盖 Scheduled Trigger、Workflow Recovery、Runtime Alert、Runtime Notification 四个后台循环；
+- 测试替身与生产入口保持完整生命周期契约，避免单元测试创建真实 Runtime Scheduler 数据库连接；
+- 已消除已反馈的 `Connection._cancel was never awaited` 异步资源警告；
+- 错误记录：`docs/04-errors/2026-08-30-scheduler-lifecycle-test-async-connection-warning.md`。
+
+## 2.10-I 当前收口切片
+
+### I-11 Worker tenant / consumer-group / Claim Competition
+
+状态：**已完成真实 PostgreSQL Acceptance**。
+
+- Worker 通过 tenant + consumer group 双重边界 Claim Delivery；
+- PostgreSQL `FOR UPDATE SKIP LOCKED` 保证同一 Delivery 的并发 Claim 竞争只允许一个 Worker 获得租约；
+- Claim acceptance 自动创建并清理两个 tenant 与两个 consumer group 的测试事实；
+- Real Gate 已纳入 Claim Competition；
+- Integration Event 测试时间使用 naive UTC，与 PostgreSQL 当前模型保持一致。
+
+### I-12 Canonical Metrics Export Governance
+
+状态：**已完成**。
+
+- 新增 `RuntimeMetricContract` 作为 Prometheus / OTLP 唯一导出规范入口；
+- Prometheus 指标名固定映射，不允许未知 Runtime 指标静默输出；
+- Prometheus 只输出 `tenant_id` 标签，禁止把 Provider / Destination / Event Type 任意扩展为公共 label；
+- OTLP 使用 `service.name`、`service.version`、`tenant.id` Resource 属性；
+- NaN / Infinity 被拒绝；Prometheus 标签值执行转义；
+- Enterprise Service 不再自行拼接 Export Contract，避免 Prometheus / OTLP 形成平行命名实现。
 
 ## 2.10-I 下一切片
 
-1. 本地执行 Worker 生命周期单元回归与 Backend default regression；
-2. 执行 Runtime Notification Lifecycle Real Gate，验证真实 PostgreSQL / Scheduler / Worker 闭环；
-3. 完成 fallback exhausted → Notification DLQ 的真实失败链路验收；
-4. 完成 Alert → Notification → Provider → Destination Metrics 的维度聚合核验；
-5. 完成 Prometheus canonical metric naming / label governance；
-6. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
-7. 完成 2.10-I Runtime Acceptance：registry + health + series + scheduler + lifecycle + notification routing + exports + audit + tenant isolation。
+1. 接入 OpenTelemetry SDK 标准 Meter / Resource，并保持 `RuntimeMetricContract` 的现有业务指标名与 tenant boundary；
+2. 增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
+3. 完成 Provider health / registry / metrics series / alert scheduler / notification routing 的统一 Real PostgreSQL Acceptance；
+4. 完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
+5. 完成 2.10-I Runtime Acceptance 全链路 Gate。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改 Delivery 状态。

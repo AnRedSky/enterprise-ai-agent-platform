@@ -8,6 +8,7 @@
 from .alerting import RuntimeAlertEvaluator
 from .destination_registry import DestinationRegistryService
 from .enterprise import RuntimeOperationsEnterpriseService
+from .metrics_contract import RuntimeMetricContract
 from .notification_scheduler import RuntimeNotificationScheduler
 from .provider_health import ProviderHealthResult, RuntimeProviderHealthService
 from .scheduler import RuntimeAlertScheduler
@@ -18,6 +19,7 @@ __all__ = [
     "ProviderHealthResult",
     "RuntimeAlertEvaluator",
     "RuntimeAlertScheduler",
+    "RuntimeMetricContract",
     "RuntimeNotificationScheduler",
     "RuntimeOperationsEnterpriseService",
     "RuntimeOperationsService",
