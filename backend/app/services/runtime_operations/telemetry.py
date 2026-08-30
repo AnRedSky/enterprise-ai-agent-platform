@@ -8,12 +8,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Callable
 from uuid import UUID
 
-from opentelemetry import metrics
+from opentelemetry.metrics import Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.metrics import Observation
 
 from .metrics_contract import RuntimeMetricContract
 
@@ -22,10 +22,10 @@ class RuntimeTelemetry:
     """提供与 RuntimeMetricContract 对齐的 OpenTelemetry Meter。"""
 
     def __init__(self, provider: MeterProvider | None = None) -> None:
-        """创建 Runtime Meter，并固定服务资源属性。
+        """创建 Runtime Meter，并固定服务 Resource。
 
         Args:
-            provider: 可选的 SDK MeterProvider；未提供时创建独立 Provider，便于应用入口和测试显式管理生命周期。
+            provider: 可选 SDK MeterProvider；未提供时创建独立 Provider，便于测试与显式生命周期管理。
         """
         self.provider = provider or MeterProvider(
             resource=Resource.create(
@@ -47,9 +47,9 @@ class RuntimeTelemetry:
             for name in RuntimeMetricContract.OTLP_NAMES
         }
 
-    def _callback(self, metric_name: str):
+    def _callback(self, metric_name: str) -> Callable[[object], list[Observation]]:
         """创建单指标观察回调，保持 tenant 作为唯一业务维度。"""
-        def observe(_options):
+        def observe(_options: object) -> list[Observation]:
             return [
                 Observation(value, {"tenant_id": tenant_id})
                 for (name, tenant_id), value in self._values.items()
