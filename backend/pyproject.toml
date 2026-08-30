@@ -10,6 +10,8 @@ dependencies = [
     "bcrypt==4.0.1",
     "fastapi==0.115.6",
     "httpx==0.28.1",
+    "opentelemetry-api==1.28.2",
+    "opentelemetry-sdk==1.28.2",
     "passlib[bcrypt]==1.7.4",
     "pydantic-settings==2.7.1",
     "pydantic==2.10.4",
