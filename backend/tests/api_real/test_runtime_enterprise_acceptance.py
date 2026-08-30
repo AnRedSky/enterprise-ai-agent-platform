@@ -1,6 +1,6 @@
 """Phase 2.10-I Runtime Enterprise Operations 的真实 PostgreSQL 验收。
 
-职责：验证 Provider Registry、Alert Rule、Metric Snapshot/Series、Prometheus/OTLP Export 与 Operational Audit 的真实持久化和租户边界。
+职责：验证 Provider Registry、Alert Rule、Metric Snapshot/Series、Prometheus/OTLP Export、Runtime Telemetry 与 Operational Audit 的真实持久化和租户边界。
 边界：不启动任何服务，不执行外部 Provider 网络请求；测试数据由用例自动创建并清理。
 """
 
@@ -9,6 +9,8 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from sqlalchemy import delete
 
 from app.infrastructure.db.session import SessionLocal
@@ -19,7 +21,7 @@ from app.models.runtime_operations import (
     RuntimeOperationAudit,
     RuntimeProviderRegistry,
 )
-from app.services.runtime_operations import RuntimeMetricContract, RuntimeOperationsEnterpriseService
+from app.services.runtime_operations import RuntimeMetricContract, RuntimeOperationsEnterpriseService, RuntimeOperationsService, RuntimeTelemetry
 
 pytestmark = pytest.mark.real_api
 
@@ -86,6 +88,31 @@ async def test_runtime_enterprise_registry_metrics_export_audit_are_tenant_scope
             assert attributes["tenant.id"] == str(tenant_a)
             assert all("tenant_id" not in item for item in otlp["resourceMetrics"][0]["scopeMetrics"][0]["metrics"])
 
+            overview = await RuntimeOperationsService(db).overview(tenant_a, window_hours=24)
+            canonical_values = {
+                "runtime.delivery.success_percent": overview["slo"]["delivery_success_percent"],
+                "runtime.delivery.retry_count": overview["deliveries"]["retry_count"],
+                "runtime.delivery.dead_letter_count": overview["deliveries"]["dead_letter_count"],
+            }
+            telemetry_reader = InMemoryMetricReader()
+            telemetry_provider = MeterProvider(
+                resource=resource_from_contract(tenant_a),
+                metric_readers=[telemetry_reader],
+            )
+            telemetry = RuntimeTelemetry(telemetry_provider)
+            telemetry.record(tenant_a, canonical_values)
+            telemetry_data = telemetry_reader.get_metrics_data()
+            assert telemetry_data is not None
+            telemetry_resource = telemetry_data.resource_metrics[0].resource.attributes
+            assert telemetry_resource["service.name"] == RuntimeMetricContract.SERVICE_NAME
+            assert telemetry_resource["tenant.id"] == str(tenant_a)
+            telemetry_names = {metric.name for metric in telemetry_data.resource_metrics[0].scope_metrics[0].metrics}
+            assert telemetry_names == set(RuntimeMetricContract.OTLP_NAMES)
+            for metric in telemetry_data.resource_metrics[0].scope_metrics[0].metrics:
+                point = next(iter(metric.data.data_points))
+                assert point.attributes == {"tenant_id": str(tenant_a)}
+            telemetry.shutdown()
+
             audits = await service.audit_list(tenant_a)
             assert {"provider.create", "alert_rule.create"}.issubset({item.action for item in audits})
             assert await service.audit_list(tenant_b) == []
@@ -97,6 +124,17 @@ async def test_runtime_enterprise_registry_metrics_export_audit_are_tenant_scope
             await db.execute(delete(RuntimeProviderRegistry).where(RuntimeProviderRegistry.tenant_id.in_([tenant_a, tenant_b])))
             await db.execute(delete(Tenant).where(Tenant.id.in_([tenant_a, tenant_b])))
             await db.commit()
+
+
+def resource_from_contract(tenant_id: uuid.UUID):
+    """构造与 RuntimeMetricContract 完全一致的 SDK Resource，避免测试复制第二套服务标识。"""
+    from opentelemetry.sdk.resources import Resource
+
+    return Resource.create({
+        "service.name": RuntimeMetricContract.SERVICE_NAME,
+        "service.version": RuntimeMetricContract.SERVICE_VERSION,
+        "tenant.id": str(tenant_id),
+    })
 
 
 @pytest.mark.asyncio
