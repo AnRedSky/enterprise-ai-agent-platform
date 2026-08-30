@@ -27,6 +27,10 @@
 
 当前主线：**P1.1 深度交互与可观测性工作台**。
 
-本轮推进 **P1.3 Runtime ↔ Workflow 生命周期双向深链**：Workflow 生命周期页面可从真实 `workflow_id` 恢复上下文；Runtime 在存在真实 Workflow 上下文时可返回生命周期页面。详见 `04-workflow/P1.3-RUNTIME-WORKFLOW-BIDIRECTIONAL-DEEPLINK.md`。
+P1.3 Runtime ↔ Workflow 生命周期双向深链代码已实现，但本地完整验收仍需实际执行。
+
+FE-P1-04 Element Plus `v-loading` 生产入口注册已实现，并保留本地验收进行中状态。
+
+本轮继续推进 Audit 可观测性体验加固：基于真实 `/runtime/audit-logs` Contract 增加有限状态筛选、错误恢复、Empty 恢复动作、Execution 真实 ID 深链及窄屏适配；同时提供 `npm run test:local:full` 统一本地回归入口。详见 `07-testing-regression/AUDIT_LOG_UX_AND_LOCAL_REGRESSION.md`。
 
 后续继续完成 Agent 调试上下文、Trigger 操作面板及 P1.1 核心闭环验收。

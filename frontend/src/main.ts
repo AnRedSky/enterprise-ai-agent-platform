@@ -29,6 +29,7 @@ import {
   ElTag,
   ElTimeline,
   ElTimelineItem,
+  vLoading,
 } from "element-plus";
 import "element-plus/dist/index.css";
 import App from "./App.vue";
@@ -67,4 +68,5 @@ const components = {
   ElTimelineItem,
 };
 for (const [name, component] of Object.entries(components)) app.component(name, component);
+app.directive("loading", vLoading);
 app.use(createPinia()).use(router).mount("#app");
