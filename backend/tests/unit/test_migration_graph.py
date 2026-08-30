@@ -31,3 +31,10 @@ def test_alert_rule_escalation_remains_downstream_of_alert_lifecycle():
     migration = _load_migration("0046_alert_rule_escalation.py")
 
     assert migration.down_revision == "0045_alert_lifecycle_notifications"
+
+
+def test_webhook_delivery_consumer_group_is_downstream_of_merged_runtime_head():
+    """0048 必须从已经合并的 Runtime/Alert head 继续，避免再次形成 Alembic 多头。"""
+    migration = _load_migration("0048_webhook_delivery_consumer_group.py")
+
+    assert migration.down_revision == "0047_merge_runtime_operations_alerts"
