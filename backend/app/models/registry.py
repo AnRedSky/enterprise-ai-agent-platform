@@ -5,6 +5,7 @@ from app.models.execution import Execution, ExecutionEvent  # noqa: F401
 from app.models.integration_event import IntegrationEventRecord  # noqa: F401
 from app.models.knowledge import KnowledgeBase, KnowledgeDocument, KnowledgeDocumentVersion  # noqa: F401
 from app.models.model_provider import ModelProfile, ModelProvider  # noqa: F401
+from app.models.operator_action import OperatorActionIdempotency  # noqa: F401
 from app.models.organization import Organization, OrganizationMembership  # noqa: F401
 from app.models.runtime_operations import RuntimeAlertRule, RuntimeMetricSample, RuntimeOperationAudit, RuntimeProviderRegistry  # noqa: F401
 from app.models.usage import ModelUsageRecord  # noqa: F401
