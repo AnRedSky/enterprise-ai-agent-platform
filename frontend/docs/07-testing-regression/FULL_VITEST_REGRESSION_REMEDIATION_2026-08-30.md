@@ -2,66 +2,48 @@
 
 ## 1. 本次基线
 
-`main` 与 `frontend` 当前已同步，最新共同提交为 `9f6fe5c8928f2bb501adb6a85eb3f79dabbaade3`。
+`main` 与 `frontend` 当前已同步，最新共同提交为 `4e31f477e57441271137b69b8a6e1c2dfe7e1e71`。
 
-本地 `npm run test:local:full` 已完成依赖、目标测试及全量 Vitest 阶段，但全量 Vitest 首次执行为 `22 passed / 9 failed`。
+本地最新反馈已从此前 9 个失败收敛到 4 个失败：Agent 调试上下文缺少系统提示词、Integration Event 详情测试缺少 descriptions 组件注册、Organizations 文本断言受表格测试桩影响、Workflow 查询测试未设置运行记录 ID。
 
-## 2. 失败分类
+## 2. 本轮修复
 
-### 测试语法阻断
+### Agent 调试上下文
 
-`tests/views/RuntimeWorkspaceTabs.test.ts` 中 `el-button` stub 的 template 使用双引号嵌套 `$emit("click")`，导致 esbuild 在 transform 阶段报 `Expected "}" but found "$emit"`。修复为模板字符串，避免 Vue template 属性与 JavaScript 字符串的引号冲突。
+遵循 `FRONTEND_DEVELOPMENT_GUIDELINES.md` 的 Agent 规则，对话调试打开后按真实 `agent_id` 调用 `getPublishedVersion`，展示当前生效版本的系统提示词，并提供独立 Loading / Error 状态。页面不复制 Agent 状态机，调试请求仍只使用真实 `agent_id`。
 
-### UI 文本契约漂移
+### Integration Event 详情测试
 
-若页面已经完成中文 UI 治理，测试不得继续断言旧英文或旧领域术语：
+生产页面已经使用正式中文字段 `幂等标识`。测试补齐 `ElDescriptions` / `ElDescriptionsItem` 组件注册，避免测试环境将业务详情组件当作未解析组件而丢失标签文本。
 
-- `delivered` → `已送达`
-- `Idempotency Key` → `幂等标识`
-- `暂无 Destination` → `暂无投递目标`
-- `新建 Subscription` → `新建事件订阅`
-- `请先创建至少一个 Destination` → `请先创建至少一个投递目标`
+### Organizations 页面
 
-Agent 调试测试改为验证真实调试上下文打开后的 `调试：<智能体>` 标题，而不是依赖表格内部按钮 stub 的渲染细节。
+组织页继续保留真实 `/organizations/{id}` 成员管理深链，并增加明确的用户提示“进入组织详情可管理成员”，使成员管理入口在高信息密度表格测试桩及窄屏信息层级中仍有可感知的业务说明。
 
-### 异步测试竞态
+### Workflow 查询测试
 
-`OperationsConsole` 测试原先只等待页面标题出现即读取 SLO 指标；页面标题属于同步渲染，而 overview 数据通过异步 API 加载。测试改为等待真实异步结果 `99.50%` 后再验证指标与 API 调用。
+“查询运行记录”必须以真实 `execution_id` 为输入。测试在调用 `loadExecution` 前显式设置 `executionId = "e1"`，避免把空输入当成后端 Contract。产品代码不新增本地推断或平行状态机。
 
-Workflow 创建/运行测试同样在创建与运行动作之间等待真实 `execution.id/status` 状态，避免测试依赖 Promise 微任务调度顺序。
+## 3. 兼容性与测试边界
 
-### 第三方组件测试警告
-
-`AppShell` 测试补充 `el-aside` layout stub。该问题原本不会导致断言失败，但会产生 `Failed to resolve component: el-aside` 噪声，降低回归结果可读性。
-
-### 关系字段断言
-
-Runtime Retry/Resume 测试优先验证后端真实关系字段：`retry_of_execution_id`、`resume_of_execution_id`、`resume_checkpoint_sequence`，避免将表格/描述组件的文本布局作为关系 Contract 的唯一事实来源。
-
-### 错误文案标点
-
-Organization Detail 当前统一使用 `组织详情加载失败，请稍后重试。`，测试同步当前正式 UI 文案。
-
-## 3. 设计原则
-
-1. 不为了让测试通过而恢复旧英文 UI。
-2. 不在前端复制后端状态机或业务计算。
-3. 测试优先验证 API 参数、真实 ID、后端字段与用户可见状态映射。
-4. UI 文本断言只验证正式用户可见文案，不把历史英文术语当作 Contract。
-5. 异步页面必须等待业务数据稳定状态，而不是等待任意同步标题。
-6. 测试 stub 应覆盖必要的 Element Plus 结构，但不得模拟业务逻辑。
+- 不恢复旧英文 UI 文案。
+- 不通过修改生产代码来迎合错误的测试输入。
+- 不自动启动 API、Scheduler、Worker、PostgreSQL 或 Redis。
+- 不引入手工 token、用户名、密码、tenant ID、agent ID、workflow ID 或其他业务测试数据输入；测试数据继续由测试夹具提供。
+- Agent 系统提示词仅展示后端正式 Published Version 返回值，不写入浏览器持久化存储。
 
 ## 4. 验证顺序
 
 ```powershell
-npm test -- tests/views/RuntimeWorkspaceTabs.test.ts tests/views/OperationsConsole.test.ts tests/views/Integrations.test.ts tests/views/IntegrationEventConsole.test.ts tests/views/Agents.test.ts tests/views/OrganizationDetail.test.ts tests/views/Organizations.test.ts tests/views/Runtime.test.ts tests/views/Workflows.test.ts
+npm test -- tests/views/Agents.test.ts tests/views/IntegrationEventConsole.test.ts tests/views/Organizations.test.ts tests/views/Workflows.test.ts
 npm test
 npm run build
 npm run test:gate
+npm run test:local:full
 ```
 
-本次修改没有自动启动 API、Scheduler、Worker、PostgreSQL 或 Redis，也没有引入手工测试数据输入。完整回归在本地服务未就绪时继续遵循“只检查、不自动启动”的既定边界。
+以上命令需在本地重新执行后才能记录为通过；本文件不预先声明尚未实际执行的结果。
 
 ## 5. 当前验收状态
 
-本文件只记录修复内容；在开发者重新执行上述命令之前，不将全量 Vitest、Build、Gate 或 E2E 标记为通过。
+本轮代码已针对用户提供的 4 个失败点完成修复设计与实现。最终验收仍以开发者本地实际执行结果为准。
