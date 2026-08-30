@@ -8,7 +8,7 @@
 
 ## 2. 当前状态
 
-**开发中。**
+**开发中。第一切片 Backend 已进入实现阶段。**
 
 Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification Lifecycle 收口；当前正式下一阶段为 LT-03 的 Operations Console 治理切片。
 
@@ -18,7 +18,23 @@ Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification L
 
 为 Runtime / Workflow / Trigger 运维操作建立统一的操作治理 Contract，避免前端自行判断权限、状态或重复实现生命周期规则。
 
-### 3.2 操作边界
+### 3.2 已实现 Backend 切片
+
+- 新增 `OperatorActionGovernanceService`，统一维护 Workflow Execution / Trigger 操作定义；
+- 提供后端计算的 Action Availability Contract；
+- Workflow Execution 已接入 Run / Cancel / Retry / Resume 统一 Operator Action 入口；
+- Trigger 已接入 Enable / Disable / Delete / Invoke 统一 Operator Action 入口；
+- 高风险操作统一要求 `confirm=true`；
+- Retry / Trigger Invoke 要求 `Idempotency-Key`；
+- 新增 tenant-scoped Operator Action 幂等事实表与 Alembic migration；
+- Operator Action 继续委托现有 `WorkflowExecutionService` / `WorkflowTriggerService`，不复制生命周期状态机；
+- Operator Action 结果写入现有 `AuditLog`，保留 actor、tenant、resource、action、outcome 与 execution 关联；
+- 新增 API Contract 与 Unit 测试；
+- 新增独立 Unit Gate，服务缺失时只报告未执行，不自动启动服务。
+
+当前 Backend 实现尚未由本地开发环境重新执行完整 Regression / Real API Gate，因此本阶段暂不得标记为 Acceptance Passed。
+
+### 3.3 操作边界
 
 ```text
 查询 / 诊断
@@ -41,7 +57,7 @@ Operational Audit
 - Runtime：Execution 诊断深链；
 - Audit：操作结果与失败原因关联。
 
-### 3.3 强制规则
+### 3.4 强制规则
 
 1. Tenant scope 必须由后端身份上下文决定，前端不得提交并决定目标 Tenant。
 2. 前端不得复制 Workflow / Trigger 状态机；操作是否允许由 Backend Contract 决定。
