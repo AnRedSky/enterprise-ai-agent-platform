@@ -23,9 +23,46 @@ class _FakeDb:
         self.record = record
         self.add = Mock()
         self.flush = AsyncMock()
+        self.statement = None
 
-    async def execute(self, _statement):
+    async def execute(self, statement):
+        self.statement = statement
         return _ScalarResult(self.record)
+
+
+@pytest.mark.asyncio
+async def test_claim_next_scopes_claim_to_tenant_and_consumer_group() -> None:
+    """验证 Claim 查询同时包含 tenant 与 consumer group 隔离条件。"""
+    tenant_id = uuid4()
+    record = SimpleNamespace(
+        id=uuid4(), tenant_id=tenant_id, integration_event_id=uuid4(), attempt_count=0,
+        status="pending", lease_owner=None, lease_expires_at=None,
+        last_error_code=None, last_error_message=None,
+    )
+    db = _FakeDb(record)
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    claimed = await WebhookDeliveryRepository().claim_next(
+        db, now, "worker-a", tenant_id=tenant_id, consumer_group="phase-2.10-i",
+    )
+
+    assert claimed is record
+    assert record.status == "running"
+    assert record.attempt_count == 1
+    assert db.statement is not None
+    params = db.statement.compile().params
+    assert params["tenant_id_1"] == tenant_id
+    assert "phase-2.10-i" in params.values()
+
+
+@pytest.mark.asyncio
+async def test_claim_next_rejects_invalid_consumer_group() -> None:
+    """验证 Worker Claim 不允许空或超长 consumer group。"""
+    db = _FakeDb(None)
+    now = datetime.now(UTC).replace(tzinfo=None)
+
+    with pytest.raises(ValueError, match="consumer_group"):
+        await WebhookDeliveryRepository().claim_next(db, now, "worker-a", consumer_group="   ")
 
 
 @pytest.mark.asyncio
@@ -64,7 +101,7 @@ async def test_mark_failed_dead_letters_when_persisted_attempt_count_exhausts_ma
     assert record.lease_owner is None
     assert record.lease_expires_at is None
     db.flush.assert_awaited()
-    db.add.assert_called_once()
+    assert db.add.call_count == 1
 
 
 @pytest.mark.asyncio
