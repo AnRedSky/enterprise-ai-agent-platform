@@ -31,6 +31,9 @@ const global = {
     "el-table-column": { template: "<span/>" },
     "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
   },
+  directives: {
+    loading: () => undefined,
+  },
 };
 
 const workflow = { id: "w1", name: "订单审批", description: "", owner_id: "u1", tenant_id: "t1", status: "published", published_version_id: "v2", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:10:00Z" };
