@@ -59,7 +59,7 @@ if (-not ($schedulerReady -and $workerReady)) {
 }
 
 Write-Host "[4/6] Alert -> Notification -> Worker Runtime Acceptance"
-& uv run pytest -q tests/api_real/test_alert_notification_runtime_acceptance.py --tb=short
+& uv run pytest -q -m real_api tests/api_real/test_alert_notification_runtime_acceptance.py --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Alert Notification Runtime Acceptance failed." }
 
 Write-Host "[5/6] Migration graph regression"
