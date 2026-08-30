@@ -61,7 +61,7 @@ class WebhookDeliveryWorker:
 
     @staticmethod
     def _notification_status(delivery: WebhookDelivery, *, success: bool | None = None) -> str:
-        """Translate durable webhook state into notification lifecycle semantics."""
+        """将持久化 Webhook 状态映射为 Notification 生命周期状态。"""
         if success is True:
             return "delivered"
         if delivery.status == "dead_letter":
@@ -80,7 +80,7 @@ class WebhookDeliveryWorker:
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """Persist notification outcome in its own transaction so Worker state is authoritative."""
+        """在独立事务中记录 Notification 结果，使 Worker 状态作为权威事实。"""
         async with SessionLocal() as db:
             lifecycle = AlertLifecycleService(db, actor=self.owner)
             await lifecycle.record_delivery_outcome(
@@ -124,7 +124,7 @@ class WebhookDeliveryWorker:
             async with SessionLocal() as db:
                 updated = await self.repository.mark_failed(
                     db, delivery_id, self.owner, datetime.now(UTC).replace(tzinfo=None),
-                    error_code, error_message, retry_at, response_status_code,
+                    error_code, error_message, retry_at, response_status_code, self.max_attempts,
                 )
                 delivery_state = await self.repository.get(db, record.tenant_id, delivery_id)
                 await db.commit()
