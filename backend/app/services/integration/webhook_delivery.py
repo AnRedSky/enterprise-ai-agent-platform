@@ -80,16 +80,18 @@ class WebhookDeliveryWorker:
 
     async def _record_notification_outcome(
         self,
+        tenant_id: uuid.UUID,
         delivery_id: uuid.UUID,
         status: str,
         *,
         error_code: str | None = None,
         error_message: str | None = None,
     ) -> None:
-        """在独立事务中记录 Notification 结果，使 Worker 状态作为权威事实。"""
+        """在独立事务中按租户记录 Notification 结果，防止跨租户更新同 ID 事实。"""
         async with SessionLocal() as db:
             lifecycle = AlertLifecycleService(db, actor=self.owner, consumer_group=self.consumer_group)
             await lifecycle.record_delivery_outcome(
+                tenant_id,
                 delivery_id,
                 status=status,
                 error_code=error_code,
@@ -136,6 +138,7 @@ class WebhookDeliveryWorker:
                 await db.commit()
             if updated and delivery_state is not None:
                 await self._record_notification_outcome(
+                    record.tenant_id,
                     delivery_id,
                     self._notification_status(delivery_state),
                     error_code=error_code,
@@ -150,7 +153,7 @@ class WebhookDeliveryWorker:
             delivery_state = await self.repository.get(db, record.tenant_id, delivery_id)
             await db.commit()
         if updated and delivery_state is not None:
-            await self._record_notification_outcome(delivery_id, "delivered")
+            await self._record_notification_outcome(record.tenant_id, delivery_id, "delivered")
         return updated
 
     def stop(self) -> None:
