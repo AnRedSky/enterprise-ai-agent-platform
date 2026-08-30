@@ -4,10 +4,10 @@
 
 ## 1. 当前基线
 
-- 最新远端 `main`：`b8acde920af3ade85291d44b578bfd32a36ddb6a`（2026-08-30，Runtime Audit tenant boundary regression test）。
-- 本轮已通过 PR #56 将最新 `main` 合并到 `frontend`，合并提交为 `03c628c18a313c8fddf37ce9448c13b08cf33dc6`。
+- 最新远端 `main`：`283c003fb6522788cce98b94250840ff37f3a06c`（2026-08-30，Runtime Telemetry SDK Contract 与 tenant isolation 回归）。
+- 本轮已通过 PR #57 将最新 `main` 合并到 `frontend`，合并提交为 `fe7b69162d4761c2a656403eae215faff391771b`。
 - 后端最新 Audit Contract 已提供 tenant-scoped、1~1000 bounded、稳定排序的基础查询入口；前端继续复用现有 `/runtime/audit-logs` API，不新增平行 API。
-- 用户本地此前存在 Node 依赖目录不完整的问题：`node_modules/.bin/vite.cmd` 不存在，`npm ci` 因 Windows `@esbuild/win32-x64/esbuild.exe` 文件锁返回 EPERM，故本地验证仍需重新安装依赖后执行。
+- 用户本地此前存在 Node 依赖目录不完整的问题：`node_modules/.bin/vite.cmd` 不存在，`npm ci` 因 Windows `@esbuild/win32-x64/esbuild.exe` 文件锁返回 EPERM；本轮用户已成功完成 `npm ci`，但本地全面回归脚本因路径解析缺陷提前失败，已修复。
 
 ## 2. 当前主线：P1.1 / P1.3 / P1 稳定性
 
@@ -36,6 +36,12 @@
 5. 表格和筛选区增加窄屏响应式适配；
 6. 新增 AuditLog targeted Vitest；
 7. 新增 `npm run test:local:full` 统一本地回归入口；脚本只做依赖/服务 readiness 检查，不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis，也不要求手工输入测试数据。
+
+### 本轮回归脚本修复
+
+状态：**代码已修复，本地全面回归待重新执行**。
+
+`run-local-full-regression.ps1` 现在基于 `$PSScriptRoot` 定位 `frontend` 根目录，不再依赖调用脚本时的当前工作目录。`npm run test:local:full` 从 `frontend` 目录执行时可以正确找到 `frontend/package.json`。
 
 ## 3. 长期任务队列
 
@@ -115,7 +121,7 @@ npm ci
 npm run test:local:full
 ```
 
-脚本内部依次执行 targeted AuditLog、全量 Vitest、production build、frontend regression gate，并检查已有 Backend API 与 Frontend E2E 服务是否可访问；服务不存在时 E2E 标记 `NOT EXECUTED` 并停止，不自动启动/停止任何后端基础设施。
+脚本内部依次执行 targeted AuditLog、全量 Vitest、production build、frontend regression gate，并检查已有 Backend API 与 Frontend E2E 服务是否可访问；服务不存在时 E2E 标记 `NOT EXECUTED` 并停止，不自动启动/停止任何后端基础设施。脚本路径解析基于 `$PSScriptRoot`，因此不依赖调用者当前工作目录。
 
 也可以按标准流程分别执行：
 

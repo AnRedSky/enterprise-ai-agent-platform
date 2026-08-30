@@ -1,6 +1,8 @@
 $ErrorActionPreference = "Stop"
 
-$frontendRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
+# Resolve paths from the script location, not the caller's current directory.
+# The script lives at frontend/scripts/test, so two parent levels reach frontend.
+$frontendRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $projectRoot = (Resolve-Path (Join-Path $frontendRoot "..")).Path
 $results = @()
 
