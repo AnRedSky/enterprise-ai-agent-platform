@@ -13,6 +13,7 @@ from .notification_scheduler import RuntimeNotificationScheduler
 from .provider_health import ProviderHealthResult, RuntimeProviderHealthService
 from .scheduler import RuntimeAlertScheduler
 from .service import RuntimeOperationsService
+from .telemetry import RuntimeTelemetry
 
 __all__ = [
     "DestinationRegistryService",
@@ -24,4 +25,5 @@ __all__ = [
     "RuntimeOperationsEnterpriseService",
     "RuntimeOperationsService",
     "RuntimeProviderHealthService",
+    "RuntimeTelemetry",
 ]
