@@ -20,7 +20,7 @@ const global = {
     "el-card": { template: "<div><slot name='header'/><slot/></div>" },
     "el-select": { props: ["modelValue"], emits: ["update:modelValue"], template: "<div><slot/></div>" },
     "el-option": { template: "<option><slot/></option>" },
-    "el-button": { props: ["loading"], template: "<button @click="$emit('click')"><slot/></button>" },
+    "el-button": { props: ["loading"], template: `<button @click="$emit('click')"><slot/></button>` },
     "el-tag": { template: "<span><slot/></span>" },
     "el-empty": { props: ["description"], template: "<div>{{ description }}</div>" },
     "el-row": { template: "<div><slot/></div>" },
