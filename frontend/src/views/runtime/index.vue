@@ -1,2 +1,5 @@
-<script setup lang="ts">import RuntimeExecutions from './components/RuntimeExecutions.vue';</script>
-<template><RuntimeExecutions /></template>
+<script setup lang="ts">
+import RuntimeWorkspaceTabs from './components/RuntimeWorkspaceTabs.vue';
+</script>
+
+<template><RuntimeWorkspaceTabs /></template>
