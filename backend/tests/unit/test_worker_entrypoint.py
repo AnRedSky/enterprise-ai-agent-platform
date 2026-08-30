@@ -42,12 +42,12 @@ async def test_run_worker_service_disposes_database_engine_after_worker_stops(mo
     await worker_entrypoint.run_worker_service()
 
     workflow_worker.run_forever.assert_awaited_once()
-    webhook_worker_factory.assert_called_once_with(
-        sender=webhook_worker_factory.call_args.kwargs["sender"],
-        concurrency=4,
-        lease_seconds=60,
-        max_attempts=5,
-    )
+    webhook_worker_factory.assert_called_once()
+    constructor_kwargs = webhook_worker_factory.call_args.kwargs
+    assert callable(constructor_kwargs["sender"])
+    assert constructor_kwargs["concurrency"] == 4
+    assert constructor_kwargs["lease_seconds"] == 60
+    assert constructor_kwargs["max_attempts"] == 5
     webhook_worker.run_forever.assert_awaited_once_with(0.2)
     workflow_worker.stop.assert_called_once()
     webhook_worker.stop.assert_called_once()
