@@ -27,12 +27,15 @@ async def test_run_worker_service_disposes_database_engine_after_worker_stops(mo
     webhook_worker = MagicMock()
     webhook_worker.owner = "webhook-test-owner"
     webhook_worker.concurrency = 4
+    webhook_worker.consumer_group = "default"
+    webhook_worker.tenant_id = None
     webhook_worker.run_forever = AsyncMock(return_value=None)
     webhook_worker.stop = MagicMock()
 
     dispose = AsyncMock(return_value=None)
     webhook_worker_factory = MagicMock(return_value=webhook_worker)
     webhook_worker_factory.DEFAULT_CONCURRENCY = 4
+    webhook_worker_factory.DEFAULT_CONSUMER_GROUP = "default"
 
     monkeypatch.setattr(worker_entrypoint, "WorkflowWorker", lambda: workflow_worker)
     monkeypatch.setattr(worker_entrypoint, "WebhookDeliveryWorker", webhook_worker_factory)
@@ -48,10 +51,30 @@ async def test_run_worker_service_disposes_database_engine_after_worker_stops(mo
     assert constructor_kwargs["concurrency"] == 4
     assert constructor_kwargs["lease_seconds"] == 60
     assert constructor_kwargs["max_attempts"] == 5
+    assert constructor_kwargs["tenant_id"] is None
+    assert constructor_kwargs["consumer_group"] == "default"
     webhook_worker.run_forever.assert_awaited_once_with(0.2)
     workflow_worker.stop.assert_called_once()
     webhook_worker.stop.assert_called_once()
     dispose.assert_awaited_once()
+
+
+def test_worker_scope_environment(monkeypatch) -> None:
+    """验证 Worker 可从环境变量获得 tenant 与 consumer group 隔离边界。"""
+    tenant_id = "8f4a4f0e-5b1b-4f15-a5a2-3c6d0b4a7c11"
+    monkeypatch.setenv("WEBHOOK_WORKER_TENANT_ID", tenant_id)
+    monkeypatch.setenv("WEBHOOK_WORKER_CONSUMER_GROUP", "phase-2.10-i")
+
+    assert str(worker_entrypoint._optional_uuid_env("WEBHOOK_WORKER_TENANT_ID")) == tenant_id
+    assert worker_entrypoint._consumer_group_env() == "phase-2.10-i"
+
+
+def test_worker_scope_environment_rejects_invalid_tenant(monkeypatch) -> None:
+    """验证错误的 tenant scope 不会静默退化为全租户 Worker。"""
+    monkeypatch.setenv("WEBHOOK_WORKER_TENANT_ID", "not-a-uuid")
+
+    with pytest.raises(ValueError, match="WEBHOOK_WORKER_TENANT_ID"):
+        worker_entrypoint._optional_uuid_env("WEBHOOK_WORKER_TENANT_ID")
 
 
 @pytest.mark.asyncio
@@ -64,8 +87,6 @@ async def test_dispose_database_engine_preserves_cancellation_after_shielded_cle
         dispose_started.set()
         await allow_dispose.wait()
 
-    # 不使用动态 class attribute：普通函数挂到 class 后会发生 descriptor 绑定，
-    # 导致 dispose() 被隐式传入 self，从而测试 Task 永远无法到达 dispose_started。
     fake_engine = SimpleNamespace(dispose=dispose)
     monkeypatch.setattr(worker_entrypoint, "engine", fake_engine)
 
