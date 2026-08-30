@@ -24,11 +24,15 @@ class WebhookDeliveryRepository:
         lease_seconds: int = 60,
         max_attempts: int = 5,
         tenant_id: uuid.UUID | None = None,
+        consumer_group: str = "default",
     ) -> WebhookDelivery | None:
         if not owner.strip():
             raise ValueError("owner 不能为空")
         if lease_seconds <= 0 or max_attempts <= 0:
             raise ValueError("lease_seconds 和 max_attempts 必须大于 0")
+        consumer_group = consumer_group.strip()
+        if not consumer_group or len(consumer_group) > 128:
+            raise ValueError("consumer_group 必须为 1..128 个字符")
         claimable = or_(
             WebhookDelivery.status == "pending",
             (WebhookDelivery.status == "running") & (WebhookDelivery.lease_expires_at <= now),
@@ -42,6 +46,7 @@ class WebhookDeliveryRepository:
             .where(
                 claimable,
                 WebhookDelivery.attempt_count < max_attempts,
+                WebhookDelivery.consumer_group == consumer_group,
                 or_(WebhookDelivery.next_attempt_at.is_(None), WebhookDelivery.next_attempt_at <= now),
             )
         )
@@ -146,8 +151,6 @@ class WebhookDeliveryRepository:
         record.response_status_code = response_status_code
         record.lease_owner = None
         record.lease_expires_at = None
-        # 死信判定必须以持久化后的 attempt_count 为准，避免 Worker 侧计算值与
-        # 实际领取次数发生偏差，导致已经耗尽重试次数的 Delivery 继续保持 pending。
         exhausted = record.attempt_count >= max_attempts
         final_status = "dead_letter" if exhausted else "pending"
         record.status = final_status
