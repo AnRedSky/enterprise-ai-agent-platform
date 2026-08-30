@@ -1,9 +1,11 @@
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
+from app.models.integration_event import IntegrationEventRecord
 from app.models.runtime_operations import RuntimeOperationAudit
 from app.services.runtime_operations.alerting import OPERATORS, RuntimeAlertEvaluator
 
@@ -27,6 +29,12 @@ class _DB:
     async def execute(self, _statement): return _Result(self.rules)
     async def scalar(self, _statement): return next(self.scalar_rows, None)
     def add(self, item): self.added.append(item)
+    async def flush(self): pass
+
+    @asynccontextmanager
+    async def begin_nested(self):
+        """模拟 AsyncSession 的 savepoint 上下文，保持 publisher 事务边界契约。"""
+        yield
 
 
 @pytest.mark.asyncio
@@ -41,6 +49,9 @@ async def test_evaluator_returns_firing_transition_and_persists_lifecycle_audit(
     assert result[0]["transition"] == "firing"
     assert isinstance(db.added[0], RuntimeOperationAudit)
     assert db.added[0].action == "alert.transition"
+    assert isinstance(db.added[1], IntegrationEventRecord)
+    assert db.added[1].event_type == "runtime.alert.firing"
+    assert db.added[1].idempotency_key == f"alert:{rule.id}:firing:{sample.id}"
 
 
 @pytest.mark.asyncio
@@ -63,6 +74,7 @@ async def test_evaluator_returns_recovery_after_firing_state():
     assert result[0]["state"] == "normal"
     assert result[0]["transition"] == "recovery"
     assert db.added[0].outcome == "normal"
+    assert db.added[1].event_type == "runtime.alert.recovery"
 
 
 @pytest.mark.asyncio
