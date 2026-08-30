@@ -15,6 +15,16 @@ VALUES = {
 }
 
 
+def test_otel_resource_uses_canonical_service_and_tenant_attributes() -> None:
+    """OpenTelemetry Resource 属性必须由 canonical contract 单一入口生成。"""
+    tenant_id = uuid4()
+    assert RuntimeMetricContract.otel_resource(tenant_id) == {
+        "service.name": RuntimeMetricContract.SERVICE_NAME,
+        "service.version": RuntimeMetricContract.SERVICE_VERSION,
+        "tenant.id": str(tenant_id),
+    }
+
+
 def test_prometheus_uses_canonical_names_and_only_tenant_label() -> None:
     """Prometheus 只能暴露规范指标名和 tenant_id 标签，避免任意业务维度泄漏到出口。"""
     tenant_id = uuid4()
@@ -66,11 +76,7 @@ def test_otlp_uses_resource_tenant_attribute_and_canonical_names() -> None:
     attributes = {item["key"]: item["value"]["stringValue"] for item in resource["attributes"]}
     metrics = payload["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
 
-    assert attributes == {
-        "service.name": RuntimeMetricContract.SERVICE_NAME,
-        "service.version": RuntimeMetricContract.SERVICE_VERSION,
-        "tenant.id": str(tenant_id),
-    }
+    assert attributes == RuntimeMetricContract.otel_resource(tenant_id)
     assert [item["name"] for item in metrics] == list(RuntimeMetricContract.OTLP_NAMES)
     assert all("tenant_id" not in item for item in metrics)
     assert all("timeUnixNano" in item["gauge"]["dataPoints"][0] for item in metrics)
