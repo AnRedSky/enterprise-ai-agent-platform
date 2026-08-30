@@ -37,6 +37,7 @@
 | ERR-0029 | 2026-08-28 | B2 Synthetic Runtime 被 DAG Contract 错误拦截 |
 | ERR-0030 | 2026-08-29 | Delegation Claim 创建 Execution 后未进入 Durable Frontier |
 | ERR-0031 | 2026-08-29 | Frontend SSE Reader Double 与 Runtime Status Contract 漂移 |
+| ERR-0032 | 2026-08-30 | Runtime Metric Contract 部分指标导出与 Real Acceptance fixture 唯一键冲突 |
 
 ## 迁移规则
 
