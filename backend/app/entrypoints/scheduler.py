@@ -1,7 +1,7 @@
 """Scheduler Service 进程入口。
 
-职责：独立启动持久化 Scheduled Trigger Scheduler、Durable Recovery Scan、Runtime Alert Scheduler 与 Notification Routing Scheduler，使调度、恢复、运维告警和通知路由周期任务与 API HTTP 进程解耦。
-边界：不提供 HTTP 路由、不复制调度或恢复规则；具体 slot、lease、misfire、Recovery Policy、告警评估与通知事件分发继续由正式领域服务负责。
+职责：独立启动持久化 Scheduled Trigger Scheduler、Durable Recovery Scan、Runtime Alert Scheduler 与 Notification Routing Scheduler，使调度、恢复、运维告警和通知路由周期任务与 API HTTP 进程解耦，并统一管理 Runtime Telemetry 生命周期。
+边界：不提供 HTTP 路由、不复制调度或恢复规则；具体 slot、lease、misfire、Recovery Policy、告警评估、通知路由与观测指标事实继续由正式领域服务负责。
 关键依赖：项目配置、`app.services.workflow_scheduler`、`app.services.runtime_operations` 与 `app.services.integration` 正式入口。
 """
 
@@ -13,6 +13,7 @@ import logging
 from app.core.config import settings
 from app.services.runtime_operations.notification_scheduler import RuntimeNotificationScheduler
 from app.services.runtime_operations.scheduler import RuntimeAlertScheduler
+from app.services.runtime_operations.telemetry import RuntimeTelemetry
 from app.services.workflow_scheduler import ScheduledTriggerScheduler
 from app.services.workflow_scheduler.recovery import WorkflowRecoveryScheduler
 
@@ -38,8 +39,9 @@ async def run_scheduler_service() -> None:
     """启动并监督独立 Scheduler Service 的全部后台生命周期。
 
     三个领域循环共同组成既有调度职责；Notification Routing Scheduler 作为
-    Integration Event -> Delivery Fact 的周期编排加入同一 Supervisor。任一循环
-    发生未处理异常时统一取消其他任务并传播异常，避免服务处于半存活状态。
+    Integration Event -> Delivery Fact 的周期编排加入同一 Supervisor。RuntimeTelemetry
+    与 Scheduler Service 同生命周期创建和销毁，避免每个租户或每轮调度重复创建 SDK Provider。
+    任一循环发生未处理异常时统一取消其他任务并传播异常，避免服务处于半存活状态。
     """
     scheduler = ScheduledTriggerScheduler(settings.scheduler_poll_interval_seconds)
     recovery_scheduler = WorkflowRecoveryScheduler(
@@ -47,6 +49,8 @@ async def run_scheduler_service() -> None:
     )
     alert_scheduler = RuntimeAlertScheduler(settings.scheduler_poll_interval_seconds)
     notification_scheduler = RuntimeNotificationScheduler(settings.scheduler_poll_interval_seconds)
+    telemetry = RuntimeTelemetry()
+    alert_scheduler.set_telemetry(telemetry)
 
     scheduler_task = asyncio.create_task(scheduler.run_forever())
     recovery_task = asyncio.create_task(_run_recovery_service(recovery_scheduler))
@@ -70,6 +74,7 @@ async def run_scheduler_service() -> None:
             if not task.done():
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        telemetry.shutdown()
         logger.info("Scheduler Service stopped")
 
 
