@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import inspect
 
 from app.services.integration.alert_lifecycle import AlertLifecycleService
 
