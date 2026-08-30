@@ -16,6 +16,7 @@ from app.api.v1.knowledge.retrieval import router as knowledge_retrieval_router
 from app.api.v1.knowledge.router import router as knowledge_router
 from app.api.v1.model_providers.router import router as model_providers_router
 from app.api.v1.organizations.router import router as organizations_router
+from app.api.v1.runtime.operator_actions import router as runtime_operator_actions_router
 from app.api.v1.runtime.router import router as runtime_router
 from app.api.v1.tools.router import router as tools_router
 from app.api.v1.usage.router import router as usage_router
@@ -39,6 +40,7 @@ app.include_router(agents_router, prefix="/api/v1/agents", tags=["agents"])
 app.include_router(chat_router, prefix="/api/v1/agents", tags=["chat"])
 app.include_router(tools_router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(runtime_router)
+app.include_router(runtime_operator_actions_router)
 app.include_router(knowledge_router, prefix="/api/v1/knowledge", tags=["knowledge"])
 app.include_router(knowledge_ingestion_router, prefix="/api/v1/knowledge", tags=["knowledge-ingestion"])
 app.include_router(knowledge_retrieval_router, prefix="/api/v1/knowledge", tags=["knowledge-retrieval"])
