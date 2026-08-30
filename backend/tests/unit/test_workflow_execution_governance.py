@@ -19,7 +19,7 @@ async def test_cancel_allows_pending_and_running_only():
     execution = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), workflow_id=uuid4(), workflow_version_id=uuid4(), status="pending")
     result = await service.cancel(execution, actor_id)
     assert result.status == "cancelled"
-    assert db.add.call_count == 2
+    assert db.add.call_count == 3
     db.flush.assert_awaited()
 
 
