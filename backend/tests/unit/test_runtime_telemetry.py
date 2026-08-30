@@ -1,11 +1,12 @@
 """Runtime OpenTelemetry Meter 适配的单元测试。
 
-职责：验证 SDK Meter、Resource、canonical metric 与 tenant 维度的一致性。
+职责：验证 SDK Meter、Resource、canonical metric、tenant 维度，以及 Scheduler 到 SDK Meter 的事实桥接。
 边界：不连接 PostgreSQL、Redis 或真实 Provider，不验证网络导出。
 """
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.resources import Resource
 
 from app.services.runtime_operations import RuntimeMetricContract, RuntimeTelemetry
+from app.services.runtime_operations.scheduler import RuntimeAlertScheduler
 
 
 def test_runtime_telemetry_uses_canonical_resource_and_metric_names() -> None:
@@ -69,3 +71,40 @@ def test_runtime_telemetry_rejects_non_finite_metric() -> None:
     with pytest.raises(ValueError):
         telemetry.record(uuid4(), {"runtime.delivery.retry_count": float("nan")})
     telemetry.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_runtime_alert_scheduler_bridges_durable_slo_to_telemetry() -> None:
+    """验证 Scheduler 从 Runtime Operations Durable facts 生成 SDK Meter 快照。"""
+    tenant_id = uuid4()
+    db = MagicMock()
+    telemetry = MagicMock()
+    scheduler = RuntimeAlertScheduler(60)
+    scheduler.set_telemetry(telemetry)
+    overview = {
+        "slo": {
+            "delivery_success_percent": 98.5,
+            "p95_delivery_latency_ms": 240.0,
+        },
+        "deliveries": {
+            "retry_count": 3,
+            "dead_letter_count": 2,
+        },
+    }
+
+    with patch(
+        "app.services.runtime_operations.scheduler.RuntimeOperationsService"
+    ) as service_factory:
+        service_factory.return_value.overview = AsyncMock(return_value=overview)
+        await scheduler._sync_telemetry(tenant_id, db)
+
+    service_factory.assert_called_once_with(db)
+    telemetry.record.assert_called_once_with(
+        tenant_id,
+        {
+            "runtime.delivery.success_percent": 98.5,
+            "runtime.delivery.retry_count": 3,
+            "runtime.delivery.dead_letter_count": 2,
+            "runtime.delivery.p95_latency_ms": 240.0,
+        },
+    )
