@@ -124,7 +124,11 @@ class WebhookDeliveryRepository:
         error_message: str,
         retry_at: datetime | None,
         response_status_code: int | None = None,
+        max_attempts: int = 5,
     ) -> bool:
+        """记录失败并按数据库中的累计尝试次数决定重试或死信。"""
+        if max_attempts <= 0:
+            raise ValueError("max_attempts 必须大于 0")
         result = await db.execute(
             select(WebhookDelivery)
             .where(
@@ -142,9 +146,13 @@ class WebhookDeliveryRepository:
         record.response_status_code = response_status_code
         record.lease_owner = None
         record.lease_expires_at = None
-        record.status = "dead_letter" if retry_at is None else "pending"
-        record.next_attempt_at = retry_at
-        await self._audit(db, record, "dead_letter" if retry_at is None else "retry", owner, record.status, error_code, error_message)
+        # 死信判定必须以持久化后的 attempt_count 为准，避免 Worker 侧计算值与
+        # 实际领取次数发生偏差，导致已经耗尽重试次数的 Delivery 继续保持 pending。
+        exhausted = record.attempt_count >= max_attempts
+        final_status = "dead_letter" if exhausted else "pending"
+        record.status = final_status
+        record.next_attempt_at = None if exhausted else retry_at
+        await self._audit(db, record, "dead_letter" if exhausted else "retry", owner, final_status, error_code, error_message)
         return True
 
     async def replay(self, db: AsyncSession, tenant_id: uuid.UUID, delivery_id: uuid.UUID, actor: str) -> WebhookDelivery | None:
