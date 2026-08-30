@@ -57,7 +57,7 @@
 必须验证 tenant isolation、Overview / Dimension / SLO / Alert、Dead Letter Replay / Audit，以及 Worker 后续网络投递边界；Gate 不启动或停止 API、Worker、Scheduler、Redis、PostgreSQL，测试数据自动生成和清理。
 
 ## 2.10-I Provider / Metrics / Alert / Export / Audit
-状态：**开发中，Runtime Lifecycle、Worker tenant/consumer-group 隔离、Claim 竞争与三维时间序列采样切片已完成，进入指标出口规范化与 SDK 观测能力收口**。
+状态：**开发中，Runtime Lifecycle、Worker tenant/consumer-group 隔离、Claim 竞争、三维时间序列采样与 Canonical Metrics Export Contract 已完成，进入统一企业 Acceptance 与 SDK 观测能力收口。**
 
 ### I-1 时间序列 Metrics
 
@@ -103,7 +103,7 @@
 - `GET /api/v1/runtime/operations/metrics/otlp`：输出 OTLP HTTP 指标结构；
 - 导出数据 tenant-scoped，且直接从 Durable facts 计算，避免导出缓存与业务事实漂移。
 
-当前阶段完成 canonical metric naming / label governance：Prometheus 使用固定的规范指标名与唯一 `tenant_id` 标签，OTLP 使用 `service.name`、`service.version`、`tenant.id` Resource 属性；导出值统一拒绝 NaN / Infinity，并对 Prometheus 标签值执行安全转义。该 Contract 集中维护在 `RuntimeMetricContract`，后续接入 OpenTelemetry SDK 时不得改变现有业务指标名与租户边界。
+当前已完成 canonical metric naming / label governance：Prometheus 使用固定的规范指标名与唯一 `tenant_id` 标签，OTLP 使用 `service.name`、`service.version`、`tenant.id` Resource 属性；导出值统一拒绝 NaN / Infinity，并对 Prometheus 标签值执行安全转义。该 Contract 集中维护在 `RuntimeMetricContract`，后续 SDK 接入不得改变现有业务指标名与租户边界。
 
 ### I-6 Operational Audit
 
@@ -176,9 +176,31 @@
 - NaN / Infinity 被拒绝；Prometheus 标签值执行转义；
 - Enterprise Service 不再自行拼接 Export Contract，避免 Prometheus / OTLP 形成平行命名实现。
 
-## 2.10-I 下一切片
+### I-13 Enterprise Runtime Acceptance
 
-1. 接入 OpenTelemetry SDK 标准 Meter / Resource，并保持 `RuntimeMetricContract` 的现有业务指标名与 tenant boundary；
+状态：**代码与 Gate 已完成，等待开发者本地实际执行新增 Acceptance 后收口。**
+
+新增 `tests/api_real/test_runtime_enterprise_acceptance.py`，覆盖：
+
+- Provider Registry tenant isolation；
+- Alert Rule tenant isolation；
+- Metrics Snapshot / Series tenant isolation；
+- Prometheus canonical metric export；
+- OTLP Resource tenant attribute；
+- Runtime Operational Audit 的 create facts 与 tenant isolation；
+- Export Contract 未知指标拒绝与跨租户边界。
+
+`backend/scripts/test/phase-2.10/03_alert_notification_lifecycle_real_gate.ps1` 已扩展为 8 步 Gate，并纳入：
+
+- `tests/unit/test_runtime_metric_contract.py`；
+- `tests/api_real/test_runtime_operations_acceptance.py`；
+- `tests/api_real/test_runtime_enterprise_acceptance.py`；
+- Migration / Runtime Unit / Real Acceptance / Metric Export Regression；
+- 服务只做状态探测，禁止自动启动、重启或停止任何服务。
+
+### I-14 下一切片
+
+1. 接入 OpenTelemetry SDK 标准 Meter / Resource，并保持 `RuntimeMetricContract` 的业务指标名、标签和 tenant boundary 不变；
 2. 增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
 3. 完成 Provider health / registry / metrics series / alert scheduler / notification routing 的统一 Real PostgreSQL Acceptance；
 4. 完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
