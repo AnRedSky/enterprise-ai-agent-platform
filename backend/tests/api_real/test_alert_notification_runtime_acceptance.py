@@ -82,9 +82,7 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
             )
             db.add(sample)
             await db.flush()
-            lifecycle = AlertLifecycleService(
-                db, actor=f"acceptance-{suffix}", consumer_group=consumer_group,
-            )
+            lifecycle = AlertLifecycleService(db, actor=f"acceptance-{suffix}", consumer_group=consumer_group)
             instance = await lifecycle.evaluate_rule(rule, sample, now=sample.recorded_at)
             await db.commit()
 
@@ -170,7 +168,7 @@ async def test_alert_notification_worker_delivery_fallback_and_slo_are_tenant_sc
                         "notification.fallback.routed",
                     ]),
                 )
-            )).scalars().all()
+            )).scalars().all())
             assert {item.action for item in audits} >= {
                 "notification.delivery.dead_letter", "notification.delivery.delivered", "notification.fallback.routed",
             }
