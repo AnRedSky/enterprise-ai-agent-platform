@@ -16,9 +16,8 @@ from app.services.integration.notification import NotificationRoutingService
 class AlertNotificationDeliveryService:
     """Materialize policy-selected, tenant-scoped webhook delivery facts."""
 
-    # Provider tiers currently use the HTTP transport implementation, while the
-    # provider value remains the routing identity used for ordering/fallback.
     SUPPORTED_PROVIDERS = frozenset({"webhook_http", "webhook_http_fallback"})
+    DEFAULT_CONSUMER_GROUP = "default"
 
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -35,8 +34,14 @@ class AlertNotificationDeliveryService:
         provider_order: Sequence[str] | None = None,
         fallback: bool = False,
         exclude_providers: Sequence[str] | None = None,
+        consumer_group: str = DEFAULT_CONSUMER_GROUP,
     ) -> list[WebhookDelivery]:
-        """Select destinations deterministically; fallback selects the next provider tier."""
+        """Select destinations deterministically; fallback preserves the consumer group."""
+        consumer_group = consumer_group.strip()
+        if not consumer_group:
+            raise ValueError("consumer_group 不能为空")
+        if len(consumer_group) > 128:
+            raise ValueError("consumer_group 长度不能超过 128")
         query = select(WebhookSubscription).join(
             WebhookDestination, WebhookDestination.id == WebhookSubscription.destination_id
         ).where(
@@ -90,6 +95,7 @@ class AlertNotificationDeliveryService:
                 "subscription_id": s.id,
                 "destination_id": s.destination_id,
                 "integration_event_id": event.id,
+                "consumer_group": consumer_group,
                 "status": "pending",
                 "attempt_count": 0,
             }
