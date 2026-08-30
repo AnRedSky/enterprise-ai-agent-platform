@@ -14,6 +14,10 @@ def upgrade() -> None:
         "webhook_deliveries",
         sa.Column("consumer_group", sa.String(length=128), nullable=False, server_default="default"),
     )
+    # Replace the pre-existing claim index whose key does not include the worker
+    # consumer group. Existing rows remain claimable because the new column has
+    # a transactional default of ``default``.
+    op.drop_index("ix_webhook_delivery_claimable", table_name="webhook_deliveries")
     op.create_index(
         "ix_webhook_delivery_consumer_group",
         "webhook_deliveries",
@@ -31,3 +35,8 @@ def downgrade() -> None:
     op.drop_index("ix_webhook_delivery_claimable_v2", table_name="webhook_deliveries")
     op.drop_index("ix_webhook_delivery_consumer_group", table_name="webhook_deliveries")
     op.drop_column("webhook_deliveries", "consumer_group")
+    op.create_index(
+        "ix_webhook_delivery_claimable",
+        "webhook_deliveries",
+        ["tenant_id", "status", "next_attempt_at", "lease_expires_at"],
+    )
