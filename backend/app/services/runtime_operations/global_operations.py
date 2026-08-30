@@ -1,7 +1,7 @@
 """Enterprise Runtime Global Operations posture.
 
 This module provides a read-only, tenant-scoped operational view across the
-existing durable Workflow / Execution / Frontier / Trigger facts.  It does not
+existing durable Workflow / Execution / Frontier / Trigger facts. It does not
 introduce a second lifecycle, scheduler, or worker state machine.
 
 Important boundary:
@@ -21,7 +21,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.workflow import Workflow
+from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.models.workflow_trigger import WorkflowTrigger
 
@@ -32,7 +32,6 @@ class GlobalRuntimeOperationsService:
     MAX_WINDOW_HOURS = 168
     MAX_ITEMS = 100
     _EXECUTION_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
-    _FRONTIER_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
@@ -46,12 +45,23 @@ class GlobalRuntimeOperationsService:
     def _counts(rows: list[tuple[str, int]]) -> dict[str, int]:
         return {status: int(count) for status, count in rows}
 
+    @staticmethod
+    def _agent_filter(agent_id: UUID | None):
+        if agent_id is None:
+            return None
+        return WorkflowExecution.workflow_version_id.in_(
+            select(WorkflowVersion.id).where(
+                WorkflowVersion.definition["agent_id"].as_string() == str(agent_id),
+            )
+        )
+
     async def overview(
         self,
         tenant_id: UUID,
         *,
         window_hours: int = 24,
         workflow_id: UUID | None = None,
+        agent_id: UUID | None = None,
         trigger_id: UUID | None = None,
         execution_id: UUID | None = None,
         execution_status: str | None = None,
@@ -60,8 +70,11 @@ class GlobalRuntimeOperationsService:
         """Return the tenant's global runtime posture.
 
         Filters are applied server-side and always retain the tenant boundary.
-        ``workflow_id``, ``trigger_id`` and ``execution_id`` are correlation
-        filters; ``execution_status`` is an execution-state filter.
+        ``workflow_id``, ``agent_id``, ``trigger_id`` and ``execution_id`` are
+        correlation filters; ``execution_status`` is an execution-state filter.
+
+        Agent correlation uses the canonical WorkflowVersion definition field
+        ``agent_id`` when present. No separate Agent lifecycle is introduced.
 
         Worker posture is derived from durable frontier claims. Scheduler
         posture intentionally reports process liveness as ``unknown`` because
@@ -76,6 +89,9 @@ class GlobalRuntimeOperationsService:
         ]
         if workflow_id is not None:
             execution_filters.append(WorkflowExecution.workflow_id == workflow_id)
+        agent_filter = self._agent_filter(agent_id)
+        if agent_filter is not None:
+            execution_filters.append(agent_filter)
         if execution_id is not None:
             execution_filters.append(WorkflowExecution.id == execution_id)
         if execution_status is not None:
@@ -93,6 +109,10 @@ class GlobalRuntimeOperationsService:
         workflow_filters = [Workflow.tenant_id == tenant_id]
         if workflow_id is not None:
             workflow_filters.append(Workflow.id == workflow_id)
+        if agent_filter is not None:
+            workflow_filters.append(
+                Workflow.id.in_(select(WorkflowExecution.workflow_id).where(*execution_filters))
+            )
         workflow_rows = (await self.db.execute(
             select(Workflow.status, func.count())
             .where(*workflow_filters)
@@ -124,6 +144,10 @@ class GlobalRuntimeOperationsService:
                         WorkflowExecution.workflow_id == workflow_id,
                     )
                 )
+            )
+        if agent_filter is not None:
+            frontier_filters.append(
+                WorkflowFrontier.execution_id.in_(select(WorkflowExecution.id).where(*execution_filters))
             )
         if execution_id is not None:
             frontier_filters.append(WorkflowFrontier.execution_id == execution_id)
@@ -167,6 +191,8 @@ class GlobalRuntimeOperationsService:
         ]
         if workflow_id is not None:
             scheduled_trigger_filters.append(WorkflowTrigger.workflow_id == workflow_id)
+        if trigger_id is not None:
+            scheduled_trigger_filters.append(WorkflowTrigger.id == trigger_id)
         scheduled_enabled = await self.db.scalar(
             select(func.count()).select_from(WorkflowTrigger).where(*scheduled_trigger_filters)
         ) or 0
@@ -207,6 +233,7 @@ class GlobalRuntimeOperationsService:
             "generated_at": datetime.now(UTC),
             "filters": {
                 "workflow_id": workflow_id,
+                "agent_id": agent_id,
                 "trigger_id": trigger_id,
                 "execution_id": execution_id,
                 "execution_status": execution_status,
