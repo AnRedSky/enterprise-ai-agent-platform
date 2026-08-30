@@ -1,99 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
-
-const { listAgents, listTools, executions } = vi.hoisted(() => ({
-  listAgents: vi.fn(),
-  listTools: vi.fn(),
-  executions: vi.fn(),
-}));
-vi.mock("@/api/agents", () => ({ listAgents }));
-vi.mock("@/api/tools", () => ({ listTools }));
-vi.mock("@/api/runtime", () => ({ runtimeApi: { executions } }));
-vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
-
+import { elementTableStubs } from "../support/element-table-stubs";
+const { listAgents, listTools, executions } = vi.hoisted(() => ({ listAgents: vi.fn(), listTools: vi.fn(), executions: vi.fn() }));
+vi.mock("@/api/agents", () => ({ listAgents })); vi.mock("@/api/tools", () => ({ listTools })); vi.mock("@/api/runtime", () => ({ runtimeApi: { executions } })); vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 import Dashboard from "../../src/views/dashboard/components/DashboardOverview.vue";
-
-const stubs = {
-  "el-button": { template: "<button @click=\"$emit('click')\"><slot/></button>", emits: ["click"] },
-  "el-alert": { template: "<div class=\"alert\"><slot/><span>{{ title }}</span><span>{{ description }}</span></div>", props: ["title", "description"] },
-  "el-card": { template: "<div><slot name=\"header\"/><slot/></div>" },
-  "el-tag": { template: "<span><slot/></span>" },
-  "el-table": { template: "<div class=\"table\">{{ JSON.stringify(data) }}</div>", props: ["data"] },
-  "el-table-column": { template: "<div />" },
-  "el-empty": { template: "<div>{{ description }}</div>", props: ["description"] },
-};
+const stubs = { ...elementTableStubs, "el-button": { template: "<button @click=\"$emit('click')\"><slot/></button>", emits: ["click"] }, "el-alert": { template: "<div class=\"alert\">{{ title }}{{ description }}<slot/></div>", props: ["title", "description"] }, "el-card": { template: "<div><slot name=\"header\"/><slot/></div>" }, "el-tag": { template: "<span><slot/></span>" }, "el-empty": { template: "<div>{{ description }}</div>", props: ["description"] } };
 const global = { stubs, directives: { loading: () => undefined } };
-
 describe("DashboardOverview", () => {
-  beforeEach(() => {
-    listAgents.mockReset();
-    listTools.mockReset();
-    executions.mockReset();
-  });
-
-  it("loads lifecycle metrics and recent runtime executions", async () => {
-    listAgents.mockResolvedValue([
-      { id: "a1", name: "A", status: "published" },
-      { id: "a2", name: "B", status: "draft" },
-    ]);
-    listTools.mockResolvedValue([{ id: "t1", enabled: true }, { id: "t2", enabled: false }]);
-    executions.mockImplementation(({ status, page_size }: { status?: string; page_size?: number }) =>
-      Promise.resolve({ data: {
-        total: status === "failed" ? 2 : 8,
-        page: 1,
-        page_size,
-        items: status === "failed" ? [] : [{ execution_id: "execution-001", status: "completed", started_at: "2026-08-29T08:00:00Z", agent_id: "a1", duration_ms: 240 }],
-      } }),
-    );
-    const wrapper = mount(Dashboard, { global });
-    await vi.waitFor(() => expect(executions).toHaveBeenCalledTimes(2));
-    await vi.waitFor(() => expect(wrapper.get('[data-testid="metric-executions"]').text()).toBe("8"));
-    expect(wrapper.get('[data-testid="metric-agents"]').text()).toBe("2");
-    expect(wrapper.get('[data-testid="metric-published"]').text()).toBe("1");
-    expect(wrapper.get('[data-testid="metric-tools"]').text()).toBe("1/2");
-    expect(wrapper.get('[data-testid="metric-failed"]').text()).toBe("2");
-    expect(wrapper.text()).toContain("最近执行");
-    expect(wrapper.text()).toContain("execution-001");
-    expect(wrapper.text()).toContain("智能体管理");
-  });
-
-  it("uses Chinese wording for dashboard labels and quick entries", async () => {
-    listAgents.mockResolvedValue([]);
-    listTools.mockResolvedValue([]);
-    executions.mockResolvedValue({ data: { total: 0, items: [] } });
-    const wrapper = mount(Dashboard, { global });
-    await vi.waitFor(() => expect(executions).toHaveBeenCalledTimes(2));
-    const text = wrapper.text();
-    expect(text).toContain("企业级智能体平台");
-    expect(text).toContain("智能体");
-    expect(text).toContain("工具");
-    expect(text).toContain("运行记录");
-    expect(text).toContain("审计日志");
-    expect(text).not.toContain("ENTERPRISE AI AGENT PLATFORM");
-    expect(text).not.toContain("Published");
-    expect(text).not.toContain("Agent 管理");
-    expect(text).not.toContain("Tool 管理");
-  });
-
-  it("does not expose backend exception text on the dashboard", async () => {
-    listAgents.mockRejectedValue(new Error("HTTP 502 Bad Gateway"));
-    listTools.mockResolvedValue([]);
-    executions.mockResolvedValue({ data: { total: 0, items: [] } });
-    const wrapper = mount(Dashboard, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("平台数据加载失败，请稍后重试"));
-    expect(wrapper.text()).not.toContain("HTTP 502 Bad Gateway");
-  });
-
-  it("renders unknown execution statuses as Chinese text while preserving the technical value", async () => {
-    listAgents.mockResolvedValue([]);
-    listTools.mockResolvedValue([]);
-    executions.mockImplementation(({ status }: { status?: string }) => Promise.resolve({
-      data: {
-        total: 1,
-        items: status === "failed" ? [] : [{ execution_id: "execution-unknown", status: "waiting_for_approval", started_at: "2026-08-29T08:00:00Z" }],
-      },
-    }));
-    const wrapper = mount(Dashboard, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("未知状态（waiting_for_approval）"));
-  });
+ beforeEach(() => { listAgents.mockReset(); listTools.mockReset(); executions.mockReset(); });
+ it("loads lifecycle metrics and recent runtime executions", async () => { listAgents.mockResolvedValue([{ id: "a1", name: "A", status: "published" }, { id: "a2", name: "B", status: "draft" }]); listTools.mockResolvedValue([{ id: "t1", enabled: true }, { id: "t2", enabled: false }]); executions.mockImplementation(({ status, page_size }: { status?: string; page_size?: number }) => Promise.resolve({ data: { total: status === "failed" ? 2 : 8, page: 1, page_size, items: status === "failed" ? [] : [{ execution_id: "execution-001", status: "completed", started_at: "2026-08-29T08:00:00Z", agent_id: "a1", duration_ms: 240 }] } })); const wrapper = mount(Dashboard, { global }); await vi.waitFor(() => expect((wrapper.vm as any).loading).toBe(false)); expect(wrapper.get('[data-testid="metric-executions"]').text()).toBe("8"); expect(wrapper.get('[data-testid="metric-agents"]').text()).toBe("2"); expect(wrapper.get('[data-testid="metric-published"]').text()).toBe("1"); expect(wrapper.get('[data-testid="metric-tools"]').text()).toBe("1/2"); expect(wrapper.get('[data-testid="metric-failed"]').text()).toBe("2"); expect(wrapper.text()).toContain("最近执行"); expect(wrapper.text()).toContain("execution-001"); expect(wrapper.text()).toContain("智能体管理"); });
+ it("uses Chinese wording for dashboard labels and quick entries", async () => { listAgents.mockResolvedValue([]); listTools.mockResolvedValue([]); executions.mockResolvedValue({ data: { total: 0, items: [] } }); const wrapper = mount(Dashboard, { global }); await vi.waitFor(() => expect((wrapper.vm as any).loading).toBe(false)); const text = wrapper.text(); expect(text).toContain("企业级智能体平台"); expect(text).toContain("智能体"); expect(text).toContain("工具"); expect(text).toContain("运行记录"); expect(text).toContain("审计日志"); expect(text).not.toContain("ENTERPRISE AI AGENT PLATFORM"); expect(text).not.toContain("Published"); });
+ it("does not expose backend exception text on the dashboard", async () => { listAgents.mockRejectedValue(new Error("HTTP 502 Bad Gateway")); listTools.mockResolvedValue([]); executions.mockResolvedValue({ data: { total: 0, items: [] } }); const wrapper = mount(Dashboard, { global }); await vi.waitFor(() => expect((wrapper.vm as any).error).toBe("平台数据加载失败，请稍后重试")); expect(wrapper.text()).toContain("平台数据加载失败，请稍后重试"); expect(wrapper.text()).not.toContain("HTTP 502 Bad Gateway"); });
+ it("renders unknown execution statuses as Chinese text while preserving the technical value", async () => { listAgents.mockResolvedValue([]); listTools.mockResolvedValue([]); executions.mockImplementation(({ status }: { status?: string }) => Promise.resolve({ data: { total: 1, items: status === "failed" ? [] : [{ execution_id: "execution-unknown", status: "waiting_for_approval", started_at: "2026-08-29T08:00:00Z" }] } })); const wrapper = mount(Dashboard, { global }); await vi.waitFor(() => expect((wrapper.vm as any).loading).toBe(false)); expect((wrapper.vm as any).statusLabel("waiting_for_approval")).toBe("未知状态（waiting_for_approval）"); expect((wrapper.vm as any).recentExecutions[0].status).toBe("waiting_for_approval"); expect(wrapper.text()).toContain("未知状态（waiting_for_approval）"); });
 });
