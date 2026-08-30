@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.integration_event import IntegrationEventRecord
-from app.models.runtime_operations import RuntimeNotificationDelivery
+from app.models.runtime_operations import RuntimeNotificationDelivery, RuntimeOperationAudit
 from app.models.webhook_delivery import WebhookDelivery
 from app.models.webhook_integration import WebhookDestination
 
@@ -220,3 +220,23 @@ class RuntimeOperationsService:
             stmt.order_by(WebhookDelivery.updated_at.desc(), WebhookDelivery.id.desc()).offset(offset).limit(page_size)
         )).scalars().all()
         return page, page_size, total, rows
+
+    async def audit_list(self, tenant_id: UUID, limit: int = 100) -> list[RuntimeOperationAudit]:
+        """按租户查询不可变运维审计事实。
+
+        Args:
+            tenant_id: 目标租户标识；查询必须始终带租户条件，防止审计事实跨租户泄漏。
+            limit: 最大返回条数，限制在 1 到 1000，避免一次查询无界读取审计记录。
+
+        Returns:
+            按创建时间倒序排列的当前租户运维审计记录。
+
+        设计意图：RuntimeOperationsService 是 Runtime 事实查询的基础入口，因此 Audit 查询与指标、DLQ 查询一样直接 tenant-scoped；Enterprise Service 仅复用本入口，不保留第二套查询规则。
+        """
+        bounded_limit = min(max(limit, 1), 1000)
+        return list((await self.db.execute(
+            select(RuntimeOperationAudit)
+            .where(RuntimeOperationAudit.tenant_id == tenant_id)
+            .order_by(RuntimeOperationAudit.created_at.desc(), RuntimeOperationAudit.id.desc())
+            .limit(bounded_limit)
+        )).scalars().all())
