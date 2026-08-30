@@ -1,4 +1,4 @@
-"""验证 Runtime Prometheus / OTLP 指标导出的规范契约与租户边界。"""
+"""验证 Runtime Prometheus / OTLP / OpenTelemetry SDK 指标导出的规范契约与租户边界。"""
 
 from uuid import uuid4
 
@@ -16,13 +16,22 @@ VALUES = {
 
 
 def test_otel_resource_uses_canonical_service_and_tenant_attributes() -> None:
-    """OpenTelemetry Resource 属性必须由 canonical contract 单一入口生成。"""
+    """OpenTelemetry OTLP Resource 属性必须由 canonical contract 单一入口生成。"""
     tenant_id = uuid4()
     assert RuntimeMetricContract.otel_resource(tenant_id) == {
         "service.name": RuntimeMetricContract.SERVICE_NAME,
         "service.version": RuntimeMetricContract.SERVICE_VERSION,
         "tenant.id": str(tenant_id),
     }
+
+
+def test_otel_sdk_resource_is_process_scoped() -> None:
+    """共享 SDK MeterProvider 只能使用进程级 Resource，tenant 必须留在 Metric 维度。"""
+    assert RuntimeMetricContract.otel_sdk_resource() == {
+        "service.name": RuntimeMetricContract.SERVICE_NAME,
+        "service.version": RuntimeMetricContract.SERVICE_VERSION,
+    }
+    assert RuntimeMetricContract.OTEL_METRIC_ATTRIBUTES == ("tenant_id",)
 
 
 def test_prometheus_uses_canonical_names_and_only_tenant_label() -> None:

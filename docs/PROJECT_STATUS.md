@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10 Enterprise Integration Event Operations 开发中**
 - 当前任务：**2.10-I Runtime Notification Lifecycle / Provider / Metrics / Alert / Export / Operational Audit**
-- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization、tenant/consumer-group Claim isolation、Claim competition、Canonical Metrics Export Contract 与 Runtime Acceptance Gate 收口**
+- 最近完成：**Alert firing/recovery、Notification Policy、grouping/dedup/cooldown、Provider fallback、Worker outcome synchronization、tenant/consumer-group Claim isolation、Claim competition、Canonical Metrics Export Contract、Runtime Telemetry SDK Contract 与 Runtime Acceptance Gate 收口**
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -45,7 +45,11 @@
 - Alert Notification 专用 routing 不再被通用 Notification Scheduler 绕过 Policy 重复路由；`alert.*` 由 AlertLifecycleService 独占编排；
 - Notification-level SLO / Metrics / Operational Audit 已有正式聚合入口；
 - Prometheus / OTLP Export；
-- Runtime Operational Audit 覆盖 Provider、Alert、Notification Delivery 生命周期。
+- Runtime Operational Audit 覆盖 Provider、Alert、Notification Delivery 生命周期；
+- Runtime Operations 基础服务提供 tenant-scoped `audit_list()` 正式查询入口，Enterprise Service 复用该入口；
+- `RuntimeMetricContract` 统一维护 Prometheus / OTLP / OpenTelemetry SDK 的 canonical metric names、service Resource 与 tenant metric attribute contract；
+- `RuntimeTelemetry` 使用进程级 SDK Resource，tenant 仅作为唯一 Metric observation 维度，避免共享 MeterProvider 跨租户污染；
+- SDK 多租户隔离与 Contract 一致性已补充 unit / Real Acceptance 覆盖。
 
 ### Worker / Scheduler 生命周期回归
 状态：**已完成**。
@@ -130,10 +134,10 @@ Runtime Notification Lifecycle Real Gate completed.
 
 1. 建立 Provider Registry / Alert Rule / Metrics Snapshot / Series / Prometheus / OTLP / Operational Audit 的统一真实 PostgreSQL Acceptance；
 2. 将统一 Real Gate 纳入 canonical Runtime Metric Contract 回归，并持续验证 tenant boundary；
-3. 接入 OpenTelemetry SDK 标准 Meter / Resource，在不改变 `RuntimeMetricContract` 业务指标名、标签和 tenant boundary 的前提下建立 SDK 观测层；
-4. 增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
-5. 完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
-6. 完成 2.10-I Runtime Acceptance 全链路 Gate。
+3. **已完成**：接入 OpenTelemetry SDK 标准 Meter / Resource，在不改变 `RuntimeMetricContract` 业务指标名、标签和 tenant boundary 的前提下建立 SDK 观测层；
+4. **已完成**：增加 SDK Meter 与 Prometheus / OTLP Contract 的一致性单元测试；
+5. **已完成**：完成 fallback exhausted → Notification DLQ → SLO / Audit 的端到端失败链路验收；
+6. 完成 2.10-I Runtime Acceptance 全链路 Gate，并以最新代码重新执行本地 unit / Real API / Gate 回归。
 
 ## 6. 长期未完成能力
 长期企业化能力独立维护在 `docs/05-long-term/`。

@@ -22,12 +22,7 @@ def test_runtime_telemetry_uses_canonical_resource_and_metric_names() -> None:
     """验证 SDK Meter 使用统一服务 Resource，并暴露 canonical Runtime 指标。"""
     reader = InMemoryMetricReader()
     provider = MeterProvider(
-        resource=Resource.create(
-            {
-                "service.name": RuntimeMetricContract.SERVICE_NAME,
-                "service.version": RuntimeMetricContract.SERVICE_VERSION,
-            }
-        ),
+        resource=Resource.create(RuntimeMetricContract.otel_sdk_resource()),
         metric_readers=[reader],
     )
     telemetry = RuntimeTelemetry(provider)
@@ -50,10 +45,46 @@ def test_runtime_telemetry_uses_canonical_resource_and_metric_names() -> None:
     resource = data.resource_metrics[0].resource.attributes
     assert resource["service.name"] == RuntimeMetricContract.SERVICE_NAME
     assert resource["service.version"] == RuntimeMetricContract.SERVICE_VERSION
+    assert "tenant.id" not in resource
     for metric in scope.metrics:
         point = next(iter(metric.data.data_points))
-        assert point.attributes == {"tenant_id": str(tenant_id)}
+        assert point.attributes == {RuntimeMetricContract.OTEL_METRIC_ATTRIBUTES[0]: str(tenant_id)}
 
+    telemetry.shutdown()
+
+
+def test_runtime_telemetry_keeps_multiple_tenants_isolated() -> None:
+    """验证共享 SDK MeterProvider 时不同租户只能通过 canonical tenant 维度区分。"""
+    reader = InMemoryMetricReader()
+    telemetry = RuntimeTelemetry(
+        MeterProvider(
+            resource=Resource.create(RuntimeMetricContract.otel_sdk_resource()),
+            metric_readers=[reader],
+        )
+    )
+    tenant_a, tenant_b = uuid4(), uuid4()
+    telemetry.record(tenant_a, {"runtime.delivery.retry_count": 2})
+    telemetry.record(tenant_b, {"runtime.delivery.retry_count": 5})
+
+    data = reader.get_metrics_data()
+    assert data is not None
+    metric = next(
+        metric
+        for metric in data.resource_metrics[0].scope_metrics[0].metrics
+        if metric.name == "runtime.delivery.retry_count"
+    )
+    points = list(metric.data.data_points)
+    assert {
+        (point.attributes["tenant_id"], point.value)
+        for point in points
+    } == {
+        (str(tenant_a), 2.0),
+        (str(tenant_b), 5.0),
+    }
+    assert all(
+        tuple(point.attributes.keys()) == RuntimeMetricContract.OTEL_METRIC_ATTRIBUTES
+        for point in points
+    )
     telemetry.shutdown()
 
 

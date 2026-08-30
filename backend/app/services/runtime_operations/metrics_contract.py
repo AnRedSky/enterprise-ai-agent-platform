@@ -1,6 +1,6 @@
 """Runtime 指标导出规范。
 
-职责：集中维护 Prometheus / OTLP 的规范指标名、标签与资源属性，避免不同导出器自行定义第二套命名规则。
+职责：集中维护 Prometheus、OTLP 与 OpenTelemetry SDK 的规范指标名、标签与资源属性，避免不同观测出口自行定义第二套命名规则。
 边界：只负责导出格式与值校验，不读取数据库、不计算业务指标，也不改变 Runtime Durable facts。
 """
 
@@ -24,12 +24,33 @@ class RuntimeMetricContract:
     OTLP_NAMES = tuple(PROMETHEUS_NAMES.keys())
     PROMETHEUS_LABELS = ("tenant_id",)
     OTEL_RESOURCE_ATTRIBUTES = ("service.name", "service.version", "tenant.id")
+    OTEL_SDK_RESOURCE_ATTRIBUTES = ("service.name", "service.version")
+    OTEL_METRIC_ATTRIBUTES = ("tenant_id",)
     SERVICE_NAME = "enterprise-ai-agent-platform.runtime"
     SERVICE_VERSION = "0.1.0"
 
     @classmethod
+    def otel_sdk_resource(cls) -> dict[str, str]:
+        """构造 SDK MeterProvider 使用的进程级 Resource。
+
+        Args:
+            无。
+
+        Returns:
+            仅包含进程级 service.name 与 service.version 的 Resource 属性。
+
+        设计意图：MeterProvider 在 Scheduler 进程生命周期内共享，不能把单个租户写入
+        Provider 级 Resource；tenant_id 必须作为 SDK Metric 的唯一业务维度，而 OTLP
+        网络导出仍通过 ``otel_resource`` 为单租户 Payload 提供 tenant.id。
+        """
+        return {
+            "service.name": cls.SERVICE_NAME,
+            "service.version": cls.SERVICE_VERSION,
+        }
+
+    @classmethod
     def otel_resource(cls, tenant_id: UUID) -> dict[str, str]:
-        """构造唯一规范的 OpenTelemetry Resource 属性集合。
+        """构造单租户 OTLP Export Resource 属性集合。
 
         Args:
             tenant_id: 当前租户标识，作为 Resource 的 tenant.id 属性写入。
