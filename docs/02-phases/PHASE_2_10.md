@@ -144,13 +144,24 @@
 - Scheduler 只负责事件路由编排，不执行外部 HTTP，不修改 Integration Event 状态机；
 - Webhook Delivery Worker 继续负责 lease、网络发送、retry、dead-letter 和最终 Delivery Audit。
 
+### I-10 Worker Lifecycle Regression
+
+状态：**单元测试修复完成，等待本地回归结果**。
+
+- 修复 Worker 入口生命周期测试中对 `WebhookDeliveryWorker.DEFAULT_CONCURRENCY` 类级契约的 Mock 缺失；
+- 测试显式保留生产构造器需要的类级默认值，并验证 sender / concurrency / lease / max_attempts 参数；
+- 错误记录：`docs/04-errors/2026-08-30-worker-entrypoint-test-mock-class-attribute.md`；
+- Runtime Real Gate 继续禁止自动启动服务，仅检查 Scheduler / Worker 是否已经由开发者启动；测试身份与业务数据自动生成，不要求人工填写。
+
 ## 2.10-I 下一切片
 
-1. 将 Runtime Notification Routing 与 Webhook Delivery Worker 组成真实告警通知闭环，并验证 tenant isolation；
-2. 增加告警通知稳定幂等键、去重和通知失败审计的完整策略；
-3. 增加 Prometheus canonical metric naming / label governance；
-4. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
-5. 完成 2.10-I Runtime Acceptance：registry + health + series + scheduler + lifecycle + notification routing + exports + audit + tenant isolation。
+1. 本地执行 Worker 生命周期单元回归与 Backend default regression；
+2. 执行 Runtime Notification Lifecycle Real Gate，验证真实 PostgreSQL / Scheduler / Worker 闭环；
+3. 完成 fallback exhausted → Notification DLQ 的真实失败链路验收；
+4. 完成 Alert → Notification → Provider → Destination Metrics 的维度聚合核验；
+5. 完成 Prometheus canonical metric naming / label governance；
+6. 接入 OpenTelemetry SDK 的标准 Meter / Resource / tenant-safe attributes；
+7. 完成 2.10-I Runtime Acceptance：registry + health + series + scheduler + lifecycle + notification routing + exports + audit + tenant isolation。
 
 ## 约束
 - Operations API 不绕过 Repository 直接修改 Delivery 状态。
@@ -163,3 +174,4 @@
 - Provider healthcheck 必须经过统一 SSRF/出口安全校验，不得使用未经约束的用户输入发起内网探测。
 - Scheduler Alert Evaluation 不直接执行通知网络请求，只负责指标采样、规则评估与 Integration Event 产生。
 - Scheduler Notification Routing 不直接执行通知网络请求，只负责 Durable Event → Delivery Fact 编排；实际网络投递必须由 Delivery Worker 完成。
+- 测试 Gate 可以自动探测服务、生成测试上下文并清理测试数据，但禁止自动创建、启动、重启或停止 API、Worker、Scheduler、PostgreSQL、Redis 等服务进程。
