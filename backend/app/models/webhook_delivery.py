@@ -46,7 +46,7 @@ class WebhookDelivery(Base):
     integration_event_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("integration_events.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    consumer_group: Mapped[str] = mapped_column(String(128), nullable=False, default="default", index=True)
+    consumer_group: Mapped[str] = mapped_column(String(128), nullable=False, default="default")
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending", index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
