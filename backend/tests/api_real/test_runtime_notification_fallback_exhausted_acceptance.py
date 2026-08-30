@@ -1,6 +1,6 @@
 """Phase 2.10-I fallback exhausted 真实 PostgreSQL 验收。
 
-职责：验证主 Provider 进入 dead-letter 后没有可用 fallback 时，Notification DLQ、SLO Metric 与 Operational Audit 一致落库。
+职责：验证主 Provider 进入 dead-letter 后没有可用 fallback 时，Notification DLQ、SLO、Canonical Metrics 与 Operational Audit 一致落库。
 边界：不启动服务，不执行外部网络请求；测试数据由用例自动创建并清理。
 """
 
@@ -28,15 +28,17 @@ from app.models.webhook_delivery import WebhookDelivery
 from app.models.webhook_integration import WebhookDestination, WebhookSubscription
 from app.services.integration.alert_lifecycle import AlertLifecycleService
 from app.services.integration.webhook_delivery import WebhookDeliveryWorker
+from app.services.runtime_operations import RuntimeMetricContract, RuntimeOperationsService
 
 pytestmark = pytest.mark.real_api
 
 
 @pytest.mark.asyncio
-async def test_fallback_exhausted_persists_dlq_slo_and_audit() -> None:
-    """验证 fallback 耗尽后的 Notification DLQ / Metric / Audit 事实保持同一租户边界。"""
+async def test_fallback_exhausted_persists_dlq_slo_metrics_and_audit() -> None:
+    """验证 fallback 耗尽后的 Notification DLQ / SLO / canonical Metric / Audit 事实保持同一租户边界。"""
     suffix = uuid.uuid4().hex[:12]
     tenant_id = uuid.uuid4()
+    foreign_tenant_id = uuid.uuid4()
     rule_id = uuid.uuid4()
     destination_id = uuid.uuid4()
     subscription_id = uuid.uuid4()
@@ -45,6 +47,7 @@ async def test_fallback_exhausted_persists_dlq_slo_and_audit() -> None:
         async with SessionLocal() as db:
             db.add_all([
                 Tenant(id=tenant_id, name=f"phase-210-i-dlq-{suffix}", status="active"),
+                Tenant(id=foreign_tenant_id, name=f"phase-210-i-foreign-{suffix}", status="active"),
                 RuntimeAlertRule(
                     id=rule_id,
                     tenant_id=tenant_id,
@@ -141,6 +144,7 @@ async def test_fallback_exhausted_persists_dlq_slo_and_audit() -> None:
             )
             assert len(notifications) == 1
             assert notifications[0].status == "dead_letter"
+            assert notifications[0].provider == "webhook_http"
 
             metrics = list(
                 (
@@ -155,19 +159,60 @@ async def test_fallback_exhausted_persists_dlq_slo_and_audit() -> None:
             assert len(metrics) == 1
             assert metrics[0].value == 1
             assert metrics[0].dimensions["provider"] == "webhook_http"
+            assert metrics[0].dimensions["transition"] == "firing"
+
+            operations = RuntimeOperationsService(db)
+            overview = await operations.overview(tenant_id, window_hours=24)
+            assert overview["notifications"]["dead_letter_count"] == 1
+            assert overview["notifications"]["slo"]["delivery_success_percent"] == 0.0
+            assert overview["notifications"]["slo"]["target_percent"] == 99.0
+            assert overview["notifications"]["slo"]["error_budget_percent"] == 0.0
+
+            canonical_values = {
+                "runtime.delivery.success_percent": overview["slo"]["delivery_success_percent"],
+                "runtime.delivery.retry_count": overview["deliveries"]["retry_count"],
+                "runtime.delivery.dead_letter_count": overview["deliveries"]["dead_letter_count"],
+            }
+            prometheus = RuntimeMetricContract.prometheus(tenant_id, canonical_values)
+            assert "runtime_delivery_success_percent" in prometheus
+            assert "runtime_delivery_retry_count" in prometheus
+            assert "runtime_delivery_dead_letter_count" in prometheus
+            assert f'tenant_id="{tenant_id}"' in prometheus
+            assert str(foreign_tenant_id) not in prometheus
+
+            otlp = RuntimeMetricContract.otlp(tenant_id, canonical_values)
+            resource_attributes = {
+                item["key"]: item["value"]["stringValue"]
+                for item in otlp["resourceMetrics"][0]["resource"]["attributes"]
+            }
+            assert resource_attributes["tenant.id"] == str(tenant_id)
+            exported_names = [
+                item["name"]
+                for item in otlp["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+            ]
+            assert exported_names == list(canonical_values)
+            assert set(exported_names).issubset(RuntimeMetricContract.OTLP_NAMES)
 
             audits = list(
                 (
                     await db.execute(
-                        select(RuntimeOperationAudit).where(
+                        select(RuntimeOperationAudit)
+                        .where(
                             RuntimeOperationAudit.tenant_id == tenant_id,
-                            RuntimeOperationAudit.action == "notification.fallback.exhausted",
+                            RuntimeOperationAudit.resource_id == str(instance.id),
                         )
+                        .order_by(RuntimeOperationAudit.created_at, RuntimeOperationAudit.id)
                     )
                 ).scalars().all()
             )
-            assert len(audits) == 1
-            assert audits[0].outcome == "failure"
+            actions = [audit.action for audit in audits]
+            assert "notification.delivery.dead_letter" in actions
+            assert "notification.fallback.exhausted" in actions
+            exhausted = next(audit for audit in audits if audit.action == "notification.fallback.exhausted")
+            assert exhausted.outcome == "failure"
+            assert exhausted.details["provider"] == "webhook_http"
+            assert exhausted.tenant_id == tenant_id
+            assert await operations.audit_list(foreign_tenant_id) == []
 
             groups = list(
                 (
@@ -182,16 +227,16 @@ async def test_fallback_exhausted_persists_dlq_slo_and_audit() -> None:
             assert groups[0].severity == "critical"
     finally:
         async with SessionLocal() as db:
-            await db.execute(delete(RuntimeOperationAudit).where(RuntimeOperationAudit.tenant_id == tenant_id))
-            await db.execute(delete(RuntimeMetricSample).where(RuntimeMetricSample.tenant_id == tenant_id))
-            await db.execute(delete(RuntimeNotificationDelivery).where(RuntimeNotificationDelivery.tenant_id == tenant_id))
-            await db.execute(delete(RuntimeNotificationGroup).where(RuntimeNotificationGroup.tenant_id == tenant_id))
-            await db.execute(delete(RuntimeAlertInstance).where(RuntimeAlertInstance.tenant_id == tenant_id))
-            await db.execute(delete(RuntimeNotificationPolicy).where(RuntimeNotificationPolicy.tenant_id == tenant_id))
-            await db.execute(delete(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_id))
-            await db.execute(delete(WebhookSubscription).where(WebhookSubscription.tenant_id == tenant_id))
-            await db.execute(delete(WebhookDestination).where(WebhookDestination.tenant_id == tenant_id))
-            await db.execute(delete(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id == tenant_id))
-            await db.execute(delete(RuntimeAlertRule).where(RuntimeAlertRule.tenant_id == tenant_id))
-            await db.execute(delete(Tenant).where(Tenant.id == tenant_id))
+            await db.execute(delete(RuntimeOperationAudit).where(RuntimeOperationAudit.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(RuntimeMetricSample).where(RuntimeMetricSample.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(RuntimeNotificationDelivery).where(RuntimeNotificationDelivery.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(RuntimeNotificationGroup).where(RuntimeNotificationGroup.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(RuntimeAlertInstance).where(RuntimeAlertInstance.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(RuntimeNotificationPolicy).where(RuntimeNotificationPolicy.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(WebhookDelivery).where(WebhookDelivery.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(WebhookSubscription).where(WebhookSubscription.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(WebhookDestination).where(WebhookDestination.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(RuntimeAlertRule).where(RuntimeAlertRule.tenant_id.in_([tenant_id, foreign_tenant_id])))
+            await db.execute(delete(Tenant).where(Tenant.id.in_([tenant_id, foreign_tenant_id])))
             await db.commit()
