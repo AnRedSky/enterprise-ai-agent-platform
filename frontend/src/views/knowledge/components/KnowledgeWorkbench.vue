@@ -36,12 +36,13 @@ async function search() { const text = query.value.trim(); if (!text) { retrieva
 function selectResult(result: RetrievalResult | null) { selectedResult.value = result; }
 function clearRetrieval() { query.value = ""; results.value = []; selectedResult.value = null; retrievalError.value = ""; }
 const pageState = computed(() => permissionDenied.value ? "permission" : error.value ? "error" : loading.value ? "loading" : bases.value.length === 0 ? "empty" : "success");
+async function handleStateAction() { if (pageState.value === "empty") { baseDialog.value = true; return; } if (pageState.value === "error") await loadBases(); }
 onMounted(loadBases);
 </script>
 <template>
   <div class="page">
     <PageHeader eyebrow="知识资产" title="知识库管理" description="统一管理知识库、文档、版本和内容分块，并支持知识检索调试。"><template #actions><el-button type="primary" @click="baseDialog = true">新建知识库</el-button></template></PageHeader>
-    <StatePanel v-if="pageState !== 'success'" :state="pageState" :title="pageState === 'loading' ? '正在加载知识库' : pageState === 'empty' ? '暂无知识库' : pageState === 'permission' ? '无权访问知识库' : '知识库加载失败'" :description="pageState === 'loading' ? '正在同步知识资产。' : pageState === 'empty' ? '请先创建知识库，再继续管理文档和版本。' : pageState === 'permission' ? '当前账号没有知识库访问权限，请联系管理员。' : error" :action-label="pageState === 'error' ? '重试' : pageState === 'empty' ? '创建知识库' : undefined" @action="pageState === 'empty' ? (baseDialog = true) : loadBases" />
+    <StatePanel v-if="pageState !== 'success'" :state="pageState" :title="pageState === 'loading' ? '正在加载知识库' : pageState === 'empty' ? '暂无知识库' : pageState === 'permission' ? '无权访问知识库' : '知识库加载失败'" :description="pageState === 'loading' ? '正在同步知识资产。' : pageState === 'empty' ? '请先创建知识库，再继续管理文档和版本。' : pageState === 'permission' ? '当前账号没有知识库访问权限，请联系管理员。' : error" :action-label="pageState === 'error' ? '重试' : pageState === 'empty' ? '创建知识库' : undefined" @action="handleStateAction" />
     <template v-else>
       <PageToolbar title="知识资产工作台" description="按知识库 → 文档 → 版本 → 分块逐级查看资产。"><span class="selection">{{ selectedBase ? `当前知识库：${selectedBase.name}` : "请选择知识库" }}</span></PageToolbar>
       <div class="grid">
