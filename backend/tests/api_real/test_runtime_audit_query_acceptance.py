@@ -60,6 +60,11 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
             assert rows[0].resource_id == "trigger-a-1"
             assert rows[0].tenant_id == tenant_a
 
+            _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, actor="operator-a", action="operator.workflow_execution.retry")
+            assert total == 3
+            assert [row.resource_id for row in rows] == ["exec-a-4", "exec-a-3", "exec-a-1"]
+            assert {row.tenant_id for row in rows} == {tenant_a}
+
             _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, resource_id="exec-a-3")
             assert total == 1
             assert rows[0].outcome == "failed"
@@ -67,6 +72,10 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
             _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, since=now - timedelta(minutes=3, seconds=30), until=now - timedelta(minutes=1, seconds=30))
             assert total == 2
             assert [row.resource_id for row in rows] == ["exec-a-3", "trigger-a-1"]
+
+            _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, actor="operator-b", action="operator.workflow_execution.retry")
+            assert total == 0
+            assert rows == []
 
             _, _, total, rows = await service.audit_query(tenant_b, page=1, page_size=100)
             assert total == 2
