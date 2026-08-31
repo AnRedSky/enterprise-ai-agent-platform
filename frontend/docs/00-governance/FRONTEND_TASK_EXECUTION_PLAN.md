@@ -4,84 +4,50 @@
 
 ## 1. 当前基线
 
-- 最新远端 `main`：`ac90bd2e86f76f9100e67d948e3cbde261527b61`（2026-08-31，worker/scheduler diagnostics UI）。
-- 当前 `frontend` 与最新 `main` 已处于同一提交，无需产生空合并提交；本轮开发继续只消费已经稳定的后端 Contract，不提前实现尚未完成 Acceptance 的后端能力。
-- 前端开发准则明确要求：后端稳定能力是正式前端实现的唯一前置条件，开发顺序固定为 Backend Contract / Tests / Acceptance → Frontend API Types → View / Component → Vitest → Real API / E2E。
-- 本轮选择已稳定的 Organization / Membership Contract 继续前端化，不进入最新 Runtime Operations / Scheduler 后端主线。
+- 最新远端 `main`：`2fccc9ddee10579e8dfcc6e684164e140b7356bc`（2026-08-31，Runtime Audit Query 路由修复）。
+- 当前 `frontend` 已同步到该 `main`，本轮 UI 整改基于稳定后端 Contract，不新增业务 Contract。
+- 当前主线暂缓新增业务功能，优先解决系统 UI 无法达到企业级使用标准的问题。
+- 前端开发准则要求保持现有企业级信息架构，采用渐进增强；公共视觉规则应统一收敛到 Design Tokens 和公共组件。
 
-## 2. 本轮交付：Organization 成员管理体验增强
+## 2. 当前主线：UI-01 + UI-02
 
-状态：**进行中**。
+状态：**进行中：首轮基础系统整改已实现。**
 
-### 实现范围
+### UI-01：Design System Foundation
 
-1. 复用现有 `/organizations/{organization_id}/members` 分页 Contract，不新增 API client。
-2. 成员列表使用固定 `page_size=20`，页码通过 `offset=(page-1)*20` 计算。
-3. 成员总数使用后端 `total`，只有超过一页时显示分页控件。
-4. 成员角色、状态、所有权转移、暂停/恢复、移除等既有生命周期操作保持原 Backend Contract。
-5. 添加、编辑、删除、状态变更、所有权转移后保持当前页面上下文；删除导致当前页越界时自动回退到最后有效页。
-6. 成员加载错误独立于组织详情错误，提供可恢复的用户提示，不展示原始异常。
-7. 组织详情在 900px / 600px 以下增加响应式布局，操作区和分页在窄屏下保持可用。
-8. 新增 targeted Vitest 覆盖分页参数、页码状态、既有成员生命周期和权限边界。
+已实现：
 
-### Contract 对齐
+- `src/styles/tokens.css`：颜色、文字、间距、圆角、阴影、布局和控件尺寸 Token；
+- `src/styles/reset.css`：基础 reset、焦点可见性和 reduced-motion；
+- `src/styles/typography.css`：统一字体与文本层级；
+- `src/styles/components.css`：Element Plus 全局控件视觉基线；
+- `src/styles/global.css`：应用布局变量、页面容器和响应式规则。
 
-前端继续调用：
+### UI-02：Application Shell
 
-```text
-GET  /organizations/{organization_id}/members?offset={offset}&limit={limit}
-POST /organizations/{organization_id}/members
-PATCH /organizations/{organization_id}/members/{membership_id}
-POST /organizations/{organization_id}/members/{membership_id}/transfer-owner
-DELETE /organizations/{organization_id}/members/{membership_id}
-```
+已实现：
 
-列表响应继续使用：
+- 侧边栏品牌、工作区、导航分组、系统状态统一视觉；
+- 顶部上下文栏、搜索、帮助、通知、环境和用户菜单统一视觉；
+- Shell 视觉参数统一引用 Design Tokens；
+- 保持既有业务路由和信息架构不变；
+- 700px 以下采用紧凑导航模式；
+- 增强键盘焦点和 reduced-motion 支持。
 
-```text
-{
-  "items": Membership[],
-  "total": number
-}
-```
+## 3. UI 整改后续队列
 
-前端不复制后端 RBAC、tenant boundary 或所有权状态机，仅根据当前用户 membership 的真实角色/状态决定是否展示管理入口。
+### P0：系统 UI 全面整改
 
-## 3. 长期任务队列
+1. UI-03：Page Header / Toolbar / Metric / Card / Table 公共模式统一；
+2. UI-04：Loading / Empty / Error / Permission / Success 状态统一；
+3. UI-05：表单、Dialog、Drawer、确认操作和危险操作视觉/交互统一；
+4. UI-06：核心页面逐页迁移至 Design Tokens，清理散落硬编码样式；
+5. UI-07：1440 / 1280 / 1024 / 768 / 390 响应式视觉验收；
+6. UI-08：核心页面可访问性、交互密度和视觉一致性专项整改。
 
-### P0：核心业务闭环
+### 业务功能
 
-| ID | 领域 | 目标 | 状态 | 验收 |
-|---|---|---|---|---|
-| FE-P0-01 | Agent | 创建 → Version → Publish → Runtime → Trace/Audit 闭环 | 进行中 | View + API + Real 联调 |
-| FE-P0-02 | Workflow | 编辑 → 校验 → 发布 → Execution → Trace | 进行中 | View + API + E2E |
-| FE-P0-03 | Runtime | Execution → Event → Trace → Audit 统一详情链路 | 进行中 | View + API + E2E |
-| FE-P0-04 | Knowledge | 知识资产 → 检索 → Agent 关联 → Runtime 验证 | 待实施 | View + API |
-| FE-P0-05 | Tool | 工具配置 → Agent 关联 → Runtime 调用结果 | 待实施 | View + API |
-| FE-P0-06 | Organization | 组织 → 成员 → 权限 → 资源边界 | 进行中 | View + API + E2E |
-| FE-P0-07 | Model Provider | Provider/Model 配置与 Agent 使用关系 | 待实施 | View + API |
-| FE-P0-08 | Audit | 跨领域操作证据查询与详情 | 进行中 | View + API + E2E |
-| FE-P0-09 | Integration | Event → Delivery → Audit → Replay → Dead Letter | 待实施 | View + Real API |
-
-### P1：稳定性与企业级体验
-
-- FE-P1-01：统一 Loading / Empty / Error / Success / Permission 状态。
-- FE-P1-02：统一错误分类与用户提示隔离。
-- FE-P1-03：统一中文状态映射，未知值安全回退。
-- FE-P1-04：清理 Element Plus 未解析组件警告（进行中）。
-- FE-P1-05：统一公共模式，并完成核心页面渐进增强（进行中）。
-- FE-P1-06：建立 1440 / 1280 / 1024 / 768 / 390 响应式验收矩阵。
-- FE-P1-07：补充核心页面 Playwright 用户旅程。
-- FE-P1-08：完成 Runtime / Agent / Workflow 深度交互与可观测性工作台。
-
-### P2：后端稳定后再实施
-
-- Provider Registry / Health；
-- Alert Rule 与 firing/recovery 生命周期；
-- Notification Routing / Provider fallback；
-- Notification SLO / Route Metrics；
-- Runtime Alert Scheduler 运维视图；
-- Prometheus / OpenTelemetry 配置与观测状态。
+新增业务功能暂缓。UI-01 至 UI-08 完成前，不进入新的业务领域开发；现有业务仅允许进行 UI 兼容整改和必要缺陷修复。
 
 ## 4. 固定执行流程
 
@@ -90,39 +56,41 @@ DELETE /organizations/{organization_id}/members/{membership_id}
     ↓
 确认 Backend Contract / Tests / Acceptance
     ↓
-检索现有 API / Types / View / Components / Tests / Docs
+检索现有 UI / Components / Styles / Tests / Docs
     ↓
-确定最小业务切片
+确定一个 UI 原子整改单元
     ↓
-API Types → View / Component → Vitest
+实现源码 + 测试 + 必要文档
     ↓
 targeted test → npm test → npm run build → npm run test:gate
     ↓
 必要时 Real API / Browser E2E
     ↓
-同步 frontend/docs / 项目状态
+同步 frontend/docs
     ↓
 一个原子提交
 ```
 
 ## 5. 本轮验证状态
 
-本轮代码通过 GitHub 远端源码审查完成实现提交；当前环境没有直接执行用户本地 Node/Vitest/build 的能力，因此不能将 targeted Vitest、全量 Vitest、build 或 test gate 记录为“通过”。
+本轮 UI-01 + UI-02 已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将这些测试记录为“通过”。
 
-用户本地验收应按：
+用户本地应执行：
 
 ```powershell
 cd frontend
-npm test -- tests/views/OrganizationDetail.test.ts
 npm test
 npm run build
 npm run test:gate
+npm run test:final
 ```
 
-需要真实后端时，再执行项目既有 Real API / Browser E2E 流程。测试不得自动启动或停止后端服务，也不得依赖手工输入测试数据。
+视觉验收至少检查 1440 / 1280 / 1024 / 768 / 390 五档 viewport，并重点验证导航、页面容器、表格、表单、Dialog、Loading、Empty、Error 和 Permission 状态。
+
+测试数据必须由既有脚本自动生成；测试流程不得自动启动/停止服务，也不得要求手动填写测试信息。
 
 ## 6. 完成定义
 
-任务只有同时满足 Backend Contract、类型、用户链路、状态完整性、安全边界、targeted/full Vitest、build、test gate、必要 Real API/E2E、文档同步和原子提交等条件，才能标记 `已完成`。
+任务只有同时满足代码实现、视觉一致性、响应式、可访问性、targeted/full Vitest、build、test gate、必要 Real API/E2E、文档同步和原子提交等条件，才能标记 `已完成`。
 
 没有实际执行证据不得写成“通过”。

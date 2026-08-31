@@ -1,0 +1,8 @@
+:root { font-family: var(--ui-font-family); color: var(--ui-text-primary); font-synthesis: none; text-rendering: optimizeLegibility; }
+body { color: var(--ui-text-primary); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, p { margin-top: 0; }
+h1 { font-size: 24px; line-height: 32px; font-weight: 650; letter-spacing: -.02em; }
+h2 { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -.01em; }
+h3 { font-size: 16px; line-height: 24px; font-weight: 600; }
+p { color: var(--ui-text-tertiary); font-size: 13px; line-height: 20px; }
+code, pre, kbd { font-family: var(--ui-font-mono); }

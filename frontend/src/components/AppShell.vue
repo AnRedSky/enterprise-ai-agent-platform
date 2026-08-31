@@ -29,9 +29,7 @@ const navigation = [
     { path: "/integrations", label: "集成中心", icon: Connection, description: "Webhook 与事件出站" },
   ] },
 ];
-const titleMap: Record<string, string> = {
-  "/dashboard": "总览", "/agents": "智能体", "/tools": "工具", "/knowledge": "知识库", "/workflows": "工作流编排", "/workflows/triggers": "触发器", "/organizations": "组织与成员", "/runtime": "运行中心", "/runtime/operations": "运行运维", "/runtime/audit": "审计日志", "/integrations": "集成中心",
-};
+const titleMap: Record<string, string> = { "/dashboard": "总览", "/agents": "智能体", "/tools": "工具", "/knowledge": "知识库", "/workflows": "工作流编排", "/workflows/triggers": "触发器", "/organizations": "组织与成员", "/runtime": "运行中心", "/runtime/operations": "运行运维", "/runtime/audit": "审计日志", "/integrations": "集成中心" };
 const currentTitle = computed(() => {
   if (route.path.startsWith("/organizations/") && route.path.endsWith("/model-providers")) return "模型 Provider";
   if (route.path.startsWith("/organizations/")) return "组织详情";
@@ -57,11 +55,11 @@ function logout() { clearSession(); void router.replace({ path: "/login", query:
         <div class="brand-mark"><el-icon :size="20"><Grid /></el-icon></div>
         <div v-if="!collapsed" class="brand-copy"><strong>Enterprise AI</strong><span>Agent Platform</span></div>
       </button>
-      <div v-if="!collapsed" class="workspace-switcher">
-        <div class="workspace-icon"><el-icon><OfficeBuilding /></el-icon></div>
-        <div><span>当前工作区</span><strong>企业默认空间</strong></div>
+      <button v-if="!collapsed" class="workspace-switcher" type="button" aria-label="切换工作区">
+        <span class="workspace-icon"><el-icon><OfficeBuilding /></el-icon></span>
+        <span class="workspace-copy"><small>当前工作区</small><strong>企业默认空间</strong></span>
         <el-icon class="workspace-chevron"><Expand /></el-icon>
-      </div>
+      </button>
       <el-scrollbar class="nav-scroll">
         <template v-for="group in navigation" :key="group.section">
           <div v-if="!collapsed" class="nav-section-title">{{ group.section }}</div>
@@ -72,9 +70,7 @@ function logout() { clearSession(); void router.replace({ path: "/login", query:
           </el-menu>
         </template>
       </el-scrollbar>
-      <div v-if="!collapsed" class="sidebar-footer">
-        <div class="system-status"><i></i><span>平台服务正常</span><small>v0.1</small></div>
-      </div>
+      <div v-if="!collapsed" class="sidebar-footer"><div class="system-status"><i></i><span>平台服务正常</span><small>v0.1</small></div></div>
     </el-aside>
     <el-container class="content-container">
       <el-header class="app-header">
@@ -96,5 +92,58 @@ function logout() { clearSession(); void router.replace({ path: "/login", query:
 </template>
 
 <style scoped>
-.app-shell{min-height:100vh;background:#f5f7fa}.app-sidebar{display:flex;flex-direction:column;border-right:1px solid #e4e7ed;background:#fff;transition:width .2s ease;box-shadow:1px 0 0 rgba(16,24,40,.02)}.brand{width:100%;min-height:68px;padding:0 18px;display:flex;align-items:center;gap:11px;border:0;border-bottom:1px solid #f0f2f5;background:#fff;color:#101828;cursor:pointer;text-align:left}.brand:hover{background:#fafafa}.brand-mark{width:34px;height:34px;flex:0 0 34px;display:grid;place-items:center;border-radius:9px;background:#111827;color:#fff}.brand-copy{display:grid;gap:1px}.brand-copy strong{font-size:14px;line-height:1.2;white-space:nowrap}.brand-copy span{color:#98a2b3;font-size:10px;letter-spacing:.04em}.workspace-switcher{margin:12px 12px 5px;padding:10px;border:1px solid #eaecf0;border-radius:10px;display:flex;align-items:center;gap:9px;background:#fcfcfd}.workspace-icon{width:30px;height:30px;display:grid;place-items:center;border-radius:7px;background:#eef4ff;color:#2563eb}.workspace-switcher div:nth-child(2){display:grid;min-width:0;gap:2px}.workspace-switcher span{color:#98a2b3;font-size:9px}.workspace-switcher strong{overflow:hidden;color:#344054;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.workspace-chevron{margin-left:auto;color:#98a2b3;transform:rotate(45deg)}.nav-scroll{flex:1;padding:8px 10px}.nav-section-title{padding:10px 12px 5px;color:#98a2b3;font-size:10px;font-weight:700;letter-spacing:.08em}.app-menu{border-right:0;background:transparent}.app-menu :deep(.el-menu-item){height:40px;line-height:40px;margin:2px 0;border-radius:7px;color:#475467}.app-menu :deep(.el-menu-item:hover){background:#f2f4f7;color:#1d2939}.app-menu :deep(.el-menu-item.is-active){background:#eef4ff;color:#2563eb;font-weight:600}.menu-label{display:block}.sidebar-footer{padding:12px;border-top:1px solid #f0f2f5}.system-status{display:flex;align-items:center;gap:7px;padding:6px 4px;color:#667085;font-size:11px}.system-status i{width:7px;height:7px;border-radius:50%;background:#67c23a}.system-status small{margin-left:auto;color:#98a2b3}.content-container{min-width:0}.app-header{height:68px;display:flex;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid #e4e7ed;background:rgba(255,255,255,.96)}.header-left,.header-actions{display:flex;align-items:center;gap:8px}.collapse-button{width:36px;height:36px;color:#667085}.breadcrumb{margin-left:4px}.search-button{height:34px;margin-right:4px;padding:0 9px;color:#667085;gap:7px}.search-button kbd{padding:2px 5px;border:1px solid #d0d5dd;border-radius:4px;background:#f9fafb;color:#98a2b3;font-size:9px}.env-tag{margin-left:5px}.user-menu{display:flex;align-items:center;gap:9px;margin-left:6px;padding:2px 0 2px 6px;border:0;background:transparent;cursor:pointer}.user-meta{display:grid;gap:2px;text-align:left}.user-meta strong{color:#344054;font-size:12px}.user-meta small{color:#98a2b3;font-size:10px}.app-main{padding:0;overflow:auto}.page-frame{min-height:calc(100vh - 68px)}:deep(.page-enter-active),:deep(.page-leave-active){transition:opacity .12s ease,transform .12s ease}:deep(.page-enter-from){opacity:0;transform:translateY(3px)}:deep(.page-leave-to){opacity:0}@media(max-width:900px){.search-button span,.search-button kbd{display:none}}@media(max-width:700px){.app-sidebar{width:72px!important}.brand{justify-content:center;padding:0}.nav-scroll{padding-inline:8px}.app-header{padding:0 14px}.breadcrumb{display:none}.header-actions>.el-button,.env-tag,.user-meta{display:none}.search-button{display:none}}
+.app-shell { min-height: 100vh; background: var(--ui-bg-page); }
+.app-sidebar { display: flex; flex-direction: column; border-right: 1px solid var(--ui-border-default); background: var(--ui-bg-surface); transition: width .2s ease; }
+.brand { width: 100%; min-height: var(--ui-header-height); padding: 0 18px; display: flex; align-items: center; gap: 11px; border: 0; border-bottom: 1px solid var(--ui-color-gray-100); background: var(--ui-bg-surface); color: var(--ui-text-primary); cursor: pointer; text-align: left; }
+.brand:hover { background: var(--ui-bg-subtle); }
+.brand-mark { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: var(--ui-radius-sm); background: var(--ui-text-primary); color: #fff; }
+.brand-copy { display: grid; gap: 1px; }
+.brand-copy strong { font-size: 14px; line-height: 18px; white-space: nowrap; }
+.brand-copy span { color: var(--ui-text-placeholder); font-size: 10px; letter-spacing: .04em; }
+.workspace-switcher { width: calc(100% - 24px); margin: 12px; padding: 9px; border: 1px solid var(--ui-border-default); border-radius: var(--ui-radius-md); display: flex; align-items: center; gap: 9px; background: var(--ui-bg-subtle); color: var(--ui-text-primary); cursor: pointer; text-align: left; }
+.workspace-switcher:hover { border-color: var(--ui-border-strong); background: #fff; }
+.workspace-icon { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 30px; border-radius: var(--ui-radius-xs); background: var(--ui-color-brand-50); color: var(--ui-color-brand-600); }
+.workspace-copy { min-width: 0; display: grid; gap: 2px; }
+.workspace-copy small { color: var(--ui-text-placeholder); font-size: 9px; }
+.workspace-copy strong { overflow: hidden; color: var(--ui-color-gray-700); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-chevron { margin-left: auto; color: var(--ui-text-placeholder); transform: rotate(45deg); }
+.nav-scroll { flex: 1; padding: 6px 10px; }
+.nav-section-title { padding: 12px 12px 5px; color: var(--ui-text-placeholder); font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.app-menu { border-right: 0; background: transparent; }
+.app-menu :deep(.el-menu-item) { height: 40px; margin: 2px 0; border-radius: var(--ui-radius-sm); color: var(--ui-text-secondary); }
+.app-menu :deep(.el-menu-item:hover) { background: var(--ui-color-gray-100); color: var(--ui-text-primary); }
+.app-menu :deep(.el-menu-item.is-active) { background: var(--ui-color-brand-50); color: var(--ui-color-brand-600); font-weight: 600; }
+.app-menu :deep(.el-icon) { margin-right: 10px; }
+.sidebar-footer { padding: 12px; border-top: 1px solid var(--ui-color-gray-100); }
+.system-status { display: flex; align-items: center; gap: 7px; padding: 5px 4px; color: var(--ui-text-tertiary); font-size: 11px; }
+.system-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--ui-color-success-600); box-shadow: 0 0 0 3px rgba(3,152,85,.1); }
+.system-status small { margin-left: auto; color: var(--ui-text-placeholder); }
+.content-container { min-width: 0; }
+.app-header { height: var(--ui-header-height); display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--ui-border-default); background: rgba(255,255,255,.94); backdrop-filter: blur(12px); }
+.header-left, .header-actions { display: flex; align-items: center; gap: 8px; }
+.collapse-button { width: 36px; height: 36px; color: var(--ui-text-secondary); }
+.breadcrumb { margin-left: 4px; }
+.header-actions { gap: 4px; }
+.search-button { height: 34px; margin-right: 4px; padding: 0 9px; color: var(--ui-text-tertiary); gap: 7px; }
+.search-button kbd { padding: 2px 5px; border: 1px solid var(--ui-border-strong); border-radius: 4px; background: var(--ui-bg-subtle); color: var(--ui-text-placeholder); font-size: 9px; }
+.env-tag { margin: 0 6px; }
+.user-menu { display: flex; align-items: center; gap: 9px; margin-left: 4px; padding: 3px 5px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; cursor: pointer; }
+.user-menu:hover { background: var(--ui-color-gray-100); }
+.user-meta { display: grid; gap: 2px; text-align: left; }
+.user-meta strong { max-width: 120px; overflow: hidden; color: var(--ui-color-gray-700); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.user-meta small { color: var(--ui-text-placeholder); font-size: 10px; }
+.app-main { padding: 0; overflow: auto; background: var(--ui-bg-page); }
+.page-frame { min-height: 100%; }
+:deep(.page-enter-active), :deep(.page-leave-active) { transition: opacity .12s ease, transform .12s ease; }
+:deep(.page-enter-from) { opacity: 0; transform: translateY(3px); }
+:deep(.page-leave-to) { opacity: 0; }
+@media (max-width: 900px) { .search-button span, .search-button kbd { display: none; } }
+@media (max-width: 700px) {
+  .app-sidebar { width: var(--ui-sidebar-collapsed) !important; }
+  .brand { justify-content: center; padding: 0; }
+  .nav-scroll { padding-inline: 8px; }
+  .app-header { padding: 0 14px; }
+  .breadcrumb, .env-tag, .user-meta, .header-actions > .el-button { display: none; }
+  .search-button { display: none; }
+}
 </style>
