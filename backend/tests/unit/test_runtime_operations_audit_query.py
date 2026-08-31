@@ -72,6 +72,28 @@ async def test_audit_query_filters_by_actor_without_relaxing_tenant_scope():
 
 
 @pytest.mark.asyncio
+async def test_audit_query_combines_actor_and_action_filters():
+    db = AsyncMock()
+    db.scalar.return_value = 1
+    db.execute.return_value = _ScalarRows(["audit-a"])
+    tenant_id = uuid4()
+
+    _, _, total, rows = await RuntimeOperationsService(db).audit_query(
+        tenant_id,
+        actor="operator-a",
+        action="operator.workflow_execution.retry",
+    )
+
+    assert total == 1
+    assert rows == ["audit-a"]
+    statement = db.execute.await_args.args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "runtime_operation_audits.tenant_id" in compiled
+    assert "runtime_operation_audits.actor = 'operator-a'" in compiled
+    assert "runtime_operation_audits.action = 'operator.workflow_execution.retry'" in compiled
+
+
+@pytest.mark.asyncio
 async def test_audit_query_rejects_reversed_time_window():
     db = AsyncMock()
     now = datetime.now(UTC).replace(tzinfo=None)
