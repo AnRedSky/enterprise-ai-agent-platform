@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { runtimeApi, type Execution } from "@/api/runtime";
 import StatePanel from "@/components/ui/StatePanel.vue";
-const router = useRouter(); const loading = ref(false); const executions = ref<Execution[]>([]); const error = ref(false); const permissionDenied = ref(false);
+const router = useRouter(); const loading = ref(true); const executions = ref<Execution[]>([]); const error = ref(false); const permissionDenied = ref(false);
 const counts = computed(() => executions.value.reduce((result, item) => { result.total += 1; if (item.status === "failed") result.failed += 1; else if (["pending", "running", "retrying"].includes(item.status)) result.active += 1; else if (item.status === "completed") result.completed += 1; return result; }, { total: 0, failed: 0, active: 0, completed: 0 }));
 const healthLabel = computed(() => counts.value.failed > 0 ? "存在失败运行" : counts.value.active > 0 ? "运行中" : "运行稳定"); const state = computed(() => permissionDenied.value ? "permission" : error.value ? "error" : loading.value ? "loading" : executions.value.length === 0 ? "empty" : "success");
 async function loadOverview() { loading.value = true; error.value = false; permissionDenied.value = false; try { const response = await runtimeApi.executions({ page: 1, page_size: 20 }); executions.value = response.data.items; } catch (e: any) { permissionDenied.value = e?.response?.status === 403; error.value = !permissionDenied.value; } finally { loading.value = false; } }
