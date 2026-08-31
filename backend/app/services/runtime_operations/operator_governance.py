@@ -183,6 +183,8 @@ class OperatorActionGovernanceService:
             return None
         if record.status != "succeeded" or record.result_resource_id is None:
             raise HTTPException(status_code=409, detail="相同 Idempotency-Key 的 Operator Action 已在处理中或此前失败")
+        if record.result_resource_type != "workflow_execution":
+            raise HTTPException(status_code=409, detail="Operator Action 幂等结果不是 Workflow Execution")
         result = (await self.db.execute(select(WorkflowExecution).where(
             WorkflowExecution.tenant_id == record.tenant_id,
             WorkflowExecution.id == record.result_resource_id,
@@ -191,8 +193,17 @@ class OperatorActionGovernanceService:
             raise HTTPException(status_code=409, detail="Operator Action 幂等结果已失效")
         return result
 
-    async def _finish_idempotency(self, record_key: str | None, tenant_id: UUID, result_id: UUID, *, status: str = "succeeded", error_code: str | None = None) -> None:
-        """持久化幂等请求的最终结果。"""
+    async def _finish_idempotency(
+        self,
+        record_key: str | None,
+        tenant_id: UUID,
+        result_id: UUID | None,
+        *,
+        result_resource_type: str | None = None,
+        status: str = "succeeded",
+        error_code: str | None = None,
+    ) -> None:
+        """持久化幂等请求的最终结果；失败请求不得伪造结果资源。"""
         if record_key is None:
             return
         record = (await self.db.execute(select(OperatorActionIdempotency).where(
@@ -200,7 +211,8 @@ class OperatorActionGovernanceService:
             OperatorActionIdempotency.idempotency_key == record_key,
         ))).scalar_one()
         record.status = status
-        record.result_resource_id = result_id
+        record.result_resource_id = result_id if status == "succeeded" else None
+        record.result_resource_type = result_resource_type if status == "succeeded" else None
         record.error_code = error_code
         await self.db.flush()
 
@@ -310,16 +322,16 @@ class OperatorActionGovernanceService:
                 result = await service.resume_from_latest_checkpoint(execution, actor_id)
         except HTTPException as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, execution_id, status="failed", error_code=f"HTTP_{exc.status_code}")
+                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
                 await self.db.commit()
             raise
         except Exception as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, execution_id, status="failed", error_code="OPERATOR_ACTION_FAILED")
+                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
                 await self.db.commit()
             raise HTTPException(status_code=500, detail="Operator Action 执行失败") from exc
         if definition.requires_idempotency_key:
-            await self._finish_idempotency(idempotency_key, tenant_id, result.id)
+            await self._finish_idempotency(idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
         await self._audit(
             actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_execution", resource_id=execution_id,
             action=action, status="success", workflow_id=execution.workflow_id,
@@ -372,16 +384,18 @@ class OperatorActionGovernanceService:
                 )
         except HTTPException as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, trigger_id, status="failed", error_code=f"HTTP_{exc.status_code}")
+                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
                 await self.db.commit()
             raise
         except Exception as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, trigger_id, status="failed", error_code="OPERATOR_ACTION_FAILED")
+                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
                 await self.db.commit()
             raise HTTPException(status_code=500, detail="Operator Action 执行失败") from exc
         if definition.requires_idempotency_key:
-            await self._finish_idempotency(idempotency_key, tenant_id, result.id)
+            if not isinstance(result, WorkflowExecution):
+                raise HTTPException(status_code=500, detail="Operator Action 结果不是 Workflow Execution")
+            await self._finish_idempotency(idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
         await self._audit(
             actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_trigger", resource_id=trigger_id,
             action=action, status="success", workflow_id=workflow.id,
