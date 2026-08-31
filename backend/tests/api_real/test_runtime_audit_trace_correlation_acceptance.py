@@ -1,6 +1,6 @@
 """Phase 2.10-II Audit / Trace Correlation PostgreSQL acceptance。
 
-测试验证 Execution → Trace / Audit / Operator Action 与反向深链，重点覆盖 tenant isolation、稳定分页与筛选。
+测试验证 Execution → Trace / Audit / Operator Action 与反向深链，重点覆盖 tenant isolation、稳定分页、筛选和历史审计兼容解析。
 不启动或停止任何服务，测试身份与业务事实全部自动创建并清理。
 """
 
@@ -33,7 +33,7 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
     version_a, version_b = uuid.uuid4(), uuid.uuid4()
     execution_a, execution_b = uuid.uuid4(), uuid.uuid4()
     trace_a, trace_b = uuid.uuid4(), uuid.uuid4()
-    audit_a, audit_b = uuid.uuid4(), uuid.uuid4()
+    audit_a, audit_b, legacy_audit = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     action_a, action_b = uuid.uuid4(), uuid.uuid4()
     now = datetime.now(UTC).replace(tzinfo=None)
 
@@ -59,6 +59,7 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
             db.add_all([
                 AuditLog(id=audit_a, actor_id=user_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, workflow_execution_id=execution_a, action="operator.workflow_execution.retry", resource_type="workflow_execution", resource_id=str(execution_a), trace_id=str(execution_a), status="success", metadata_json={"fixture": suffix}, created_at=now),
                 AuditLog(id=audit_b, actor_id=user_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=version_b, workflow_execution_id=execution_b, action="operator.workflow_execution.run", resource_type="workflow_execution", resource_id=str(execution_b), trace_id=str(execution_b), status="success", metadata_json={"fixture": suffix}, created_at=now),
+                AuditLog(id=legacy_audit, actor_id=user_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, workflow_execution_id=None, execution_id=execution_a, action="legacy.workflow_execution.trace", resource_type="workflow_execution", resource_id=str(execution_a), trace_id=str(execution_a), status="success", metadata_json={"fixture": suffix, "legacy": True}, created_at=now),
                 OperatorActionIdempotency(id=action_a, tenant_id=tenant_a, actor_id=user_a, resource_type="workflow_execution", resource_id=execution_a, action="retry", idempotency_key=f"correlation-a-{suffix}", status="succeeded", result_resource_id=execution_a, metadata_json={"fixture": suffix}, created_at=now, updated_at=now),
                 OperatorActionIdempotency(id=action_b, tenant_id=tenant_b, actor_id=user_b, resource_type="workflow_execution", resource_id=execution_b, action="run", idempotency_key=f"correlation-b-{suffix}", status="succeeded", result_resource_id=execution_b, metadata_json={"fixture": suffix}, created_at=now, updated_at=now),
             ])
@@ -70,7 +71,7 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
             assert result is not None
             assert result["execution"].id == execution_a
             assert [item.id for item in result["traces"]["items"]] == [trace_a]
-            assert [item.id for item in result["audits"]["items"]] == [audit_a]
+            assert [item.id for item in result["audits"]["items"]] == [audit_a, legacy_audit]
             assert [item.id for item in result["operator_actions"]] == [action_a]
 
             filtered = await service.by_execution(
@@ -83,7 +84,7 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
             )
             assert filtered is not None
             assert filtered["traces"]["total"] == 1
-            assert filtered["audits"]["total"] == 1
+            assert filtered["audits"]["total"] == 2
 
             rejected_filter = await service.by_execution(
                 tenant_a,
@@ -103,6 +104,11 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
             assert reverse_audit is not None
             assert reverse_audit["execution"].id == execution_a
             assert reverse_audit["focus_audit_id"] == audit_a
+
+            reverse_legacy_audit = await service.by_audit(tenant_a, legacy_audit)
+            assert reverse_legacy_audit is not None
+            assert reverse_legacy_audit["execution"].id == execution_a
+            assert reverse_legacy_audit["focus_audit_id"] == legacy_audit
 
             reverse_action = await service.by_operator_action(tenant_a, action_a)
             assert reverse_action is not None
