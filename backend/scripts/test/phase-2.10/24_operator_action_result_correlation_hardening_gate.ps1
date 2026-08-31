@@ -37,7 +37,7 @@ uv run pytest -q tests/unit/test_operator_action_result_correlation.py tests/uni
 if ($LASTEXITCODE -ne 0) { throw "Operator Action result correlation unit regression failed." }
 
 Write-Host "[4/5] PostgreSQL schema acceptance"
-uv run pytest -q tests/api_real/test_operator_action_result_correlation_acceptance.py --tb=short
+uv run pytest -q -m integration tests/api_real/test_operator_action_result_correlation_acceptance.py --tb=short
 if ($LASTEXITCODE -ne 0) { throw "Operator Action result correlation PostgreSQL acceptance failed." }
 
 Write-Host "[5/5] Service startup boundary"

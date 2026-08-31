@@ -6,9 +6,10 @@ from sqlalchemy import text
 from app.infrastructure.db import engine
 
 
-@pytest.mark.real_api
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_operator_action_result_resource_type_schema_is_available() -> None:
+    """验证 PostgreSQL 中结果资源类型、索引及历史数据清理约束。"""
     async with engine.begin() as connection:
         column = (
             await connection.execute(
