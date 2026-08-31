@@ -2,6 +2,7 @@
 
 职责：验证批量 Operator Action 的 tenant boundary、逐项结果和现有生命周期委托。
 边界：不启动服务、不调用真实 Provider；测试身份与业务事实均由用例自动创建和清理。
+关键约束：Operator Action 可能产生 Integration Event，清理租户前必须先删除事件事实。
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from sqlalchemy import delete, select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.core import AuditLog, Tenant, User
+from app.models.integration_event import IntegrationEventRecord
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.services.runtime_operations.batch_operator_actions import BatchOperatorActionService
@@ -73,6 +75,13 @@ async def test_batch_operator_action_is_tenant_scoped_and_partially_completable(
             assert state_b == "pending"
     finally:
         async with SessionLocal() as db:
+            # Workflow Execution 的取消动作会产生 Durable Integration Event；事件是租户的父事实，
+            # 删除租户前必须显式清理它。Webhook Delivery 对事件使用 ON DELETE CASCADE，会随事件一并删除。
+            await db.execute(
+                delete(IntegrationEventRecord).where(
+                    IntegrationEventRecord.tenant_id.in_([tenant_a, tenant_b])
+                )
+            )
             await db.execute(delete(AuditLog).where(AuditLog.workflow_execution_id.in_([execution_a, execution_b])))
             await db.execute(delete(WorkflowExecution).where(WorkflowExecution.id.in_([execution_a, execution_b])))
             await db.execute(delete(WorkflowVersion).where(WorkflowVersion.id.in_([version_a, version_b])))
