@@ -96,7 +96,10 @@ class RuntimeAuditTraceCorrelationService:
                 (OperatorActionIdempotency.resource_type == "workflow_execution")
                 & (OperatorActionIdempotency.resource_id == execution_id)
             )
-            | (OperatorActionIdempotency.result_resource_id == execution_id),
+            | (
+                (OperatorActionIdempotency.result_resource_type == "workflow_execution")
+                & (OperatorActionIdempotency.result_resource_id == execution_id)
+            ),
         ).order_by(OperatorActionIdempotency.created_at.asc(), OperatorActionIdempotency.id.asc())
         return list((await self.db.execute(stmt)).scalars().all())
 
@@ -230,8 +233,14 @@ class RuntimeAuditTraceCorrelationService:
         ))).scalar_one_or_none()
         if action is None:
             return None
-        execution_id = action.result_resource_id if action.result_resource_id is not None else (
-            action.resource_id if action.resource_type == "workflow_execution" else None
+        execution_id = (
+            action.result_resource_id
+            if action.result_resource_type == "workflow_execution"
+            else (
+                action.resource_id
+                if action.resource_type == "workflow_execution"
+                else None
+            )
         )
         if execution_id is None:
             return {"execution": None, "traces": {"items": [], "page": 1, "page_size": 0, "total": 0},
