@@ -31,8 +31,12 @@ const StatePanelStub = {
 function mountView() {
   return mount(ToolWorkbench, {
     global: {
-      components: { StatePanel: StatePanelStub, ElTable, ElTableColumn, ElTag },
+      directives: { loading: () => undefined },
       stubs: {
+        StatePanel: StatePanelStub,
+        ElTable,
+        ElTableColumn,
+        ElTag,
         "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" },
         "el-alert": true,
         "el-dialog": { template: "<div><slot /><slot name=\"footer\" /></div>" },
