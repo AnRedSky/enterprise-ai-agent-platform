@@ -24,6 +24,15 @@
 
 当前阶段：**进行中**。
 
+本轮回归修复：
+
+- Dashboard aggregate `runtimeApi.executions` 双调用 Mock 序列补齐，Retry 后完整恢复 Success；
+- Knowledge 测试移除整体 `element-plus` Mock，改用真实 table scoped slot 验证未知状态；
+- Tool 测试使用 `vi.hoisted` 修复 Vitest mock factory hoisting failure；
+- Dashboard / Knowledge / Tool 统一使用可交互 `StatePanel` stub，清理 `el-icon` resolve warning；
+- 三个页面测试统一 `vi.resetAllMocks()`，避免跨用例 Mock 污染；
+- 保持页面生产状态映射与公共 `StatePanel` 单一实现，不新增平行状态机。
+
 回归重点：
 
 - StatePanel 五态一致性；
