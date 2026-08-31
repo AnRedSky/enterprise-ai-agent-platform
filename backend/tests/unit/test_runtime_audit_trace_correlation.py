@@ -51,7 +51,35 @@ async def test_by_execution_returns_trace_audit_and_operator_facts() -> None:
 @pytest.mark.asyncio
 async def test_by_operator_action_without_execution_keeps_action_only() -> None:
     tenant_id, action_id = uuid4(), uuid4()
-    action = MagicMock(id=action_id, result_resource_id=None, resource_type="workflow_trigger", resource_id=uuid4())
+    action = MagicMock(
+        id=action_id,
+        result_resource_type=None,
+        result_resource_id=None,
+        resource_type="workflow_trigger",
+        resource_id=uuid4(),
+    )
+    action_result = MagicMock(scalar_one_or_none=MagicMock(return_value=action))
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=action_result)
+
+    result = await RuntimeAuditTraceCorrelationService(db).by_operator_action(tenant_id, action_id)
+
+    assert result["execution"] is None
+    assert result["operator_actions"] == [action]
+    assert result["traces"]["total"] == 0
+    assert result["audits"]["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_by_operator_action_rejects_untyped_result_as_execution() -> None:
+    tenant_id, action_id, result_id = uuid4(), uuid4(), uuid4()
+    action = MagicMock(
+        id=action_id,
+        result_resource_type="workflow_trigger",
+        result_resource_id=result_id,
+        resource_type="workflow_trigger",
+        resource_id=uuid4(),
+    )
     action_result = MagicMock(scalar_one_or_none=MagicMock(return_value=action))
     db = MagicMock()
     db.execute = AsyncMock(return_value=action_result)
