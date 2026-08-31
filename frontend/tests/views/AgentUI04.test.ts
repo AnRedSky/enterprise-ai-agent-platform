@@ -25,11 +25,15 @@ const agentRow = { id: "a1", name: "Agent", model_id: "model", status: "publishe
 
 function mountView() {
   return mount(AgentWorkbench, { global: { stubs: {
-    "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" }, "el-table": { template: "<div><slot /></div>" },
-    "el-table-column": { template: "<div><slot :row=\"agentRow\" /></div>", data: () => ({ agentRow }) }, "el-tag": true, "el-alert": true, "el-dialog": { template: "<div><slot /><slot name=\"footer\" /></div>" },
+    "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" },
+    "el-table": { template: "<div><slot /></div>" },
+    "el-table-column": { template: "<div><slot :row=\"agentRow\" /></div>", data: () => ({ agentRow }) },
+    "el-tag": { template: "<span><slot /></span>" }, "el-alert": true,
+    "el-dialog": { props: ["modelValue"], template: "<div v-if=\"modelValue\"><slot /><slot name=\"footer\" /></div>" },
     "el-form": { template: "<form><slot /></form>" }, "el-form-item": { template: "<div><slot /></div>" }, "el-input": true, "el-divider": true,
     "el-descriptions": { template: "<div><slot /></div>" }, "el-descriptions-item": { template: "<div><slot /></div>" }, "el-scrollbar": { template: "<div><slot /></div>" }, "el-empty": { template: "<div>empty</div>" },
-  } } });
+    "el-icon": { template: "<span><slot /></span>" },
+  }, directives: { loading: () => undefined } } });
 }
 
 describe("AgentWorkbench UI-04", () => {
