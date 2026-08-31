@@ -24,11 +24,11 @@ describe("Runtime UI-04 states", () => {
   });
 
   it.each([
-    ["empty", { data: { items: [] } }, "暂无运行记录"],
-    ["error", Promise.reject(new Error("network")), "运行概览加载失败"],
-    ["permission", Promise.reject({ response: { status: 403 } }), "无权查看运行概览"],
-  ] as const)("renders %s state", async (state, response, title) => {
-    api.executions.mockReturnValueOnce(response);
+    ["empty", () => Promise.resolve({ data: { items: [] } }), "暂无运行记录"],
+    ["error", () => Promise.reject(new Error("network")), "运行概览加载失败"],
+    ["permission", () => Promise.reject({ response: { status: 403 } }), "无权查看运行概览"],
+  ] as const)("renders %s state", async (state, responseFactory, title) => {
+    api.executions.mockReturnValueOnce(responseFactory());
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.findComponent(StatePanel).props("state")).toBe(state);
