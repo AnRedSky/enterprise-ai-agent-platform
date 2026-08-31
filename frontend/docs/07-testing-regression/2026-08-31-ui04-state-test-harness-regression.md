@@ -1,46 +1,41 @@
-# UI-04 状态测试 Harness 回归记录 — 2026-08-31
+# UI-04 状态测试 Harness 回归记录 — 2026-09-01
 
 ## 1. 基线
 
-本轮先确认最新 `main`，随后将其通过 PR #67 合并到 `frontend`。当前 `main` 基线为 `341d12729364ade1cf7cd2b3e108b22312e29fe4`，同步合并提交为 `68ddb1780adaa0102ae09f1bec35e2ca4686e4a5`；当前 `frontend` 已不落后于 `main`。前端继续遵循现行准则：Backend Contract → API Types → View / Component → Vitest → Real API / E2E；状态页面必须覆盖 Loading / Empty / Error / Success / Permission。
+本轮先确认最新 `main` 并将其快进同步到历史 `frontend` 分支。当前 `main` / `frontend` 基线均为 `3da6d0be38fddf7d3f93a5b0449ba28609e52897`（`fix(operations): align correlation internal page types`）。前端继续遵循现行准则：Backend Contract → API Types → View / Component → Vitest → Real API / E2E；状态页面必须覆盖 Loading / Empty / Error / Success / Permission。
 
 用户本地回归反馈集中在 Dashboard / Agent / AuditLog / Tool，以及既有 UI-04 状态测试：
 
-- Agent UI-04：成功态断言错误地把隐藏 Dialog 内的 StatePanel 计入页面；对话调试 Permission 场景的 Dialog stub 没有模拟 `v-model` 可见性，因此打开对话后状态面板无法按真实交互呈现。
-- Dashboard：指标测试直接读取 MetricCard 根节点文本，把 label、value、caption、description 拼接后的完整文本当成数值，导致数值断言失败。
-- AuditLog / Agent / Tool / Dashboard：测试环境未完整提供 Element Plus `el-icon` 与 loading directive，产生 Vue warning；这些 warning 不代表生产组件缺少依赖，而是测试 Harness 没有覆盖共享组件依赖。
+- Agent UI-04：21 个 targeted 测试中仅 1 个失败；失败用例在点击“对话调试”后直接从 DOM 查询 StatePanel `permission`，未稳定表达组件的异步 `chatContextState` 状态契约。
+- AgentWorkbench 生产代码已经由 `openChat()` 设置 `chatVisible=true` 并调用 `loadChatContext(agent.id)`；`loadChatContext()` 将后端 403 映射为 `chatContextState="permission"`，因此本次不修改生产状态机。
+- Dashboard / AuditLog / Tool 等测试仍可能输出 Element Plus `el-icon` / `v-loading` warning；这些 warning 属于测试 Harness 覆盖不足，不改变当前生产组件实现或本轮失败判定。
 
 ## 2. 根因与决策
 
-### 2.1 Agent Dialog 测试 Harness
+### 2.1 Agent 对话调试 Permission 回归断言
 
-`AgentWorkbench` 的多个 `el-dialog` 包含 StatePanel。旧测试 stub 无条件渲染 slot，导致实际不可见的 Dialog 内容进入测试 DOM，从而破坏“成功态页面不存在 StatePanel”的断言。该问题属于测试 Harness 与真实 Element Plus Dialog 可见性语义不一致，不应修改生产页面状态机。
+`AgentWorkbench` 的对话调试状态是异步 API 请求驱动的组件状态：点击“对话调试”后先进入 loading，再由 `getPublishedVersion()` 的结果决定 `success` / `empty` / `permission` / `error`。直接依赖 `StatePanel` 是否已经出现在测试 DOM，会同时耦合 Element Plus Dialog stub 的可见性语义、Vue 异步渲染时序和状态组件 DOM 结构。
 
-决策：Dialog stub 增加 `modelValue` prop，仅在 `modelValue=true` 时渲染 slot；同时在测试 Harness 中显式提供 `el-icon` stub 和 loading directive。
+决策：回归测试以 `chatContextState` 作为一等状态契约，使用 `vi.waitFor()` 等待异步状态稳定，再验证 API 参数和用户可见 Permission 文案。生产页面状态机保持不变。
 
-### 2.2 Dashboard MetricCard 测试契约
+### 2.2 测试 Harness 边界
 
-`MetricCard` 是公共组件，根节点同时包含 label、value、trend 和 description。测试要求的是指标数值，而不是整个卡片的可见文本，因此应定位公共组件的 value 子节点，而不是修改 MetricCard 的信息架构来迎合测试。
-
-决策：指标断言统一使用 `[data-testid] .ui-metric-card__value`，保持公共组件现有 UI 结构。
-
-### 2.3 Element Plus 测试依赖
-
-`StatePanel` 和 MetricCard 使用 Element Plus 图标；部分业务页面使用 `v-loading`。测试应通过 Harness 提供必要的 stub/directive，避免把正常组件依赖误判为运行时故障，同时保持真实生产组件实现不变。
+Dialog stub 继续只在 `modelValue=true` 时渲染 slot，并显式提供 `el-icon` 与 `loading` directive stub。这样保持测试与真实 Element Plus 可见性语义一致，同时避免通过修改业务组件来迎合测试。
 
 ## 3. 本轮修复
 
-提交：`test: align UI-04 regression harness`
+提交：`test: harden Agent UI-04 permission contract`
 
-- AgentUI04：修正 Dialog 可见性 stub；补充 `el-icon` 与 loading directive 测试依赖；保持生产 Agent 状态机不变。
-- Dashboard：修正 MetricCard 数值断言定位；保持 MetricCard 公共 API 和视觉结构不变。
-- 未新增 API client、mapper、状态枚举或业务逻辑。
+- `AgentUI04.test.ts`：将对话调试 Permission 断言从 DOM 直接查询改为等待 `chatContextState === "permission"`。
+- 增加 `getPublishedVersion("a1")` 调用断言，确保点击入口仍绑定真实 Agent ID。
+- 保留“无权加载调试配置”用户可见文案断言。
+- 未新增 API client、mapper、状态枚举或业务逻辑；未修改 `AgentWorkbench.vue`。
 
 ## 4. 验证状态
 
-用户本地反馈基线：5 个 targeted test 文件、21 个测试，18 个通过、3 个失败；失败均定位到测试 Harness/断言契约，不是 Backend Contract 失败。
+用户本地反馈基线：5 个 targeted test 文件、21 个测试，20 个通过、1 个失败。失败定位为 Agent UI-04 异步状态回归断言，不是 Backend Contract 失败。
 
-当前远程操作环境不能直接执行用户 Windows 工作树中的 npm，因此本记录不把修复后的测试标记为已通过。应在本地执行：
+本轮远程操作环境不能直接执行用户 Windows 工作树中的 npm，因此不能把修复后的测试标记为已通过。请在本地执行：
 
 ```powershell
 npm run test:unit -- --run `
@@ -51,7 +46,7 @@ npm run test:unit -- --run `
   tests/views/OperationsConsole.test.ts
 ```
 
-随后按项目准则继续：
+targeted 全部通过后继续按项目准则执行：
 
 ```powershell
 npm test
@@ -63,4 +58,4 @@ npm run test:gate
 
 ## 5. 下一步
 
-targeted UI-04 回归通过后，继续 P1.1 主线：Runtime Tab / 按需加载、Agent 调试上下文、Workflow 生命周期与真实 Execution 联动。避免为了消除测试 warning 修改生产组件或复制公共状态模式。
+targeted UI-04 回归全部通过后，继续 P1.1 主线：Runtime Tab / 按需加载、Agent 调试上下文、Workflow 生命周期与真实 Execution 联动。避免重复实现公共状态模式，也不要为了消除测试 warning 修改生产组件。
