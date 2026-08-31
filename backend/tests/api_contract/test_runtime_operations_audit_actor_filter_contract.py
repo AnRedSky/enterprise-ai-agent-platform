@@ -12,6 +12,16 @@ from app.main import app
 client = TestClient(app)
 
 
+def _schema_max_length(schema: dict) -> int:
+    """从 OpenAPI 字符串 schema 中读取最大长度，兼容 nullable 的 anyOf 表示。"""
+    if "maxLength" in schema:
+        return schema["maxLength"]
+    for variant in schema.get("anyOf", []):
+        if variant.get("type") == "string" and "maxLength" in variant:
+            return variant["maxLength"]
+    raise AssertionError(f"schema does not expose maxLength: {schema}")
+
+
 def test_runtime_audit_query_exposes_optional_actor_filter():
     route = next(route for route in app.routes if route.path == "/api/v1/runtime/operations/audit/query")
     actor_parameter = next(parameter for parameter in route.dependant.query_params if parameter.name == "actor")
@@ -19,7 +29,7 @@ def test_runtime_audit_query_exposes_optional_actor_filter():
 
     parameters = app.openapi()["paths"]["/api/v1/runtime/operations/audit/query"]["get"]["parameters"]
     actor_schema = next(parameter["schema"] for parameter in parameters if parameter["name"] == "actor")
-    assert actor_schema["maxLength"] == 128
+    assert _schema_max_length(actor_schema) == 128
 
 
 def test_runtime_audit_query_keeps_get_only_contract_with_actor_filter():
