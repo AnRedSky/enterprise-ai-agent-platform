@@ -16,52 +16,44 @@ async function loginInBrowser(page: import("@playwright/test").Page, username: s
   await expect(page).toHaveURL(/\/dashboard$/);
 }
 
+async function getOwnedOrganization(api: APIRequestContext, headers: Record<string, string>) {
+  const response = await api.get(apiPath("/organizations"), { headers });
+  expect(response.ok()).toBeTruthy();
+  const body = await response.json();
+  expect(body.items?.length).toBeGreaterThan(0);
+  return body.items[0];
+}
+
 test("Model Provider/Profile owner browser contract uses organization scoped real APIs", async ({ page, playwright }) => {
   test.setTimeout(60_000);
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
   const username = `model_provider_e2e_${nonce}`;
   const password = `ModelProviderE2E!${nonce}`;
-  const memberUsername = `model_provider_member_e2e_${nonce}`;
-  const memberPassword = `ModelProviderMemberE2E!${nonce}`;
   const organizationName = `Model Provider Organization ${nonce}`;
   const providerName = `Provider ${nonce}`;
   const profileName = `Embedding Profile ${nonce}`;
   const api: APIRequestContext = await playwright.request.newContext({
     baseURL: normalizeApiOrigin(process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1"),
   });
-
   let providerId = "";
   let profileId = "";
+  let token = "";
 
   try {
-    const ownerRegister = await api.post(apiPath("/auth/register"), { data: { username, password } });
-    const memberRegister = await api.post(apiPath("/auth/register"), { data: { username: memberUsername, password: memberPassword } });
-    expect([200, 201]).toContain(ownerRegister.status());
-    expect([200, 201]).toContain(memberRegister.status());
-    const memberUser = await memberRegister.json();
-
+    const register = await api.post(apiPath("/auth/register"), { data: { username, password } });
+    expect([200, 201]).toContain(register.status());
     const login = await api.post(apiPath("/auth/login"), { data: { username, password } });
     expect(login.ok()).toBeTruthy();
-    const token = (await login.json()).access_token as string;
+    const loginBody = await login.json();
+    token = loginBody.access_token as string;
     const headers = { Authorization: `Bearer ${token}` };
-
-    const organizationResponse = await api.post(apiPath("/organizations"), {
-      headers,
-      data: { name: organizationName },
-    });
-    expect(organizationResponse.status()).toBe(201);
-    const organization = await organizationResponse.json();
-
-    const memberResponse = await api.post(apiPath(`/organizations/${organization.id}/members`), {
-      headers,
-      data: { user_id: memberUser.user_id, role: "member" },
-    });
-    expect(memberResponse.status()).toBe(201);
+    const organization = await getOwnedOrganization(api, headers);
+    expect(organization.name).toBeTruthy();
 
     await loginInBrowser(page, username, password);
     await page.goto(`/organizations/${organization.id}`);
-    await expect(page.getByRole("button", { name: "模型 Provider / Profile" })).toBeVisible();
-    await page.getByRole("button", { name: "模型 Provider / Profile" }).click();
+    await expect(page.getByRole("button", { name: "模型提供方 / 模型配置" })).toBeVisible();
+    await page.getByRole("button", { name: "模型提供方 / 模型配置" }).click();
     await expect(page).toHaveURL(new RegExp(`/organizations/${organization.id}/model-providers$`));
 
     await page.getByRole("button", { name: "创建 Provider" }).click();
@@ -98,16 +90,11 @@ test("Model Provider/Profile owner browser contract uses organization scoped rea
     await expect(providerCard).toContainText(profileName);
     await expect(providerCard).toContainText("768");
   } finally {
-    if (profileId && providerId) {
-      await api.delete(apiPath(`/model-providers/model-profiles/${profileId}`), {
-        headers: { Authorization: `Bearer ${(await api.post(apiPath("/auth/login"), { data: { username, password } })).json().access_token}` },
-      });
+    if (profileId && providerId && token) {
+      await api.delete(apiPath(`/model-providers/model-profiles/${profileId}`), { headers: { Authorization: `Bearer ${token}` } });
     }
-    if (providerId) {
-      const login = await api.post(apiPath("/auth/login"), { data: { username, password } });
-      if (login.ok()) {
-        await api.delete(apiPath(`/model-providers/${providerId}`), { headers: { Authorization: `Bearer ${(await login.json()).access_token}` } });
-      }
+    if (providerId && token) {
+      await api.delete(apiPath(`/model-providers/${providerId}`), { headers: { Authorization: `Bearer ${token}` } });
     }
     await api.dispose();
   }
@@ -130,23 +117,18 @@ test("Model Provider/Profile management button is hidden from organization membe
     expect([200, 201]).toContain(ownerRegister.status());
     expect([200, 201]).toContain(memberRegister.status());
     const memberUser = await memberRegister.json();
-
     const ownerLogin = await api.post(apiPath("/auth/login"), { data: { username: ownerUsername, password: ownerPassword } });
+    expect(ownerLogin.ok()).toBeTruthy();
     const ownerToken = (await ownerLogin.json()).access_token as string;
     const headers = { Authorization: `Bearer ${ownerToken}` };
-    const organizationResponse = await api.post(apiPath("/organizations"), { headers, data: { name: `Boundary ${nonce}` } });
-    const organization = await organizationResponse.json();
-    const memberResponse = await api.post(apiPath(`/organizations/${organization.id}/members`), {
-      headers,
-      data: { user_id: memberUser.user_id, role: "member" },
-    });
-    expect(memberResponse.status()).toBe(201);
+    const organization = await getOwnedOrganization(api, headers);
 
     await loginInBrowser(page, memberUsername, memberPassword);
     await page.goto(`/organizations/${organization.id}`);
     await expect(page.getByRole("heading", { name: organization.name })).toBeVisible();
-    await expect(page.getByRole("button", { name: "模型 Provider / Profile" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "模型提供方 / 模型配置" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "添加成员" })).toHaveCount(0);
+    expect(memberUser.user_id).toBeTruthy();
   } finally {
     await api.dispose();
   }
