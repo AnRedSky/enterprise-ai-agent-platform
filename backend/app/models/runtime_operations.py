@@ -119,7 +119,14 @@ class RuntimeMetricSample(Base):
 
 class RuntimeOperationAudit(Base):
     __tablename__ = "runtime_operation_audits"
-    __table_args__ = (Index("ix_runtime_operation_audit_tenant_created", "tenant_id", "created_at"), Index("ix_runtime_operation_audit_tenant_action", "tenant_id", "action", "created_at"))
+    __table_args__ = (
+        Index("ix_runtime_operation_audit_tenant_created", "tenant_id", "created_at"),
+        Index("ix_runtime_operation_audit_tenant_action", "tenant_id", "action", "created_at"),
+        Index("ix_runtime_operation_audit_tenant_resource", "tenant_id", "resource_type", "resource_id", "created_at"),
+        Index("ix_runtime_operation_audit_tenant_outcome", "tenant_id", "outcome", "created_at"),
+        Index("ix_runtime_operation_audit_tenant_actor", "tenant_id", "actor", "created_at"),
+        Index("ix_runtime_operation_audit_tenant_actor_action", "tenant_id", "actor", "action", "created_at"),
+    )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     actor: Mapped[str] = mapped_column(String(128), nullable=False)

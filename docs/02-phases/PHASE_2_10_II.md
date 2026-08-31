@@ -8,7 +8,7 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；II-03 Worker / Scheduler Diagnostics Backend 与 Frontend 第一切片已实现；II-04 Audit / Trace Correlation Backend 第一切片已实现；II-05 Controlled Batch Operations Backend 第一切片已实现并完成开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 验证；II-06 Runtime Audit Query Backend 第一切片已完成开发者本地 Unit / API Contract / Real PostgreSQL Acceptance，当前进入查询性能强化。**
+**开发中。II-01 Backend Operator Action Governance、II-02 Global Runtime Operations、II-03 Worker / Scheduler Diagnostics Backend、II-04 Audit / Trace Correlation Backend、II-05 Controlled Batch Operations Backend、II-06 Runtime Audit Query Backend 第一切片与查询性能强化均已完成开发者本地反馈验收；II-07 Runtime Audit Query 运维主体过滤第一切片已完成，并继续进行主体 + 动作组合过滤硬化。**
 
 ## 3. 第一切片：Operator Action Governance
 
@@ -106,7 +106,7 @@ II-01 至 II-05 已建立统一 Operator Action、全局 Runtime 查询、Worker
 
 - `(tenant_id, resource_type, resource_id, created_at)`：支持资源维度精确过滤与稳定时间排序；
 - `(tenant_id, outcome, created_at)`：支持结果过滤与时间范围查询；
-- `(tenant_id, actor, created_at)`：为后续运维审计主体过滤及常见审计追踪查询预留稳定索引路径。
+- `(tenant_id, actor, created_at)`：为运维审计主体过滤及常见审计追踪查询提供稳定索引路径。
 
 索引均以 `tenant_id` 为第一列，确保数据库优化路径与既有 tenant boundary 一致，不提供跨租户扫描入口。
 
@@ -123,7 +123,43 @@ II-01 至 II-05 已建立统一 Operator Action、全局 Runtime 查询、Worker
 
 Gate 只负责探测数据库、执行 migration 与测试，不自动创建、启动、重启或停止 API、Scheduler、Worker、PostgreSQL、Redis；Acceptance 测试数据继续自动创建和清理，不要求人工填写 ID。
 
-## 10. 完成判定
+## 10. 第八切片：II-07 Runtime Audit Query 运维主体过滤
+
+### 10.1 第一切片：actor 精确过滤
+
+已完成并通过开发者本地 Unit / API Contract / Real PostgreSQL Acceptance：
+
+- 在既有 `RuntimeOperationsService.audit_query` 增加 `actor` 精确过滤；
+- API 增加可选 `actor` 查询参数，最大长度 128；
+- tenant scope 仍完全来自认证 Claims，不接受 `tenant_id` 查询参数；
+- 复用 `0050_runtime_audit_query_indexes` 的 `(tenant_id, actor, created_at)` 索引；
+- Acceptance 自动创建两个租户、不同 actor 与审计事实，验证 actor 过滤不会削弱 tenant isolation；
+- Gate 不自动启动或停止任何服务。
+
+### 10.2 当前后续硬化：actor + action 组合过滤
+
+审计排障的常见场景是回答“**哪个主体执行了什么运维动作**”。现有查询已经允许多个精确条件叠加，但缺少针对 `tenant_id + actor + action + created_at` 的专用数据库访问路径，因此继续补齐组合索引，而不新增第二套查询入口。
+
+新增 Alembic migration：`0051_runtime_audit_actor_action_index`，建立：
+
+- `(tenant_id, actor, action, created_at)`：支持主体 + 动作精确过滤、时间窗口与稳定时间排序。
+
+同时补充：
+
+- Unit：验证 actor 与 action 条件同时进入既有 tenant-scoped 查询；
+- Real PostgreSQL Acceptance：验证主体 + 动作组合过滤结果准确，并验证另一租户即使使用相同 actor/action 也不可被当前租户读取；
+- `20_runtime_audit_actor_action_hardening_gate.ps1`：执行 head、`alembic upgrade head`、Unit/API Contract、Real PostgreSQL Acceptance；
+- 不自动启动 API、Scheduler、Worker、PostgreSQL、Redis，不要求人工填写测试 ID。
+
+### 10.3 设计边界
+
+1. `actor` 仍为精确匹配，不引入模糊搜索或第二套主体解析规则。
+2. `action` 继续复用既有精确过滤语义。
+3. 所有查询条件始终叠加认证 tenant scope。
+4. 新索引只优化既有查询，不改变审计事实生命周期，不改变 API 返回 Contract。
+5. 不为单一字段组合无限制增加索引；当前索引只覆盖已验证的主体 + 动作运维查询场景。
+
+## 11. 完成判定
 
 每个 Backend 切片至少满足：
 

@@ -222,17 +222,7 @@ class RuntimeOperationsService:
         return page, page_size, total, rows
 
     async def audit_list(self, tenant_id: UUID, limit: int = 100) -> list[RuntimeOperationAudit]:
-        """按租户查询不可变运维审计事实。
-
-        Args:
-            tenant_id: 目标租户标识；查询必须始终带租户条件，防止审计事实跨租户泄漏。
-            limit: 最大返回条数，限制在 1 到 1000，避免一次查询无界读取审计记录。
-
-        Returns:
-            按创建时间倒序排列的当前租户运维审计记录。
-
-        设计意图：RuntimeOperationsService 是 Runtime 事实查询的基础入口，因此 Audit 查询与指标、DLQ 查询一样直接 tenant-scoped；Enterprise Service 仅复用本入口，不保留第二套查询规则。
-        """
+        """按租户查询不可变运维审计事实。"""
         bounded_limit = min(max(limit, 1), 1000)
         return list((await self.db.execute(
             select(RuntimeOperationAudit)
@@ -251,10 +241,11 @@ class RuntimeOperationsService:
         resource_type: str | None = None,
         resource_id: str | None = None,
         outcome: str | None = None,
+        actor: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
     ) -> tuple[int, int, int, list[RuntimeOperationAudit]]:
-        """分页查询当前租户运维审计事实并提供可解释过滤条件。
+        """分页查询当前租户运维审计事实并提供操作主体过滤。
 
         Args:
             tenant_id: 认证上下文确定的租户标识，不接受客户端替代值。
@@ -264,13 +255,14 @@ class RuntimeOperationsService:
             resource_type: 可选资源类型精确匹配。
             resource_id: 可选资源标识精确匹配。
             outcome: 可选结果精确匹配。
+            actor: 可选操作主体精确匹配。
             since: 可选创建时间下界。
             until: 可选创建时间上界。
 
         Returns:
             页码、页大小、匹配总数以及稳定排序后的当前租户审计记录。
 
-        设计意图：审计事实属于高增长只读数据，第一切片使用数据库分页和稳定的 created_at + id 排序，避免把全量审计记录加载到应用内；所有过滤条件都叠加 tenant scope，禁止通过过滤参数探测其他租户事实。
+        设计意图：操作主体是企业审计最常用的追责维度之一；复用既有 actor 复合索引，避免为同一事实建立第二套查询入口，同时始终把认证 tenant scope 放在数据库查询条件中。
         """
         if since is not None and until is not None and since > until:
             raise ValueError("since must not be later than until")
@@ -281,6 +273,7 @@ class RuntimeOperationsService:
             RuntimeOperationAudit.resource_type: resource_type,
             RuntimeOperationAudit.resource_id: resource_id,
             RuntimeOperationAudit.outcome: outcome,
+            RuntimeOperationAudit.actor: actor,
         }
         for column, value in filters.items():
             if value is not None:
