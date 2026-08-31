@@ -21,8 +21,8 @@ const StatePanelStub = {
 const mountView = () => mount(KnowledgeWorkbench, {
   global: {
     directives: { loading: () => undefined },
-    components: { StatePanel: StatePanelStub, ElTable, ElTableColumn, ElTag },
     stubs: {
+      StatePanel: StatePanelStub,
       PageHeader: true,
       PageToolbar: true,
       SurfaceCard: { template: "<div><slot/><slot name='header'/></div>" },
@@ -30,6 +30,9 @@ const mountView = () => mount(KnowledgeWorkbench, {
       "el-dialog": true, "el-form": true, "el-form-item": true, "el-input": true,
       "el-input-number": true, "el-select": true, "el-option": true, "el-slider": true,
       "el-alert": true, "el-empty": true, "el-icon": true,
+      ElTable,
+      ElTableColumn,
+      ElTag,
     },
   },
 });

@@ -24,8 +24,8 @@ function mountView() {
   return mount(DashboardOverview, {
     global: {
       directives: { loading: () => undefined },
-      components: { StatePanel: StatePanelStub, ElTable, ElTableColumn, ElTag },
       stubs: {
+        StatePanel: StatePanelStub,
         PageHeader: true,
         MetricCard: true,
         SurfaceCard: true,
@@ -33,6 +33,9 @@ function mountView() {
         "el-empty": true,
         "el-alert": true,
         "el-icon": true,
+        ElTable,
+        ElTableColumn,
+        ElTag,
       },
     },
   });
@@ -109,6 +112,7 @@ describe("Dashboard UI-04 states", () => {
     mocks.executions.mockResolvedValueOnce(ok([], 0));
     const wrapper = mountView();
     await flushPromises();
+    await nextTick();
     expect(wrapper.text()).toContain("未知状态（provider_pending_v2）");
   });
 });
