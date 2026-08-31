@@ -14,7 +14,7 @@ from sqlalchemy import delete
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.core import Tenant, User
-from app.models.workflow import Workflow
+from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.runtime_operations.diagnostics import RuntimeDiagnosticsService
@@ -28,6 +28,7 @@ async def test_runtime_diagnostics_are_tenant_scoped_and_use_only_durable_facts(
     tenant_a, tenant_b = uuid.uuid4(), uuid.uuid4()
     user_a, user_b = uuid.uuid4(), uuid.uuid4()
     workflow_a, workflow_b = uuid.uuid4(), uuid.uuid4()
+    version_a, version_b = uuid.uuid4(), uuid.uuid4()
     execution_a, execution_b = uuid.uuid4(), uuid.uuid4()
     frontier_running, frontier_expired, frontier_foreign = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     trigger_a, trigger_b = uuid.uuid4(), uuid.uuid4()
@@ -42,11 +43,13 @@ async def test_runtime_diagnostics_are_tenant_scoped_and_use_only_durable_facts(
                 User(id=user_b, username=f"phase-210-diag-b-{suffix}", password_hash="fixture", tenant_id=tenant_b, status="active"),
                 Workflow(id=workflow_a, name=f"diag-a-{suffix}", description="", owner_id=user_a, tenant_id=tenant_a, status="published"),
                 Workflow(id=workflow_b, name=f"diag-b-{suffix}", description="", owner_id=user_b, tenant_id=tenant_b, status="published"),
-                WorkflowExecution(id=execution_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=uuid.uuid4(), created_by=user_a, status="running", created_at=now),
-                WorkflowExecution(id=execution_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=uuid.uuid4(), created_by=user_b, status="running", created_at=now),
-                WorkflowFrontier(id=frontier_running, tenant_id=tenant_a, execution_id=execution_a, workflow_version_id=uuid.uuid4(), decision_fingerprint=f"diag-running-{suffix}", frontier_key=f"diag-running-{suffix}", node_ids=["node-1"], status="running", attempt=2, worker_owner="worker-a", worker_lease_expires_at=now + timedelta(minutes=5), created_at=now),
-                WorkflowFrontier(id=frontier_expired, tenant_id=tenant_a, execution_id=execution_a, workflow_version_id=uuid.uuid4(), decision_fingerprint=f"diag-expired-{suffix}", frontier_key=f"diag-expired-{suffix}", node_ids=["node-2"], status="failed", attempt=3, worker_owner="worker-a", worker_lease_expires_at=now - timedelta(minutes=5), error_code="FIXTURE_FAILURE", created_at=now),
-                WorkflowFrontier(id=frontier_foreign, tenant_id=tenant_b, execution_id=execution_b, workflow_version_id=uuid.uuid4(), decision_fingerprint=f"diag-foreign-{suffix}", frontier_key=f"diag-foreign-{suffix}", node_ids=["node-3"], status="running", attempt=1, worker_owner="worker-b", worker_lease_expires_at=now + timedelta(minutes=5), created_at=now),
+                WorkflowVersion(id=version_a, workflow_id=workflow_a, version="1", definition={}, status="published", created_by=user_a),
+                WorkflowVersion(id=version_b, workflow_id=workflow_b, version="1", definition={}, status="published", created_by=user_b),
+                WorkflowExecution(id=execution_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, created_by=user_a, status="running", created_at=now),
+                WorkflowExecution(id=execution_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=version_b, created_by=user_b, status="running", created_at=now),
+                WorkflowFrontier(id=frontier_running, tenant_id=tenant_a, execution_id=execution_a, workflow_version_id=version_a, decision_fingerprint=f"diag-running-{suffix}", frontier_key=f"diag-running-{suffix}", node_ids=["node-1"], status="running", attempt=2, worker_owner="worker-a", worker_lease_expires_at=now + timedelta(minutes=5), created_at=now),
+                WorkflowFrontier(id=frontier_expired, tenant_id=tenant_a, execution_id=execution_a, workflow_version_id=version_a, decision_fingerprint=f"diag-expired-{suffix}", frontier_key=f"diag-expired-{suffix}", node_ids=["node-2"], status="failed", attempt=3, worker_owner="worker-a", worker_lease_expires_at=now - timedelta(minutes=5), error_code="FIXTURE_FAILURE", created_at=now),
+                WorkflowFrontier(id=frontier_foreign, tenant_id=tenant_b, execution_id=execution_b, workflow_version_id=version_b, decision_fingerprint=f"diag-foreign-{suffix}", frontier_key=f"diag-foreign-{suffix}", node_ids=["node-3"], status="running", attempt=1, worker_owner="worker-b", worker_lease_expires_at=now + timedelta(minutes=5), created_at=now),
                 WorkflowTrigger(id=trigger_a, tenant_id=tenant_a, workflow_id=workflow_a, name=f"diag-schedule-a-{suffix}", trigger_type="schedule", status="enabled", created_by=user_a, config={}),
                 WorkflowTrigger(id=trigger_b, tenant_id=tenant_b, workflow_id=workflow_b, name=f"diag-schedule-b-{suffix}", trigger_type="schedule", status="enabled", created_by=user_b, config={}),
             ])
@@ -78,6 +81,7 @@ async def test_runtime_diagnostics_are_tenant_scoped_and_use_only_durable_facts(
             await db.execute(delete(WorkflowFrontier).where(WorkflowFrontier.tenant_id.in_([tenant_a, tenant_b])))
             await db.execute(delete(WorkflowExecution).where(WorkflowExecution.tenant_id.in_([tenant_a, tenant_b])))
             await db.execute(delete(WorkflowTrigger).where(WorkflowTrigger.tenant_id.in_([tenant_a, tenant_b])))
+            await db.execute(delete(WorkflowVersion).where(WorkflowVersion.workflow_id.in_([workflow_a, workflow_b])))
             await db.execute(delete(Workflow).where(Workflow.id.in_([workflow_a, workflow_b])))
             await db.execute(delete(User).where(User.id.in_([user_a, user_b])))
             await db.execute(delete(Tenant).where(Tenant.id.in_([tenant_a, tenant_b])))
