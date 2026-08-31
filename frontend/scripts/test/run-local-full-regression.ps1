@@ -1,9 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 # Resolve paths from the script location, not the caller's current directory.
-# The script lives at frontend/scripts/test, so two parent levels reach frontend.
 $frontendRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$projectRoot = (Resolve-Path (Join-Path $frontendRoot "..")).Path
 $results = @()
 
 function Record-Result([string]$Name, [string]$Status, [string]$Detail) {
@@ -35,7 +33,7 @@ function Test-Url([string]$Name, [string]$Url) {
 Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Local Frontend Full Regression"
 Write-Host "This script NEVER starts or stops API, Scheduler, Worker, PostgreSQL or Redis."
-Write-Host "No manual test data is required. E2E runs only when the existing local services are ready."
+Write-Host "No manual test data is required. Browser E2E uses isolated scenario runners with generated fixtures."
 Write-Host "============================================================"
 
 Push-Location $frontendRoot
@@ -54,7 +52,16 @@ try {
     $apiReady = Test-Url "Backend API readiness" "http://127.0.0.1:8000/health"
     $frontendReady = Test-Url "Frontend E2E readiness" "http://127.0.0.1:5173/"
     if ($apiReady -and $frontendReady) {
-        Invoke-Step "Browser E2E" "npm" @("run", "test:e2e")
+        $e2eRunner = Join-Path $PSScriptRoot "e2e\00_run_isolated_test.ps1"
+        $organizationGate = Join-Path $PSScriptRoot "e2e\02_run_organization_e2e.ps1"
+        $modelProviderGate = Join-Path $PSScriptRoot "e2e\03_run_model_provider_e2e.ps1"
+        $workflowTriggerGate = Join-Path $PSScriptRoot "e2e\01_run_workflow_trigger_e2e.ps1"
+
+        Invoke-Step "Organization Browser E2E" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $organizationGate)
+        Invoke-Step "Model Provider Browser E2E" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $modelProviderGate)
+        Invoke-Step "Workflow Trigger Browser E2E" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $workflowTriggerGate)
+        Invoke-Step "Webhook Governance Browser E2E" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $e2eRunner, "-Spec", "workflow-webhook-governance.spec.ts", "-Grep", "Workflow Trigger Governance completes the real webhook browser contract")
+        Invoke-Step "Webhook Runtime Browser E2E" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $e2eRunner, "-Spec", "workflow-webhook-runtime.spec.ts", "-Grep", "Webhook browser runtime converges duplicate events and enforces lifecycle security")
     } else {
         Write-Host "E2E: NOT EXECUTED because required existing services are unavailable."
     }
