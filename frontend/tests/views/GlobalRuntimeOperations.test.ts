@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 
-const globalApi = vi.fn();
-const workerApi = vi.fn();
-const schedulerApi = vi.fn();
+const { globalApi, workerApi, schedulerApi } = vi.hoisted(() => ({
+  globalApi: vi.fn(),
+  workerApi: vi.fn(),
+  schedulerApi: vi.fn(),
+}));
 vi.mock("../../src/api/runtimeOperations", () => ({ runtimeOperationsApi: { global: globalApi } }));
 vi.mock("../../src/api/runtimeDiagnostics", () => ({ runtimeDiagnosticsApi: { worker: workerApi, scheduler: schedulerApi } }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
