@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**II-07 Runtime Audit Query 运维主体过滤、主体 + 动作组合过滤与动作 + 结果组合过滤硬化**。
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤与 actor + action 组合过滤硬化**。
+- 当前任务：**II-07 Runtime Audit Query 运维主体过滤、主体 + 动作组合过滤、动作 + 结果组合过滤与查询契约硬化**。
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -38,25 +38,30 @@
 - 新增 Unit、API Contract 与真实 PostgreSQL tenant-isolation / actor-filter acceptance 覆盖；
 - `18_runtime_audit_actor_filter_unit_gate.ps1` 与 `19_runtime_audit_actor_filter_real_gate.ps1` 已完成开发者本地验证。
 
-### 第二切片：actor + action 组合过滤硬化 — 已实现
+### 第二切片：actor + action 组合过滤硬化 — 已完成
 
 - 新增 `0051_runtime_audit_actor_action_index`；
 - `RuntimeOperationAudit` 模型同步声明 `(tenant_id, actor, action, created_at)` 复合索引；
 - Unit/API Contract 覆盖主体 + 动作组合过滤契约；
 - Real PostgreSQL Acceptance 覆盖主体 + 动作组合过滤，以及相同 actor/action 的跨租户隔离；
-- `20_runtime_audit_actor_action_hardening_gate.ps1` 负责 migration、Unit/API Contract 与 Real Acceptance；
-- Gate 不自动启动或停止服务，测试身份和业务事实均自动生成。
+- `20_runtime_audit_actor_action_hardening_gate.ps1` 已完成对应 Gate。
 
-### 当前切片：action + outcome 组合过滤硬化 — 已实现，等待开发者本地验收
+### 第三切片：action + outcome 组合过滤硬化 — 已完成
 
 - 新增 `0052_runtime_audit_action_outcome_index`；
 - `RuntimeOperationAudit` 模型同步声明 `(tenant_id, action, outcome, created_at)` 复合索引；
-- Real PostgreSQL Acceptance 新增 `action + outcome` 组合过滤断言，并继续验证 tenant isolation；
-- 新增 `test_runtime_operations_audit_actor_action_contract.py`，验证查询契约与模型索引声明；
-- 新增 `21_runtime_audit_action_outcome_hardening_gate.ps1`，自动执行 migration head、`alembic upgrade head`、Unit/API Contract 与 Real PostgreSQL Acceptance；
-- Gate 不自动启动或停止 API/Scheduler/Worker/PostgreSQL/Redis，也不要求手工填写测试 ID 或业务数据。
+- Real PostgreSQL Acceptance 覆盖 action + outcome 组合过滤，并继续验证 tenant isolation；
+- `21_runtime_audit_action_outcome_hardening_gate.ps1` 已完成对应 Gate；
+- 开发者反馈中的 actor OpenAPI `maxLength` 缺口已在远端 `main` 修复，并通过 `Query(min_length=1, max_length=128)` 暴露到 OpenAPI。
 
-**开发者本地执行 `21_runtime_audit_action_outcome_hardening_gate.ps1` 后，再根据真实结果继续 II-07 下一项审计查询缺口；在真实结果返回前不预填通过状态。**
+### 第四切片：审计查询响应契约与复合过滤边界硬化 — 已实现，等待开发者本地验收
+
+- 新增 `RuntimeOperationAuditItem` 与 `RuntimeOperationAuditQueryResponse`，避免 ORM 模型直接成为公共 API 响应契约；
+- `GET /api/v1/runtime/operations/audit/query` 显式声明 `response_model`，OpenAPI 对响应字段和字段长度形成稳定契约；
+- API Contract 新增响应 schema 与全部 operational filter 长度边界断言；
+- Real PostgreSQL Acceptance 新增 `resource_type + resource_id` 组合过滤、分页稳定性、第二页边界以及 `since > until` 拒绝测试；
+- 新增 `22_runtime_audit_query_contract_hardening_gate.ps1`，自动执行 migration/head、Unit/API Contract 与 Real PostgreSQL Acceptance；
+- Gate 明确禁止自动启动或停止 API/Scheduler/Worker/PostgreSQL/Redis，测试身份和业务事实全部自动生成。
 
 ## 4. Backend 验收规则
 
@@ -79,8 +84,8 @@ Frontend 页面回归、Frontend Build、Browser E2E 不作为 Backend 主线开
 ## 5. 下一执行顺序
 
 ```text
-① 开发者本地执行 21_runtime_audit_action_outcome_hardening_gate.ps1
+① 开发者本地执行 22_runtime_audit_query_contract_hardening_gate.ps1
 ② 执行 Backend targeted regression
-③ 根据真实结果检查 II-07 是否存在下一项审计查询缺口
-④ 继续 II-07 后续 Backend 能力
+③ 若真实验收通过，继续扫描 II-07 的剩余审计查询缺口
+④ 保持 Backend-first，暂不转入 Frontend 回归
 ```
