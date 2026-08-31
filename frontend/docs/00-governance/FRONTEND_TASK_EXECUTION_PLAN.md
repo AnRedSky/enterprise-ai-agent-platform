@@ -34,7 +34,7 @@
 
 ### UI-03：公共页面视觉体系
 
-状态：**进行中：公共模式组件已建立，并开始核心页面迁移。**
+状态：**进行中：公共模式组件已建立，并已完成工具管理、平台工作台两个核心页面迁移。**
 
 已实现：
 
@@ -44,9 +44,17 @@
 - `src/components/ui/SurfaceCard.vue`：统一内容容器、Header、Body 和局部操作；
 - `UI_DESIGN_SYSTEM.md` 增加 UI-03 公共模式规范；
 - `views/tools/components/ToolWorkbench.vue`：迁移至 `PageHeader` + `PageToolbar` + `SurfaceCard`，保留原有 API、权限和操作链路；
-- `tests/views/Tools.test.ts`：覆盖公共模式挂载、Empty 状态和管理员创建入口。
+- `tests/views/Tools.test.ts`：覆盖公共模式挂载、Empty 状态和管理员创建入口；
+- `views/dashboard/components/DashboardOverview.vue`：迁移至 `PageHeader` + `MetricCard` + `SurfaceCard`，保留指标、运行记录、快速入口和异常提醒；
+- `tests/views/DashboardUI03.test.ts`：覆盖 Dashboard 公共模式接入、指标卡数量、Empty 状态和快速入口。
 
-本阶段坚持“先建立公共模式，再迁移业务页面”，不修改业务 API 和领域逻辑。
+本阶段坚持“一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交”，不修改业务 API 和领域逻辑。
+
+### 下一迁移候选
+
+优先继续检查核心业务页面的公共模式缺口，下一轮只选择一个页面作为原子整改单元。优先级原则：用户访问频率高、页面结构稳定、公共组件复用收益高、不会引入新的 Backend Contract。
+
+当前不进行全量页面批量重构。
 
 ## 3. UI 整改后续队列
 
@@ -87,12 +95,13 @@ targeted test → npm test → npm run build → npm run test:gate
 
 ## 5. 本轮验证状态
 
-本轮 UI-03 工具工作台迁移已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将测试记录为“通过”。
+本轮 Dashboard UI-03 迁移已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将测试记录为“通过”。
 
 用户本地应执行：
 
 ```powershell
 cd frontend
+npm test -- tests/views/DashboardUI03.test.ts
 npm test -- tests/views/Tools.test.ts
 npm test
 npm run build
