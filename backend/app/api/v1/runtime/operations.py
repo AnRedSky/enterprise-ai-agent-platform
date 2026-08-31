@@ -84,7 +84,6 @@ class AlertRuleEnabledRequest(BaseModel):
     enabled: bool
 
 
-# 本路由由 Runtime 聚合路由以 /api/v1/runtime 前缀挂载；这里仅保留领域相对路径，避免重复拼接前缀。
 router = APIRouter(prefix="/operations", tags=["runtime-operations"])
 
 
@@ -214,20 +213,10 @@ async def create_metrics_snapshot(claims: dict = Depends(_claims), db: AsyncSess
 
 
 @router.get("/metrics/series")
-async def metric_series(
-    metric_name: str = Query(..., min_length=1, max_length=120),
-    window_minutes: int = Query(60, ge=1, le=10080),
-    dimension_key: str | None = Query(None, min_length=1, max_length=32),
-    dimension_value: str | None = Query(None, min_length=1, max_length=255),
-    claims: dict = Depends(_claims),
-    db: AsyncSession = Depends(get_db),
-):
+async def metric_series(metric_name: str = Query(..., min_length=1, max_length=120), window_minutes: int = Query(60, ge=1, le=10080), dimension_key: str | None = Query(None, min_length=1, max_length=32), dimension_value: str | None = Query(None, min_length=1, max_length=255), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
     """查询租户时间序列，可按规范维度进一步过滤。"""
     try:
-        rows = await RuntimeOperationsEnterpriseService(db).series(
-            _tenant_id(claims), metric_name, window_minutes,
-            dimension_key=dimension_key, dimension_value=dimension_value,
-        )
+        rows = await RuntimeOperationsEnterpriseService(db).series(_tenant_id(claims), metric_name, window_minutes, dimension_key=dimension_key, dimension_value=dimension_value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"items": rows, "metric_name": metric_name, "window_minutes": window_minutes, "dimension_key": dimension_key, "dimension_value": dimension_value}
@@ -249,31 +238,10 @@ async def runtime_operation_audit(limit: int = Query(100, ge=1, le=1000), claims
 
 
 @router.get("/audit/query")
-async def runtime_operation_audit_query(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=100),
-    action: str | None = Query(None, min_length=1, max_length=80),
-    resource_type: str | None = Query(None, min_length=1, max_length=80),
-    resource_id: str | None = Query(None, min_length=1, max_length=128),
-    outcome: str | None = Query(None, min_length=1, max_length=24),
-    since: datetime | None = Query(None),
-    until: datetime | None = Query(None),
-    claims: dict = Depends(_claims),
-    db: AsyncSession = Depends(get_db),
-):
+async def runtime_operation_audit_query(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100), action: str | None = Query(None, min_length=1, max_length=80), resource_type: str | None = Query(None, min_length=1, max_length=80), resource_id: str | None = Query(None, min_length=1, max_length=128), outcome: str | None = Query(None, min_length=1, max_length=24), actor: str | None = Query(None, min_length=1, max_length=128), since: datetime | None = Query(None), until: datetime | None = Query(None), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
     """分页查询当前租户运维审计；所有过滤条件均叠加认证租户范围。"""
     try:
-        result_page, result_size, total, rows = await RuntimeOperationsService(db).audit_query(
-            _tenant_id(claims),
-            page=page,
-            page_size=page_size,
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            outcome=outcome,
-            since=since,
-            until=until,
-        )
+        result_page, result_size, total, rows = await RuntimeOperationsService(db).audit_query(_tenant_id(claims), page=page, page_size=page_size, action=action, resource_type=resource_type, resource_id=resource_id, outcome=outcome, actor=actor, since=since, until=until)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"items": rows, "page": result_page, "page_size": result_size, "total": total}
