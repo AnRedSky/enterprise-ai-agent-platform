@@ -2,14 +2,14 @@
 
 ## 1. 基线
 
-本轮先确认 `main` 与 `frontend` 已同步：当前两者均指向 `02654f4d2b3f0c6cfc227eb3b31e0b38a38527bf`，无待合并差异。前端开发继续直接基于 `frontend` 历史分支状态推进，并遵循现行前端准则：Backend Contract → API Types → View / Component → Vitest → Real API / E2E；状态页面必须覆盖 Loading / Empty / Error / Success / Permission。fileciteturn117file0L2-L2
+本轮先确认最新 `main`，随后将其通过 PR #67 合并到 `frontend`。当前 `main` 基线为 `341d12729364ade1cf7cd2b3e108b22312e29fe4`，同步合并提交为 `68ddb1780adaa0102ae09f1bec35e2ca4686e4a5`；当前 `frontend` 已不落后于 `main`。前端继续遵循现行准则：Backend Contract → API Types → View / Component → Vitest → Real API / E2E；状态页面必须覆盖 Loading / Empty / Error / Success / Permission。fileciteturn117file0L2-L2
 
 用户本地回归反馈集中在 Dashboard / Knowledge / Tool，以及既有 UI-03 迁移测试：
 
 - Dashboard：空数据时 UI-03 仍要求核心工作区可见；Error 文案不完整；未知 Execution 状态因页面被 Empty 状态短路而无法出现在 DOM。
 - Knowledge / Tool：用户反馈的 UI-04 重试失败与当前远端代码已有的显式 `StatePanel` action 连接存在时间差；当前 `KnowledgeWorkbench` 已通过 `handleStateAction → loadBases` 处理 Error 重试，Tool 已通过 `handleStateAction → load` 处理 Error 重试。
 - Knowledge UI-03：旧测试假设 Empty 状态仍渲染完整工作区，与 UI-04 的“状态优先”架构冲突。
-- Operations Console：当前远端实现已经包含 Audit 的“资源类型”筛选与表格列，用户反馈对应的断言属于本地代码同步前的旧状态。
+- Operations Console：最新 main 已完成 Runtime Audit `actor` Contract 收口，Audit 页面和测试现在使用正式 `actor` 字段及操作主体过滤。
 
 ## 2. 根因与决策
 
@@ -55,19 +55,28 @@ UI-04 已成为页面状态的正式验收层，旧 UI-03 测试不得继续要�
 - 测试改为验证页面状态中的 `retrievalError = "请输入检索问题"`，避免在 Knowledge Empty 状态下要求不存在的检索工作区 DOM；
 - 生产逻辑保持“先校验输入，再请求检索 API”。
 
+### 3.4 最新 Backend Contract 同步
+
+通过 PR #67 的同步合并提交：`68ddb1780adaa0102ae09f1bec35e2ca4686e4a5`
+
+- 将最新 main 的 Runtime Audit `actor` Contract 同步到 frontend；
+- `RuntimeAudit` 使用正式 `tenant_id / actor / action / resource_type / resource_id / outcome / details / created_at`；
+- Operations Console Audit 支持 actor 精确过滤并展示正式 `actor` 字段；
+- 前端未复制 `tenant_id` 查询参数，保持 tenant boundary 由服务端负责。
+
 ## 4. 当前代码事实
 
 - Dashboard 已具备 PageHeader / MetricCard / SurfaceCard / StatePanel 公共模式，并在 Empty 状态保留工作台导航。
 - Knowledge Error 状态具备显式重试 action；Tool Error 状态同样具备显式重试 action。
-- Operations Console Audit 已包含“资源类型”筛选和“资源类型”结果列。
+- Operations Console Audit 已包含“操作主体”“资源类型”等正式过滤入口，并使用最新 Backend `actor` 字段。
 - `StatePanel.test.ts` 已验证 Loading / Empty / Error / Permission / Success 和 recoverable action 六类公共行为。
-- 未修改 Backend Contract；未新增第二套状态机；未知状态仍保留技术值。
+- 本轮没有新增平行 API client、mapper 或状态机；未知状态仍保留技术值。
 
 ## 5. 验证状态
 
 用户本地反馈中的 `npm run build` 已成功完成，Vite 生产构建通过，产物正常生成。
 
-用户反馈的全量 Vitest 基线为：`45` 个测试文件、`186` 个测试，其中 `33` 个文件通过、`12` 个文件失败；失败项包含 UI-03 与旧测试 Harness 假设。该结果不能作为当前远端修复后的通过结果，因为随后已发生代码与测试提交。
+用户反馈的全量 Vitest 基线为：`45` 个测试文件、`186` 个测试，其中 `33` 个文件通过、`12` 个文件失败；失败项包含 UI-03 与旧测试 Harness 假设。该结果不能作为当前远端修复后的通过结果，因为随后已发生代码与测试提交，并且最新 main 又完成了 Runtime Audit Contract 同步。
 
 当前远程操作环境不能直接执行用户 Windows 工作树中的 npm，因此不将未实际执行的命令记录为通过。应在本地按以下顺序复验：
 
