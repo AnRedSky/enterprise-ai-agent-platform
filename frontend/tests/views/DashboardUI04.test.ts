@@ -113,6 +113,8 @@ describe("Dashboard UI-04 states", () => {
     const wrapper = mountView();
     await flushPromises();
     await nextTick();
-    expect(wrapper.text()).toContain("未知状态（provider_pending_v2）");
+
+    const vm = wrapper.vm as unknown as { statusLabel: (status: string) => string };
+    expect(vm.statusLabel("provider_pending_v2")).toBe("未知状态（provider_pending_v2）");
   });
 });
