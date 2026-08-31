@@ -21,7 +21,7 @@ function mountView() {
         PageHeader: true,
         MetricCard: true,
         SurfaceCard: true,
-        "el-button": true,
+        "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" },
         "el-table": true,
         "el-table-column": true,
         "el-tag": true,
@@ -58,12 +58,18 @@ describe("Dashboard UI-04 states", () => {
     expect(wrapper.findComponent(StatePanel).props("state")).toBe("permission");
   });
 
-  it("renders error for recoverable aggregate failure", async () => {
-    mocks.listAgents.mockRejectedValue(new Error("network")); mocks.listTools.mockResolvedValue([]); mocks.executions.mockResolvedValue(ok());
+  it("renders error for recoverable aggregate failure and retries", async () => {
+    mocks.listAgents.mockRejectedValueOnce(new Error("network"));
+    mocks.listTools.mockResolvedValueOnce([]); mocks.executions.mockResolvedValueOnce(ok());
     const wrapper = mountView(); await flushPromises();
     const panel = wrapper.findComponent(StatePanel);
     expect(panel.props("state")).toBe("error");
+    mocks.listAgents.mockResolvedValueOnce([{ status: "published" }]);
+    mocks.listTools.mockResolvedValueOnce([{ enabled: true }]);
+    mocks.executions.mockResolvedValueOnce(ok([{ execution_id: "e1", status: "completed" }]));
     await panel.find("button").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".metrics").exists()).toBe(true);
     expect(mocks.listAgents).toHaveBeenCalledTimes(2);
   });
 
