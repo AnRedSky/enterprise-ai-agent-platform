@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import delete, select
 
 from app.infrastructure.db.session import SessionLocal
-from app.models.core import Tenant, User
+from app.models.core import AuditLog, Tenant, User
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.services.runtime_operations.batch_operator_actions import BatchOperatorActionService
@@ -73,6 +73,7 @@ async def test_batch_operator_action_is_tenant_scoped_and_partially_completable(
             assert state_b == "pending"
     finally:
         async with SessionLocal() as db:
+            await db.execute(delete(AuditLog).where(AuditLog.workflow_execution_id.in_([execution_a, execution_b])))
             await db.execute(delete(WorkflowExecution).where(WorkflowExecution.id.in_([execution_a, execution_b])))
             await db.execute(delete(WorkflowVersion).where(WorkflowVersion.id.in_([version_a, version_b])))
             await db.execute(delete(Workflow).where(Workflow.id.in_([workflow_a, workflow_b])))
