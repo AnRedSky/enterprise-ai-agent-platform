@@ -2,59 +2,82 @@
 
 ## Baseline
 
-Local `npm run test:e2e` executed against the current frontend/backend integration environment reported 8 failures across organization, model-provider, scheduled-trigger and webhook flows.
+Local `npm run test:e2e` executed against the then-current frontend/backend integration environment reported failures across organization, model-provider, scheduled-trigger and webhook flows. The subsequent isolated runs narrowed the remaining failures to fixture ownership, scheduler-card interaction, and confirmation-dialog handling.
 
-## Root causes
+## Root causes and remediation
 
 ### 1. Organization fixtures violated the current Tenant → Organization contract
 
-The backend now guarantees one Organization for the active default Tenant and registration automatically creates an active OrganizationMembership for the newly registered user. Organization creation rejects a second Organization in the same Tenant with HTTP 409, and adding a user who is already a member returns a conflict. The E2E fixtures incorrectly created a second Organization and then added a user who was already a member, producing the observed 409/422 responses.
+The current backend enforces one Organization per Tenant. Registration creates an active OrganizationMembership for a newly registered user, while Organization creation rejects a second Organization in the same Tenant. The previous E2E fixtures treated each registered user as a new owner and attempted to create duplicate organization state.
 
-The tests were changed to discover the Organization returned by `GET /api/v1/organizations` and to discover existing Membership records instead of creating duplicate domain state.
+The Browser E2E reset script now clears the Organization aggregate and recreates a deterministic local-only owner fixture. The owner identity is configurable through `BROWSER_E2E_OWNER_USERNAME` / `BROWSER_E2E_OWNER_PASSWORD`, with safe local-test defaults. Organization and Model Provider owner scenarios authenticate through that fixture and discover the real Organization through `GET /api/v1/organizations`.
 
-### 2. Organization UI assertions used stale English labels
+### 2. Organization UI assertions were stale
 
-The production page currently renders Chinese labels such as `组织`, `创建组织`, `暂停组织`, `恢复组织`, `模型提供方 / 模型配置`, and `所有者（owner）`. The E2E tests still asserted obsolete labels such as `Organizations` and `创建 Organization`.
+The production page renders Chinese labels such as `组织`, `管理成员`, `模型提供方 / 模型配置`, `暂停组织`, `恢复组织`, and `所有者（owner）`. The E2E tests are aligned with these current UI labels and use real membership state rather than synthetic owner assumptions.
 
-The tests now assert the current production UI contract.
+### 3. Scheduled Trigger scheduler state is intentionally on-demand
 
-### 3. Workflow publish fixtures used an empty Definition
+The Trigger page follows the frontend governance rule that scheduler state is loaded on demand. The `.scheduler-card` is only rendered after the user selects `调度状态`. The scheduled E2E contract was incorrectly asserting the card before performing that user action.
 
-The current Runtime Definition Contract rejects an empty `nodes` array for new Workflow versions. Scheduled and webhook E2E fixtures therefore failed at publish. The fixtures now use a minimal valid input → output workflow definition with a real edge.
+The test now clicks `调度状态` after validating the persisted scheduler API contract, then verifies the rendered timezone, misfire policy and catch-up limit.
 
-### 4. Trigger lifecycle assertions depended on transient toast timing
+### 4. Trigger disable is a confirmed destructive/lifecycle action
 
-`ElMessage.success()` is intentionally transient. Browser E2E previously waited for `Trigger 已禁用`, which can disappear while the real API persistence/load cycle is still completing. The tests now assert the durable Trigger `status=disabled` through the real API and the rendered row, while retaining the delete success notification where it is useful for the user-facing flow.
+The production Trigger page wraps enable/disable with `ElMessageBox.confirm()`. The E2E tests previously clicked `禁用` and immediately asserted persisted state without confirming the dialog. This made the backend state correctly remain `enabled`.
 
-## Changes
+The scheduled and webhook E2E tests now explicitly confirm the visible message box before asserting the durable `disabled` state through both the rendered row and real API polling. Delete confirmation remains explicit as well.
 
-- Align organization E2E fixtures with the one-Organization-per-Tenant backend contract.
-- Align organization E2E selectors with the current Chinese production UI labels.
-- Use a valid Runtime Definition in scheduled/webhook fixtures.
-- Replace transient Trigger-disabled toast assertions with persisted-state assertions.
-- Preserve real API calls, generated unique test identities, and browser authentication; no hard-coded business fixtures were introduced.
+### 5. Workflow fixtures must use a valid Runtime Definition
 
-## Verification required locally
+Scheduled and webhook fixtures use a minimal input → output workflow definition with a real edge, matching the current Runtime Definition Contract and avoiding empty-node publish failures.
 
-The GitHub-side change is code-complete, but browser E2E execution must still be performed in the user's local Windows environment because this workspace cannot execute against the local backend/browser stack.
+## Changed files
+
+- `backend/scripts/test/e2e/00_reset_browser_e2e_database.py`
+  - resets Organization state;
+  - creates a deterministic local E2E owner;
+  - supports environment overrides for owner credentials.
+- `frontend/tests/e2e/organization-management.spec.ts`
+  - uses the seeded owner fixture and generated member users;
+  - verifies owner/member/suspended-member boundaries against real API state.
+- `frontend/tests/e2e/model-provider-governance.spec.ts`
+  - uses the seeded owner fixture for owner-only Provider/Profile operations.
+- `frontend/tests/e2e/workflow-trigger-governance.spec.ts`
+  - performs the real `调度状态` interaction;
+  - confirms Trigger disable before durable-state assertions.
+- `frontend/tests/e2e/workflow-webhook-governance.spec.ts`
+  - confirms Trigger disable before durable-state assertions.
+- `frontend/tests/e2e/workflow-webhook-runtime.spec.ts`
+  - confirms Trigger disable before validating webhook rejection after lifecycle transition.
+
+## Local verification
+
+Browser E2E must be executed against the local backend/browser stack. The isolated runner is the preferred path because it resets the database and creates the owner fixture before each scenario:
 
 ```powershell
-cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
 
-git fetch origin
-git checkout frontend
-git pull --ff-only origin frontend
-
-cd frontend
-npm test
-npm run build
-npm run test:e2e
-npm run test:gate
-npm run test:local:full
+.\scripts\test\e2e\02_run_organization_e2e.ps1
+.\scripts\test\e2e\02_run_model_provider_governance_e2e.ps1
+.\scripts\test\e2e\01_run_workflow_trigger_e2e.ps1
+npm run test:e2e -- tests/e2e/workflow-webhook-governance.spec.ts
+npm run test:e2e -- tests/e2e/workflow-webhook-runtime.spec.ts
 ```
 
-Do not record any of the above commands as passed until their real local output has been observed.
+For a direct `npm run test:e2e -- <spec>` invocation, run the reset script first if the local database does not already contain the deterministic owner fixture:
 
-## Expected result
+```powershell
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
+uv run python .\scripts\test\e2e\00_reset_browser_e2e_database.py
 
-The previous 8 E2E failures should be removed by the fixture/contract corrections. Any remaining failure must be treated as a new runtime or UI contract defect and investigated from its actual HTTP response, browser trace, and current backend contract rather than weakening the assertion.
+cd ..\frontend
+npm run test:e2e -- tests/e2e/organization-management.spec.ts
+npm run test:e2e -- tests/e2e/model-provider-governance.spec.ts
+```
+
+Do not record a test as passed until the actual local command output has been observed.
+
+## Verification status
+
+GitHub-side code changes are complete for the reported failures. No local browser/backend execution is claimed from this workspace. The next acceptance step is to run the isolated E2E scenarios locally, followed by `npm test`, `npm run build`, `npm run test:gate`, and the full local regression gate.
