@@ -91,8 +91,9 @@
       </el-tab-pane>
 
       <el-tab-pane label="Audit" name="audit">
-        <div class="tab-toolbar"><div><strong>Runtime 运维审计</strong><span>支持分页、动作/资源/结果过滤和时间窗口查询；查询严格限制在当前租户。</span></div><el-button @click="loadAudit">刷新</el-button></div>
+        <div class="tab-toolbar"><div><strong>Runtime 运维审计</strong><span>支持分页、主体/动作/资源/结果过滤和时间窗口查询；查询严格限制在当前租户。</span></div><el-button @click="loadAudit">刷新</el-button></div>
         <el-form inline class="audit-filters" @submit.prevent="queryAudit">
+          <el-input v-model="auditActor" placeholder="操作主体（可选）" clearable style="width: 180px" />
           <el-input v-model="auditAction" placeholder="动作（可选）" clearable style="width: 220px" />
           <el-input v-model="auditResourceType" placeholder="资源类型（可选）" clearable style="width: 160px" />
           <el-input v-model="auditResourceId" placeholder="资源标识（可选）" clearable style="width: 220px" />
@@ -111,7 +112,7 @@
           <el-table-column prop="resource_type" label="资源类型" width="150" />
           <el-table-column prop="resource_id" label="资源标识" min-width="220" show-overflow-tooltip />
           <el-table-column prop="outcome" label="结果" width="110" />
-          <el-table-column prop="actor_id" label="操作人" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="actor" label="操作主体" min-width="180" show-overflow-tooltip />
           <el-table-column prop="created_at" label="时间" min-width="180" />
         </el-table>
         <el-pagination v-if="auditTotal" v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditTotal" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" @change="loadAudit" />
@@ -130,7 +131,7 @@
 import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Refresh } from "@element-plus/icons-vue";
-import { runtimeOperationsApi, type RuntimeAlert, type RuntimeAlertRule, type RuntimeDeadLetter, type RuntimeGlobalPosture, type RuntimeMetricSample, type RuntimeOperationsOverview, type RuntimeProvider } from "@/api/runtimeOperations";
+import { runtimeOperationsApi, type RuntimeAlert, type RuntimeAlertRule, type RuntimeAudit, type RuntimeDeadLetter, type RuntimeGlobalPosture, type RuntimeMetricSample, type RuntimeOperationsOverview, type RuntimeProvider } from "@/api/runtimeOperations";
 
 const activeTab = ref("global");
 const windowHours = ref(24);
@@ -139,7 +140,7 @@ const overview = ref<RuntimeOperationsOverview>();
 const alerts = ref<RuntimeAlert[]>([]);
 const providers = ref<RuntimeProvider[]>([]);
 const alertRules = ref<RuntimeAlertRule[]>([]);
-const audits = ref<Record<string, unknown>[]>([]);
+const audits = ref<RuntimeAudit[]>([]);
 const metricSeries = ref<RuntimeMetricSample[]>([]);
 const deadLetters = ref<RuntimeDeadLetter[]>([]);
 const loading = ref(false);
@@ -156,6 +157,7 @@ const deadLetterTotal = ref(0);
 const auditPage = ref(1);
 const auditPageSize = ref(20);
 const auditTotal = ref(0);
+const auditActor = ref("");
 const auditAction = ref("");
 const auditResourceType = ref("");
 const auditResourceId = ref("");
@@ -183,10 +185,10 @@ async function loadGlobal() { globalPosture.value = (await runtimeOperationsApi.
 async function loadOverview() { overview.value = (await runtimeOperationsApi.overview(windowHours.value)).data; }
 async function loadAlerts() { loadingAlerts.value = true; try { alerts.value = (await runtimeOperationsApi.alerts(windowHours.value)).data.items; alertRules.value = (await runtimeOperationsApi.alertRules()).data.items; } finally { loadingAlerts.value = false; } }
 async function loadProviders() { loadingProviders.value = true; try { providers.value = (await runtimeOperationsApi.providers()).data.items; } finally { loadingProviders.value = false; } }
-function auditQueryParams() { return { page: auditPage.value, page_size: auditPageSize.value, action: auditAction.value.trim() || undefined, resource_type: auditResourceType.value.trim() || undefined, resource_id: auditResourceId.value.trim() || undefined, outcome: auditOutcome.value || undefined, since: auditSince.value || undefined, until: auditUntil.value || undefined }; }
+function auditQueryParams() { return { page: auditPage.value, page_size: auditPageSize.value, actor: auditActor.value.trim() || undefined, action: auditAction.value.trim() || undefined, resource_type: auditResourceType.value.trim() || undefined, resource_id: auditResourceId.value.trim() || undefined, outcome: auditOutcome.value || undefined, since: auditSince.value || undefined, until: auditUntil.value || undefined }; }
 async function loadAudit() { auditLoading.value = true; try { const result = await runtimeOperationsApi.auditQuery(auditQueryParams()); audits.value = result.data.items; auditTotal.value = result.data.total; } catch { ElMessage.error("审计查询失败，请检查筛选条件后重试。"); } finally { auditLoading.value = false; } }
 async function queryAudit() { auditPage.value = 1; await loadAudit(); }
-async function resetAuditFilters() { auditAction.value = ""; auditResourceType.value = ""; auditResourceId.value = ""; auditOutcome.value = ""; auditSince.value = ""; auditUntil.value = ""; auditPage.value = 1; await loadAudit(); }
+async function resetAuditFilters() { auditActor.value = ""; auditAction.value = ""; auditResourceType.value = ""; auditResourceId.value = ""; auditOutcome.value = ""; auditSince.value = ""; auditUntil.value = ""; auditPage.value = 1; await loadAudit(); }
 async function loadMetrics() { metricLoading.value = true; try { metricSeries.value = (await runtimeOperationsApi.metricSeries(metricName.value.trim(), metricWindow.value, dimensionKey.value || undefined, dimensionValue.value || undefined)).data.items; } catch { ElMessage.error("指标查询失败，请稍后重试。"); } finally { metricLoading.value = false; } }
 async function loadDeadLetters() { deadLetterLoading.value = true; try { const response = await runtimeOperationsApi.deadLetters(deadLetterPage.value, deadLetterPageSize.value); deadLetters.value = response.data.items; deadLetterTotal.value = response.data.total; } catch { ElMessage.error("死信查询失败，请稍后重试。"); } finally { deadLetterLoading.value = false; } }
 async function loadAll() { loading.value = true; error.value = false; try { await Promise.all([loadGlobal(), loadOverview(), loadAlerts(), loadProviders(), loadAudit(), loadDeadLetters()]); } catch { error.value = true; } finally { loading.value = false; } }
