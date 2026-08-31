@@ -21,10 +21,12 @@ vi.mock("element-plus", () => ({
   ElMessageBox: { confirm: vi.fn() },
 }));
 
+const agentRow = { id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" };
+
 function mountView() {
   return mount(AgentWorkbench, { global: { stubs: {
     "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" }, "el-table": { template: "<div><slot /></div>" },
-    "el-table-column": { template: "<div />" }, "el-tag": true, "el-alert": true, "el-dialog": { template: "<div><slot /><slot name=\"footer\" /></div>" },
+    "el-table-column": { template: "<div><slot :row=\"agentRow\" /></div>", data: () => ({ agentRow }) }, "el-tag": true, "el-alert": true, "el-dialog": { template: "<div><slot /><slot name=\"footer\" /></div>" },
     "el-form": { template: "<form><slot /></form>" }, "el-form-item": { template: "<div><slot /></div>" }, "el-input": true, "el-divider": true,
     "el-descriptions": { template: "<div><slot /></div>" }, "el-descriptions-item": { template: "<div><slot /></div>" }, "el-scrollbar": { template: "<div><slot /></div>" }, "el-empty": { template: "<div>empty</div>" },
   } } });
@@ -51,14 +53,14 @@ describe("AgentWorkbench UI-04", () => {
   });
 
   it("renders success state as the populated agent table", async () => {
-    api.listAgents.mockResolvedValueOnce([{ id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" }]);
+    api.listAgents.mockResolvedValueOnce([agentRow]);
     const wrapper = mountView(); await flushPromises();
     expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
     expect(wrapper.find(".table").exists()).toBe(true);
   });
 
   it("separates chat context permission from chat context error", async () => {
-    api.listAgents.mockResolvedValueOnce([{ id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" }]);
+    api.listAgents.mockResolvedValueOnce([agentRow]);
     api.getPublishedVersion.mockRejectedValueOnce({ response: { status: 403 } });
     const wrapper = mountView(); await flushPromises();
     const button = wrapper.findAll("button").find((node) => node.text() === "对话调试");
