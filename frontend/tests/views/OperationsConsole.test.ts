@@ -28,7 +28,9 @@ describe("Runtime Operations Console", () => {
   it("queries the tenant-scoped audit contract with paging and actor/action/resource filters", async () => {
     const wrapper = mountConsole();
     await vi.waitFor(() => expect(runtimeOperationsApi.auditQuery).toHaveBeenCalledWith({ page: 1, page_size: 20, actor: undefined, action: undefined, resource_type: undefined, resource_id: undefined, outcome: undefined, since: undefined, until: undefined }));
-    (wrapper.vm as any).activeTab = "audit";
+    const auditTab = wrapper.findAll(".el-tabs__item").find((tab) => tab.text() === "Audit");
+    expect(auditTab).toBeDefined();
+    await auditTab!.trigger("click");
     await wrapper.vm.$nextTick();
     expect(wrapper.text()).toContain("操作主体（可选）"); expect(wrapper.text()).toContain("资源类型"); expect(wrapper.text()).toContain("provider.health.probe"); expect(wrapper.text()).toContain("success"); expect(wrapper.text()).toContain("u1"); expect(wrapper.text()).toContain("1");
   });
