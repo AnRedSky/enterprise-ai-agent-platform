@@ -8,9 +8,9 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Backend Domain / API Contract 与 Frontend Operations 第一切片已实现，当前进入本地验证与联调。**
+**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；II-03 Worker / Scheduler Diagnostics Backend 第一切片已实现，进入本地验证。**
 
-Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification Lifecycle 收口。II-01 已通过本地 Alembic、Unit/API Contract、Real PostgreSQL Acceptance 与完整 Backend Regression；当前推进 II-02。
+Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification Lifecycle 收口。II-01 已通过本地 Alembic、Unit/API Contract、Real PostgreSQL Acceptance 与完整 Backend Regression。II-02 已通过开发者本地反馈的 Global Runtime Operations Unit / Real Gate 与完整 Backend Regression。
 
 ## 3. 第一切片：Operator Action Governance
 
@@ -51,7 +51,7 @@ Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification L
 - `/runtime/operations/global` 全局 Runtime Operations 只读页面；
 - Unit / API Contract / PostgreSQL Real Acceptance 测试；
 - Frontend Component Contract 测试与独立 Frontend Gate；
-- Backend / Frontend Gate 均禁止自动启动或停止服务，测试数据自动创建和清理。
+- Backend / Frontend Gate 均禁止自动启动或停止服务，测试数据自动生成和清理。
 
 ### 4.2 设计边界
 
@@ -80,16 +80,39 @@ Runtime Operations UI / Diagnostics
 
 ### 4.3 当前验证状态
 
-代码、测试与 Frontend UI 已提交到 `main`，但本轮尚未在用户本地环境执行 II-02 Frontend / Backend Gate，因此 **暂不得标记 Acceptance Passed**。
+II-02 Backend 已由开发者本地反馈确认通过；Frontend targeted Unit / Build、完整 Frontend Regression、Browser E2E 仍需按范围执行后再完成 Acceptance 收口。
 
-## 5. 后续切片
+## 5. 第三切片：II-03 Worker / Scheduler Diagnostics
 
-### II-03 Worker / Scheduler Diagnostics
+### 5.1 Backend 第一切片
 
-- Worker lease / claim / concurrency 状态；
-- Scheduler loop / trigger / misfire 状态；
-- 失败恢复与运行态诊断；
-- 不暴露内部连接和 Secret。
+已实现 `RuntimeDiagnosticsService`，只读复用现有 `WorkflowFrontier` 与 `WorkflowTrigger` Durable Facts：
+
+- Worker Frontier 状态、running / pending / completed / failed 统计；
+- Worker lease active / expired / no-expiry 统计；
+- Durable worker owner claim 聚合；
+- 最近 Worker Frontier error 事实；
+- Scheduler enabled / disabled scheduled trigger 统计；
+- Scheduler pending Frontier backlog；
+- scheduled trigger 配置摘要；
+- Worker / Scheduler 当前没有 durable heartbeat 时统一返回 `unknown + NO_DURABLE_HEARTBEAT_FACT`；
+- `/api/v1/runtime/diagnostics/worker` 与 `/api/v1/runtime/diagnostics/scheduler` 只读 API Contract；
+- 所有租户范围均来自认证 Claims，不接受客户端 `tenant_id`；
+- 不新增 Worker / Scheduler 生命周期状态机，不修改任何 Durable Fact。
+
+### 5.2 测试与 Gate
+
+- `tests/unit/test_runtime_diagnostics.py` 覆盖窗口边界、Worker liveness、lease / owner 聚合及 Scheduler posture；
+- `tests/api_contract/test_runtime_diagnostics_contract.py` 覆盖只读路由 Contract；
+- `scripts/test/phase-2.10/08_runtime_diagnostics_unit_gate.ps1` 提供独立 Unit / Contract Gate；
+- Gate 禁止自动创建、启动、重启或停止 API、Scheduler、Worker、PostgreSQL、Redis；
+- 真实 PostgreSQL / API Acceptance 必须由后续本地服务已运行条件下执行，测试身份与业务数据由 fixture 自动创建和清理。
+
+### 5.3 当前验证状态
+
+**代码已提交，尚未宣称 Acceptance Passed。** 必须先执行本地 Unit Gate，再补充 tenant boundary 的 Real PostgreSQL / HTTP Acceptance；随后才能进入 II-03 Frontend Diagnostics 与完整联调。
+
+## 6. 后续切片
 
 ### II-04 Audit / Trace Correlation
 
@@ -103,7 +126,7 @@ Runtime Operations UI / Diagnostics
 - 权限、确认、幂等、部分失败结果和审计；
 - 禁止前端复制批量业务规则。
 
-## 6. 完成判定
+## 7. 完成判定
 
 每个切片必须同时满足：
 
@@ -116,12 +139,14 @@ Runtime Operations UI / Diagnostics
 - 范围需要时执行 Browser E2E；
 - 测试 Gate 不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis，测试数据自动生成和清理。
 
-## 7. 开发顺序
+## 8. 开发顺序
 
 ```text
 Operator Action Contract
         ↓
 Global Runtime Operations Contract
+        ↓
+Worker / Scheduler Diagnostics Contract
         ↓
 Backend Domain / API Contract
         ↓
@@ -129,7 +154,7 @@ Unit + Integration + Real API
         ↓
 Frontend API Types
         ↓
-Operations UI
+Operations UI / Diagnostics UI
         ↓
 Frontend Regression / Build
         ↓
