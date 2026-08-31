@@ -15,7 +15,7 @@
       :title="stateTitle"
       :description="stateDescription"
       :action-label="pageState === 'error' ? '重试' : pageState === 'empty' ? '创建工具' : undefined"
-      @action="pageState === 'empty' ? (createVisible = true) : load"
+      @action="handleStateAction"
     />
 
     <template v-else>
@@ -157,6 +157,14 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+async function handleStateAction() {
+  if (pageState.value === "empty") {
+    createVisible.value = true;
+    return;
+  }
+  if (pageState.value === "error") await load();
 }
 
 async function toggle(tool: Tool) {
