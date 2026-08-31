@@ -8,7 +8,7 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance、II-02 Global Runtime Operations、II-03 Worker / Scheduler Diagnostics Backend、II-04 Audit / Trace Correlation Backend、II-05 Controlled Batch Operations Backend、II-06 Runtime Audit Query Backend 第一切片与查询性能强化均已完成开发者本地反馈验收；II-07 Runtime Audit Query 运维主体过滤第一切片已完成，并继续进行主体 + 动作组合过滤硬化。Runtime Audit / Trace Correlation 响应 Contract 硬化已实现，等待开发者本地 Backend Gate 验收。**
+**开发中。II-01 Backend Operator Action Governance、II-02 Global Runtime Operations、II-03 Worker / Scheduler Diagnostics Backend、II-04 Audit / Trace Correlation Backend、II-05 Controlled Batch Operations Backend、II-06 Runtime Audit Query Backend 第一切片与查询性能强化均已完成开发者本地反馈验收；II-07 Runtime Audit Query 运维主体过滤第一切片已完成，并继续进行主体 + 动作组合过滤硬化。Runtime Audit / Trace Correlation 响应 Contract 硬化及历史审计关联硬化已实现，等待开发者本地 Backend Gate 验收。**
 
 ## 3. 第一切片：Operator Action Governance
 
@@ -159,30 +159,35 @@ Gate 只负责探测数据库、执行 migration 与测试，不自动创建、�
 4. 新索引只优化既有查询，不改变审计事实生命周期，不改变 API 返回 Contract。
 5. 不为单一字段组合无限制增加索引；当前索引只覆盖已验证的主体 + 动作运维查询场景。
 
-## 11. 第九切片：Runtime Audit / Trace Correlation 响应 Contract 硬化
+## 11. 第九切片：Runtime Audit / Trace Correlation 响应 Contract 与历史审计关联硬化
 
 ### 11.1 问题
 
 既有双向关联 API 已经具备 tenant-scoped Execution / Trace / Audit / Operator Action 查询能力，但 `RuntimeCorrelationPageWithItems.items` 使用 `list[Any]`，导致 OpenAPI 无法明确表达 Trace 与 Audit 集合元素类型，也无法对错误领域对象形成公共 API 响应约束。
 
-同时 `/traces/{trace_id}` 路径参数缺少显式长度边界，和其他 Runtime 运维 Contract 的输入约束不一致。
+同时 `/traces/{trace_id}` 路径参数缺少显式长度边界，和其他 Runtime 运维 Contract 的输入约束不一致。进一步审阅发现，历史 AuditLog 保留了早期 `execution_id` 字段；部分历史审计没有新的 `workflow_execution_id`，仅保留 `trace_id`，原有 `by_audit` 无法恢复当前 Workflow Execution。
 
 ### 11.2 修复
 
 - 新增 `RuntimeCorrelationTracePage`，明确 `items: list[WorkflowTraceItem]`；
 - 新增 `RuntimeCorrelationAuditPage`，明确 `items: list[AuditLogItem]`；
 - `RuntimeCorrelationResponse` 改用两个具体分页 Contract；
-- `trace_id` 增加 `1..128` 路径参数边界；
+- `trace_id` 增加 `1..128` 的路径参数边界；
+- `Audit → Execution` 关联优先使用正式 `workflow_execution_id`；
+- 历史 Audit 缺少正式 Execution 外键时，仅通过当前 tenant scope 内的 `trace_id → WorkflowTraceEvent → execution_id` 恢复，不猜测旧 `execution_id` 与新 Workflow Execution 的映射；
+- Operator Action 无 Execution 时继续返回稳定的请求分页元数据，不返回 `page_size=0` 的伪分页结果；
 - 不改变查询语义、tenant boundary 或数据存储。
 
 ### 11.3 自动化 Gate
 
-新增：
+新增 / 更新：
 
 - `tests/api_contract/test_runtime_correlations_contract.py`；
+- `tests/unit/test_runtime_audit_trace_correlation.py`；
+- `tests/api_real/test_runtime_audit_trace_correlation_acceptance.py`；
 - `scripts/test/phase-2.10/23_runtime_correlation_contract_hardening_gate.ps1`。
 
-Gate 执行 Runtime correlation Unit、API Contract 与 Backend targeted regression，并明确输出 Service startup boundary；禁止自动启动、重启或停止任何 API、Scheduler、Worker、PostgreSQL、Redis，不要求人工填写测试 ID。
+Gate 执行 Runtime correlation Unit、API Contract、PostgreSQL readiness、Real PostgreSQL Acceptance、targeted regression 与 Backend default regression；所有 pytest warning 转为错误。Gate 只探测依赖服务，不自动启动、重启或停止任何 API、Scheduler、Worker、PostgreSQL、Redis；测试身份与业务数据全部自动生成和清理。
 
 ## 12. 完成判定
 
