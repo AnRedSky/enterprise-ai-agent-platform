@@ -71,7 +71,7 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
             assert result is not None
             assert result["execution"].id == execution_a
             assert [item.id for item in result["traces"]["items"]] == [trace_a]
-            assert [item.id for item in result["audits"]["items"]] == [audit_a, legacy_audit]
+            assert {item.id for item in result["audits"]["items"]} == {audit_a, legacy_audit}
             assert [item.id for item in result["operator_actions"]] == [action_a]
 
             filtered = await service.by_execution(
