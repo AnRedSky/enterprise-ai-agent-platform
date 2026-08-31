@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ToolWorkbench from "@/views/tools/components/ToolWorkbench.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
@@ -13,7 +13,7 @@ vi.mock("@/api/tools", () => ({ bindTool: vi.fn(), createTool: vi.fn(), disableT
 vi.mock("@/utils/toolError", () => ({ getToolUserError: (_error: unknown, fallback: string) => fallback }));
 
 function mountPage() {
-  return shallowMount(ToolWorkbench, { global: { stubs: {
+  return mount(ToolWorkbench, { global: { stubs: {
     "el-button": { template: "<button><slot /></button>" }, "el-alert": true, "el-table": true, "el-table-column": true, "el-empty": true, "el-dialog": true,
     "el-form": true, "el-form-item": true, "el-input": true, "el-select": true, "el-option": true, "el-tag": true,
   } } });
