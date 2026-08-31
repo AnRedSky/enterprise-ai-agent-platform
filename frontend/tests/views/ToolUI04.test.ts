@@ -52,11 +52,13 @@ describe("ToolWorkbench UI-04", () => {
     expect(wrapper.findComponent(StatePanel).props("state")).toBe("loading");
   });
 
-  it("shows empty state when no tools are available", async () => {
+  it("shows empty state with a create action when no tools are available", async () => {
     listTools.mockResolvedValueOnce([]);
     const wrapper = mountView();
     await flushPromises();
-    expect(wrapper.findComponent(StatePanel).props("state")).toBe("empty");
+    const panel = wrapper.findComponent(StatePanel);
+    expect(panel.props("state")).toBe("empty");
+    expect(panel.props("actionLabel")).toBe("创建工具");
     expect(wrapper.text()).toContain("暂无可用工具");
   });
 
@@ -68,12 +70,18 @@ describe("ToolWorkbench UI-04", () => {
     expect(wrapper.text()).toContain("无权查看工具");
   });
 
-  it("shows recoverable error state for non-permission failures", async () => {
+  it("shows recoverable error state and retries successfully", async () => {
     listTools.mockRejectedValueOnce(new Error("network"));
     const wrapper = mountView();
     await flushPromises();
-    expect(wrapper.findComponent(StatePanel).props("state")).toBe("error");
-    expect(wrapper.text()).toContain("工具加载失败");
+    const panel = wrapper.findComponent(StatePanel);
+    expect(panel.props("state")).toBe("error");
+    listTools.mockResolvedValueOnce([tool]);
+    await panel.find("button").trigger("click");
+    await flushPromises();
+    expect(listTools).toHaveBeenCalledTimes(2);
+    expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
+    expect(wrapper.find(".table").exists()).toBe(true);
   });
 
   it("renders the existing workspace for populated tools", async () => {
