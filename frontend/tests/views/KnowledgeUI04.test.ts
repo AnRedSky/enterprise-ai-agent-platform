@@ -21,7 +21,7 @@ const mountView = () => mount(KnowledgeWorkbench, {
       SurfaceCard: { template: "<div><slot/><slot name='header'/></div>" },
       "el-button": true, "el-table": true, "el-table-column": true, "el-dialog": true, "el-form": true,
       "el-form-item": true, "el-input": true, "el-input-number": true, "el-select": true, "el-option": true,
-      "el-slider": true, "el-alert": true, "el-empty": true,
+      "el-slider": true, "el-alert": true, "el-empty": true, "el-icon": true,
     },
   },
 });
@@ -44,6 +44,19 @@ describe("Knowledge UI-04 states", () => {
     expect(wrapper.find(".grid").exists()).toBe(true);
   });
 
+  it("provides retry action for recoverable loading failure", async () => {
+    mocks.listKnowledgeBases.mockRejectedValueOnce(new Error("network"));
+    const wrapper = mountView();
+    await flushPromises();
+    const panel = wrapper.findComponent(StatePanel);
+    expect(panel.props("state")).toBe("error");
+    mocks.listKnowledgeBases.mockResolvedValueOnce({ items: [{ id: "kb-1", name: "企业知识库", status: "active" }] });
+    await panel.find("button").trigger("click");
+    await flushPromises();
+    expect(mocks.listKnowledgeBases).toHaveBeenCalledTimes(2);
+    expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
+  });
+
   it.each([
     ["empty", { items: [] }, "暂无知识库"],
     ["permission", { response: { status: 403 } }, "无权访问知识库"],
@@ -56,5 +69,12 @@ describe("Knowledge UI-04 states", () => {
     const panel = wrapper.findComponent(StatePanel);
     expect(panel.props("state")).toBe(state);
     expect(panel.text()).toContain(title);
+  });
+
+  it("keeps unknown knowledge status explicit in the workspace", async () => {
+    mocks.listKnowledgeBases.mockResolvedValueOnce({ items: [{ id: "kb-1", name: "企业知识库", status: "future_status_v2" }] });
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain("未知状态（future_status_v2）");
   });
 });
