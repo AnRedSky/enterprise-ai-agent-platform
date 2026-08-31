@@ -118,4 +118,10 @@ Gate 只探测本地前置条件，不创建、启动、重启或停止 API、Sc
 
 ## 7. 当前验收状态
 
-代码、Unit、API Contract、Real PostgreSQL Acceptance 与 Gate 已提交；**尚未使用开发者本地执行结果宣称通过**。本阶段后续必须以实际本地测试反馈更新 Acceptance 状态。
+Unit Gate 已由开发者本地反馈确认通过：Unit/API Contract 9 passed，Backend targeted regression 38 passed。
+
+Real Gate 已执行并确认业务断言进入验收流程，但测试在 `finally` 清理阶段因 `integration_events_tenant_id_fkey` 外键约束失败而未通过。根因是 `workflow_execution.cancel` 会产生 Durable Integration Event，而 Acceptance fixture 原清理顺序遗漏了 `IntegrationEventRecord`。
+
+已修复 Acceptance fixture：删除测试租户前先删除其 `IntegrationEventRecord`；Webhook Delivery 对 Integration Event 使用 `ON DELETE CASCADE`，不新增第二套清理逻辑。
+
+**当前状态：修复已提交，等待开发者本地重新执行 Real Acceptance / Real Gate 与 Backend Regression；尚未宣称 II-05 Acceptance Passed。**
