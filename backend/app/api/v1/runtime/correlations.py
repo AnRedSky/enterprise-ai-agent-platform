@@ -7,7 +7,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,7 +84,7 @@ async def execution_correlation(
 
 @router.get("/traces/{trace_id}", response_model=RuntimeCorrelationResponse)
 async def trace_correlation(
-    trace_id: str,
+    trace_id: str = Path(..., min_length=1, max_length=128),
     trace_page: int = Query(1, ge=1),
     trace_page_size: int = Query(50, ge=1, le=100),
     audit_page: int = Query(1, ge=1),
