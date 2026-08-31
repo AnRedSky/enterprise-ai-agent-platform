@@ -8,7 +8,7 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance、II-02 Global Runtime Operations、II-03 Worker / Scheduler Diagnostics Backend、II-04 Audit / Trace Correlation Backend、II-05 Controlled Batch Operations Backend、II-06 Runtime Audit Query Backend 第一切片与查询性能强化均已完成开发者本地反馈验收；II-07 Runtime Audit Query 运维主体过滤第一切片已完成，并继续进行主体 + 动作组合过滤硬化。**
+**开发中。II-01 Backend Operator Action Governance、II-02 Global Runtime Operations、II-03 Worker / Scheduler Diagnostics Backend、II-04 Audit / Trace Correlation Backend、II-05 Controlled Batch Operations Backend、II-06 Runtime Audit Query Backend 第一切片与查询性能强化均已完成开发者本地反馈验收；II-07 Runtime Audit Query 运维主体过滤第一切片已完成，并继续进行主体 + 动作组合过滤硬化。Runtime Audit / Trace Correlation 响应 Contract 硬化已实现，等待开发者本地 Backend Gate 验收。**
 
 ## 3. 第一切片：Operator Action Governance
 
@@ -159,7 +159,32 @@ Gate 只负责探测数据库、执行 migration 与测试，不自动创建、�
 4. 新索引只优化既有查询，不改变审计事实生命周期，不改变 API 返回 Contract。
 5. 不为单一字段组合无限制增加索引；当前索引只覆盖已验证的主体 + 动作运维查询场景。
 
-## 11. 完成判定
+## 11. 第九切片：Runtime Audit / Trace Correlation 响应 Contract 硬化
+
+### 11.1 问题
+
+既有双向关联 API 已经具备 tenant-scoped Execution / Trace / Audit / Operator Action 查询能力，但 `RuntimeCorrelationPageWithItems.items` 使用 `list[Any]`，导致 OpenAPI 无法明确表达 Trace 与 Audit 集合元素类型，也无法对错误领域对象形成公共 API 响应约束。
+
+同时 `/traces/{trace_id}` 路径参数缺少显式长度边界，和其他 Runtime 运维 Contract 的输入约束不一致。
+
+### 11.2 修复
+
+- 新增 `RuntimeCorrelationTracePage`，明确 `items: list[WorkflowTraceItem]`；
+- 新增 `RuntimeCorrelationAuditPage`，明确 `items: list[AuditLogItem]`；
+- `RuntimeCorrelationResponse` 改用两个具体分页 Contract；
+- `trace_id` 增加 `1..128` 路径参数边界；
+- 不改变查询语义、tenant boundary 或数据存储。
+
+### 11.3 自动化 Gate
+
+新增：
+
+- `tests/api_contract/test_runtime_correlations_contract.py`；
+- `scripts/test/phase-2.10/23_runtime_correlation_contract_hardening_gate.ps1`。
+
+Gate 执行 Runtime correlation Unit、API Contract 与 Backend targeted regression，并明确输出 Service startup boundary；禁止自动启动、重启或停止任何 API、Scheduler、Worker、PostgreSQL、Redis，不要求人工填写测试 ID。
+
+## 12. 完成判定
 
 每个 Backend 切片至少满足：
 
