@@ -91,8 +91,30 @@
       </el-tab-pane>
 
       <el-tab-pane label="Audit" name="audit">
-        <div class="tab-toolbar"><div><strong>Runtime 运维审计</strong><span>记录 Provider、Alert、Notification Delivery 等运维动作。</span></div><el-button @click="loadAudit">刷新</el-button></div>
-        <el-table :data="audits" v-loading="auditLoading" empty-text="暂无运维审计"><el-table-column prop="action" label="操作" min-width="220" /><el-table-column prop="status" label="状态" width="120" /><el-table-column prop="actor_id" label="操作人" min-width="220" show-overflow-tooltip /><el-table-column prop="created_at" label="时间" min-width="180" /></el-table>
+        <div class="tab-toolbar"><div><strong>Runtime 运维审计</strong><span>支持分页、动作/资源/结果过滤和时间窗口查询；查询严格限制在当前租户。</span></div><el-button @click="loadAudit">刷新</el-button></div>
+        <el-form inline class="audit-filters" @submit.prevent="queryAudit">
+          <el-input v-model="auditAction" placeholder="动作（可选）" clearable style="width: 220px" />
+          <el-input v-model="auditResourceType" placeholder="资源类型（可选）" clearable style="width: 160px" />
+          <el-input v-model="auditResourceId" placeholder="资源标识（可选）" clearable style="width: 220px" />
+          <el-select v-model="auditOutcome" placeholder="结果" clearable style="width: 130px">
+            <el-option label="成功" value="success" />
+            <el-option label="拒绝" value="rejected" />
+            <el-option label="失败" value="failed" />
+          </el-select>
+          <el-input v-model="auditSince" type="datetime-local" aria-label="开始时间" style="width: 190px" />
+          <el-input v-model="auditUntil" type="datetime-local" aria-label="结束时间" style="width: 190px" />
+          <el-button type="primary" :loading="auditLoading" native-type="submit">查询</el-button>
+          <el-button :disabled="auditLoading" @click="resetAuditFilters">重置</el-button>
+        </el-form>
+        <el-table :data="audits" v-loading="auditLoading" empty-text="暂无符合条件的运维审计">
+          <el-table-column prop="action" label="操作" min-width="220" />
+          <el-table-column prop="resource_type" label="资源类型" width="150" />
+          <el-table-column prop="resource_id" label="资源标识" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="outcome" label="结果" width="110" />
+          <el-table-column prop="actor_id" label="操作人" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="created_at" label="时间" min-width="180" />
+        </el-table>
+        <el-pagination v-if="auditTotal" v-model:current-page="auditPage" v-model:page-size="auditPageSize" :total="auditTotal" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" @change="loadAudit" />
       </el-tab-pane>
 
       <el-tab-pane label="死信" name="dead-letters">
@@ -131,6 +153,15 @@ const actionLoading = ref(false);
 const deadLetterPage = ref(1);
 const deadLetterPageSize = ref(20);
 const deadLetterTotal = ref(0);
+const auditPage = ref(1);
+const auditPageSize = ref(20);
+const auditTotal = ref(0);
+const auditAction = ref("");
+const auditResourceType = ref("");
+const auditResourceId = ref("");
+const auditOutcome = ref("");
+const auditSince = ref("");
+const auditUntil = ref("");
 const replayingId = ref("");
 const togglingProviderId = ref("");
 const probingProviderId = ref("");
@@ -147,26 +178,28 @@ const deliveryStatuses = [{ key: "pending", label: "待处理" }, { key: "runnin
 const sloHealthy = computed(() => !!overview.value && overview.value.slo.delivery_success_percent >= overview.value.slo.target_percent);
 function statusCount(values: Record<string, number>, key: string) { return values[key] || 0; }
 function livenessLabel(value: string) { return value === "unknown" ? "未知（无持久化心跳）" : value; }
-function messageFromError(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
 
 async function loadGlobal() { globalPosture.value = (await runtimeOperationsApi.global({ window_hours: windowHours.value, limit: 50 })).data; }
 async function loadOverview() { overview.value = (await runtimeOperationsApi.overview(windowHours.value)).data; }
 async function loadAlerts() { loadingAlerts.value = true; try { alerts.value = (await runtimeOperationsApi.alerts(windowHours.value)).data.items; alertRules.value = (await runtimeOperationsApi.alertRules()).data.items; } finally { loadingAlerts.value = false; } }
 async function loadProviders() { loadingProviders.value = true; try { providers.value = (await runtimeOperationsApi.providers()).data.items; } finally { loadingProviders.value = false; } }
-async function loadAudit() { auditLoading.value = true; try { audits.value = (await runtimeOperationsApi.audit()).data.items; } finally { auditLoading.value = false; } }
-async function loadMetrics() { metricLoading.value = true; try { metricSeries.value = (await runtimeOperationsApi.metricSeries(metricName.value.trim(), metricWindow.value, dimensionKey.value || undefined, dimensionValue.value || undefined)).data.items; } catch (error) { ElMessage.error(messageFromError(error, "指标查询失败")); } finally { metricLoading.value = false; } }
-async function loadDeadLetters() { deadLetterLoading.value = true; try { const response = await runtimeOperationsApi.deadLetters(deadLetterPage.value, deadLetterPageSize.value); deadLetters.value = response.data.items; deadLetterTotal.value = response.data.total; } catch (error) { ElMessage.error(messageFromError(error, "死信查询失败")); } finally { deadLetterLoading.value = false; } }
+function auditQueryParams() { return { page: auditPage.value, page_size: auditPageSize.value, action: auditAction.value.trim() || undefined, resource_type: auditResourceType.value.trim() || undefined, resource_id: auditResourceId.value.trim() || undefined, outcome: auditOutcome.value || undefined, since: auditSince.value || undefined, until: auditUntil.value || undefined }; }
+async function loadAudit() { auditLoading.value = true; try { const result = await runtimeOperationsApi.auditQuery(auditQueryParams()); audits.value = result.data.items; auditTotal.value = result.data.total; } catch { ElMessage.error("审计查询失败，请检查筛选条件后重试。"); } finally { auditLoading.value = false; } }
+async function queryAudit() { auditPage.value = 1; await loadAudit(); }
+async function resetAuditFilters() { auditAction.value = ""; auditResourceType.value = ""; auditResourceId.value = ""; auditOutcome.value = ""; auditSince.value = ""; auditUntil.value = ""; auditPage.value = 1; await loadAudit(); }
+async function loadMetrics() { metricLoading.value = true; try { metricSeries.value = (await runtimeOperationsApi.metricSeries(metricName.value.trim(), metricWindow.value, dimensionKey.value || undefined, dimensionValue.value || undefined)).data.items; } catch { ElMessage.error("指标查询失败，请稍后重试。"); } finally { metricLoading.value = false; } }
+async function loadDeadLetters() { deadLetterLoading.value = true; try { const response = await runtimeOperationsApi.deadLetters(deadLetterPage.value, deadLetterPageSize.value); deadLetters.value = response.data.items; deadLetterTotal.value = response.data.total; } catch { ElMessage.error("死信查询失败，请稍后重试。"); } finally { deadLetterLoading.value = false; } }
 async function loadAll() { loading.value = true; error.value = false; try { await Promise.all([loadGlobal(), loadOverview(), loadAlerts(), loadProviders(), loadAudit(), loadDeadLetters()]); } catch { error.value = true; } finally { loading.value = false; } }
-async function evaluateAlerts() { actionLoading.value = true; try { const result = await runtimeOperationsApi.evaluateAlertRules(); alertEvaluationMessage.value = `规则评估完成，本次状态发生变化 ${result.data.count} 条`; await loadAlerts(); } catch (error) { ElMessage.error(messageFromError(error, "告警评估失败")); } finally { actionLoading.value = false; } }
-async function toggleProvider(row: RuntimeProvider) { togglingProviderId.value = row.id; try { const result = await runtimeOperationsApi.setProviderEnabled(row.id, row.enabled); Object.assign(row, result.data); ElMessage.success(row.enabled ? "Provider 已启用" : "Provider 已停用"); } catch (error) { row.enabled = !row.enabled; ElMessage.error(messageFromError(error, "Provider 状态更新失败")); } finally { togglingProviderId.value = ""; } }
-async function probeProvider(row: RuntimeProvider) { probingProviderId.value = row.id; try { const result = await runtimeOperationsApi.probeProviderHealth(row.id); row.status = result.data.status; row.last_checked_at = new Date().toISOString(); providerMessage.value = result.data.error ? `Provider ${row.name} 探测失败，请检查 Provider 配置。` : `Provider ${row.name} 探测完成：${result.data.status}${result.data.latency_ms == null ? "" : `，${result.data.latency_ms} ms`}`; } catch (error) { ElMessage.error(messageFromError(error, "Provider 健康探测失败")); } finally { probingProviderId.value = ""; } }
-async function toggleRule(row: RuntimeAlertRule) { togglingRuleId.value = row.id; try { const result = await runtimeOperationsApi.setAlertRuleEnabled(row.id, row.enabled); Object.assign(row, result.data); ElMessage.success(row.enabled ? "告警规则已启用" : "告警规则已停用"); } catch (error) { row.enabled = !row.enabled; ElMessage.error(messageFromError(error, "告警规则状态更新失败")); } finally { togglingRuleId.value = ""; } }
-async function snapshotMetrics() { try { const result = await runtimeOperationsApi.createMetricsSnapshot(); ElMessage.success(`已写入 ${result.data.samples_written} 条指标样本`); await loadMetrics(); } catch (error) { ElMessage.error(messageFromError(error, "指标采样失败")); } }
-async function replay(deliveryId: string) { try { await ElMessageBox.confirm("重新投递会将 Delivery 重新进入后端队列，不会由浏览器直接请求目标地址。", "确认重新投递", { type: "warning" }); replayingId.value = deliveryId; const result = await runtimeOperationsApi.replayDeadLetters([deliveryId]); if (result.data.rejected.length) throw new Error(result.data.rejected[0].reason); ElMessage.success("Delivery 已重新进入投递队列"); await loadDeadLetters(); } catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error(messageFromError(error, "重新投递失败")); } finally { replayingId.value = ""; } }
+async function evaluateAlerts() { actionLoading.value = true; try { const result = await runtimeOperationsApi.evaluateAlertRules(); alertEvaluationMessage.value = `规则评估完成，本次状态发生变化 ${result.data.count} 条`; await loadAlerts(); } catch { ElMessage.error("告警评估失败，请稍后重试。"); } finally { actionLoading.value = false; } }
+async function toggleProvider(row: RuntimeProvider) { togglingProviderId.value = row.id; try { const result = await runtimeOperationsApi.setProviderEnabled(row.id, row.enabled); Object.assign(row, result.data); ElMessage.success(row.enabled ? "Provider 已启用" : "Provider 已停用"); } catch { row.enabled = !row.enabled; ElMessage.error("Provider 状态更新失败，请稍后重试。"); } finally { togglingProviderId.value = ""; } }
+async function probeProvider(row: RuntimeProvider) { probingProviderId.value = row.id; try { const result = await runtimeOperationsApi.probeProviderHealth(row.id); row.status = result.data.status; row.last_checked_at = new Date().toISOString(); providerMessage.value = result.data.error ? `Provider ${row.name} 探测失败，请检查 Provider 配置。` : `Provider ${row.name} 探测完成：${result.data.status}${result.data.latency_ms == null ? "" : `，${result.data.latency_ms} ms`}`; } catch { ElMessage.error("Provider 健康探测失败，请稍后重试。"); } finally { probingProviderId.value = ""; } }
+async function toggleRule(row: RuntimeAlertRule) { togglingRuleId.value = row.id; try { const result = await runtimeOperationsApi.setAlertRuleEnabled(row.id, row.enabled); Object.assign(row, result.data); ElMessage.success(row.enabled ? "告警规则已启用" : "告警规则已停用"); } catch { row.enabled = !row.enabled; ElMessage.error("告警规则状态更新失败，请稍后重试。"); } finally { togglingRuleId.value = ""; } }
+async function snapshotMetrics() { try { const result = await runtimeOperationsApi.createMetricsSnapshot(); ElMessage.success(`已写入 ${result.data.samples_written} 条指标样本`); await loadMetrics(); } catch { ElMessage.error("指标采样失败，请稍后重试。"); } }
+async function replay(deliveryId: string) { try { await ElMessageBox.confirm("重新投递会将 Delivery 重新进入后端队列，不会由浏览器直接请求目标地址。", "确认重新投递", { type: "warning" }); replayingId.value = deliveryId; const result = await runtimeOperationsApi.replayDeadLetters([deliveryId]); if (result.data.rejected.length) throw new Error(result.data.rejected[0].reason); ElMessage.success("Delivery 已重新进入投递队列"); await loadDeadLetters(); } catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error("重新投递失败，请稍后重试。"); } finally { replayingId.value = ""; } }
 onMounted(loadAll);
 </script>
 
 <style scoped>
-.operations-console{padding:24px}.toolbar{display:flex;justify-content:space-between;gap:20px;margin-bottom:18px}.toolbar strong,.toolbar span{display:block}.toolbar span{margin-top:5px;color:#667085;font-size:12px}.toolbar-actions{display:flex;gap:10px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.metric-card{padding:16px;border:1px solid #eaecf0;border-radius:10px}.metric-card span,.metric-card small,.muted{display:block;color:#667085;font-size:11px}.metric-card strong{display:block;margin:6px 0;font-size:24px;color:#101828}.metric-card.danger{border-color:#fecdca}.slo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}.card-title,.slo-row,.status-row{display:flex;justify-content:space-between;align-items:center}.slo-row,.status-row{margin:10px 0}.slo-row span,.status-row span{color:#667085;font-size:12px}.tab-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.tab-toolbar strong,.tab-toolbar span{display:block}.tab-toolbar span{margin-top:4px;color:#667085;font-size:12px}.inline-alert{margin:10px 0}.recent-card{margin-top:14px}
-@media(max-width:900px){.operations-console{padding:14px}.toolbar,.tab-toolbar{align-items:flex-start;flex-direction:column}.metric-grid,.slo-grid{grid-template-columns:1fr}.toolbar-actions{width:100%}.toolbar-actions :deep(.el-select){flex:1}}
+.operations-console{padding:24px}.toolbar{display:flex;justify-content:space-between;gap:20px;margin-bottom:18px}.toolbar strong,.toolbar span{display:block}.toolbar span{margin-top:5px;color:#667085;font-size:12px}.toolbar-actions{display:flex;gap:10px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.metric-card{padding:16px;border:1px solid #eaecf0;border-radius:10px}.metric-card span,.metric-card small,.muted{display:block;color:#667085;font-size:11px}.metric-card strong{display:block;margin:6px 0;font-size:24px;color:#101828}.metric-card.danger{border-color:#fecdca}.slo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}.card-title,.slo-row,.status-row{display:flex;justify-content:space-between;align-items:center}.slo-row,.status-row{margin:10px 0}.slo-row span,.status-row span{color:#667085;font-size:12px}.tab-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.tab-toolbar strong,.tab-toolbar span{display:block}.tab-toolbar span{margin-top:4px;color:#667085;font-size:12px}.audit-filters{margin-bottom:14px}.inline-alert{margin:10px 0}.recent-card{margin-top:14px}
+@media(max-width:900px){.operations-console{padding:14px}.toolbar,.tab-toolbar{align-items:flex-start;flex-direction:column}.metric-grid,.slo-grid{grid-template-columns:1fr}.toolbar-actions{width:100%}.toolbar-actions :deep(.el-select){flex:1}.audit-filters :deep(.el-form-item){margin-right:0;width:100%}.audit-filters :deep(.el-input),.audit-filters :deep(.el-select){width:100%!important}}
 </style>

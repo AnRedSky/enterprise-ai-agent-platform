@@ -9,7 +9,7 @@
 - 展示 Execution / Workflow / Trigger / Worker / Scheduler 的后端真实事实；
 - Vitest 覆盖 Contract 请求参数、核心运行态势、既有 2.10-I 运维能力回归。
 
-前端开发准则要求 Backend Contract → API Types → View / Component → Vitest，并禁止前端复制后端生命周期状态机或推断业务关系。fileciteturn242file0
+前端开发准则要求 Backend Contract → API Types → View / Component → Vitest，并禁止前端复制后端生命周期状态机或推断业务关系。
 
 ## 2. Backend Contract 对齐
 
@@ -96,3 +96,53 @@ npm run test:gate
 
 - 当前首屏不提供 Global Contract 的高级过滤表单；API Types 已完整支持，后续可在不改变 Contract 的情况下增加诊断筛选交互。
 - Worker / Scheduler liveness 保持 `unknown`，这是后端 Contract 的事实，不由前端补充心跳推断。
+
+## 8. Phase 2.10-II / II-06 Runtime Audit Query 前端实现
+
+后端已在 `GET /api/v1/runtime/operations/audit/query` 提供 tenant-scoped 分页审计查询 Contract。前端在不新增事实源的前提下，将既有 Operations Console 的 Audit Tab 从简单 `limit` 查询升级为正式分页查询。
+
+### 8.1 Contract 对齐
+
+支持参数：
+
+- `page`：从 1 开始；
+- `page_size`：1~100，默认 50；
+- `action`：动作精确过滤；
+- `resource_type`：资源类型精确过滤；
+- `resource_id`：资源标识精确过滤；
+- `outcome`：结果精确过滤；
+- `since` / `until`：时间窗口。
+
+前端 API client 新增 `runtimeOperationsApi.auditQuery()` 与 `RuntimeAuditQuery / RuntimeAuditQueryResponse`，不接受 `tenant_id`，tenant boundary 继续由后端认证 Claims 决定。
+
+### 8.2 UI 实现
+
+Audit Tab 提供：
+
+- 动作、资源类型、资源标识、结果筛选；
+- 开始/结束时间筛选；
+- 查询与重置；
+- 分页、每页数量切换；
+- 空数据、加载和失败恢复反馈；
+- 结果表展示 action、resource_type、resource_id、outcome、actor_id、created_at。
+
+页面不展示 Secret、Token 或原始 Provider 错误，不复制后端审计状态机。
+
+### 8.3 测试
+
+`frontend/tests/views/OperationsConsole.test.ts` 新增审计 Contract 回归：
+
+- 首次加载发送 `page=1/page_size=20` 以及空过滤条件；
+- 正确渲染资源类型、资源标识和结果；
+- 验证分页查询入口已经替换旧的无限制 `limit` 审计读取。
+
+本地验收仍必须执行：
+
+```text
+npm test -- tests/views/OperationsConsole.test.ts
+npm test
+npm run build
+npm run test:gate
+```
+
+实际命令未执行前不得记录为通过；Real API / Browser E2E 仅在本地已有后端服务并满足测试数据自动生成约束时执行。

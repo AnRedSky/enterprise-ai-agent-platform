@@ -80,6 +80,22 @@ export type RuntimeAlertRule = {
 export type RuntimeAlert = Record<string, unknown> & { id?: string; name?: string; status?: string; severity?: string; fired_at?: string; recovered_at?: string | null };
 export type RuntimeMetricSample = Record<string, unknown> & { timestamp?: string; value?: number; metric_name?: string; dimension_key?: string | null; dimension_value?: string | null };
 export type RuntimeAudit = Record<string, unknown> & { id?: string; action?: string; status?: string; actor_id?: string; created_at?: string };
+export type RuntimeAuditQuery = {
+  page?: number;
+  page_size?: number;
+  action?: string;
+  resource_type?: string;
+  resource_id?: string;
+  outcome?: string;
+  since?: string;
+  until?: string;
+};
+export type RuntimeAuditQueryResponse = {
+  items: RuntimeAudit[];
+  page: number;
+  page_size: number;
+  total: number;
+};
 export type RuntimeDeadLetter = Record<string, unknown> & { id: string; integration_event_id: string; attempt_count: number; response_status_code?: number | null; last_error_code?: string | null; last_error_message?: string | null; updated_at: string };
 
 export type GlobalRuntimeExecution = {
@@ -126,6 +142,7 @@ export const runtimeOperationsApi = {
     return request.get<{ items: RuntimeMetricSample[]; metric_name: string; window_minutes: number }>("/runtime/operations/metrics/series", { params: { metric_name: metricName, window_minutes: windowMinutes, dimension_key: dimensionKey, dimension_value: dimensionValue } });
   },
   audit(limit = 100) { return request.get<ListResponse<RuntimeAudit>>("/runtime/operations/audit", { params: { limit } }); },
+  auditQuery(query: RuntimeAuditQuery = {}) { return request.get<RuntimeAuditQueryResponse>("/runtime/operations/audit/query", { params: query }); },
   deadLetters(page: number, pageSize: number) { return request.get<{ items: RuntimeDeadLetter[]; page: number; page_size: number; total: number }>("/runtime/operations/dead-letters", { params: { page, page_size: pageSize } }); },
   replayDeadLetters(deliveryIds: string[]) { return request.post<{ replayed: string[]; rejected: Array<{ delivery_id: string; reason: string }> }>("/runtime/operations/dead-letters/replay", { delivery_ids: deliveryIds }); },
 };
