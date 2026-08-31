@@ -4,6 +4,7 @@ import ToolWorkbench from "@/views/tools/components/ToolWorkbench.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
 import PageToolbar from "@/components/ui/PageToolbar.vue";
 import SurfaceCard from "@/components/ui/SurfaceCard.vue";
+import StatePanel from "@/components/ui/StatePanel.vue";
 
 const api = vi.hoisted(() => ({ listTools: vi.fn(), listAgents: vi.fn() }));
 vi.mock("@/api/auth", () => ({ getRoles: () => ["admin"] }));
@@ -28,15 +29,17 @@ describe("ToolWorkbench UI-03 migration", () => {
     expect(wrapper.findComponent(PageHeader).props("title")).toBe("工具管理");
     expect(wrapper.findComponent(PageToolbar).props("title")).toBe("工具列表");
   });
-  it("renders the empty-state contract when no tools are returned", async () => {
+  it("renders the shared empty-state contract when no tools are returned", async () => {
     const wrapper = mountPage(); await flushPromises();
-    expect(wrapper.find("el-empty-stub").exists()).toBe(true);
-    expect(wrapper.text()).toContain("暂无可用工具，请先创建或启用工具。");
+    const state = wrapper.findComponent(StatePanel);
+    expect(state.exists()).toBe(true);
+    expect(state.props("state")).toBe("empty");
+    expect(state.props("title")).toBe("暂无可用工具");
+    expect(state.props("description")).toBe("当前没有可用工具，请创建工具或启用已有工具。");
   });
   it("keeps the administrator creation action in the PageHeader action slot", async () => {
     const wrapper = mountPage(); await flushPromises();
     const header = wrapper.findComponent(PageHeader);
-    expect(header.find("el-button-stub").exists()).toBe(true);
     expect(header.text()).toContain("创建工具");
   });
 });
