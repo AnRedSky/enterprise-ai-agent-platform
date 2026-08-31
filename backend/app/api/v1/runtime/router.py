@@ -1,8 +1,8 @@
 """Runtime 查询 API 路由模块。
 
-模块职责：提供执行记录、事件时间线、Workflow Trace、审计日志与 Durable Integration Event 运维查询接口。
-边界：仅负责协议参数、身份与租户上下文适配；查询业务规则统一由 RuntimeQueryService / WorkflowExecutionService 承担。
-关键依赖：FastAPI、SQLAlchemy AsyncSession，以及 canonical `app.dependencies.db.get_db` 数据库依赖。
+模块职责：提供执行记录、事件时间线、Workflow Trace、审计日志、Durable Integration Event 与 Runtime Diagnostics 运维查询接口。
+边界：仅负责协议参数、身份与租户上下文适配；查询业务规则统一由领域 Service 承担。
+关键依赖：FastAPI、SQLAlchemy AsyncSession，以及 Runtime Query / Operations / Diagnostics Service。
 """
 
 from datetime import datetime, UTC
@@ -30,6 +30,7 @@ from app.schemas.runtime import (
 )
 from app.services.runtime_query import RuntimeQueryService
 from app.services.workflow import WorkflowExecutionService
+from app.api.v1.runtime.diagnostics import router as diagnostics_router
 from app.api.v1.runtime.global_operations import router as global_operations_router
 from app.api.v1.runtime.operations import router as operations_router
 
@@ -202,3 +203,4 @@ async def integration_event_delivery_audits(
 
 router.include_router(operations_router)
 router.include_router(global_operations_router)
+router.include_router(diagnostics_router)
