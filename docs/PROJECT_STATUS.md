@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**II-07 Runtime Audit Query 运维主体过滤、主体 + 动作组合过滤、动作 + 结果组合过滤与查询契约硬化**。
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化**。
+- 当前任务：**II-07 Runtime Audit Query 运维主体过滤、主体 + 动作组合过滤、动作 + 结果组合过滤与查询契约硬化后的跨层 Contract 收口**。
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -54,14 +54,23 @@
 - `21_runtime_audit_action_outcome_hardening_gate.ps1` 已完成对应 Gate；
 - 开发者反馈中的 actor OpenAPI `maxLength` 缺口已在远端 `main` 修复，并通过 `Query(min_length=1, max_length=128)` 暴露到 OpenAPI。
 
-### 第四切片：审计查询响应契约与复合过滤边界硬化 — 已实现，等待开发者本地验收
+### 第四切片：审计查询响应契约与复合过滤边界硬化 — 已完成本地 Backend 验收
 
 - 新增 `RuntimeOperationAuditItem` 与 `RuntimeOperationAuditQueryResponse`，避免 ORM 模型直接成为公共 API 响应契约；
 - `GET /api/v1/runtime/operations/audit/query` 显式声明 `response_model`，OpenAPI 对响应字段和字段长度形成稳定契约；
 - API Contract 新增响应 schema 与全部 operational filter 长度边界断言；
 - Real PostgreSQL Acceptance 新增 `resource_type + resource_id` 组合过滤、分页稳定性、第二页边界以及 `since > until` 拒绝测试；
-- 新增 `22_runtime_audit_query_contract_hardening_gate.ps1`，自动执行 migration/head、Unit/API Contract 与 Real PostgreSQL Acceptance；
-- Gate 明确禁止自动启动或停止 API/Scheduler/Worker/PostgreSQL/Redis，测试身份和业务事实全部自动生成。
+- `22_runtime_audit_query_contract_hardening_gate.ps1` 已完成开发者本地验证：migration/head、Unit/API Contract、Real PostgreSQL Acceptance 均通过；Gate 未创建、启动、重启或停止任何服务。
+- Backend targeted lifecycle API：`2 passed`；Backend 完整回归：`1016 passed, 3 skipped, 73 deselected`。
+
+### 第五切片：前端 Runtime Audit Contract 漂移收口 — 已实现，等待开发者本地 Frontend 验收
+
+- 发现 Backend 正式响应字段为 `actor`，而 Operations Console 仍使用历史 `actor_id`；
+- 前端 `RuntimeAudit` 类型已按 Backend Contract 收紧为 `tenant_id / actor / action / resource_type / resource_id / outcome / details / created_at`；
+- Audit Tab 增加 actor 精确过滤，并继续禁止前端传递 `tenant_id`；
+- Audit 表格改为展示正式 `actor` 字段；
+- Vitest fixture 与 Contract 断言改为正式 Backend 字段，防止 `actor` / `actor_id` 再次漂移；
+- 相关工程错误已记录至 `docs/04-errors/`。
 
 ## 4. Backend 验收规则
 
@@ -84,8 +93,9 @@ Frontend 页面回归、Frontend Build、Browser E2E 不作为 Backend 主线开
 ## 5. 下一执行顺序
 
 ```text
-① 开发者本地执行 22_runtime_audit_query_contract_hardening_gate.ps1
-② 执行 Backend targeted regression
-③ 若真实验收通过，继续扫描 II-07 的剩余审计查询缺口
-④ 保持 Backend-first，暂不转入 Frontend 回归
+① 开发者本地执行 Frontend Runtime Audit targeted regression
+② 执行 Frontend full regression + production build + test:gate
+③ 若 Frontend 验收通过，继续扫描 II-07 剩余 Runtime Audit Query 缺口
+④ Backend-first 继续推进下一项可形成真实业务能力的 Operator Governance / Audit 能力
+⑤ 前端页面回归与 Browser E2E 在对应 Backend Contract 稳定后独立执行
 ```

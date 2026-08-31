@@ -124,7 +124,8 @@ Audit Tab 提供：
 - 查询与重置；
 - 分页、每页数量切换；
 - 空数据、加载和失败恢复反馈；
-- 结果表展示 action、resource_type、resource_id、outcome、actor_id、created_at。
+- 结果表展示 action、resource_type、resource_id、outcome、actor、created_at；
+- 操作主体精确过滤与 `actor` 字段展示与 Backend II-07 Contract 保持一致。
 
 页面不展示 Secret、Token 或原始 Provider 错误，不复制后端审计状态机。
 
@@ -133,8 +134,18 @@ Audit Tab 提供：
 `frontend/tests/views/OperationsConsole.test.ts` 新增审计 Contract 回归：
 
 - 首次加载发送 `page=1/page_size=20` 以及空过滤条件；
-- 正确渲染资源类型、资源标识和结果；
+- 正确渲染资源类型、资源标识、结果和操作主体；
+- 验证 actor/action/resource 查询参数入口；
 - 验证分页查询入口已经替换旧的无限制 `limit` 审计读取。
+
+### 8.4 Contract 漂移修复
+
+Backend II-07 响应契约将审计主体正式字段定义为 `actor`。此前前端仍使用历史 `actor_id`，造成类型、fixture 与表格字段漂移。该问题已通过以下方式修复：
+
+- API Type 使用正式 `RuntimeAudit` 字段：`tenant_id`、`actor`、`action`、`resource_type`、`resource_id`、`outcome`、`details`、`created_at`；
+- Audit Query 参数增加 `actor`，不增加 `tenant_id`；
+- View 使用 `actor` 展示操作主体；
+- Vitest fixture 与断言全部改为正式 Backend Contract。
 
 本地验收仍必须执行：
 

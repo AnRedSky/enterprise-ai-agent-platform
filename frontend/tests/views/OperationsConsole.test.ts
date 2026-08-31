@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.mocked(runtimeOperationsApi.alerts).mockResolvedValue({ data: { items: [{ id: "a1", name: "delivery failure", status: "firing", severity: "warning", fired_at: "2026-08-30T08:00:00Z", recovered_at: null }] } } as never);
   vi.mocked(runtimeOperationsApi.alertRules).mockResolvedValue({ data: { items: [{ id: "r1", name: "Delivery SLO", metric_name: "runtime.notification.delivery", operator: "<", threshold: 99, window_minutes: 15, severity: "warning", enabled: true }] } } as never);
   vi.mocked(runtimeOperationsApi.providers).mockResolvedValue({ data: { items: [{ id: "p1", name: "primary-webhook", provider_type: "webhook", enabled: true, status: "healthy", last_checked_at: "2026-08-30T08:00:00Z" }] } } as never);
-  vi.mocked(runtimeOperationsApi.auditQuery).mockResolvedValue({ data: { items: [{ id: "audit1", action: "provider.health.probe", resource_type: "provider", resource_id: "p1", outcome: "success", actor_id: "u1", created_at: "2026-08-30T08:00:00Z" }], page: 1, page_size: 20, total: 1 } } as never);
+  vi.mocked(runtimeOperationsApi.auditQuery).mockResolvedValue({ data: { items: [{ id: "audit1", tenant_id: "tenant-1", action: "provider.health.probe", resource_type: "provider", resource_id: "p1", outcome: "success", actor: "u1", details: {}, created_at: "2026-08-30T08:00:00Z" }], page: 1, page_size: 20, total: 1 } } as never);
   vi.mocked(runtimeOperationsApi.deadLetters).mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } } as never);
   vi.mocked(runtimeOperationsApi.metricSeries).mockResolvedValue({ data: { items: [], metric_name: "runtime.notification.delivery", window_minutes: 60 } } as never);
 });
@@ -58,12 +58,14 @@ describe("Runtime Operations Console", () => {
     expect(runtimeOperationsApi.alertRules).toHaveBeenCalled();
   });
 
-  it("queries the tenant-scoped audit contract with paging and filters", async () => {
+  it("queries the tenant-scoped audit contract with paging and actor/action/resource filters", async () => {
     const wrapper = mountConsole();
-    await vi.waitFor(() => expect(runtimeOperationsApi.auditQuery).toHaveBeenCalledWith({ page: 1, page_size: 20, action: undefined, resource_type: undefined, resource_id: undefined, outcome: undefined, since: undefined, until: undefined }));
+    await vi.waitFor(() => expect(runtimeOperationsApi.auditQuery).toHaveBeenCalledWith({ page: 1, page_size: 20, actor: undefined, action: undefined, resource_type: undefined, resource_id: undefined, outcome: undefined, since: undefined, until: undefined }));
+    expect(wrapper.text()).toContain("操作主体（可选）");
     expect(wrapper.text()).toContain("资源类型");
     expect(wrapper.text()).toContain("provider.health.probe");
     expect(wrapper.text()).toContain("success");
+    expect(wrapper.text()).toContain("u1");
     expect(wrapper.text()).toContain("1");
   });
 
