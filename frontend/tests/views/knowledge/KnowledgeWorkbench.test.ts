@@ -74,12 +74,12 @@ describe("KnowledgeWorkbench", () => {
     expect(wrapper.vm.results[0].citation).toBe("员工手册#chunk-0");
   });
 
-  it("检索问题为空时不调用接口并提示用户", async () => {
+  it("检索问题为空时不调用接口并记录用户提示", async () => {
     vi.mocked(api.listKnowledgeBases).mockResolvedValue({ items: [], total: 0, page: 1, page_size: 20 });
     const wrapper = mount(KnowledgeWorkbench, { global });
     await vi.waitFor(() => expect(api.listKnowledgeBases).toHaveBeenCalled());
     await wrapper.vm.search();
     expect(api.retrieveKnowledge).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain("请输入检索问题");
+    expect((wrapper.vm as any).retrievalError).toBe("请输入检索问题");
   });
 });
