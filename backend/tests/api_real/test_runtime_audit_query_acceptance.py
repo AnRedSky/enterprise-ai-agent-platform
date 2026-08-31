@@ -25,7 +25,7 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
     """验证租户 A 不能看到租户 B，并验证动作/资源/结果/时间窗口组合过滤。"""
     suffix = uuid4().hex[:12]
     tenant_a, tenant_b = uuid4(), uuid4()
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     audit_ids = [uuid4() for _ in range(7)]
 
     try:
@@ -126,6 +126,7 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
 
     finally:
         async with SessionLocal() as db:
+            # RuntimeOperationAudit 当前没有独立 FK 依赖，先删除审计事实。
             await db.execute(delete(RuntimeOperationAudit).where(RuntimeOperationAudit.id.in_(audit_ids)))
             await db.execute(delete(Tenant).where(Tenant.id.in_([tenant_a, tenant_b])))
             await db.commit()
