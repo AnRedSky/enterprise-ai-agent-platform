@@ -10,7 +10,7 @@
 执行原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。不进行全量页面批量重构，不新增 Backend Contract。
 
 ## UI-04
-状态：**进行中：公共状态体系已建立，并完成 Workflow、Runtime 概览、Audit Log 三个真实页面的渐进迁移。**
+状态：**进行中：公共状态体系已建立，并完成 Workflow、Runtime 概览、Audit Log、AgentWorkbench 四个真实页面的渐进迁移。**
 
 公共组件：`src/components/ui/StatePanel.vue`
 
@@ -20,19 +20,20 @@
 - Workflow 页面
 - RuntimeObservabilityOverview
 - AuditLogPanel
+- AgentWorkbench
 
-本轮 Audit Log：
-- `views/audit-log/components/AuditLogPanel.vue`
-- `tests/views/AuditLogUI04.test.ts`
-- `docs/01-design/UI_04_AUDIT_LOG_MIGRATION.md`
+本轮 AgentWorkbench：
+- `views/agents/components/AgentWorkbench.vue`
+- `tests/views/AgentUI04.test.ts`
+- `docs/01-design/UI_04_AGENT_MIGRATION.md`
 
 状态规则：
 - Loading 与 Empty 严格区分；
 - Error 与 HTTP 403 Permission 分离；
 - Error 提供 Retry；
 - Success 表达服务端同步完成，不替代真实数据；
-- 保留 Runtime Execution 深链、分页和状态筛选；
-- 页面级状态使用 StatePanel，表格刷新继续使用 v-loading。
+- Chat streaming / completed / failed / cancelled 保留为领域状态，不被页面 StatePanel 粗暴替换；
+- 页面级状态使用 StatePanel，局部控件继续使用按钮 loading 等交互反馈。
 
 ## 固定执行流程
 
@@ -50,7 +51,7 @@
 
 ```powershell
 cd frontend
-npm test -- tests/views/AuditLogUI04.test.ts
+npm test -- tests/views/AgentUI04.test.ts
 npm test -- tests/components/StatePanel.test.ts
 npm run build
 npm run test:gate
