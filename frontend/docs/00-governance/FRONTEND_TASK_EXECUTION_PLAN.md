@@ -10,17 +10,17 @@
 执行原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。不进行全量页面批量重构，不新增 Backend Contract。
 
 ## UI-04
-状态：**进行中：公共状态体系已建立，并完成 Workflow、Runtime 概览、Audit Log、AgentWorkbench、Dashboard、KnowledgeWorkbench 六个真实页面的渐进迁移。**
+状态：**进行中：公共状态体系已建立，并完成 Workflow、Runtime 概览、Audit Log、AgentWorkbench、Dashboard、KnowledgeWorkbench、ToolWorkbench 七个真实页面的渐进迁移。**
 
 公共组件：`src/components/ui/StatePanel.vue`
 
 标准状态：Loading / Empty / Error / Permission / Success。
 
-已迁移：Workflow、RuntimeObservabilityOverview、AuditLogPanel、AgentWorkbench、DashboardOverview、KnowledgeWorkbench。
+已迁移：Workflow、RuntimeObservabilityOverview、AuditLogPanel、AgentWorkbench、DashboardOverview、KnowledgeWorkbench、ToolWorkbench。
 
-本轮 KnowledgeWorkbench：`views/knowledge/components/KnowledgeWorkbench.vue`、`tests/views/KnowledgeUI04.test.ts`、`docs/01-design/UI_04_KNOWLEDGE_MIGRATION.md`。
+本轮 ToolWorkbench：`views/tools/components/ToolWorkbench.vue`、`tests/views/ToolUI04.test.ts`、`docs/01-design/UI_04_TOOL_MIGRATION.md`。
 
-状态规则：Loading 与 Empty 严格区分；Error 与 HTTP 403 Permission 分离；Error 提供 Retry；Success 表达服务端同步完成，不替代真实数据；局部控件继续使用按钮 loading / table loading 等交互反馈。
+状态规则：Loading 与 Empty 严格区分；Error 与 HTTP 403 Permission 分离；Error 提供 Retry；Success 表达首屏服务端数据同步完成，不替代真实数据；局部控件继续使用按钮 loading / table loading 等交互反馈。
 
 ## 固定执行流程
 
@@ -38,8 +38,11 @@
 
 ```powershell
 cd frontend
+npm test -- tests/views/ToolUI04.test.ts
+npm test -- tests/views/DashboardUI04.test.ts
 npm test -- tests/views/KnowledgeUI04.test.ts
 npm test -- tests/components/StatePanel.test.ts
+npm test
 npm run build
 npm run test:gate
 npm run test:final
@@ -49,4 +52,4 @@ npm run test:final
 
 ## 后续优先级
 
-UI-04 下一步继续完成 ToolWorkbench 状态补齐；随后执行 UI-04 核心页面 Regression。Regression 通过后进入 UI-05 Form / Dialog / Drawer / Confirm 统一。仍坚持一次只迁移一个核心页面。
+UI-04 已完成核心页面状态迁移，下一步执行 UI-04 核心页面 Regression，重点检查跨页面状态组件一致性、403 映射、Retry 和未知状态边界；Regression 通过后进入 UI-05 Form / Dialog / Drawer / Confirm 统一。仍坚持一次只迁移一个核心页面。

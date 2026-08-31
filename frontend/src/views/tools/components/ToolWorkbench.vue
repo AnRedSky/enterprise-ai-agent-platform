@@ -9,43 +9,44 @@
       </template>
     </PageHeader>
 
-    <el-alert
-      v-if="error"
-      :title="error"
-      type="error"
-      show-icon
-      closable
-      @close="error = ''"
+    <StatePanel
+      v-if="pageState !== 'success'"
+      :state="pageState"
+      :title="stateTitle"
+      :description="stateDescription"
+      :action-label="pageState === 'error' ? '重试' : pageState === 'empty' ? '创建工具' : undefined"
+      @action="pageState === 'empty' ? (createVisible = true) : load"
     />
 
-    <PageToolbar title="工具列表" description="按启用状态和工具能力查看当前可用工具。">
-      <span class="toolbar-count">共 {{ tools.length }} 个工具</span>
-    </PageToolbar>
+    <template v-else>
+      <PageToolbar title="工具列表" description="按启用状态和工具能力查看当前可用工具。">
+        <span class="toolbar-count">共 {{ tools.length }} 个工具</span>
+      </PageToolbar>
 
-    <SurfaceCard>
-      <el-table v-loading="loading" :data="tools" border class="table">
-        <el-table-column prop="name" label="名称" min-width="180" />
-        <el-table-column prop="description" label="描述" min-width="220" />
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag :type="row.enabled ? 'success' : 'info'">
-              {{ row.enabled ? "启用" : "停用" }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="420">
-          <template #default="{ row }">
-            <el-button v-if="isAdmin" link type="primary" @click="toggle(row as Tool)">
-              {{ row.enabled ? "停用" : "启用" }}
-            </el-button>
-            <el-button link type="primary" @click="openExecute(row as Tool)">执行</el-button>
-            <el-button v-if="isAdmin" link type="primary" @click="openBind(row as Tool, 'bind')">绑定智能体</el-button>
-            <el-button v-if="isAdmin" link type="danger" @click="openBind(row as Tool, 'unbind')">解绑智能体</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!loading && !tools.length" description="暂无可用工具，请先创建或启用工具。" />
-    </SurfaceCard>
+      <SurfaceCard>
+        <el-table v-loading="loading" :data="tools" border class="table">
+          <el-table-column prop="name" label="名称" min-width="180" />
+          <el-table-column prop="description" label="描述" min-width="220" />
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag :type="row.enabled ? 'success' : 'info'">
+                {{ row.enabled ? "启用" : "停用" }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" min-width="420">
+            <template #default="{ row }">
+              <el-button v-if="isAdmin" link type="primary" @click="toggle(row as Tool)">
+                {{ row.enabled ? "停用" : "启用" }}
+              </el-button>
+              <el-button link type="primary" @click="openExecute(row as Tool)">执行</el-button>
+              <el-button v-if="isAdmin" link type="primary" @click="openBind(row as Tool, 'bind')">绑定智能体</el-button>
+              <el-button v-if="isAdmin" link type="danger" @click="openBind(row as Tool, 'unbind')">解绑智能体</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </SurfaceCard>
+    </template>
 
     <el-dialog v-model="createVisible" title="创建工具" width="620px">
       <el-form label-width="110px">
@@ -109,6 +110,7 @@ import { ElMessage } from "element-plus";
 import PageHeader from "@/components/ui/PageHeader.vue";
 import PageToolbar from "@/components/ui/PageToolbar.vue";
 import SurfaceCard from "@/components/ui/SurfaceCard.vue";
+import StatePanel from "@/components/ui/StatePanel.vue";
 import { getRoles } from "@/api/auth";
 import { listAgents, type Agent } from "@/api/agents";
 import {
@@ -125,20 +127,33 @@ import { getToolUserError } from "@/utils/toolError";
 
 type BindingAction = "bind" | "unbind";
 const tools = ref<Tool[]>([]), agents = ref<Agent[]>([]), loading = ref(false), saving = ref(false), executing = ref(false), error = ref("");
+const permissionDenied = ref(false);
 const createVisible = ref(false), bindVisible = ref(false), executeVisible = ref(false);
 const selectedTool = ref<Tool | null>(null), selectedAgent = ref(""), bindingAction = ref<BindingAction>("bind");
 const argumentsText = ref("{}\n"), executionResult = ref("");
 const createForm = ref({ name: "", description: "", endpoint: "", input_schema: "{}" });
 const isAdmin = computed(() => getRoles().includes("admin"));
 
+const pageState = computed(() => permissionDenied.value ? "permission" : error.value ? "error" : loading.value ? "loading" : tools.value.length === 0 ? "empty" : "success");
+const stateTitle = computed(() => {
+  const titles: Record<string, string> = { loading: "正在加载工具", empty: "暂无可用工具", permission: "无权查看工具", error: "工具加载失败" };
+  return titles[pageState.value] ?? "工具";
+});
+const stateDescription = computed(() => {
+  const descriptions: Record<string, string> = { loading: "正在同步工具与智能体数据。", empty: "当前没有可用工具，请创建工具或启用已有工具。", permission: "当前账号没有工具访问权限，请联系管理员。", error: "无法同步工具与智能体数据，请检查服务状态后重试。" };
+  return descriptions[pageState.value] ?? "";
+});
+
 async function load() {
   loading.value = true;
   error.value = "";
+  permissionDenied.value = false;
   try {
     [tools.value, agents.value] = await Promise.all([listTools(), listAgents()]);
-  } catch (e) {
+  } catch (e: any) {
     console.error(e);
-    error.value = getToolUserError(e, "工具数据加载失败，请稍后重试");
+    permissionDenied.value = e?.response?.status === 403;
+    error.value = permissionDenied.value ? "" : getToolUserError(e, "工具数据加载失败，请稍后重试");
   } finally {
     loading.value = false;
   }
