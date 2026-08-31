@@ -8,7 +8,7 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；II-03 Worker / Scheduler Diagnostics Backend 第一切片已实现，进入本地验证。**
+**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；II-03 Worker / Scheduler Diagnostics Backend 与 Frontend 第一切片已实现；II-04 Audit / Trace Correlation Backend 第一切片已实现，进入本地验证。**
 
 Phase 2.10-I 已根据本地实际 Real Gate 反馈完成 Runtime Notification Lifecycle 收口。II-01 已通过本地 Alembic、Unit/API Contract、Real PostgreSQL Acceptance 与完整 Backend Regression。II-02 已通过开发者本地反馈的 Global Runtime Operations Unit / Real Gate 与完整 Backend Regression。
 
@@ -75,7 +75,7 @@ Runtime Operations UI / Diagnostics
 4. Trigger 生命周期继续由 `WorkflowTriggerService` 管理。
 5. Worker posture 只读取 Durable Frontier claim facts。
 6. 当前没有 scheduler/worker heartbeat durable contract 时，必须报告 `unknown`，不得把“有数据活动”解释为服务存活。
-7. Agent correlation 只复用现有 `WorkflowVersion.definition.agent_id`，不新增第二套 Agent 关联事实。
+7. Agent correlation 只复用 `WorkflowVersion.definition.agent_id`，不新增第二套 Agent 关联事实。
 8. Frontend 只消费 Backend Contract，不在页面复制状态聚合、tenant scope 或生命周期规则。
 
 ### 4.3 当前验证状态
@@ -112,13 +112,42 @@ II-02 Backend 已由开发者本地反馈确认通过；Frontend targeted Unit /
 
 **代码已提交，尚未宣称 Acceptance Passed。** 必须先执行本地 Unit Gate，再补充 tenant boundary 的 Real PostgreSQL / HTTP Acceptance；随后才能进入 II-03 Frontend Diagnostics 与完整联调。
 
-## 6. 后续切片
+## 6. 第四切片：II-04 Audit / Trace Correlation
 
-### II-04 Audit / Trace Correlation
+### 6.1 Backend 第一切片
 
-- Execution → Trace → Audit 双向关联；
-- Operator Action → Audit → Execution 关联；
-- 稳定分页、筛选和深链。
+新增 `RuntimeAuditTraceCorrelationService`，只读复用现有 Workflow Execution、Workflow Trace、AuditLog 与 Operator Action 幂等事实，不新增第二套审计或 Trace 存储。
+
+提供四条 tenant-scoped 深链：
+
+- `GET /api/v1/runtime/correlations/executions/{execution_id}`：Execution → Trace / Audit / Operator Action；
+- `GET /api/v1/runtime/correlations/traces/{trace_id}`：Trace → Execution / Audit / Operator Action；
+- `GET /api/v1/runtime/correlations/audits/{audit_id}`：Audit → Execution / Trace / Operator Action；
+- `GET /api/v1/runtime/correlations/operator-actions/{operator_action_id}`：Operator Action → Execution / Audit / Trace。
+
+关联边界：
+
+1. Tenant scope 只来自认证 Claims，客户端不能传入 `tenant_id`。
+2. Execution、Trace、Audit 与 Operator Action 均只读查询，不修改任何 Durable Fact。
+3. Operator Action 直接复用 `OperatorActionIdempotency`，通过 `resource_id` / `result_resource_id` 与 Workflow Execution 关联。
+4. Audit 继续复用现有 `AuditLog.workflow_execution_id`；Trace 继续复用现有 `WorkflowTraceEvent.execution_id` / `trace_id`。
+5. Trace / Audit 集合使用 `created_at + id` 稳定排序，并分别提供独立分页参数，避免深链页面出现不稳定分页。
+6. 跨租户资源统一表现为不存在，阻止通过深链探测其他租户事实。
+
+### 6.2 测试与 Gate
+
+- `tests/unit/test_runtime_audit_trace_correlation.py` 覆盖分页边界、正向关联和反向深链；
+- `tests/api_contract/test_runtime_audit_trace_correlation_contract.py` 覆盖四条 GET-only Contract；
+- `tests/api_real/test_runtime_audit_trace_correlation_acceptance.py` 覆盖 Execution / Trace / Audit / Operator Action 的 tenant isolation 与双向关联；
+- `scripts/test/phase-2.10/10_audit_trace_correlation_unit_gate.ps1`；
+- `scripts/test/phase-2.10/11_audit_trace_correlation_real_gate.ps1`；
+- 两个 Gate 均禁止自动启动、重启或停止 API、Scheduler、Worker、PostgreSQL、Redis；Acceptance 数据自动生成和清理。
+
+### 6.3 当前验证状态
+
+**Backend 第一切片代码已形成，尚未宣称本地 Gate / Acceptance Passed。** 开发者本地执行必须依次完成 Unit / Contract、Real PostgreSQL Acceptance 与 Backend Regression；通过后再进入 II-04 Frontend Correlation UI 与 Browser E2E。
+
+## 7. 后续切片
 
 ### II-05 Controlled Batch Operations
 
@@ -126,7 +155,7 @@ II-02 Backend 已由开发者本地反馈确认通过；Frontend targeted Unit /
 - 权限、确认、幂等、部分失败结果和审计；
 - 禁止前端复制批量业务规则。
 
-## 7. 完成判定
+## 8. 完成判定
 
 每个切片必须同时满足：
 
@@ -139,7 +168,7 @@ II-02 Backend 已由开发者本地反馈确认通过；Frontend targeted Unit /
 - 范围需要时执行 Browser E2E；
 - 测试 Gate 不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis，测试数据自动生成和清理。
 
-## 8. 开发顺序
+## 9. 开发顺序
 
 ```text
 Operator Action Contract
@@ -148,13 +177,15 @@ Global Runtime Operations Contract
         ↓
 Worker / Scheduler Diagnostics Contract
         ↓
+Audit / Trace Correlation Contract
+        ↓
 Backend Domain / API Contract
         ↓
 Unit + Integration + Real API
         ↓
 Frontend API Types
         ↓
-Operations UI / Diagnostics UI
+Operations UI / Diagnostics UI / Correlation UI
         ↓
 Frontend Regression / Build
         ↓

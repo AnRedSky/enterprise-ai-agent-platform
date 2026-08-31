@@ -30,6 +30,7 @@ from app.schemas.runtime import (
 )
 from app.services.runtime_query import RuntimeQueryService
 from app.services.workflow import WorkflowExecutionService
+from app.api.v1.runtime.correlations import router as correlations_router
 from app.api.v1.runtime.diagnostics import router as diagnostics_router
 from app.api.v1.runtime.global_operations import router as global_operations_router
 from app.api.v1.runtime.operations import router as operations_router
@@ -204,3 +205,4 @@ async def integration_event_delivery_audits(
 router.include_router(operations_router)
 router.include_router(global_operations_router)
 router.include_router(diagnostics_router)
+router.include_router(correlations_router)

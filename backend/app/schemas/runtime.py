@@ -244,3 +244,66 @@ class RuntimeSchedulerDiagnosticsResponse(BaseModel):
     liveness_reason_code: str
     durable: dict[str, int]
     triggers: list[RuntimeSchedulerTrigger]
+
+
+class RuntimeCorrelationExecution(BaseModel):
+    """Audit / Trace 关联视图中的 Workflow Execution 最小事实。"""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    workflow_id: UUID
+    workflow_version_id: UUID
+    created_by: UUID
+    retry_of_execution_id: UUID | None = None
+    resume_of_execution_id: UUID | None = None
+    status: str
+    current_node_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    ended_at: datetime | None = None
+    created_at: datetime
+
+
+class RuntimeOperatorActionItem(BaseModel):
+    """关联视图中的 Operator Action 幂等事实。"""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    actor_id: UUID
+    resource_type: str
+    resource_id: UUID
+    action: str
+    idempotency_key: str
+    status: str
+    result_resource_id: UUID | None = None
+    error_code: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RuntimeCorrelationPage(BaseModel):
+    """关联 Trace / Audit 集合的稳定分页元数据。"""
+
+    page: int
+    page_size: int
+    total: int
+
+
+class RuntimeCorrelationPageWithItems(RuntimeCorrelationPage):
+    """关联事件分页集合。"""
+
+    items: list[Any]
+
+
+class RuntimeCorrelationResponse(BaseModel):
+    """Execution、Trace、Audit 与 Operator Action 双向关联 Contract。"""
+
+    execution: RuntimeCorrelationExecution | None
+    traces: RuntimeCorrelationPageWithItems
+    audits: RuntimeCorrelationPageWithItems
+    operator_actions: list[RuntimeOperatorActionItem]
+    focus_audit_id: UUID | None = None
+    focus_operator_action_id: UUID | None = None
