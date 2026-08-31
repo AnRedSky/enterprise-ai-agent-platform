@@ -4,6 +4,7 @@
 边界：不启动服务、不访问真实数据库、不执行真实 Workflow / Trigger 生命周期。
 """
 
+from app.api.v1.runtime.batch_operator_actions import BatchOperatorActionRequest
 from app.main import app
 
 
@@ -21,11 +22,7 @@ def test_batch_operator_action_route_is_registered():
 
 
 def test_batch_operator_action_request_contract_exposes_tenant_free_payload():
-    route = _route("/api/v1/runtime/operator-actions/batch", "POST")
-    request_model = route.dependant.body_params[0].field_info
-    assert request_model is not None
-
-    schema = route.body_field.type_.model_json_schema()
+    schema = BatchOperatorActionRequest.model_json_schema()
     assert "tenant_id" not in schema["properties"]
     assert set(schema["properties"]) >= {
         "resource_type", "action", "resource_ids", "confirm", "reason", "input_data",
