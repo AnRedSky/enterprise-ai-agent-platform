@@ -3,12 +3,17 @@ import { flushPromises, mount } from "@vue/test-utils";
 import AgentWorkbench from "@/views/agents/components/AgentWorkbench.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
 
-const listAgents = vi.fn();
-const listVersions = vi.fn();
-const getPublishedVersion = vi.fn();
+const api = vi.hoisted(() => ({
+  listAgents: vi.fn(),
+  listVersions: vi.fn(),
+  getPublishedVersion: vi.fn(),
+}));
 vi.mock("@/api/agents", () => ({
-  listAgents, listVersions, getPublishedVersion,
-  createAgent: vi.fn(), createVersion: vi.fn(), publishAgent: vi.fn(), archiveAgent: vi.fn(),
+  ...api,
+  createAgent: vi.fn(),
+  createVersion: vi.fn(),
+  publishAgent: vi.fn(),
+  archiveAgent: vi.fn(),
 }));
 vi.mock("@/api/chat", () => ({ streamChat: vi.fn() }));
 vi.mock("element-plus", () => ({
@@ -29,7 +34,7 @@ describe("AgentWorkbench UI-04", () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
   it("uses shared loading state while agents are loading", async () => {
-    listAgents.mockReturnValueOnce(new Promise(() => {}));
+    api.listAgents.mockReturnValueOnce(new Promise(() => {}));
     const wrapper = mountView();
     expect(wrapper.findComponent(StatePanel).props("state")).toBe("loading");
   });
@@ -39,22 +44,22 @@ describe("AgentWorkbench UI-04", () => {
     ["error", new Error("network"), "智能体加载失败"],
     ["permission", { response: { status: 403 } }, "无权查看智能体"],
   ] as const)("renders %s agent list state", async (state, response, title) => {
-    listAgents.mockReturnValueOnce(state === "empty" ? Promise.resolve(response) : Promise.reject(response));
+    api.listAgents.mockReturnValueOnce(state === "empty" ? Promise.resolve(response) : Promise.reject(response));
     const wrapper = mountView(); await flushPromises();
     expect(wrapper.findComponent(StatePanel).props("state")).toBe(state);
     expect(wrapper.text()).toContain(title);
   });
 
   it("renders success state as the populated agent table", async () => {
-    listAgents.mockResolvedValueOnce([{ id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" }]);
+    api.listAgents.mockResolvedValueOnce([{ id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" }]);
     const wrapper = mountView(); await flushPromises();
     expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
     expect(wrapper.find(".table").exists()).toBe(true);
   });
 
   it("separates chat context permission from chat context error", async () => {
-    listAgents.mockResolvedValueOnce([{ id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" }]);
-    getPublishedVersion.mockRejectedValueOnce({ response: { status: 403 } });
+    api.listAgents.mockResolvedValueOnce([{ id: "a1", name: "Agent", model_id: "model", status: "published", version: "v1" }]);
+    api.getPublishedVersion.mockRejectedValueOnce({ response: { status: 403 } });
     const wrapper = mountView(); await flushPromises();
     const button = wrapper.findAll("button").find((node) => node.text() === "对话调试");
     expect(button).toBeDefined();
