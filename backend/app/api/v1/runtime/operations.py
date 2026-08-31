@@ -25,6 +25,31 @@ class RuntimeOperationsOverview(BaseModel):
     slo: dict
 
 
+class RuntimeOperationAuditItem(BaseModel):
+    """Runtime 运维审计查询的稳定 API 资源契约。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    actor: str = Field(max_length=128)
+    action: str = Field(max_length=80)
+    resource_type: str = Field(max_length=80)
+    resource_id: str | None = Field(default=None, max_length=128)
+    outcome: str = Field(max_length=24)
+    details: dict
+    created_at: datetime
+
+
+class RuntimeOperationAuditQueryResponse(BaseModel):
+    """分页审计查询响应，避免 ORM 模型直接成为公共 API 契约。"""
+
+    items: list[RuntimeOperationAuditItem]
+    page: int
+    page_size: int
+    total: int
+
+
 class DeadLetterItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -238,7 +263,7 @@ async def runtime_operation_audit(limit: int = Query(100, ge=1, le=1000), claims
     return {"items": await RuntimeOperationsEnterpriseService(db).audit_list(_tenant_id(claims), limit)}
 
 
-@router.get("/audit/query")
+@router.get("/audit/query", response_model=RuntimeOperationAuditQueryResponse)
 async def runtime_operation_audit_query(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100), action: str | None = Query(None, min_length=1, max_length=80), resource_type: str | None = Query(None, min_length=1, max_length=80), resource_id: str | None = Query(None, min_length=1, max_length=128), outcome: str | None = Query(None, min_length=1, max_length=24), actor: Annotated[str | None, Query(min_length=1, max_length=128)] = None, since: datetime | None = Query(None), until: datetime | None = Query(None), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
     """分页查询当前租户运维审计；所有过滤条件均叠加认证租户范围。"""
     try:
