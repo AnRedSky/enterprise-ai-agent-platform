@@ -6,7 +6,7 @@ import PageToolbar from "@/components/ui/PageToolbar.vue";
 import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
 import { createDocument, createKnowledgeBase, createVersion, deleteDocument, ingestVersion, listChunks, listDocuments, listKnowledgeBases, listVersions, retrieveKnowledge, type KnowledgeBase, type KnowledgeChunk, type KnowledgeDocument, type KnowledgeVersion, type RetrievalResult } from "@/api/knowledge";
-const loading = ref(false), error = ref(""), permissionDenied = ref(false);
+const loading = ref(true), error = ref(""), permissionDenied = ref(false);
 const bases = ref<KnowledgeBase[]>([]), documents = ref<KnowledgeDocument[]>([]), versions = ref<KnowledgeVersion[]>([]), chunks = ref<KnowledgeChunk[]>([]), results = ref<RetrievalResult[]>([]);
 const selectedResult = ref<RetrievalResult | null>(null), selectedBase = ref<KnowledgeBase | null>(null), selectedDocument = ref<KnowledgeDocument | null>(null), selectedVersion = ref<KnowledgeVersion | null>(null);
 const baseDialog = ref(false), docDialog = ref(false), versionDialog = ref(false), saving = ref(false), ingesting = ref(""), retrievalLoading = ref(false), retrievalError = ref("");
