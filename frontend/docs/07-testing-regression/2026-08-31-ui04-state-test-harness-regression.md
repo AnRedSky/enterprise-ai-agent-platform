@@ -2,64 +2,92 @@
 
 ## 1. 基线
 
-本轮开始前先将历史 `frontend` 分支快进同步到最新 `main`。`main` 最新提交为 `c7c1e53b155cb93559e035bee533d2ff293d757e`；其父提交即历史 `frontend` HEAD，因此不存在需要解决的代码冲突。
+本轮先确认 `main` 与 `frontend` 已同步：当前两者均指向 `02654f4d2b3f0c6cfc227eb3b31e0b38a38527bf`，无待合并差异。前端开发继续直接基于 `frontend` 历史分支状态推进，并遵循现行前端准则：Backend Contract → API Types → View / Component → Vitest → Real API / E2E；状态页面必须覆盖 Loading / Empty / Error / Success / Permission。fileciteturn117file0L2-L2
 
-本地反馈集中在 Dashboard / Knowledge / Tool 三个 UI-04 状态测试：
+用户本地回归反馈集中在 Dashboard / Knowledge / Tool，以及既有 UI-03 迁移测试：
 
-- Dashboard：Error 重试后未触发第二次请求；未知 Execution 状态断言为空。
-- Knowledge：Error 重试后未触发第二次请求。
-- Tool：Error 重试后未触发第二次请求，并持续出现 `Failed to resolve directive: loading` 警告。
-- `StatePanel.test.ts` 6/6 通过，说明公共状态组件本身的 action emit 契约正常。
+- Dashboard：空数据时 UI-03 仍要求核心工作区可见；Error 文案不完整；未知 Execution 状态因页面被 Empty 状态短路而无法出现在 DOM。
+- Knowledge / Tool：用户反馈的 UI-04 重试失败与当前远端代码已有的显式 `StatePanel` action 连接存在时间差；当前 `KnowledgeWorkbench` 已通过 `handleStateAction → loadBases` 处理 Error 重试，Tool 已通过 `handleStateAction → load` 处理 Error 重试。
+- Knowledge UI-03：旧测试假设 Empty 状态仍渲染完整工作区，与 UI-04 的“状态优先”架构冲突。
+- Operations Console：当前远端实现已经包含 Audit 的“资源类型”筛选与表格列，用户反馈对应的断言属于本地代码同步前的旧状态。
 
-## 2. 根因
+## 2. 根因与决策
 
-生产页面已经通过 `StatePanel` 的 `action` 事件连接 `load` / `loadBases` 等恢复动作。问题位于页面测试 Harness：测试通过 `global.components` 注册 `StatePanel`，但页面使用的是 `<script setup>` 中直接导入的本地 `StatePanel`，因此该注册不能可靠覆盖本地组件。
+### 2.1 Dashboard Empty 状态
 
-结果是测试实际挂载了生产 `StatePanel`，其内部 `el-button` 又被测试替身处理，最终使测试对“状态面板按钮 → action → reload”的边界不稳定，表现为请求计数仍为 1。
+Dashboard 原先在 `empty` 时只渲染一个页面级 `StatePanel`，因此核心指标、最近执行和常用入口全部被短路。该行为与 UI-03 要求的工作台骨架不一致，也会让空数据页面失去主要导航能力。
 
-Dashboard 的未知状态断言还缺少一次 DOM 更新同步点；状态映射本身已经按准则返回 `未知状态（技术值）`。
+决策：保留 Empty `StatePanel` 作为一等状态，同时继续渲染指标、最近执行和常用入口。这样既满足 UI-04 状态表达，又保持 UI-03 工作台结构和快速导航可用。
 
-Tool 测试另外缺少 `v-loading` 指令测试替身，导致 Vue warning 污染测试输出。
+### 2.2 Dashboard Error 文案
 
-## 3. 修复
+用户可见错误必须遵循“发生了什么 + 下一步怎么办”，不能暴露后端异常。当前统一为“平台数据加载失败，请稍后重试”。未知状态继续使用 `未知状态（技术值）`，不做强制归一化。该规则与前端准则一致。fileciteturn117file0L2-L2
 
-### 3.1 StatePanel stub 改为显式 component stub
+### 2.3 UI-03 / UI-04 测试职责
 
-Dashboard / Knowledge / Tool 三个 UI-04 测试统一使用 `global.stubs.StatePanel`，确保测试明确替换页面本地导入的状态组件，并直接验证 `action` emit 到页面恢复函数的链路。
+UI-04 已成为页面状态的正式验收层，旧 UI-03 测试不得继续要求已经被 UI-04 架构取消的渲染条件。因此 Knowledge UI-03 测试调整为验证共享 `PageHeader` + `StatePanel` + Empty recovery action，而不是继续要求 Loading / Empty 时完整业务工作区直接可见。
 
-### 3.2 DOM 同步
+## 3. 已实施变更
 
-Dashboard 未知 Execution 状态测试在异步请求完成后增加 `nextTick()`，避免在 Element Plus 表格完成下一轮 DOM 更新前读取文本。
+### 3.1 Dashboard 空状态工作区与错误边界
 
-### 3.3 Loading directive harness
+提交：`6173033d18e65ad3ed597f6109ae438781703496`
 
-Tool UI-04 测试增加 `global.directives.loading` 测试替身，避免测试因 Element Plus `v-loading` 指令缺失产生非业务 warning。
-
-## 4. 业务边界
-
-- 未修改 Dashboard / Knowledge / Tool 的生产业务逻辑。
+- Empty 保留 `StatePanel`；
+- Empty 下继续展示 5 个核心指标、最近执行和常用入口；
+- 错误文案统一为“平台数据加载失败，请稍后重试”；
+- 保留未知 Execution 技术值展示规则；
 - 未新增 API client、mapper 或状态枚举。
-- 未改变 Backend Contract。
-- 未将未知后端状态强制转换成已知状态。
-- 未绕过权限、tenant boundary 或错误边界。
-- 重试仍由页面已有的真实加载函数执行，不通过定时器或测试专用业务逻辑模拟。
 
-## 5. 验证
+### 3.2 Knowledge UI-03 测试与 UI-04 架构对齐
 
-针对本轮变更应执行：
+提交：`aca0cbc523a9318a722c5d5ada50b2c1ed244e4b`
+
+- 删除旧测试对完整工作区的错误假设；
+- 改为验证 `PageHeader`、`StatePanel`、Empty 状态说明和“创建知识库”恢复动作；
+- 不修改 Backend Contract 或生产 API。
+
+### 3.3 Knowledge 空检索测试边界
+
+提交：`cdffeeffd59d51c9a731f632844089bca1af73ec`
+
+- 空检索问题继续禁止调用 `retrieveKnowledge`；
+- 测试改为验证页面状态中的 `retrievalError = "请输入检索问题"`，避免在 Knowledge Empty 状态下要求不存在的检索工作区 DOM；
+- 生产逻辑保持“先校验输入，再请求检索 API”。
+
+## 4. 当前代码事实
+
+- Dashboard 已具备 PageHeader / MetricCard / SurfaceCard / StatePanel 公共模式，并在 Empty 状态保留工作台导航。
+- Knowledge Error 状态具备显式重试 action；Tool Error 状态同样具备显式重试 action。
+- Operations Console Audit 已包含“资源类型”筛选和“资源类型”结果列。
+- `StatePanel.test.ts` 已验证 Loading / Empty / Error / Permission / Success 和 recoverable action 六类公共行为。
+- 未修改 Backend Contract；未新增第二套状态机；未知状态仍保留技术值。
+
+## 5. 验证状态
+
+用户本地反馈中的 `npm run build` 已成功完成，Vite 生产构建通过，产物正常生成。
+
+用户反馈的全量 Vitest 基线为：`45` 个测试文件、`186` 个测试，其中 `33` 个文件通过、`12` 个文件失败；失败项包含 UI-03 与旧测试 Harness 假设。该结果不能作为当前远端修复后的通过结果，因为随后已发生代码与测试提交。
+
+当前远程操作环境不能直接执行用户 Windows 工作树中的 npm，因此不将未实际执行的命令记录为通过。应在本地按以下顺序复验：
 
 ```powershell
+npm test -- tests/views/Dashboard.test.ts
+npm test -- tests/views/DashboardUI03.test.ts
 npm test -- tests/views/DashboardUI04.test.ts
+npm test -- tests/views/KnowledgeUI03.test.ts
 npm test -- tests/views/KnowledgeUI04.test.ts
 npm test -- tests/views/ToolUI04.test.ts
+npm test -- tests/views/OperationsConsole.test.ts
+npm test -- tests/views/knowledge/KnowledgeWorkbench.test.ts
 npm test -- tests/components/StatePanel.test.ts
 npm test
 npm run build
 npm run test:gate
 ```
 
-当前 GitHub 操作环境无法访问用户 Windows 工作树中的本地 npm 环境，因此以上命令不能被本轮远程代码操作宣称为“已通过”。最终验收状态保持为 **待本地验证**。
+测试数据继续通过 Vitest mock 自动生成，不启动服务、不手工填写业务数据、不使用 `npx` 临时下载测试框架。
 
-## 6. 本地复验要求
+## 6. 下一步
 
-用户本地依赖环境无需启动后端服务；上述 UI 状态测试使用 Vitest mock 数据即可执行。不得通过 `npx` 临时下载测试框架，也不得手工填写测试数据。
+在上述 targeted regression 全部通过后，继续 P1.1：Runtime Tab / 按需加载、Agent 调试上下文、Workflow 生命周期与真实 Execution 联动；避免继续扩张 UI-03 / UI-04 公共状态范围，优先把状态模式迁移到下一个核心真实业务页面。
