@@ -25,7 +25,7 @@ const StatePanelStub = {
   name: "StatePanel",
   props: ["state", "title", "description", "actionLabel"],
   emits: ["action"],
-  template: `<div class="state-panel" :class="\`state-panel--${state}\`" role="status"><strong>{{ title }}</strong><span v-if="description">{{ description }}</span><button v-if="actionLabel" @click="$emit('action')">{{ actionLabel }}</button></div>`,
+  template: `<div class="state-panel" :class="\`state-panel--\${state}\`" role="status"><strong>{{ title }}</strong><span v-if="description">{{ description }}</span><button v-if="actionLabel" @click="$emit('action')">{{ actionLabel }}</button></div>`,
 };
 
 function mountView() {
