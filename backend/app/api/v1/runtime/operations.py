@@ -1,11 +1,12 @@
 """Runtime 运维聚合 API 路由。"""
 
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.security import HTTPAuthorizationCredentials
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import bearer, current_claims
@@ -238,7 +239,7 @@ async def runtime_operation_audit(limit: int = Query(100, ge=1, le=1000), claims
 
 
 @router.get("/audit/query")
-async def runtime_operation_audit_query(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100), action: str | None = Query(None, min_length=1, max_length=80), resource_type: str | None = Query(None, min_length=1, max_length=80), resource_id: str | None = Query(None, min_length=1, max_length=128), outcome: str | None = Query(None, min_length=1, max_length=24), actor: str | None = Query(None, min_length=1, max_length=128), since: datetime | None = Query(None), until: datetime | None = Query(None), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
+async def runtime_operation_audit_query(page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=100), action: str | None = Query(None, min_length=1, max_length=80), resource_type: str | None = Query(None, min_length=1, max_length=80), resource_id: str | None = Query(None, min_length=1, max_length=128), outcome: str | None = Query(None, min_length=1, max_length=24), actor: Annotated[str | None, StringConstraints(min_length=1, max_length=128), Query(None)] = None, since: datetime | None = Query(None), until: datetime | None = Query(None), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
     """分页查询当前租户运维审计；所有过滤条件均叠加认证租户范围。"""
     try:
         result_page, result_size, total, rows = await RuntimeOperationsService(db).audit_query(_tenant_id(claims), page=page, page_size=page_size, action=action, resource_type=resource_type, resource_id=resource_id, outcome=outcome, actor=actor, since=since, until=until)
