@@ -190,6 +190,7 @@ async def set_alert_rule_enabled(rule_id: UUID, request: AlertRuleEnabledRequest
     try:
         item = await RuntimeOperationsEnterpriseService(db).set_alert_rule_enabled(_tenant_id(claims), rule_id, request.enabled, _actor(claims))
     except ValueError as exc:
+        await db.rollback()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await db.commit()
     return item
@@ -244,6 +245,37 @@ async def otlp_metrics(claims: dict = Depends(_claims), db: AsyncSession = Depen
 @router.get("/audit")
 async def runtime_operation_audit(limit: int = Query(100, ge=1, le=1000), claims: dict = Depends(_claims), db: AsyncSession = Depends(get_db)):
     return {"items": await RuntimeOperationsEnterpriseService(db).audit_list(_tenant_id(claims), limit)}
+
+
+@router.get("/audit/query")
+async def runtime_operation_audit_query(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    action: str | None = Query(None, min_length=1, max_length=80),
+    resource_type: str | None = Query(None, min_length=1, max_length=80),
+    resource_id: str | None = Query(None, min_length=1, max_length=128),
+    outcome: str | None = Query(None, min_length=1, max_length=24),
+    since: datetime | None = Query(None),
+    until: datetime | None = Query(None),
+    claims: dict = Depends(_claims),
+    db: AsyncSession = Depends(get_db),
+):
+    """分页查询当前租户运维审计；所有过滤条件均叠加认证租户范围。"""
+    try:
+        result_page, result_size, total, rows = await RuntimeOperationsService(db).audit_query(
+            _tenant_id(claims),
+            page=page,
+            page_size=page_size,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            outcome=outcome,
+            since=since,
+            until=until,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"items": rows, "page": result_page, "page_size": result_size, "total": total}
 
 
 @router.get("/dead-letters", response_model=DeadLetterListResponse)

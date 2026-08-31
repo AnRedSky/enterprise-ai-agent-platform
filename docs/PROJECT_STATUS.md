@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**II-05 Controlled Batch Operations Backend 第一切片验收整改**
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片** 与 Phase 2.10-I Runtime Notification Lifecycle 全链路收口。
+- 当前任务：**II-06 Runtime Audit Query Backend 第一切片实现**
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -21,31 +21,28 @@
 - Phase 2.10-H Runtime Operational Acceptance Gate 已实现；
 - Phase 2.10-I Runtime Notification Lifecycle、Worker tenant/consumer-group Claim isolation、Retry/Dead Letter/Fallback、SLO/Metrics、Canonical Metrics Export、OpenTelemetry SDK Telemetry、Operational Audit 已完成，并已通过本地实际 Real Gate；
 - Phase 2.10-II / II-01 Operator Action Governance 已完成本地验证；
-- Phase 2.10-II / II-02 Global Runtime Operations 已完成 Backend Unit / Real PostgreSQL Gate 与完整 Backend Regression 本地验证；
-- Phase 2.10-II / II-03 Worker / Scheduler Diagnostics Backend 与 Frontend 第一切片已实现；
-- Phase 2.10-II / II-04 Audit / Trace Correlation Backend 第一切片已实现，复用现有 Workflow Execution / Workflow Trace / AuditLog / Operator Action Durable Facts；
-- Phase 2.10-II / II-05 Controlled Batch Operations Backend 第一切片已实现，复用现有 Operator Action Governance，不新增 Workflow / Trigger 生命周期。
+- Phase 2.10-II / II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；
+- Phase 2.10-II / II-03 Worker / Scheduler Diagnostics Backend 第一切片已实现；
+- Phase 2.10-II / II-04 Audit / Trace Correlation Backend 第一切片已实现；
+- Phase 2.10-II / II-05 Controlled Batch Operations Backend 第一切片已实现，并已通过开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 反馈。
 
-## 3. II-05 当前状态
+## 3. II-06 当前状态
 
-已实现：
+已实现第一切片：
 
-- `BatchOperatorActionService`：统一编排 tenant-scoped 批量 Operator Action；
-- 支持现有 `workflow_execution` / `workflow_trigger` Operator Action；
-- 单批次最多 100 个资源；禁止重复资源 ID；
-- 高风险动作继续由 `OperatorActionGovernanceService` 统一执行 `confirm=true` 校验；
-- Retry / Trigger Invoke 继续复用既有 Idempotency Contract，并从批次键稳定派生单项幂等键；
-- 每个项目独立返回 `succeeded` / `rejected` / `failed`，允许同批次合法项目继续执行；
-- 所有实际状态变更继续委托 `WorkflowExecutionService` / `WorkflowTriggerService`；
-- 新增 `/api/v1/runtime/operator-actions/batch` HTTP Contract；
-- Unit / API Contract / Real PostgreSQL Acceptance 测试与独立 Gate 已提交；
-- 已修复 Real Acceptance 清理阶段遗漏 Durable Integration Event 导致的 tenant 外键约束错误。
+- `RuntimeOperationsService.audit_query`：tenant-scoped、数据库分页、稳定排序；
+- 支持 action / resource_type / resource_id / outcome 精确过滤；
+- 支持 since / until 时间窗口；
+- 明确拒绝反向时间窗口；
+- 新增 `GET /api/v1/runtime/operations/audit/query`；
+- 不新增数据库表、不新增 Audit 生命周期、不复制既有 AuditLog / Operator Action 事实；
+- 新增 Unit / API Contract 测试与独立 Unit Gate。
 
 当前未宣称：
 
-- II-05 修复后的 Real PostgreSQL Acceptance 尚未由开发者本地重新执行；
-- II-05 尚未标记 Acceptance Passed；
-- Frontend 回归不作为本阶段 Backend 验收阻塞条件。
+- II-06 第一切片尚未由开发者本地执行 Unit Gate；
+- II-06 尚未标记 Acceptance Passed；
+- Real PostgreSQL / Real API 是否需要执行将在 Unit / Contract 稳定后根据查询范围决定。
 
 ## 4. Backend 验收规则
 
@@ -68,11 +65,10 @@ Frontend 页面回归、Frontend Build、Browser E2E 不作为 Backend 主线开
 ## 5. 下一执行顺序
 
 ```text
-① 本地执行 II-05 修复后的 Real PostgreSQL Acceptance
-② 本地执行 II-05 Controlled Batch Operations Unit Gate
-③ 本地执行 II-05 Controlled Batch Operations Real Gate
-④ Backend Regression
-⑤ 若全部通过，收口 II-05 Acceptance
-⑥ 评估并定义 II-06 下一 Backend 主线任务
-⑦ 继续实现，不提前进入 Frontend / Browser 工作
+① 本地执行 II-06 Runtime Audit Query Unit Gate
+② Backend Regression
+③ 若 Unit / Contract / Regression 全部通过，再决定是否补充 Real PostgreSQL / Real API Acceptance
+④ 收口 II-06 第一切片
+⑤ 评估 II-06 第二切片或下一 Backend 主线任务
+⑥ 继续实现，不提前进入 Frontend / Browser 工作
 ```
