@@ -16,7 +16,9 @@ uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_con
 if ($LASTEXITCODE -ne 0) { throw "Runtime Audit Query unit/contract tests failed." }
 
 Write-Host "[3/4] Backend targeted regression"
-uv run pytest -q tests/unit/test_runtime_operations.py tests/api_contract/test_api_runtime_endpoints.py
+# Runtime Operations 已按领域子模块拆分；不要引用已经删除的旧聚合测试路径。
+# 这里复用当前正式 Runtime Audit Query 单元测试 + Runtime API 总体 Contract，覆盖查询规则与 Runtime 路由装配边界。
+uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_contract/test_api_runtime_endpoints.py
 if ($LASTEXITCODE -ne 0) { throw "Runtime targeted regression failed." }
 
 Write-Host "[4/4] Service prerequisite policy"
