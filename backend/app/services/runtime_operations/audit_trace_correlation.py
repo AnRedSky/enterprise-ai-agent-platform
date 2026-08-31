@@ -22,10 +22,19 @@ from app.models.workflow_trace import WorkflowTraceEvent
 MAX_PAGE_SIZE = 100
 
 
-class CorrelationPage(TypedDict):
-    """关联查询分页集合的内部返回结构。"""
+class TracePage(TypedDict):
+    """Trace 关联分页集合的内部返回结构。"""
 
-    items: list[object]
+    items: list[WorkflowTraceEvent]
+    page: int
+    page_size: int
+    total: int
+
+
+class AuditPage(TypedDict):
+    """Audit 关联分页集合的内部返回结构。"""
+
+    items: list[AuditLog]
     page: int
     page_size: int
     total: int
@@ -35,8 +44,8 @@ class CorrelationResponse(TypedDict, total=False):
     """关联查询服务向 API 层提供的统一返回结构。"""
 
     execution: WorkflowExecution | None
-    traces: CorrelationPage
-    audits: CorrelationPage
+    traces: TracePage
+    audits: AuditPage
     operator_actions: list[OperatorActionIdempotency]
     focus_audit_id: UUID | None
     focus_operator_action_id: UUID | None
@@ -72,7 +81,7 @@ class RuntimeAuditTraceCorrelationService:
         *,
         event_type: str | None = None,
         status: str | None = None,
-    ) -> CorrelationPage:
+    ) -> TracePage:
         """查询 Execution 的 Trace 事件并使用 created_at + id 保证稳定排序。
 
         Args:
@@ -114,7 +123,7 @@ class RuntimeAuditTraceCorrelationService:
         *,
         action: str | None = None,
         status: str | None = None,
-    ) -> CorrelationPage:
+    ) -> AuditPage:
         """查询 Execution 的 AuditLog，并以 created_at + id 保证稳定排序。
 
         Args:
