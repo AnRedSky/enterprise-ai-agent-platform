@@ -3,10 +3,7 @@ import { mount } from "@vue/test-utils";
 import { ElAlert, ElButton, ElCard, ElDivider, ElForm, ElInput, ElInputNumber, ElOption, ElPagination, ElProgress, ElSelect, ElSwitch, ElTabPane, ElTable, ElTableColumn, ElTabs, ElTag } from "element-plus";
 import OperationsConsole from "@/views/integrations/OperationsConsole.vue";
 import { runtimeOperationsApi } from "@/api/runtimeOperations";
-
-const { api } = vi.hoisted(() => ({ api: {
-  global: vi.fn(), overview: vi.fn(), alerts: vi.fn(), providers: vi.fn(), alertRules: vi.fn(), audit: vi.fn(), auditQuery: vi.fn(), deadLetters: vi.fn(), metricSeries: vi.fn(), evaluateAlertRules: vi.fn(), setProviderEnabled: vi.fn(), probeProviderHealth: vi.fn(), setAlertRuleEnabled: vi.fn(), createMetricsSnapshot: vi.fn(), replayDeadLetters: vi.fn(), dimensions: vi.fn(),
-} }));
+const { api } = vi.hoisted(() => ({ api: { global: vi.fn(), overview: vi.fn(), alerts: vi.fn(), providers: vi.fn(), alertRules: vi.fn(), audit: vi.fn(), auditQuery: vi.fn(), deadLetters: vi.fn(), metricSeries: vi.fn(), evaluateAlertRules: vi.fn(), setProviderEnabled: vi.fn(), probeProviderHealth: vi.fn(), setAlertRuleEnabled: vi.fn(), createMetricsSnapshot: vi.fn(), replayDeadLetters: vi.fn(), dimensions: vi.fn() } }));
 vi.mock("@/api/runtimeOperations", () => ({ runtimeOperationsApi: api }));
 const components = { ElAlert, ElButton, ElCard, ElDivider, ElForm, ElInput, ElInputNumber, ElOption, ElPagination, ElProgress, ElSelect, ElSwitch, ElTabPane, ElTable, ElTableColumn, ElTabs, ElTag };
 function mountConsole() { return mount(OperationsConsole, { global: { components, directives: { loading: () => undefined } } }); }
@@ -21,18 +18,9 @@ beforeEach(() => {
   vi.mocked(runtimeOperationsApi.deadLetters).mockResolvedValue({ data: { items: [], page: 1, page_size: 20, total: 0 } } as never);
   vi.mocked(runtimeOperationsApi.metricSeries).mockResolvedValue({ data: { items: [], metric_name: "runtime.notification.delivery", window_minutes: 60 } } as never);
 });
-
 describe("Runtime Operations Console", () => {
   it("renders backend global runtime posture", async () => { const wrapper = mountConsole(); await vi.waitFor(() => expect(runtimeOperationsApi.global).toHaveBeenCalledWith({ window_hours: 24, limit: 50 })); await vi.waitFor(() => expect(wrapper.text()).toContain("执行总量")); expect(wrapper.text()).toContain("8"); expect(wrapper.text()).toContain("未知（无持久化心跳）"); expect(wrapper.text()).toContain("订单处理"); });
   it("renders backend 2.10-I operational facts", async () => { const wrapper = mountConsole(); await vi.waitFor(() => expect(wrapper.text()).toContain("99.50%")); expect(wrapper.text()).toContain("Runtime 企业运维中心"); expect(wrapper.text()).toContain("投递成功率"); expect(runtimeOperationsApi.providers).toHaveBeenCalled(); expect(runtimeOperationsApi.alertRules).toHaveBeenCalled(); });
-  it("queries the tenant-scoped audit contract with paging and actor/action/resource filters", async () => {
-    const wrapper = mountConsole();
-    await vi.waitFor(() => expect(runtimeOperationsApi.auditQuery).toHaveBeenCalledWith({ page: 1, page_size: 20, actor: undefined, action: undefined, resource_type: undefined, resource_id: undefined, outcome: undefined, since: undefined, until: undefined }));
-    const auditTab = wrapper.findAll(".el-tabs__item").find((tab) => tab.text() === "Audit");
-    expect(auditTab).toBeDefined();
-    await auditTab!.trigger("click");
-    await wrapper.vm.$nextTick();
-    expect(wrapper.text()).toContain("操作主体（可选）"); expect(wrapper.text()).toContain("资源类型"); expect(wrapper.text()).toContain("provider.health.probe"); expect(wrapper.text()).toContain("success"); expect(wrapper.text()).toContain("u1"); expect(wrapper.text()).toContain("1");
-  });
+  it("queries the tenant-scoped audit contract with paging and actor/action/resource filters", async () => { const wrapper = mountConsole(); await vi.waitFor(() => expect(runtimeOperationsApi.auditQuery).toHaveBeenCalledWith({ page: 1, page_size: 20, actor: undefined, action: undefined, resource_type: undefined, resource_id: undefined, outcome: undefined, since: undefined, until: undefined })); const auditTab = wrapper.findAll(".el-tabs__item").find((tab) => tab.text() === "Audit"); expect(auditTab).toBeDefined(); await auditTab!.trigger("click"); await wrapper.vm.$nextTick(); expect(wrapper.find('input[placeholder="操作主体（可选）"]').exists()).toBe(true); expect(wrapper.find('input[placeholder="资源类型（可选）"]').exists()).toBe(true); expect(wrapper.text()).toContain("provider.health.probe"); expect(wrapper.text()).toContain("success"); expect(wrapper.text()).toContain("u1"); expect(wrapper.text()).toContain("1"); });
   it("exposes global and existing operational tabs", async () => { const wrapper = mountConsole(); await vi.waitFor(() => expect(wrapper.text()).toContain("Provider")); expect(wrapper.text()).toContain("全局运行态势"); expect(wrapper.text()).toContain("告警"); expect(wrapper.text()).toContain("Metrics"); expect(wrapper.text()).toContain("Audit"); expect(wrapper.text()).toContain("死信"); });
 });
