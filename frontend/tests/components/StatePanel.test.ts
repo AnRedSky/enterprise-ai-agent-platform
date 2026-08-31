@@ -18,6 +18,6 @@ describe("StatePanel", () => {
   it("emits action for recoverable error state", async () => {
     const wrapper = mountState("error");
     await wrapper.find("button").trigger("click");
-    expect(wrapper.emitted("action")).toHaveLength(1);
+    expect(wrapper.emitted("action")?.[0]).toEqual([]);
   });
 });

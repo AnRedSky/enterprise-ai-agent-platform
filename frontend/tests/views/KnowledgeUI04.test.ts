@@ -3,9 +3,9 @@ import { flushPromises, mount } from "@vue/test-utils";
 import KnowledgeWorkbench from "@/views/knowledge/components/KnowledgeWorkbench.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
 
-const listKnowledgeBases = vi.fn();
+const mocks = vi.hoisted(() => ({ listKnowledgeBases: vi.fn() }));
 vi.mock("@/api/knowledge", () => ({
-  listKnowledgeBases,
+  listKnowledgeBases: mocks.listKnowledgeBases,
   listDocuments: vi.fn(), listVersions: vi.fn(), listChunks: vi.fn(),
   createDocument: vi.fn(), createKnowledgeBase: vi.fn(), createVersion: vi.fn(), deleteDocument: vi.fn(), ingestVersion: vi.fn(), retrieveKnowledge: vi.fn(),
 }));
@@ -17,13 +17,13 @@ describe("Knowledge UI-04 states", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("shows loading while knowledge bases are requested", () => {
-    listKnowledgeBases.mockReturnValueOnce(new Promise(() => undefined));
+    mocks.listKnowledgeBases.mockReturnValueOnce(new Promise(() => undefined));
     const wrapper = mountView();
     expect(wrapper.findComponent(StatePanel).props("state")).toBe("loading");
   });
 
   it("shows success workspace when knowledge bases exist", async () => {
-    listKnowledgeBases.mockResolvedValueOnce({ items: [{ id: "kb-1", name: "企业知识库", status: "active" }] });
+    mocks.listKnowledgeBases.mockResolvedValueOnce({ items: [{ id: "kb-1", name: "企业知识库", status: "active" }] });
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
@@ -35,8 +35,8 @@ describe("Knowledge UI-04 states", () => {
     ["permission", { response: { status: 403 } }, "无权访问知识库"],
     ["error", new Error("network"), "知识库加载失败"],
   ] as const)("maps %s response to shared state", async (state, response, title) => {
-    if (state === "empty") listKnowledgeBases.mockResolvedValueOnce(response);
-    else listKnowledgeBases.mockRejectedValueOnce(response);
+    if (state === "empty") mocks.listKnowledgeBases.mockResolvedValueOnce(response);
+    else mocks.listKnowledgeBases.mockRejectedValueOnce(response);
     const wrapper = mountView();
     await flushPromises();
     const panel = wrapper.findComponent(StatePanel);
