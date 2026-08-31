@@ -190,3 +190,57 @@ class IntegrationEventReplayResponse(BaseModel):
 
     delivery: IntegrationEventDeliveryItem
     replayed: bool = True
+
+
+class RuntimeWorkerOwner(BaseModel):
+    """Worker Durable claim owner 聚合。"""
+
+    worker_owner: str
+    claim_count: int
+
+
+class RuntimeWorkerError(BaseModel):
+    """Worker Frontier 最近错误事实。"""
+
+    id: UUID
+    execution_id: UUID
+    status: str
+    attempt: int
+    worker_owner: str | None = None
+    worker_lease_expires_at: datetime | None = None
+    error_code: str
+    created_at: datetime
+
+
+class RuntimeWorkerDiagnosticsResponse(BaseModel):
+    """Worker claim / lease / owner 只读诊断 Contract。"""
+
+    window_hours: int
+    generated_at: datetime
+    liveness: str
+    liveness_reason_code: str
+    frontier: dict[str, Any]
+    leases: dict[str, int]
+    owners: list[RuntimeWorkerOwner]
+    recent_errors: list[RuntimeWorkerError]
+
+
+class RuntimeSchedulerTrigger(BaseModel):
+    """Scheduler scheduled trigger 的 Durable 配置摘要。"""
+
+    id: UUID
+    workflow_id: UUID
+    name: str
+    status: str
+    config: dict[str, Any]
+    updated_at: datetime
+
+
+class RuntimeSchedulerDiagnosticsResponse(BaseModel):
+    """Scheduler Durable backlog 与 trigger 状态只读诊断 Contract。"""
+
+    generated_at: datetime
+    liveness: str
+    liveness_reason_code: str
+    durable: dict[str, int]
+    triggers: list[RuntimeSchedulerTrigger]
