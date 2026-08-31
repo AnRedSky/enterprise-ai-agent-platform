@@ -26,10 +26,21 @@ Retrieval 无结果仍属于业务查询结果语义，不等同于页面 Error�
 
 `tests/views/KnowledgeUI04.test.ts` 覆盖首屏 Loading、Success、Empty、Error、403 Permission 五态。
 
+Dashboard 对应测试 `tests/views/DashboardUI04.test.ts` 同样使用异步首屏状态断言。
+
+## 测试环境兼容性记录
+
+本地 Vitest 4.1.10 反馈表明，`onMounted()` 中同步设置的页面 Loading 状态需要等待一次 Vue `nextTick()` 后再断言；直接在 `mount()` 返回后断言会读取首次渲染的默认 `empty` 状态。该问题属于测试时序问题，不应修改生产页面状态机以迎合测试。
+
+同时，Dashboard / Knowledge 测试中使用的 `v-loading` 指令在单元测试环境并未注册，会产生 Vue warning。测试通过 global directive stub 明确声明该依赖，避免 warning 干扰 targeted test 输出，不改变生产行为。
+
+Knowledge Success 测试不再依赖 `PageToolbar` 的文本 stub，而是验证真实成功工作区的 `.grid` 容器存在，避免把子组件 stub 的渲染策略误当成页面 Contract。
+
 ## 验证
 
 ```powershell
 cd frontend
+npm test -- tests/views/DashboardUI04.test.ts
 npm test -- tests/views/KnowledgeUI04.test.ts
 npm test -- tests/components/StatePanel.test.ts
 npm run build

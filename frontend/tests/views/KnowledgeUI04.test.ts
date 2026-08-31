@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import KnowledgeWorkbench from "@/views/knowledge/components/KnowledgeWorkbench.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
 
@@ -11,14 +12,27 @@ vi.mock("@/api/knowledge", () => ({
 }));
 vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn(), success: vi.fn() }, ElMessageBox: { confirm: vi.fn() } }));
 
-const mountView = () => mount(KnowledgeWorkbench, { global: { stubs: { PageHeader: true, PageToolbar: true, SurfaceCard: { template: "<div><slot/><slot name='header'/></div>" }, "el-button": true, "el-table": true, "el-table-column": true, "el-dialog": true, "el-form": true, "el-form-item": true, "el-input": true, "el-input-number": true, "el-select": true, "el-option": true, "el-slider": true, "el-alert": true, "el-empty": true } } });
+const mountView = () => mount(KnowledgeWorkbench, {
+  global: {
+    directives: { loading: () => undefined },
+    stubs: {
+      PageHeader: true,
+      PageToolbar: true,
+      SurfaceCard: { template: "<div><slot/><slot name='header'/></div>" },
+      "el-button": true, "el-table": true, "el-table-column": true, "el-dialog": true, "el-form": true,
+      "el-form-item": true, "el-input": true, "el-input-number": true, "el-select": true, "el-option": true,
+      "el-slider": true, "el-alert": true, "el-empty": true,
+    },
+  },
+});
 
 describe("Knowledge UI-04 states", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("shows loading while knowledge bases are requested", () => {
+  it("shows loading while knowledge bases are requested", async () => {
     mocks.listKnowledgeBases.mockReturnValueOnce(new Promise(() => undefined));
     const wrapper = mountView();
+    await nextTick();
     expect(wrapper.findComponent(StatePanel).props("state")).toBe("loading");
   });
 
@@ -27,7 +41,7 @@ describe("Knowledge UI-04 states", () => {
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
-    expect(wrapper.text()).toContain("知识资产工作台");
+    expect(wrapper.find(".grid").exists()).toBe(true);
   });
 
   it.each([
