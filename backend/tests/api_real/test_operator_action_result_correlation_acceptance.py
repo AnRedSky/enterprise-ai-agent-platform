@@ -45,3 +45,32 @@ async def test_operator_action_result_resource_type_schema_is_available() -> Non
         }
 
         assert "ix_operator_action_result_resource" in index_names
+
+        invalid_failed_results = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM operator_action_idempotencies
+                    WHERE status <> 'succeeded'
+                      AND result_resource_id IS NOT NULL
+                    """
+                )
+            )
+        ).scalar_one()
+        assert invalid_failed_results == 0
+
+        untyped_success_results = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM operator_action_idempotencies
+                    WHERE status = 'succeeded'
+                      AND result_resource_id IS NOT NULL
+                      AND result_resource_type IS NULL
+                    """
+                )
+            )
+        ).scalar_one()
+        assert untyped_success_results == 0
