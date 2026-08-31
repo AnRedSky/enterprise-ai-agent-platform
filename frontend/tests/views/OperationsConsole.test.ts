@@ -4,13 +4,14 @@ import { ElAlert, ElButton, ElCard, ElDivider, ElForm, ElInput, ElInputNumber, E
 import OperationsConsole from "@/views/integrations/OperationsConsole.vue";
 import { runtimeOperationsApi } from "@/api/runtimeOperations";
 
-vi.mock("@/api/runtimeOperations", () => ({
-  runtimeOperationsApi: {
+const { api } = vi.hoisted(() => ({
+  api: {
     global: vi.fn(), overview: vi.fn(), alerts: vi.fn(), providers: vi.fn(), alertRules: vi.fn(), audit: vi.fn(), deadLetters: vi.fn(),
     metricSeries: vi.fn(), evaluateAlertRules: vi.fn(), setProviderEnabled: vi.fn(), probeProviderHealth: vi.fn(),
     setAlertRuleEnabled: vi.fn(), createMetricsSnapshot: vi.fn(), replayDeadLetters: vi.fn(), dimensions: vi.fn(),
   },
 }));
+vi.mock("@/api/runtimeOperations", () => ({ runtimeOperationsApi: api }));
 
 const components = { ElAlert, ElButton, ElCard, ElDivider, ElForm, ElInput, ElInputNumber, ElOption, ElPagination, ElProgress, ElSelect, ElSwitch, ElTabPane, ElTable, ElTableColumn, ElTabs, ElTag };
 
