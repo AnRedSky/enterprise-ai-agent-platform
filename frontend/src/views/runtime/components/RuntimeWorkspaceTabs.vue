@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import RuntimeExecutions from "./RuntimeExecutions.vue";
 import RuntimeObservabilityOverview from "./RuntimeObservabilityOverview.vue";
+import RuntimeCorrelations from "./RuntimeCorrelations.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -18,7 +19,7 @@ const runtimeContextKeys = [
   "source",
 ] as const;
 type RuntimeContextKey = (typeof runtimeContextKeys)[number];
-type RuntimeTab = "overview" | "executions" | "diagnostics";
+type RuntimeTab = "overview" | "executions" | "diagnostics" | "correlations";
 
 function queryValue(key: RuntimeContextKey) {
   const value = route.query[key];
@@ -31,13 +32,13 @@ function hasRuntimeContext() {
 
 function routeTab(): RuntimeTab | undefined {
   const value = route.query.tab;
-  return value === "overview" || value === "executions" || value === "diagnostics" ? value : undefined;
+  return value === "overview" || value === "executions" || value === "diagnostics" || value === "correlations" ? value : undefined;
 }
 
 const activeTab = ref<RuntimeTab>(routeTab() || (hasRuntimeContext() ? "executions" : "overview"));
 const executionsMounted = ref(activeTab.value === "executions");
 
-const tabTitle = computed(() => activeTab.value === "overview" ? "运行健康" : activeTab.value === "executions" ? "Execution 运行中心" : "诊断路径");
+const tabTitle = computed(() => activeTab.value === "overview" ? "运行健康" : activeTab.value === "executions" ? "Execution 运行中心" : activeTab.value === "correlations" ? "关联追踪" : "诊断路径");
 const contextItems = computed(() => runtimeContextKeys
   .map((key) => ({ key, value: queryValue(key) }))
   .filter((item): item is { key: RuntimeContextKey; value: string } => Boolean(item.value)));
@@ -56,7 +57,7 @@ function routeQuery(extra: Record<string, string | undefined> = {}) {
 
 function selectTab(value: string | number) {
   const tab = String(value) as RuntimeTab;
-  if (!["overview", "executions", "diagnostics"].includes(tab)) return;
+  if (!["overview", "executions", "diagnostics", "correlations"].includes(tab)) return;
   activeTab.value = tab;
   if (tab === "executions") executionsMounted.value = true;
   void router.replace({ path: "/runtime", query: routeQuery({ tab }) });
@@ -81,6 +82,11 @@ function openExecutions(status?: string) {
 function openDiagnostics() {
   activeTab.value = "diagnostics";
   void router.replace({ path: "/runtime", query: routeQuery({ tab: "diagnostics" }) });
+}
+
+function openCorrelations() {
+  activeTab.value = "correlations";
+  void router.replace({ path: "/runtime", query: routeQuery({ tab: "correlations" }) });
 }
 
 function openWorkflowLifecycle() {
@@ -118,6 +124,9 @@ watch(() => route.query, syncRouteContext, { deep: true });
         <RuntimeExecutions v-if="executionsMounted" />
         <el-skeleton v-else :rows="6" animated />
       </el-tab-pane>
+      <el-tab-pane label="关联追踪" name="correlations">
+        <RuntimeCorrelations />
+      </el-tab-pane>
       <el-tab-pane label="诊断路径" name="diagnostics">
         <section class="diagnostic-card">
           <div class="diagnostic-title">企业级运行诊断闭环</div>
@@ -139,6 +148,7 @@ watch(() => route.query, syncRouteContext, { deep: true });
           <el-alert title="Runtime 详情采用按需加载：进入 Execution 后才请求时间线、Trace、Audit 与 Workflow 关系数据。" type="info" :closable="false" show-icon />
           <div class="diagnostic-actions">
             <el-button type="primary" plain @click="openExecutions()">进入 Execution 运行中心</el-button>
+            <el-button type="primary" plain @click="openCorrelations">进入关联追踪</el-button>
             <el-button text @click="openDiagnostics">刷新诊断上下文</el-button>
           </div>
         </section>
