@@ -31,7 +31,39 @@
 - Tool 测试使用 `vi.hoisted` 修复 Vitest mock factory hoisting failure；
 - Dashboard / Knowledge / Tool 统一使用可交互 `StatePanel` stub，清理 `el-icon` resolve warning；
 - 三个页面测试统一 `vi.resetAllMocks()`，避免跨用例 Mock 污染；
+- Agent / Audit 首屏 Loading 初始状态固定为 `true`，避免异步 mounted hook 在首帧将 Loading 误判为 Empty；
+- Dashboard MetricCard 恢复 `data-testid="metric-*"` 测试契约；
+- Runtime Operations Audit 保持 actor/action/resource/outcome/time-window 查询控件与 tenant-scoped API 参数契约一致；
+- 新增正式 `test:unit` 脚本，统一 targeted Vitest 的本地执行入口；
 - 保持页面生产状态映射与公共 `StatePanel` 单一实现，不新增平行状态机。
+
+### 2026-08-31 本地回归反馈
+
+用户本地首先执行：
+
+```powershell
+npm run test:unit -- --run tests/views/AgentUI04.test.ts tests/views/AuditLogUI04.test.ts tests/views/Dashboard.test.ts tests/views/Tools.test.ts tests/views/OperationsConsole.test.ts
+```
+
+原 `frontend/package.json` 缺少 `test:unit` script，因此 npm 直接返回 `Missing script: "test:unit"`，尚未进入 Vitest。
+
+已在 `frontend/package.json` 增加：
+
+```json
+"test:unit": "vitest run"
+```
+
+此前已完成一次 targeted Vitest 回归，结果为 45 个测试文件中 5 个文件失败、203 个测试中 8 个失败；当前 8 个失败项仍必须在本地真实执行中逐项确认，不能标记为通过。
+
+当前失败范围：
+
+- `AgentUI04.test.ts`：首屏 Loading、Success、对话调试入口/Permission；
+- `AuditLogUI04.test.ts`：首屏 Loading；
+- `Dashboard.test.ts`：MetricCard test id 契约；
+- `Tools.test.ts`：PageToolbar / PageHeader action slot 迁移契约；
+- `OperationsConsole.test.ts`：Audit actor/resource filter 控件可查询性。
+
+当前远端执行环境未运行 Node/Vitest/build，因此以上本地测试反馈以用户实际环境结果为准；修复后必须重新执行 targeted → full Vitest → build → gate，未实际执行不得标记为通过。
 
 回归重点：
 
@@ -62,10 +94,7 @@ UI-04 Regression 本地验证：
 
 ```powershell
 cd frontend
-npm test -- tests/views/DashboardUI04.test.ts
-npm test -- tests/views/KnowledgeUI04.test.ts
-npm test -- tests/views/ToolUI04.test.ts
-npm test -- tests/components/StatePanel.test.ts
+npm run test:unit -- --run tests/views/AgentUI04.test.ts tests/views/AuditLogUI04.test.ts tests/views/Dashboard.test.ts tests/views/Tools.test.ts tests/views/OperationsConsole.test.ts
 npm test
 npm run build
 npm run test:gate
