@@ -23,6 +23,7 @@ class OperatorActionIdempotency(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "idempotency_key", name="uq_operator_action_tenant_key"),
         Index("ix_operator_action_resource", "tenant_id", "resource_type", "resource_id"),
+        Index("ix_operator_action_result_resource", "tenant_id", "result_resource_type", "result_resource_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -33,6 +34,7 @@ class OperatorActionIdempotency(Base):
     action: Mapped[str] = mapped_column(String(50))
     idempotency_key: Mapped[str] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="started", index=True)
+    result_resource_type: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     result_resource_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
