@@ -115,7 +115,7 @@ class RuntimeMetricSample(Base):
     metric_name: Mapped[str] = mapped_column(String(120), nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
     dimensions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive, index=True)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow_naive)
 
 class RuntimeOperationAudit(Base):
     __tablename__ = "runtime_operation_audits"
@@ -126,6 +126,7 @@ class RuntimeOperationAudit(Base):
         Index("ix_runtime_operation_audit_tenant_outcome", "tenant_id", "outcome", "created_at"),
         Index("ix_runtime_operation_audit_tenant_actor", "tenant_id", "actor", "created_at"),
         Index("ix_runtime_operation_audit_tenant_actor_action", "tenant_id", "actor", "action", "created_at"),
+        Index("ix_runtime_operation_audit_tenant_action_outcome", "tenant_id", "action", "outcome", "created_at"),
     )
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
