@@ -65,6 +65,11 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
             assert [row.resource_id for row in rows] == ["exec-a-4", "exec-a-3", "exec-a-1"]
             assert {row.tenant_id for row in rows} == {tenant_a}
 
+            _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, action="operator.workflow_execution.retry", outcome="failed")
+            assert total == 1
+            assert rows[0].resource_id == "exec-a-3"
+            assert rows[0].tenant_id == tenant_a
+
             _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, resource_id="exec-a-3")
             assert total == 1
             assert rows[0].outcome == "failed"
