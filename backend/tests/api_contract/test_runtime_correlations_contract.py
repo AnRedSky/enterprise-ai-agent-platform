@@ -6,6 +6,7 @@
 
 from fastapi.testclient import TestClient
 
+from app.api.v1.runtime import correlations
 from app.main import app
 
 
@@ -63,7 +64,14 @@ def test_runtime_correlation_does_not_expose_tenant_id_query_parameter():
 
 
 def test_runtime_trace_identifier_rejects_overlong_value_before_authentication():
-    response = client.get(
-        "/api/v1/runtime/correlations/traces/" + ("t" * 129),
-    )
-    assert response.status_code == 422
+    """验证路径参数边界；覆盖认证依赖后再执行参数校验的 FastAPI 解析顺序。"""
+    app.dependency_overrides[correlations._claims] = lambda: {
+        "tenant_id": "00000000-0000-0000-0000-000000000001"
+    }
+    try:
+        response = client.get(
+            "/api/v1/runtime/correlations/traces/" + ("t" * 129),
+        )
+        assert response.status_code == 422
+    finally:
+        app.dependency_overrides.pop(correlations._claims, None)
