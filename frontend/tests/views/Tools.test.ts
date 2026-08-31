@@ -14,7 +14,7 @@ vi.mock("@/utils/toolError", () => ({ getToolUserError: (_error: unknown, fallba
 
 function mountPage() {
   return shallowMount(ToolWorkbench, { global: { stubs: {
-    "el-button": true, "el-alert": true, "el-table": true, "el-table-column": true, "el-empty": true, "el-dialog": true,
+    "el-button": { template: "<button><slot /></button>" }, "el-alert": true, "el-table": true, "el-table-column": true, "el-empty": true, "el-dialog": true,
     "el-form": true, "el-form-item": true, "el-input": true, "el-select": true, "el-option": true, "el-tag": true,
   } } });
 }
@@ -22,6 +22,7 @@ function mountPage() {
 describe("ToolWorkbench UI-03 migration", () => {
   beforeEach(() => { api.listTools.mockResolvedValue([]); api.listAgents.mockResolvedValue([]); });
   it("uses shared PageHeader, PageToolbar and SurfaceCard patterns", async () => {
+    api.listTools.mockResolvedValue([{ id: "t1", name: "Tool", description: "test", enabled: true }]);
     const wrapper = mountPage(); await flushPromises();
     expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
     expect(wrapper.findComponent(PageToolbar).exists()).toBe(true);
