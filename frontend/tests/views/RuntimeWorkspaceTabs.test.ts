@@ -7,6 +7,7 @@ const replace = vi.fn();
 vi.mock("vue-router", () => ({ useRoute: () => route, useRouter: () => ({ replace }) }));
 vi.mock("@/views/runtime/components/RuntimeExecutions.vue", () => ({ default: { template: "<div>runtime executions</div>" } }));
 vi.mock("@/views/runtime/components/RuntimeObservabilityOverview.vue", () => ({ default: { template: "<div>runtime overview</div>" } }));
+vi.mock("@/views/runtime/components/RuntimeCorrelations.vue", () => ({ default: { template: "<div>runtime correlations</div>" } }));
 
 import RuntimeWorkspaceTabs from "@/views/runtime/components/RuntimeWorkspaceTabs.vue";
 
@@ -53,6 +54,13 @@ describe("RuntimeWorkspaceTabs", () => {
     expect((wrapper.vm as { contextItems: Array<{ key: string; value: string }> }).contextItems).toEqual([
       { key: "execution_id", value: "execution-1" }, { key: "trace_id", value: "trace-1" },
     ]);
+  });
+  it("supports the Audit / Trace correlation tab", () => {
+    route.query = { tab: "correlations", execution_id: "execution-1" };
+    const wrapper = mount(RuntimeWorkspaceTabs, { global });
+    expect((wrapper.vm as { activeTab: string }).activeTab).toBe("correlations");
+    (wrapper.vm as { openCorrelations: () => void }).openCorrelations();
+    expect(replace).toHaveBeenCalledWith({ path: "/runtime", query: { execution_id: "execution-1", tab: "correlations" } });
   });
   it("keeps overview as the default when no runtime context is supplied", () => {
     const wrapper = mount(RuntimeWorkspaceTabs, { global });
