@@ -2,73 +2,76 @@
 
 ## 目标
 
-在七个真实页面完成 UI-04 公共状态迁移后，统一验证 `StatePanel` 五态、403 Permission、Error Retry、Empty 操作入口、Success 数据展示及未知状态边界，并清理 Vitest 测试环境中的组件解析 warning。
+在七个真实页面完成 UI-04 公共状态迁移后，统一验证 `StatePanel` 五态、403 Permission、Error Retry、Empty 操作入口、Success 数据展示及测试装配稳定性。
 
-## 本轮修复
+## 2026-08-31 本轮本地反馈修复
 
-本轮针对用户本地回归反馈，根因定位为**测试装配与 Mock 生命周期问题**，不是页面状态机重复实现：
+用户本地回归基线：45 个测试文件中 11 个失败，186 个测试中 10 个失败；Frontend regression gate 因此阻塞。本轮只修复反馈中已确认的测试契约/装配问题，不修改后端 Contract，不新增业务状态机。
 
-1. Dashboard 的 aggregate API 一次加载实际调用 `runtimeApi.executions` 两次（最近执行 + failed 总数）；回归 Mock 必须为两个调用分别提供返回值，Retry 场景同样保持完整调用序列。
-2. Knowledge 测试原先整体 Mock `element-plus`，导致 `StatePanel` 的按钮行为和页面组件装配不稳定；同时页面测试依赖真实表格 scoped slot 才能验证未知知识库状态。现改为使用真实 Element Plus table/column/tag，并仅对非目标交互组件做 stub。
-3. Tool 测试存在 Vitest `vi.mock` hoisting 问题，`listTools/listAgents` 不能使用 mock factory 外部的顶层变量；现统一通过 `vi.hoisted` 创建 Mock。
-4. Dashboard / Knowledge / Tool 页面测试统一使用可交互的 `StatePanel` stub，显式验证状态 class、Action 按钮和恢复路径，避免 `el-icon` resolve warning 污染回归输出。
-5. 三个页面测试统一使用 `vi.resetAllMocks()`，避免前一个用例的实现或一次性返回值影响后续用例。
+### 根因与修复
 
-## 回归范围
+1. **Vitest Mock hoisting / TDZ**
+   - `AgentUI04.test.ts`、`AuditLogUI04.test.ts`、`RuntimeUI04.test.ts`、`Tools.test.ts` 在 `vi.mock()` factory 中直接引用文件顶层 `vi.fn()`。
+   - Vitest 会提升 `vi.mock()`，导致 `Cannot access ... before initialization`。
+   - 统一改为 `vi.hoisted(() => ({ ... }))` 创建 Mock，并由 factory 返回 hoisted 对象。
 
-- 公共组件：`src/components/ui/StatePanel.vue`
-- 页面：DashboardOverview、KnowledgeWorkbench、ToolWorkbench，以及既有 UI-04 迁移页面的公共状态契约
-- 状态：Loading / Empty / Error / Permission / Success
-- 边界：未知业务状态必须显示 `未知状态（技术值）`，不得静默映射为已知状态
+2. **Element Plus bootstrap mock 不完整**
+   - `main.test.ts` 未提供 `ElIcon`，而 `src/main.ts` 已将 `ElIcon` 注册为全局组件。
+   - 补齐 `ElIcon` mock，保持 bootstrap 测试只验证全局 loading directive 注册，不扩大真实组件加载范围。
 
-## 自动化覆盖
+3. **Agent runtime identifier 测试等待条件错误**
+   - 原测试以“系统提示词”文本作为 Chat context 完成条件，但测试用 Dialog stub 同时渲染创建表单，因此该文本并不能证明 Chat context 已加载。
+   - 改为等待 `chatContextState === "success"` 后再验证请求标识、链路追踪标识、会话标识和执行标识。
 
-### StatePanel
+4. **AuditLog 状态选择器与公共组件 Contract 脱节**
+   - 页面已经统一使用 `StatePanel`，其稳定 DOM 状态类为 `.state-panel--empty` / `.state-panel--error`，旧测试仍寻找 `.empty` / `.alert`。
+   - 测试改为通过公共状态 class 验证 Empty/Error，同时保留用户可见中文文案和不暴露后端原始异常的断言。
 
-- 五态均有独立渲染断言
-- Error action emit
-- Element Plus icon/button 在组件测试中显式 stub
+5. **Dashboard / Knowledge UI-03 测试过度依赖 shallow stub 文本**
+   - `PageHeader`、`SurfaceCard`、`StatePanel` 被 shallow mount 自动 stub 后，组件内部标题/description 不会进入 `wrapper.text()`，导致“实际组件存在且 props 正确”却出现空文本失败。
+   - Dashboard 改为显式 stub 共享组件并验证 `PageHeader` / `SurfaceCard` props；Knowledge 改为显式 stub `PageHeader` / `StatePanel` 并验证状态 props。
+   - Dashboard Empty 测试保留真实 Empty 文案与快速入口验证。
 
-### Dashboard
+6. **Operations Console Audit Tab 未激活**
+   - Element Plus Tabs 默认只渲染当前激活面板，旧测试在默认 Global Tab 下直接查找 Audit 输入 placeholder。
+   - 测试先将 `activeTab` 设置为 `audit`，再验证 tenant-scoped audit query 参数与筛选 UI。
 
-- Loading
-- Empty
-- 403 Permission
-- Error + Retry 后恢复 Success
-- Success metrics/workspace
-- 未知 execution status 原样进入中文未知状态提示
-- aggregate executions 双调用契约在成功与 Retry 路径均被覆盖
-- 页面状态测试不再依赖未解析的 `el-icon`
+## 本轮修改文件
 
-### Knowledge
+- `tests/views/AgentUI04.test.ts`
+- `tests/views/AuditLogUI04.test.ts`
+- `tests/views/RuntimeUI04.test.ts`
+- `tests/views/Tools.test.ts`
+- `tests/main.test.ts`
+- `tests/views/Agents.test.ts`
+- `tests/views/AuditLog.test.ts`
+- `tests/views/DashboardUI03.test.ts`
+- `tests/views/KnowledgeUI03.test.ts`
+- `tests/views/OperationsConsole.test.ts`
 
-- Loading
-- Empty + 创建知识库入口
-- 403 Permission
-- Error + Retry 后恢复 Success
-- Success workspace
-- 未知 knowledge-base status 显式提示
-- 使用真实 table scoped slot 验证状态文案
-- 页面状态测试不再通过整体 Mock `element-plus` 产生组件解析副作用
+## 设计与实现约束
 
-### Tool
-
-- Loading
-- Empty + 创建工具入口
-- 403 Permission
-- Error + Retry 后恢复 Success
-- Success workspace
-- Mock factory 使用 `vi.hoisted`，消除 Vitest hoisting failure
-- 页面状态测试不再依赖未解析的 `el-icon`
+- 不修改 Backend Contract。
+- 不复制业务状态机到测试或页面。
+- `StatePanel` 继续作为 Loading / Empty / Error / Permission / Success 单一公共状态实现。
+- 测试应验证公共组件 Contract、props、用户可见文案和关键行为，不依赖被 stub 子组件的内部实现细节。
+- Mock 必须在 `vi.mock()` hoisting 规则下安全初始化；跨用例状态使用显式 reset/clear 策略。
+- 不把后端原始异常、HTTP body 或异常堆栈暴露给用户。
 
 ## 验证命令
 
 ```powershell
 cd frontend
-npm test -- tests/views/DashboardUI04.test.ts
-npm test -- tests/views/KnowledgeUI04.test.ts
-npm test -- tests/views/ToolUI04.test.ts
-npm test -- tests/components/StatePanel.test.ts
+npm test -- tests/views/AgentUI04.test.ts
+npm test -- tests/views/AuditLogUI04.test.ts
+npm test -- tests/views/RuntimeUI04.test.ts
+npm test -- tests/views/Tools.test.ts
+npm test -- tests/main.test.ts
+npm test -- tests/views/Agents.test.ts
+npm test -- tests/views/AuditLog.test.ts
+npm test -- tests/views/DashboardUI03.test.ts
+npm test -- tests/views/KnowledgeUI03.test.ts
+npm test -- tests/views/OperationsConsole.test.ts
 npm test
 npm run build
 npm run test:gate
@@ -77,15 +80,16 @@ npm run test:final
 
 ## 当前事实
 
-远端 Git 操作环境没有本地 Node/Vitest 执行能力，因此本轮**未将任何测试、Build、Gate 或 Final Gate 标记为已通过**。用户此前提供的本地结果确认 `StatePanel` 6/6 已通过；Dashboard 与 Knowledge 的旧测试结果已不再代表当前修复后的回归结果。
+本轮代码通过 GitHub 远端源码审查、Contract 对齐和测试静态根因修复完成；当前执行环境没有可用的 Node/Vitest 运行环境，因此**不能将 targeted/full Vitest、build、gate 或 final 标记为通过**。GitHub Actions 也未提供可用于替代本地验收的 workflow run。
 
-本轮修改后必须在用户本地重新执行上述 targeted → full → build → gate → final 顺序，并以实际命令退出码作为完成依据。
+完成 UI-04 的判定仍必须以用户本地实际命令退出码为准：targeted → full → build → `test:gate` → `test:final`。
 
 ## 已知限制
 
-- GitHub 远端连接可用于源码审查和提交，但当前执行环境不能安装/运行 Node 依赖，因此无法替代用户本地 Vitest/build 验证。
-- E2E / Real API 不由 `test:gate` 或 `test:final` 自动执行，仍按项目既定验收文档单独执行。
+- 本轮未启动 API、Scheduler、Worker、PostgreSQL、Redis。
+- 本轮未自动生成或写入业务测试数据。
+- Real API / Browser E2E 仍需在本地依赖和服务准备完成后按项目既定流程执行。
 
 ## 完成条件
 
-只有 targeted + full Vitest、build、`test:gate`、`test:final` 均实际通过后，UI-04 才可从“进行中”更新为“已完成”，随后进入 UI-05。
+只有 targeted + full Vitest、build、`test:gate`、`test:final` 均实际通过后，UI-04 才可从“进行中”更新为“已完成”，随后进入 UI-05 Form / Dialog / Drawer / Confirm 统一。
