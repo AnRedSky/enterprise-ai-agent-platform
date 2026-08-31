@@ -4,44 +4,48 @@
 
 ## 1. 当前基线
 
-- 最新远端 `main`：`283c003fb6522788cce98b94250840ff37f3a06c`（2026-08-30，Runtime Telemetry SDK Contract 与 tenant isolation 回归）。
-- 本轮已通过 PR #57 将最新 `main` 合并到 `frontend`，合并提交为 `fe7b69162d4761c2a656403eae215faff391771b`。
-- 后端最新 Audit Contract 已提供 tenant-scoped、1~1000 bounded、稳定排序的基础查询入口；前端继续复用现有 `/runtime/audit-logs` API，不新增平行 API。
-- 用户本地此前存在 Node 依赖目录不完整的问题：`node_modules/.bin/vite.cmd` 不存在，`npm ci` 因 Windows `@esbuild/win32-x64/esbuild.exe` 文件锁返回 EPERM；本轮用户已成功完成 `npm ci`，但本地全面回归脚本因路径解析缺陷提前失败，已修复。
+- 最新远端 `main`：`ac90bd2e86f76f9100e67d948e3cbde261527b61`（2026-08-31，worker/scheduler diagnostics UI）。
+- 当前 `frontend` 与最新 `main` 已处于同一提交，无需产生空合并提交；本轮开发继续只消费已经稳定的后端 Contract，不提前实现尚未完成 Acceptance 的后端能力。
+- 前端开发准则明确要求：后端稳定能力是正式前端实现的唯一前置条件，开发顺序固定为 Backend Contract / Tests / Acceptance → Frontend API Types → View / Component → Vitest → Real API / E2E。
+- 本轮选择已稳定的 Organization / Membership Contract 继续前端化，不进入最新 Runtime Operations / Scheduler 后端主线。
 
-## 2. 当前主线：P1.1 / P1.3 / P1 稳定性
-
-### P1.3：Runtime ↔ Workflow 双向深链
+## 2. 本轮交付：Organization 成员管理体验增强
 
 状态：**进行中**。
 
-代码已实现真实 `workflow_id` 上下文双向导航；本地 targeted/full Vitest、build、test gate、Real API 与 Browser E2E 尚未取得实际证据。
+### 实现范围
 
-### FE-P1-04：Element Plus 未解析组件/指令警告治理
+1. 复用现有 `/organizations/{organization_id}/members` 分页 Contract，不新增 API client。
+2. 成员列表使用固定 `page_size=20`，页码通过 `offset=(page-1)*20` 计算。
+3. 成员总数使用后端 `total`，只有超过一页时显示分页控件。
+4. 成员角色、状态、所有权转移、暂停/恢复、移除等既有生命周期操作保持原 Backend Contract。
+5. 添加、编辑、删除、状态变更、所有权转移后保持当前页面上下文；删除导致当前页越界时自动回退到最后有效页。
+6. 成员加载错误独立于组织详情错误，提供可恢复的用户提示，不展示原始异常。
+7. 组织详情在 900px / 600px 以下增加响应式布局，操作区和分页在窄屏下保持可用。
+8. 新增 targeted Vitest 覆盖分页参数、页码状态、既有成员生命周期和权限边界。
 
-状态：**进行中**。
+### Contract 对齐
 
-生产入口已注册官方 `v-loading`，并增加启动层回归测试；本地验收未完成。
+前端继续调用：
 
-### FE-P1-05：Audit 可观测性体验加固
+```text
+GET  /organizations/{organization_id}/members?offset={offset}&limit={limit}
+POST /organizations/{organization_id}/members
+PATCH /organizations/{organization_id}/members/{membership_id}
+POST /organizations/{organization_id}/members/{membership_id}/transfer-owner
+DELETE /organizations/{organization_id}/members/{membership_id}
+```
 
-状态：**进行中**。
+列表响应继续使用：
 
-本轮实际实现：
+```text
+{
+  "items": Membership[],
+  "total": number
+}
+```
 
-1. Audit 状态筛选使用有限后端状态值选择器；
-2. Empty 状态提供“查看全部记录”恢复动作；
-3. Error 状态提供重新加载且不暴露原始异常正文；
-4. Audit 的真实 `execution_id` 可直接深链 Runtime；完整 ID 保留在 query，展示层仅紧凑化；
-5. 表格和筛选区增加窄屏响应式适配；
-6. 新增 AuditLog targeted Vitest；
-7. 新增 `npm run test:local:full` 统一本地回归入口；脚本只做依赖/服务 readiness 检查，不自动启动或停止 API、Scheduler、Worker、PostgreSQL、Redis，也不要求手工输入测试数据。
-
-### 本轮回归脚本修复
-
-状态：**代码已修复，本地全面回归待重新执行**。
-
-`run-local-full-regression.ps1` 现在基于 `$PSScriptRoot` 定位 `frontend` 根目录，不再依赖调用脚本时的当前工作目录。`npm run test:local:full` 从 `frontend` 目录执行时可以正确找到 `frontend/package.json`。
+前端不复制后端 RBAC、tenant boundary 或所有权状态机，仅根据当前用户 membership 的真实角色/状态决定是否展示管理入口。
 
 ## 3. 长期任务队列
 
@@ -54,7 +58,7 @@
 | FE-P0-03 | Runtime | Execution → Event → Trace → Audit 统一详情链路 | 进行中 | View + API + E2E |
 | FE-P0-04 | Knowledge | 知识资产 → 检索 → Agent 关联 → Runtime 验证 | 待实施 | View + API |
 | FE-P0-05 | Tool | 工具配置 → Agent 关联 → Runtime 调用结果 | 待实施 | View + API |
-| FE-P0-06 | Organization | 组织 → 成员 → 权限 → 资源边界 | 待实施 | View + API + E2E |
+| FE-P0-06 | Organization | 组织 → 成员 → 权限 → 资源边界 | 进行中 | View + API + E2E |
 | FE-P0-07 | Model Provider | Provider/Model 配置与 Agent 使用关系 | 待实施 | View + API |
 | FE-P0-08 | Audit | 跨领域操作证据查询与详情 | 进行中 | View + API + E2E |
 | FE-P0-09 | Integration | Event → Delivery → Audit → Replay → Dead Letter | 待实施 | View + Real API |
@@ -65,12 +69,12 @@
 - FE-P1-02：统一错误分类与用户提示隔离。
 - FE-P1-03：统一中文状态映射，未知值安全回退。
 - FE-P1-04：清理 Element Plus 未解析组件警告（进行中）。
-- FE-P1-05：统一公共模式，并完成本轮 Audit 页面渐进增强（进行中）。
+- FE-P1-05：统一公共模式，并完成核心页面渐进增强（进行中）。
 - FE-P1-06：建立 1440 / 1280 / 1024 / 768 / 390 响应式验收矩阵。
 - FE-P1-07：补充核心页面 Playwright 用户旅程。
-- FE-P1-08：完成 P1.1 Runtime / Agent / Workflow 深度交互与可观测性工作台。
+- FE-P1-08：完成 Runtime / Agent / Workflow 深度交互与可观测性工作台。
 
-### P2：2.10-I 后端稳定后再实施
+### P2：后端稳定后再实施
 
 - Provider Registry / Health；
 - Alert Rule 与 firing/recovery 生命周期；
@@ -78,16 +82,6 @@
 - Notification SLO / Route Metrics；
 - Runtime Alert Scheduler 运维视图；
 - Prometheus / OpenTelemetry 配置与观测状态。
-
-### P3：平台化长期能力
-
-- Design System 与 Design Token；
-- 全局搜索与快捷命令；
-- 页面级权限矩阵与通知中心；
-- Dashboard 趋势与运营驾驶舱；
-- 无障碍与响应式深化；
-- 性能预算、资源优化和可观测前端；
-- 主题 / 国际化 / 大屏。
 
 ## 4. 固定执行流程
 
@@ -111,34 +105,24 @@ targeted test → npm test → npm run build → npm run test:gate
 一个原子提交
 ```
 
-## 5. 本地全面测试
+## 5. 本轮验证状态
 
-统一入口：
+本轮代码通过 GitHub 远端源码审查完成实现提交；当前环境没有直接执行用户本地 Node/Vitest/build 的能力，因此不能将 targeted Vitest、全量 Vitest、build 或 test gate 记录为“通过”。
+
+用户本地验收应按：
 
 ```powershell
 cd frontend
-npm ci
-npm run test:local:full
-```
-
-脚本内部依次执行 targeted AuditLog、全量 Vitest、production build、frontend regression gate，并检查已有 Backend API 与 Frontend E2E 服务是否可访问；服务不存在时 E2E 标记 `NOT EXECUTED` 并停止，不自动启动/停止任何后端基础设施。脚本路径解析基于 `$PSScriptRoot`，因此不依赖调用者当前工作目录。
-
-也可以按标准流程分别执行：
-
-```powershell
-npm test -- tests/views/AuditLog.test.ts
+npm test -- tests/views/OrganizationDetail.test.ts
 npm test
 npm run build
 npm run test:gate
-npm run test:e2e
 ```
 
-没有实际执行证据，不得把代码检查结果写成通过。
+需要真实后端时，再执行项目既有 Real API / Browser E2E 流程。测试不得自动启动或停止后端服务，也不得依赖手工输入测试数据。
 
 ## 6. 完成定义
 
 任务只有同时满足 Backend Contract、类型、用户链路、状态完整性、安全边界、targeted/full Vitest、build、test gate、必要 Real API/E2E、文档同步和原子提交等条件，才能标记 `已完成`。
 
-## 7. 状态规则
-
-只允许：`待实施`、`进行中`、`阻塞`、`已完成`。没有实际执行证据不得写成“通过”。
+没有实际执行证据不得写成“通过”。
