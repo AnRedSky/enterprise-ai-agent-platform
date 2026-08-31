@@ -9,13 +9,11 @@
 - 当前主线暂缓新增业务功能，优先解决系统 UI 无法达到企业级使用标准的问题。
 - 前端开发准则要求保持现有企业级信息架构，采用渐进增强；公共视觉规则应统一收敛到 Design Tokens 和公共组件。
 
-## 2. 当前主线：UI-01 + UI-02
-
-状态：**进行中：首轮基础系统整改已实现。**
+## 2. UI 整改主线
 
 ### UI-01：Design System Foundation
 
-已实现：
+状态：**完成首轮基础实现**。
 
 - `src/styles/tokens.css`：颜色、文字、间距、圆角、阴影、布局和控件尺寸 Token；
 - `src/styles/reset.css`：基础 reset、焦点可见性和 reduced-motion；
@@ -25,7 +23,7 @@
 
 ### UI-02：Application Shell
 
-已实现：
+状态：**完成首轮基础实现**。
 
 - 侧边栏品牌、工作区、导航分组、系统状态统一视觉；
 - 顶部上下文栏、搜索、帮助、通知、环境和用户菜单统一视觉；
@@ -34,11 +32,25 @@
 - 700px 以下采用紧凑导航模式；
 - 增强键盘焦点和 reduced-motion 支持。
 
+### UI-03：公共页面视觉体系
+
+状态：**进行中：公共模式组件已建立。**
+
+已实现：
+
+- `src/components/ui/PageHeader.vue`：页面唯一主标题、描述、主操作；
+- `src/components/ui/PageToolbar.vue`：列表筛选、搜索、批量操作、视图操作；
+- `src/components/ui/MetricCard.vue`：关键指标、趋势和辅助信息；
+- `src/components/ui/SurfaceCard.vue`：统一内容容器、Header、Body 和局部操作；
+- `UI_DESIGN_SYSTEM.md` 增加 UI-03 公共模式规范。
+
+本阶段坚持“先建立公共模式，再迁移业务页面”，不修改业务 API 和领域逻辑。
+
 ## 3. UI 整改后续队列
 
 ### P0：系统 UI 全面整改
 
-1. UI-03：Page Header / Toolbar / Metric / Card / Table 公共模式统一；
+1. UI-03：公共页面模式统一，并将核心页面逐步迁移至公共组件；
 2. UI-04：Loading / Empty / Error / Permission / Success 状态统一；
 3. UI-05：表单、Dialog、Drawer、确认操作和危险操作视觉/交互统一；
 4. UI-06：核心页面逐页迁移至 Design Tokens，清理散落硬编码样式；
@@ -73,7 +85,7 @@ targeted test → npm test → npm run build → npm run test:gate
 
 ## 5. 本轮验证状态
 
-本轮 UI-01 + UI-02 已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将这些测试记录为“通过”。
+本轮 UI-03 公共组件已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将这些测试记录为“通过”。
 
 用户本地应执行：
 
@@ -85,7 +97,7 @@ npm run test:gate
 npm run test:final
 ```
 
-视觉验收至少检查 1440 / 1280 / 1024 / 768 / 390 五档 viewport，并重点验证导航、页面容器、表格、表单、Dialog、Loading、Empty、Error 和 Permission 状态。
+视觉验收至少检查 1440 / 1280 / 1024 / 768 / 390 五档 viewport，并重点验证 PageHeader、PageToolbar、MetricCard、SurfaceCard、Table、Form、Dialog。
 
 测试数据必须由既有脚本自动生成；测试流程不得自动启动/停止服务，也不得要求手动填写测试信息。
 
