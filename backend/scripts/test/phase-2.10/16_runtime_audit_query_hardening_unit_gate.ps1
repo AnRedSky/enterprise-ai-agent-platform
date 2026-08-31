@@ -20,7 +20,7 @@ uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_con
 if ($LASTEXITCODE -ne 0) { throw "Runtime Audit Query unit/contract tests failed." }
 
 Write-Host "[4/5] Backend targeted regression"
-uv run pytest -q tests/unit/test_runtime_operations.py tests/api_contract/test_api_runtime_endpoints.py
+uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_contract/test_api_runtime_endpoints.py
 if ($LASTEXITCODE -ne 0) { throw "Runtime targeted regression failed." }
 
 Write-Host "[5/5] Service prerequisite policy"
