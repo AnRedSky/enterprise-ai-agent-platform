@@ -79,7 +79,17 @@ export type RuntimeAlertRule = {
 
 export type RuntimeAlert = Record<string, unknown> & { id?: string; name?: string; status?: string; severity?: string; fired_at?: string; recovered_at?: string | null };
 export type RuntimeMetricSample = Record<string, unknown> & { timestamp?: string; value?: number; metric_name?: string; dimension_key?: string | null; dimension_value?: string | null };
-export type RuntimeAudit = Record<string, unknown> & { id?: string; action?: string; status?: string; actor_id?: string; created_at?: string };
+export type RuntimeAudit = {
+  id: string;
+  tenant_id: string;
+  actor: string;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  outcome: string;
+  details: Record<string, unknown>;
+  created_at: string;
+};
 export type RuntimeAuditQuery = {
   page?: number;
   page_size?: number;
@@ -87,6 +97,7 @@ export type RuntimeAuditQuery = {
   resource_type?: string;
   resource_id?: string;
   outcome?: string;
+  actor?: string;
   since?: string;
   until?: string;
 };
