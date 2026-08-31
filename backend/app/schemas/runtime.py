@@ -292,18 +292,24 @@ class RuntimeCorrelationPage(BaseModel):
     total: int
 
 
-class RuntimeCorrelationPageWithItems(RuntimeCorrelationPage):
-    """关联事件分页集合。"""
+class RuntimeCorrelationTracePage(RuntimeCorrelationPage):
+    """关联视图中的 Trace 分页集合。"""
 
-    items: list[Any]
+    items: list[WorkflowTraceItem]
+
+
+class RuntimeCorrelationAuditPage(RuntimeCorrelationPage):
+    """关联视图中的 Audit 分页集合。"""
+
+    items: list[AuditLogItem]
 
 
 class RuntimeCorrelationResponse(BaseModel):
     """Execution、Trace、Audit 与 Operator Action 双向关联 Contract。"""
 
     execution: RuntimeCorrelationExecution | None
-    traces: RuntimeCorrelationPageWithItems
-    audits: RuntimeCorrelationPageWithItems
+    traces: RuntimeCorrelationTracePage
+    audits: RuntimeCorrelationAuditPage
     operator_actions: list[RuntimeOperatorActionItem]
     focus_audit_id: UUID | None = None
     focus_operator_action_id: UUID | None = None
