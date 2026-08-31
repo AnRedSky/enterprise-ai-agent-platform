@@ -37,7 +37,7 @@
       </el-card>
     </div>
 
-    <el-card v-if="workerDiagnostics || schedulerDiagnostics" shadow="never" class="diagnostics-card">
+    <el-card v-if="posture || diagnosticsError" shadow="never" class="diagnostics-card">
       <template #header><div class="card-title"><strong>Worker / Scheduler 诊断</strong><span class="muted">仅展示后端 Durable Facts，不推断进程心跳</span></div></template>
       <el-alert v-if="diagnosticsError" type="warning" :closable="false" title="诊断数据暂时不可用；全局运行态势仍可继续查看。" />
       <div class="diagnostics-grid">

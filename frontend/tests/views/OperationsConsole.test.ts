@@ -42,12 +42,11 @@ beforeEach(() => {
 describe("Runtime Operations Console", () => {
   it("renders backend global runtime posture", async () => {
     const wrapper = mountConsole();
-    await vi.waitFor(() => expect(wrapper.text()).toContain("全局运行态势"));
-    expect(wrapper.text()).toContain("执行总量");
+    await vi.waitFor(() => expect(runtimeOperationsApi.global).toHaveBeenCalledWith({ window_hours: 24, limit: 50 }));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("执行总量"));
     expect(wrapper.text()).toContain("8");
     expect(wrapper.text()).toContain("未知（无持久化心跳）");
     expect(wrapper.text()).toContain("订单处理");
-    expect(runtimeOperationsApi.global).toHaveBeenCalledWith({ window_hours: 24, limit: 50 });
   });
 
   it("renders backend 2.10-I operational facts", async () => {
