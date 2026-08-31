@@ -19,7 +19,7 @@ const mountView = () => mount(KnowledgeWorkbench, {
       PageHeader: true,
       PageToolbar: true,
       SurfaceCard: { template: "<div><slot/><slot name='header'/></div>" },
-      "el-button": true, "el-table": true, "el-table-column": true, "el-dialog": true, "el-form": true,
+      "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" }, "el-table": true, "el-table-column": true, "el-dialog": true, "el-form": true,
       "el-form-item": true, "el-input": true, "el-input-number": true, "el-select": true, "el-option": true,
       "el-slider": true, "el-alert": true, "el-empty": true, "el-icon": true,
     },
@@ -55,6 +55,15 @@ describe("Knowledge UI-04 states", () => {
     await flushPromises();
     expect(mocks.listKnowledgeBases).toHaveBeenCalledTimes(2);
     expect(wrapper.findComponent(StatePanel).exists()).toBe(false);
+  });
+
+  it("exposes an action for the empty state", async () => {
+    mocks.listKnowledgeBases.mockResolvedValueOnce({ items: [] });
+    const wrapper = mountView();
+    await flushPromises();
+    const panel = wrapper.findComponent(StatePanel);
+    expect(panel.props("actionLabel")).toBe("创建知识库");
+    expect(panel.text()).toContain("创建知识库");
   });
 
   it.each([
