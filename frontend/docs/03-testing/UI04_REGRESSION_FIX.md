@@ -2,7 +2,7 @@
 
 ## 变更范围
 
-本次基于 frontend 分支最新本地测试反馈，修复 UI-04 状态契约、Dashboard 可测试性以及 UI-03 测试夹具问题。
+本次基于 frontend 分支最新本地测试反馈，修复 UI-04 状态契约、Dashboard 可测试性以及 UI-03 / Runtime Console 测试夹具问题。
 
 ### 根因与处理
 
@@ -14,7 +14,7 @@
 | AuditLog loading | 审计列表 loading 初始值为 `false`，同样产生首帧 empty | 将 `loading` 初始化为 `true` |
 | Dashboard metric-executions | 页面没有稳定的 metric test contract | 为 MetricCard 增加 `data-testid="metric-<key>"` |
 | Tools UI-03 | 测试默认使用空工具数据，却要求 success-only 公共模式存在；Element Plus button slot 也未被测试 stub 渲染 | success 契约测试显式提供工具 fixture；button stub 透传 slot |
-| Operations Console audit filter | 测试通过 `wrapper.text()` 查找 input placeholder，Element Plus input placeholder 不属于文本节点 | 改为按 `input[placeholder]` 语义查询（后续本地同步该测试修正） |
+| Operations Console audit filter | 测试通过 `wrapper.text()` 查找 input placeholder，Element Plus input placeholder 不属于文本节点 | 改为按 `input[placeholder]` 语义查询 |
 
 ## 状态模型约束
 
@@ -45,4 +45,4 @@ npm run build
 
 ## 结果记录
 
-用户反馈的基线为 `40 passed / 8 failed`。本次提交针对其中的根因进行了代码和测试契约修复。由于 GitHub 远程开发工具无法复现用户 Windows 本地 Node/Vite 运行环境，本轮未伪造本地测试通过结果；应在本地执行上述命令确认最终状态。
+用户反馈的基线为 `40 passed / 8 failed`。本次提交针对 8 个失败项逐项修复代码或测试契约。由于 GitHub 远程开发工具无法复现用户 Windows 本地 Node/Vite 运行环境，本轮未伪造本地测试通过结果；最终通过状态必须在用户本地执行上述命令确认。
