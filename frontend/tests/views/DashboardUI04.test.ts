@@ -27,6 +27,7 @@ function mountView() {
         "el-tag": true,
         "el-empty": true,
         "el-alert": true,
+        "el-icon": true,
       },
     },
   });
@@ -60,12 +61,23 @@ describe("Dashboard UI-04 states", () => {
   it("renders error for recoverable aggregate failure", async () => {
     mocks.listAgents.mockRejectedValue(new Error("network")); mocks.listTools.mockResolvedValue([]); mocks.executions.mockResolvedValue(ok());
     const wrapper = mountView(); await flushPromises();
-    expect(wrapper.findComponent(StatePanel).props("state")).toBe("error");
+    const panel = wrapper.findComponent(StatePanel);
+    expect(panel.props("state")).toBe("error");
+    await panel.find("button").trigger("click");
+    expect(mocks.listAgents).toHaveBeenCalledTimes(2);
   });
 
   it("renders dashboard content after successful aggregate load", async () => {
     mocks.listAgents.mockResolvedValue([{ status: "published" }]); mocks.listTools.mockResolvedValue([{ enabled: true }]); mocks.executions.mockResolvedValue(ok([{ execution_id: "e1", status: "completed" }]));
     const wrapper = mountView(); await flushPromises();
     expect(wrapper.find(".metrics").exists()).toBe(true);
+  });
+
+  it("preserves unknown execution statuses instead of coercing them", async () => {
+    mocks.listAgents.mockResolvedValue([{ status: "published" }]);
+    mocks.listTools.mockResolvedValue([{ enabled: true }]);
+    mocks.executions.mockResolvedValue(ok([{ execution_id: "e1", status: "provider_pending_v2" }]));
+    const wrapper = mountView(); await flushPromises();
+    expect(wrapper.text()).toContain("未知状态（provider_pending_v2）");
   });
 });
