@@ -8,7 +8,7 @@
 
 ## 2. 当前状态
 
-**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；II-03 Worker / Scheduler Diagnostics Backend 与 Frontend 第一切片已实现；II-04 Audit / Trace Correlation Backend 第一切片已实现；II-05 Controlled Batch Operations Backend 第一切片已实现并完成开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 验证；当前进入 II-06 Runtime Audit Query Backend 第一切片。**
+**开发中。II-01 Backend Operator Action Governance 已完成本地反馈验证；II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；II-03 Worker / Scheduler Diagnostics Backend 与 Frontend 第一切片已实现；II-04 Audit / Trace Correlation Backend 第一切片已实现；II-05 Controlled Batch Operations Backend 第一切片已实现并完成开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 验证；II-06 Runtime Audit Query Backend 第一切片已完成开发者本地 Unit / API Contract / Real PostgreSQL Acceptance，当前进入查询性能强化。**
 
 ## 3. 第一切片：Operator Action Governance
 
@@ -89,11 +89,41 @@ II-01 至 II-05 已建立统一 Operator Action、全局 Runtime 查询、Worker
 
 - `tests/unit/test_runtime_operations_audit_query.py`；
 - `tests/api_contract/test_runtime_operations_audit_query_contract.py`；
-- `scripts/test/phase-2.10/14_runtime_audit_query_unit_gate.ps1`。
+- `scripts/test/phase-2.10/14_runtime_audit_query_unit_gate.ps1`；
+- `scripts/test/phase-2.10/15_runtime_audit_query_real_gate.ps1`。
 
-最低验收：Unit + API Contract + Backend targeted regression。该切片不需要 Migration。
+开发者本地反馈已确认 Unit / API Contract 6 passed、Real PostgreSQL Acceptance 1 passed；真实验收最初出现 `datetime.utcnow()` 弃用警告，已纳入错误记录并修复。
 
-## 9. 完成判定
+## 9. 第七切片：II-06 Runtime Audit Query 查询性能强化
+
+### 9.1 目标
+
+第一切片已经证明 tenant isolation、分页与运维过滤的业务语义正确，但查询随着审计事实增长会同时承担 tenant、resource、outcome 等组合过滤。第二切片不改变 API Contract，不复制查询规则，只补齐与现有查询路径一致的 PostgreSQL 复合索引。
+
+### 9.2 Database Hardening
+
+新增 Alembic migration：`0050_runtime_audit_query_indexes`，建立：
+
+- `(tenant_id, resource_type, resource_id, created_at)`：支持资源维度精确过滤与稳定时间排序；
+- `(tenant_id, outcome, created_at)`：支持结果过滤与时间范围查询；
+- `(tenant_id, actor, created_at)`：为后续运维审计主体过滤及常见审计追踪查询预留稳定索引路径。
+
+索引均以 `tenant_id` 为第一列，确保数据库优化路径与既有 tenant boundary 一致，不提供跨租户扫描入口。
+
+### 9.3 Warning Hardening
+
+真实 PostgreSQL Acceptance 中发现 `datetime.utcnow()` 已被 Python 新版本标记为弃用。测试夹具统一使用 `datetime.now(UTC).replace(tzinfo=None)`，保持现有 PostgreSQL `DateTime` 无时区字段兼容，同时显式表达 UTC 语义。
+
+### 9.4 自动化 Gate
+
+新增：
+
+- `scripts/test/phase-2.10/16_runtime_audit_query_hardening_unit_gate.ps1`；
+- `scripts/test/phase-2.10/17_runtime_audit_query_hardening_real_gate.ps1`。
+
+Gate 只负责探测数据库、执行 migration 与测试，不自动创建、启动、重启或停止 API、Scheduler、Worker、PostgreSQL、Redis；Acceptance 测试数据继续自动创建和清理，不要求人工填写 ID。
+
+## 10. 完成判定
 
 每个 Backend 切片至少满足：
 
@@ -102,4 +132,5 @@ II-01 至 II-05 已建立统一 Operator Action、全局 Runtime 查询、Worker
 - 不产生重复生命周期或事实源；
 - Backend Regression 通过；
 - 需要数据库结构变化时完成 Alembic migration 与本地 head 验证；
-- 范围需要时执行 Real PostgreSQL / Real API Acceptance。
+- 范围需要时执行 Real PostgreSQL / Real API Acceptance；
+- 所有实际发生的工程错误和警告均记录到 `docs/04-errors/`。

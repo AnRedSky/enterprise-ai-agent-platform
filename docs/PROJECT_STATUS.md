@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**II-06 Runtime Audit Query Backend 第一切片实现**
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**。
+- 当前任务：**II-06 Runtime Audit Query Backend 查询性能强化**
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -24,25 +24,28 @@
 - Phase 2.10-II / II-02 Global Runtime Operations 已完成本地 Backend Unit / Real PostgreSQL 验证；
 - Phase 2.10-II / II-03 Worker / Scheduler Diagnostics Backend 第一切片已实现；
 - Phase 2.10-II / II-04 Audit / Trace Correlation Backend 第一切片已实现；
-- Phase 2.10-II / II-05 Controlled Batch Operations Backend 第一切片已实现，并已通过开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 反馈。
+- Phase 2.10-II / II-05 Controlled Batch Operations Backend 第一切片已实现，并已通过开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 反馈；
+- Phase 2.10-II / II-06 Runtime Audit Query Backend 第一切片已通过开发者本地 Unit / API Contract / Real PostgreSQL Acceptance 反馈，现进入查询性能强化。
 
 ## 3. II-06 当前状态
 
-已实现第一切片：
+第一切片已完成：
 
 - `RuntimeOperationsService.audit_query`：tenant-scoped、数据库分页、稳定排序；
 - 支持 action / resource_type / resource_id / outcome 精确过滤；
 - 支持 since / until 时间窗口；
 - 明确拒绝反向时间窗口；
 - 新增 `GET /api/v1/runtime/operations/audit/query`；
-- 不新增数据库表、不新增 Audit 生命周期、不复制既有 AuditLog / Operator Action 事实；
-- 新增 Unit / API Contract 测试与独立 Unit Gate。
+- 不新增 Audit 生命周期、不复制既有 AuditLog / Operator Action 事实；
+- Unit / API Contract 与 Real PostgreSQL tenant isolation / operational filtering 已完成开发者本地反馈验收。
 
-当前未宣称：
+当前进行第二切片：
 
-- II-06 第一切片尚未由开发者本地执行 Unit Gate；
-- II-06 尚未标记 Acceptance Passed；
-- Real PostgreSQL / Real API 是否需要执行将在 Unit / Contract 稳定后根据查询范围决定。
+- 新增 `0050_runtime_audit_query_indexes` Alembic migration；
+- 为 tenant + resource、tenant + outcome、tenant + actor 的常用审计查询组合建立复合索引；
+- 修复真实验收中的 `datetime.utcnow()` 弃用警告；
+- 新增独立 Hardening Unit / Real Gate；
+- 不自动启动任何服务，不要求手工填写测试身份或业务 ID。
 
 ## 4. Backend 验收规则
 
@@ -65,10 +68,10 @@ Frontend 页面回归、Frontend Build、Browser E2E 不作为 Backend 主线开
 ## 5. 下一执行顺序
 
 ```text
-① 本地执行 II-06 Runtime Audit Query Unit Gate
-② Backend Regression
-③ 若 Unit / Contract / Regression 全部通过，再决定是否补充 Real PostgreSQL / Real API Acceptance
-④ 收口 II-06 第一切片
-⑤ 评估 II-06 第二切片或下一 Backend 主线任务
-⑥ 继续实现，不提前进入 Frontend / Browser 工作
+① 执行 II-06 Runtime Audit Query Hardening Unit Gate
+② 执行 Backend Regression
+③ 在已有本地 PostgreSQL 上执行 Hardening Real Gate
+④ 确认 migration head 与复合索引真实存在
+⑤ 收口 II-06
+⑥ 评估 II-07 下一 Backend 主线能力
 ```
