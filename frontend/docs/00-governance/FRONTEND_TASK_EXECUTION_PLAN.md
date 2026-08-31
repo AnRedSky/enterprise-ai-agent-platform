@@ -4,8 +4,8 @@
 
 ## 1. 当前基线
 
-- 最新远端 `main`：`2fccc9ddee10579e8dfcc6e684164e140b7356bc`（2026-08-31，Runtime Audit Query 路由修复）。
-- 当前 `frontend` 已同步到该 `main`，本轮 UI 整改基于稳定后端 Contract，不新增业务 Contract。
+- 最新远端 `main`：`48fb6ce8017358a50c6fbcdb4f68861cce89dd89`（2026-08-31，Runtime Audit Query targeted regression 修复后的最新主线）。
+- 当前 `frontend` 已通过 merge commit 同步该 `main`；本轮 UI 整改基于稳定后端 Contract，不新增业务 Contract。
 - 当前主线暂缓新增业务功能，优先解决系统 UI 无法达到企业级使用标准的问题。
 - 前端开发准则要求保持现有企业级信息架构，采用渐进增强；公共视觉规则应统一收敛到 Design Tokens 和公共组件。
 
@@ -34,7 +34,7 @@
 
 ### UI-03：公共页面视觉体系
 
-状态：**进行中：公共模式组件已建立。**
+状态：**进行中：公共模式组件已建立，并开始核心页面迁移。**
 
 已实现：
 
@@ -42,7 +42,9 @@
 - `src/components/ui/PageToolbar.vue`：列表筛选、搜索、批量操作、视图操作；
 - `src/components/ui/MetricCard.vue`：关键指标、趋势和辅助信息；
 - `src/components/ui/SurfaceCard.vue`：统一内容容器、Header、Body 和局部操作；
-- `UI_DESIGN_SYSTEM.md` 增加 UI-03 公共模式规范。
+- `UI_DESIGN_SYSTEM.md` 增加 UI-03 公共模式规范；
+- `views/tools/components/ToolWorkbench.vue`：迁移至 `PageHeader` + `PageToolbar` + `SurfaceCard`，保留原有 API、权限和操作链路；
+- `tests/views/Tools.test.ts`：覆盖公共模式挂载、Empty 状态和管理员创建入口。
 
 本阶段坚持“先建立公共模式，再迁移业务页面”，不修改业务 API 和领域逻辑。
 
@@ -85,12 +87,13 @@ targeted test → npm test → npm run build → npm run test:gate
 
 ## 5. 本轮验证状态
 
-本轮 UI-03 公共组件已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将这些测试记录为“通过”。
+本轮 UI-03 工具工作台迁移已通过 GitHub 远端源码修改完成；当前执行环境不能直接运行用户本地 Node/Vitest/build，因此不能将测试记录为“通过”。
 
 用户本地应执行：
 
 ```powershell
 cd frontend
+npm test -- tests/views/Tools.test.ts
 npm test
 npm run build
 npm run test:gate
