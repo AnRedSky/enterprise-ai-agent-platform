@@ -61,8 +61,7 @@
 - API Contract 新增响应 schema 与全部 operational filter 长度边界断言；
 - Real PostgreSQL Acceptance 新增 `resource_type + resource_id` 组合过滤、分页稳定性、第二页边界以及 `since > until` 拒绝测试；
 - 新增 `22_runtime_audit_query_contract_hardening_gate.ps1`，自动执行 migration/head、Unit/API Contract 与 Real PostgreSQL Acceptance；
-- Gate 明确禁止自动启动或停止 API/Scheduler/Worker/PostgreSQL/Redis，测试身份和业务事实全部自动生成；
-- 2026-08-31 开发者本地反馈发现 nullable OpenAPI 参数的 `maxLength` 断言过度依赖 schema 根节点；已将 `action` / `actor` 及其他 operational filter 的契约断言统一为兼容根节点与 `anyOf` 字符串分支的语义校验，错误记录见 `docs/04-errors/2026-08-31-phase-2-10-ii-runtime-audit-openapi-nullable-filter-bound.md`。
+- Gate 明确禁止自动启动或停止 API/Scheduler/Worker/PostgreSQL/Redis，测试身份和业务事实全部自动生成。
 
 ## 4. Backend 验收规则
 
@@ -85,9 +84,8 @@ Frontend 页面回归、Frontend Build、Browser E2E 不作为 Backend 主线开
 ## 5. 下一执行顺序
 
 ```text
-① 开发者本地重新执行 21_runtime_audit_action_outcome_hardening_gate.ps1，确认 OpenAPI nullable filter assertion 修复
-② 执行 22_runtime_audit_query_contract_hardening_gate.ps1
-③ 执行 Backend targeted regression
-④ 若真实验收通过，继续扫描 II-07 的剩余审计查询缺口
-⑤ 保持 Backend-first，暂不转入 Frontend 回归
+① 开发者本地执行 22_runtime_audit_query_contract_hardening_gate.ps1
+② 执行 Backend targeted regression
+③ 若真实验收通过，继续扫描 II-07 的剩余审计查询缺口
+④ 保持 Backend-first，暂不转入 Frontend 回归
 ```
