@@ -72,6 +72,6 @@ async def test_operator_action_result_resource_type_schema_is_available() -> Non
                       AND result_resource_type IS NULL
                     """
                 )
-            ).scalar_one()
-        )
+            )
+        ).scalar_one()
         assert untyped_success_results == 0
