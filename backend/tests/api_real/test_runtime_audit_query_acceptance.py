@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -25,7 +25,7 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
     """验证租户 A 不能看到租户 B，并验证动作/资源/结果/时间窗口组合过滤。"""
     suffix = uuid4().hex[:12]
     tenant_a, tenant_b = uuid4(), uuid4()
-    now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    now = datetime.utcnow().replace(microsecond=0)
     audit_ids = [uuid4() for _ in range(7)]
 
     try:

@@ -84,7 +84,8 @@ class AlertRuleEnabledRequest(BaseModel):
     enabled: bool
 
 
-router = APIRouter(prefix="/api/v1/runtime/operations", tags=["runtime-operations"])
+# 本路由由 Runtime 聚合路由以 /api/v1/runtime 前缀挂载；这里仅保留领域相对路径，避免重复拼接前缀。
+router = APIRouter(prefix="/operations", tags=["runtime-operations"])
 
 
 def _claims(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict:
