@@ -4,7 +4,7 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**II-05 Controlled Batch Operations Backend 第一切片**
+- 当前任务：**II-05 Controlled Batch Operations Backend 第一切片验收整改**
 - 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片** 与 Phase 2.10-I Runtime Notification Lifecycle 全链路收口。
 
 开发严格基于远端 `main`，不创建功能分支。
@@ -38,12 +38,12 @@
 - 每个项目独立返回 `succeeded` / `rejected` / `failed`，允许同批次合法项目继续执行；
 - 所有实际状态变更继续委托 `WorkflowExecutionService` / `WorkflowTriggerService`；
 - 新增 `/api/v1/runtime/operator-actions/batch` HTTP Contract；
-- Unit / API Contract / Real PostgreSQL Acceptance 测试与独立 Gate 已提交。
+- Unit / API Contract / Real PostgreSQL Acceptance 测试与独立 Gate 已提交；
+- 已修复 Real Acceptance 清理阶段遗漏 Durable Integration Event 导致的 tenant 外键约束错误。
 
 当前未宣称：
 
-- II-05 Unit Gate 尚未由开发者本地执行；
-- II-05 Real PostgreSQL Acceptance 尚未由开发者本地执行；
+- II-05 修复后的 Real PostgreSQL Acceptance 尚未由开发者本地重新执行；
 - II-05 尚未标记 Acceptance Passed；
 - Frontend 回归不作为本阶段 Backend 验收阻塞条件。
 
@@ -68,10 +68,11 @@ Frontend 页面回归、Frontend Build、Browser E2E 不作为 Backend 主线开
 ## 5. 下一执行顺序
 
 ```text
-① 本地执行 II-05 Controlled Batch Operations Unit Gate
-② 本地执行 II-05 Controlled Batch Operations Real Gate
-③ Backend Regression
-④ 收口 II-05 Acceptance
-⑤ 检查 II-06 下一 Backend 主线任务
-⑥ 继续实现，不提前进入 Frontend / Browser 工作
+① 本地执行 II-05 修复后的 Real PostgreSQL Acceptance
+② 本地执行 II-05 Controlled Batch Operations Unit Gate
+③ 本地执行 II-05 Controlled Batch Operations Real Gate
+④ Backend Regression
+⑤ 若全部通过，收口 II-05 Acceptance
+⑥ 评估并定义 II-06 下一 Backend 主线任务
+⑦ 继续实现，不提前进入 Frontend / Browser 工作
 ```
