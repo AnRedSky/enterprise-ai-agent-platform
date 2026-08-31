@@ -12,11 +12,11 @@ uv run alembic current
 if ($LASTEXITCODE -ne 0) { throw "Alembic current failed." }
 
 Write-Host "[2/4] Runtime Audit Actor Filter unit + API contract"
-uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_contract/test_runtime_operations_audit_query_contract.py
+uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_contract/test_runtime_operations_audit_query_contract.py tests/api_contract/test_runtime_operations_audit_actor_filter_contract.py
 if ($LASTEXITCODE -ne 0) { throw "Runtime Audit Actor Filter unit/contract tests failed." }
 
 Write-Host "[3/4] Backend targeted regression"
-uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_contract/test_api_runtime_endpoints.py
+uv run pytest -q tests/unit/test_runtime_operations_audit_query.py tests/api_contract/test_api_runtime_endpoints.py tests/api_contract/test_runtime_operations_audit_actor_filter_contract.py
 if ($LASTEXITCODE -ne 0) { throw "Runtime Audit Actor Filter targeted regression failed." }
 
 Write-Host "[4/4] Service prerequisite policy"
