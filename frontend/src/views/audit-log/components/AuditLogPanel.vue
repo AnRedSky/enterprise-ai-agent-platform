@@ -32,7 +32,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { runtimeApi, type AuditLog } from "../../../api/runtime";
 import StatePanel from "@/components/ui/StatePanel.vue";
-const router=useRouter();const items=ref<AuditLog[]>([]);const page=ref(1);const pageSize=ref(20);const total=ref(0);const status=ref("");const loading=ref(false);const error=ref(false);const permissionDenied=ref(false);const successFeedback=ref(false);
+const router=useRouter();const items=ref<AuditLog[]>([]);const page=ref(1);const pageSize=ref(20);const total=ref(0);const status=ref("");const loading=ref(true);const error=ref(false);const permissionDenied=ref(false);const successFeedback=ref(false);
 const statusOptions=[{value:"success",label:"成功"},{value:"failed",label:"失败"},{value:"running",label:"运行中"},{value:"pending",label:"等待中"},{value:"cancelled",label:"已取消"},{value:"completed",label:"已完成"}];
 const actionLabels:Record<string,string>={create:"创建",update:"更新",delete:"删除",publish:"发布",archive:"归档",execute:"执行",cancel:"取消",retry:"重试",resume:"恢复",bind:"绑定",unbind:"解绑",enable:"启用",disable:"停用"};
 const resourceLabels:Record<string,string>={agent:"智能体",tool:"工具",workflow:"工作流",knowledge:"知识库",model:"模型",organization:"组织",integration:"集成"};
