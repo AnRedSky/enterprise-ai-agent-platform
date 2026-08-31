@@ -70,13 +70,31 @@ async def test_runtime_audit_query_is_tenant_isolated_and_supports_operational_f
             assert rows[0].resource_id == "exec-a-3"
             assert rows[0].tenant_id == tenant_a
 
-            _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, resource_id="exec-a-3")
+            _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, resource_type="workflow_execution", resource_id="exec-a-3")
             assert total == 1
             assert rows[0].outcome == "failed"
 
             _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, since=now - timedelta(minutes=3, seconds=30), until=now - timedelta(minutes=1, seconds=30))
             assert total == 2
             assert [row.resource_id for row in rows] == ["exec-a-3", "trigger-a-1"]
+
+            _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=2, action="operator.workflow_execution.retry")
+            assert total == 3
+            assert len(rows) == 2
+            assert [row.resource_id for row in rows] == ["exec-a-4", "exec-a-3"]
+
+            _, _, total, rows = await service.audit_query(tenant_a, page=2, page_size=2, action="operator.workflow_execution.retry")
+            assert total == 3
+            assert [row.resource_id for row in rows] == ["exec-a-1"]
+
+            with pytest.raises(ValueError, match="since must not be later than until"):
+                await service.audit_query(
+                    tenant_a,
+                    page=1,
+                    page_size=10,
+                    since=now,
+                    until=now - timedelta(seconds=1),
+                )
 
             _, _, total, rows = await service.audit_query(tenant_a, page=1, page_size=10, actor="operator-b", action="operator.workflow_execution.retry")
             assert total == 0
