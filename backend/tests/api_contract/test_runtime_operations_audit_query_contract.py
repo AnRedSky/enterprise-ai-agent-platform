@@ -12,6 +12,16 @@ from app.main import app
 client = TestClient(app)
 
 
+def _schema_max_length(schema: dict) -> int:
+    """从 OpenAPI 字符串 schema 中读取最大长度，兼容 nullable 的 anyOf 表示。"""
+    if "maxLength" in schema:
+        return schema["maxLength"]
+    for variant in schema.get("anyOf", []):
+        if variant.get("type") == "string" and "maxLength" in variant:
+            return variant["maxLength"]
+    raise AssertionError(f"schema does not expose maxLength: {schema}")
+
+
 def test_runtime_audit_query_route_is_registered_as_get_only():
     routes = {
         (route.path, tuple(sorted(route.methods or [])))
@@ -50,8 +60,8 @@ def test_runtime_audit_query_exposes_stable_response_schema():
 def test_runtime_audit_query_exposes_filter_bounds():
     parameters = app.openapi()["paths"]["/api/v1/runtime/operations/audit/query"]["get"]["parameters"]
     schemas = {parameter["name"]: parameter["schema"] for parameter in parameters}
-    assert schemas["action"]["maxLength"] == 80
-    assert schemas["resource_type"]["maxLength"] == 80
-    assert schemas["resource_id"]["maxLength"] == 128
-    assert schemas["outcome"]["maxLength"] == 24
-    assert schemas["actor"]["maxLength"] == 128
+    assert _schema_max_length(schemas["action"]) == 80
+    assert _schema_max_length(schemas["resource_type"]) == 80
+    assert _schema_max_length(schemas["resource_id"]) == 128
+    assert _schema_max_length(schemas["outcome"]) == 24
+    assert _schema_max_length(schemas["actor"]) == 128
