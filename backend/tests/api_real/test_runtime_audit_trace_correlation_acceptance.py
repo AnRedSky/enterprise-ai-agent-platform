@@ -39,6 +39,8 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
 
     try:
         async with SessionLocal() as db:
+            # AuditLog / OperatorAction 的 actor_id 存在数据库外键约束；先落库基础身份与运行事实，
+            # 再写入依赖用户的运维事实，避免仅依赖 ORM relationship 是否声明来决定 flush 顺序。
             db.add_all([
                 Tenant(id=tenant_a, name=f"phase-210-correlation-a-{suffix}", status="active"),
                 Tenant(id=tenant_b, name=f"phase-210-correlation-b-{suffix}", status="active"),
@@ -52,6 +54,9 @@ async def test_runtime_audit_trace_correlation_is_bidirectional_and_tenant_scope
                 WorkflowExecution(id=execution_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=version_b, created_by=user_b, status="completed", created_at=now),
                 WorkflowTraceEvent(id=trace_a, tenant_id=tenant_a, execution_id=execution_a, workflow_id=workflow_a, workflow_version_id=version_a, event_type="execution.state_changed", status="failed", trace_id=str(execution_a), actor_id=user_a, data={"fixture": suffix}, created_at=now),
                 WorkflowTraceEvent(id=trace_b, tenant_id=tenant_b, execution_id=execution_b, workflow_id=workflow_b, workflow_version_id=version_b, event_type="execution.state_changed", status="completed", trace_id=str(execution_b), actor_id=user_b, data={"fixture": suffix}, created_at=now),
+            ])
+            await db.flush()
+            db.add_all([
                 AuditLog(id=audit_a, actor_id=user_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, workflow_execution_id=execution_a, action="operator.workflow_execution.retry", resource_type="workflow_execution", resource_id=str(execution_a), trace_id=str(execution_a), status="success", metadata_json={"fixture": suffix}, created_at=now),
                 AuditLog(id=audit_b, actor_id=user_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=version_b, workflow_execution_id=execution_b, action="operator.workflow_execution.run", resource_type="workflow_execution", resource_id=str(execution_b), trace_id=str(execution_b), status="success", metadata_json={"fixture": suffix}, created_at=now),
                 OperatorActionIdempotency(id=action_a, tenant_id=tenant_a, actor_id=user_a, resource_type="workflow_execution", resource_id=execution_a, action="retry", idempotency_key=f"correlation-a-{suffix}", status="succeeded", result_resource_id=execution_a, metadata_json={"fixture": suffix}, created_at=now, updated_at=now),
