@@ -4,19 +4,11 @@
     <StatePanel v-if="pageState === 'permission'" state="permission" title="无权查看平台概览" description="当前账号缺少平台概览所需的数据访问权限，请联系管理员。" />
     <StatePanel v-else-if="pageState === 'error'" state="error" title="平台数据加载失败" description="无法同步智能体、工具或运行记录，请检查服务状态后重试。" action-label="重试" @action="load" />
     <StatePanel v-else-if="pageState === 'loading'" state="loading" title="正在加载平台概览" description="正在同步智能体、工具和运行记录。" />
-    <template v-else-if="pageState === 'empty'">
-      <StatePanel state="empty" title="暂无平台运行数据" description="当前还没有智能体、工具或运行记录；创建并运行第一个资源后，这里会展示平台概览。" />
-    </template>
+    <template v-else-if="pageState === 'empty'"><StatePanel state="empty" title="暂无平台运行数据" description="当前还没有智能体、工具或运行记录；创建并运行第一个资源后，这里会展示平台概览。" /></template>
     <template v-else>
-      <section class="metrics" v-loading="loading" aria-label="平台核心指标">
-        <MetricCard v-for="metric in metricCards" :key="metric.key" :label="metric.label" :value="metric.value" :description="metric.description" :trend="metric.caption" trend-direction="neutral" />
-      </section>
+      <section class="metrics" v-loading="loading" aria-label="平台核心指标"><MetricCard v-for="metric in metricCards" :key="metric.key" :label="metric.label" :value="metric.value" :description="metric.description" :trend="metric.caption" trend-direction="neutral" /></section>
       <section class="workspace-grid">
-        <SurfaceCard title="最近执行" description="最近 8 条运行记录"><template #header><el-button link type="primary" @click="$router.push('/runtime')">查看全部</el-button></template>
-          <div v-if="recentExecutions.length" class="activity-summary" aria-label="最近执行窗口摘要"><div><span>窗口记录</span><strong>{{ recentExecutions.length }}</strong></div><div><span>失败</span><strong>{{ recentFailedCount }}</strong></div><div><span>进行中</span><strong>{{ recentRunningCount }}</strong></div></div>
-          <el-table v-if="recentExecutions.length" :data="recentExecutions" size="small" show-overflow-tooltip><el-table-column label="执行" min-width="180"><template #default="{ row }"><code>{{ shortId(row.execution_id) }}</code></template></el-table-column><el-table-column prop="status" label="状态" width="110"><template #default="{ row }"><el-tag size="small" :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template></el-table-column><el-table-column prop="agent_id" label="智能体" min-width="150"><template #default="{ row }">{{ row.agent_id || "-" }}</template></el-table-column><el-table-column prop="duration_ms" label="耗时" width="100"><template #default="{ row }">{{ row.duration_ms != null ? `${row.duration_ms} 毫秒` : "-" }}</template></el-table-column><el-table-column label="开始时间" min-width="170"><template #default="{ row }">{{ formatTime(row.started_at) }}</template></el-table-column></el-table>
-          <el-empty v-else description="暂无运行记录" :image-size="72" />
-        </SurfaceCard>
+        <SurfaceCard title="最近执行" description="最近 8 条运行记录"><template #header><el-button link type="primary" @click="$router.push('/runtime')">查看全部</el-button></template><div v-if="recentExecutions.length" class="activity-summary" aria-label="最近执行窗口摘要"><div><span>窗口记录</span><strong>{{ recentExecutions.length }}</strong></div><div><span>失败</span><strong>{{ recentFailedCount }}</strong></div><div><span>进行中</span><strong>{{ recentRunningCount }}</strong></div></div><el-table v-if="recentExecutions.length" :data="recentExecutions" size="small" show-overflow-tooltip><el-table-column label="执行" min-width="180"><template #default="{ row }"><code>{{ shortId(row.execution_id) }}</code></template></el-table-column><el-table-column prop="status" label="状态" width="110"><template #default="{ row }"><el-tag size="small" :type="statusType(row.status)">{{ statusLabel(row.status) }}</el-tag></template></el-table-column><el-table-column prop="agent_id" label="智能体" min-width="150"><template #default="{ row }">{{ row.agent_id || "-" }}</template></el-table-column><el-table-column prop="duration_ms" label="耗时" width="100"><template #default="{ row }">{{ row.duration_ms != null ? `${row.duration_ms} 毫秒` : "-" }}</template></el-table-column><el-table-column label="开始时间" min-width="170"><template #default="{ row }">{{ formatTime(row.started_at) }}</template></el-table-column></el-table><el-empty v-else description="暂无运行记录" :image-size="72" /></SurfaceCard>
         <SurfaceCard title="常用入口" description="按业务职责快速进入"><button v-for="action in quickActions" :key="action.path" class="quick-action" type="button" @click="$router.push(action.path)"><span class="action-icon" aria-hidden="true">{{ action.icon }}</span><span class="action-copy"><strong>{{ action.label }}</strong><small>{{ action.description }}</small></span><span class="action-arrow" aria-hidden="true">→</span></button></SurfaceCard>
       </section>
       <section class="attention" v-if="metrics.failedExecutions > 0"><el-alert title="存在失败的运行记录" :description="`当前共有 ${metrics.failedExecutions} 次失败运行记录，建议进入运行记录查看执行链路与错误信息。`" type="warning" show-icon :closable="false"><template #default><el-button type="warning" link @click="$router.push('/runtime')">立即处理</el-button></template></el-alert></section>
@@ -33,7 +25,6 @@ import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 import { listAgents } from "@/api/agents";
 import { listTools } from "@/api/tools";
 import { runtimeApi, type Execution } from "@/api/runtime";
-
 const loading = ref(false), error = ref(""), permissionDenied = ref(false), recentExecutions = ref<Execution[]>([]);
 const metrics = reactive({ agents: 0, publishedAgents: 0, tools: 0, enabledTools: 0, executions: 0, failedExecutions: 0 });
 const metricCards = computed(() => [
