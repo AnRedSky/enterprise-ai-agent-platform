@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ElTable, ElTableColumn } from 'element-plus';
 import ToolWorkbench from '@/views/tools/components/ToolWorkbench.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
 import PageToolbar from '@/components/ui/PageToolbar.vue';
@@ -14,8 +15,8 @@ vi.mock('@/api/tools', () => ({ bindTool: vi.fn(), createTool: vi.fn(), disableT
 vi.mock('@/utils/toolError', () => ({ getToolUserError: (_error: unknown, fallback: string) => fallback }));
 
 function mountPage() {
-  return mount(ToolWorkbench, { global: { stubs: {
-    'el-button': { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' }, 'el-alert': true, 'el-table': true, 'el-table-column': true, 'el-empty': true, 'el-dialog': true,
+  return mount(ToolWorkbench, { global: { components: { ElTable, ElTableColumn }, directives: { loading: () => undefined }, stubs: {
+    'el-button': { emits: ['click'], template: '<button @click="$emit(\'click\')"><slot /></button>' }, 'el-alert': true, 'el-icon': { template: '<span><slot /></span>' }, 'el-table': false, 'el-table-column': false, 'el-empty': true, 'el-dialog': true,
     'el-form': true, 'el-form-item': true, 'el-input': true, 'el-select': true, 'el-option': true, 'el-tag': true,
   } } });
 }

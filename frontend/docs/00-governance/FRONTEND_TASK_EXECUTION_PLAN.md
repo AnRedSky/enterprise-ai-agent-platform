@@ -36,6 +36,12 @@
 - 新增 `tests/components/ConfirmDialog.test.ts`；更新 `tests/views/Tools.test.ts` 验证危险操作进入公共确认模式。
 - 设计记录：`docs/01-design/UI_05_TOOL_FORM_DIALOG_MIGRATION.md`。
 
+### 本轮回归修复
+
+- 用户本地 `Tools.test.ts` 暴露测试夹具问题：此前将 `el-table` 与 `el-table-column` 简化为布尔 stub，导致真实行操作按钮无法渲染，测试错误地得到 `undefined`。
+- 本轮仅调整测试夹具：使用 Element Plus 的真实 `ElTable` / `ElTableColumn`，同时保留轻量按钮与其他非目标组件 stub，并注册无副作用的 `loading` 指令和 `el-icon` stub，确保测试环境与应用入口的组件注册边界一致。
+- 未修改 ToolWorkbench 业务实现；该失败属于测试环境与组件契约不一致，不应通过改变生产代码绕过。
+
 ### 下一批
 
 继续 ToolWorkbench 的创建 Dialog 表单统一：校验、提交 loading、成功关闭、失败保留输入和响应式宽度；完成 targeted/full 门禁后再选择第二个核心页面迁移。
