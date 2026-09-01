@@ -24,8 +24,9 @@ async def test_operator_action_audit_result_lineage_is_tenant_scoped() -> None:
             await connection.execute(
                 text(
                     """
-                    INSERT INTO tenants (id, name, status)
-                    VALUES (:id, :name, 'active'), (:id_b, :name_b, 'active')
+                    INSERT INTO tenants (id, name, status, created_at)
+                    VALUES (:id, :name, 'active', CURRENT_TIMESTAMP),
+                           (:id_b, :name_b, 'active', CURRENT_TIMESTAMP)
                     """
                 ),
                 {
@@ -38,9 +39,9 @@ async def test_operator_action_audit_result_lineage_is_tenant_scoped() -> None:
             await connection.execute(
                 text(
                     """
-                    INSERT INTO users (id, username, password_hash, tenant_id, status)
-                    VALUES (:id, :username, 'fixture', :tenant_id, 'active'),
-                           (:id_b, :username_b, 'fixture', :tenant_id_b, 'active')
+                    INSERT INTO users (id, username, password_hash, tenant_id, status, created_at)
+                    VALUES (:id, :username, 'fixture', :tenant_id, 'active', CURRENT_TIMESTAMP),
+                           (:id_b, :username_b, 'fixture', :tenant_id_b, 'active', CURRENT_TIMESTAMP)
                     """
                 ),
                 {
@@ -57,12 +58,15 @@ async def test_operator_action_audit_result_lineage_is_tenant_scoped() -> None:
                     """
                     INSERT INTO operator_action_idempotencies
                     (id, tenant_id, actor_id, resource_type, resource_id, action,
-                     idempotency_key, status, result_resource_type, result_resource_id)
+                     idempotency_key, status, result_resource_type, result_resource_id,
+                     created_at, updated_at)
                     VALUES
                     (:id, :tenant_id, :actor_id, 'workflow_execution', :resource_id, 'retry',
-                     :idempotency_key, 'succeeded', 'workflow_execution', :result_resource_id),
+                     :idempotency_key, 'succeeded', 'workflow_execution', :result_resource_id,
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
                     (:id_b, :tenant_id_b, :actor_id_b, 'workflow_execution', :resource_id_b, 'retry',
-                     :idempotency_key_b, 'succeeded', 'workflow_execution', :result_resource_id_b)
+                     :idempotency_key_b, 'succeeded', 'workflow_execution', :result_resource_id_b,
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """
                 ),
                 {
@@ -85,14 +89,14 @@ async def test_operator_action_audit_result_lineage_is_tenant_scoped() -> None:
                     """
                     INSERT INTO audit_logs
                     (id, actor_id, tenant_id, workflow_execution_id, operator_action_id,
-                     action, resource_type, resource_id, trace_id, status, metadata)
+                     action, resource_type, resource_id, trace_id, status, metadata, created_at)
                     VALUES
                     (:id, :actor_id, :tenant_id, NULL, :operator_action_id,
                      'operator.workflow_execution.retry', 'workflow_execution', :resource_id,
-                     :trace_id, 'success', :metadata),
+                     :trace_id, 'success', :metadata, CURRENT_TIMESTAMP),
                     (:id_b, :actor_id_b, :tenant_id_b, NULL, :operator_action_id_b,
                      'operator.workflow_execution.retry', 'workflow_execution', :resource_id_b,
-                     :trace_id_b, 'success', :metadata_b)
+                     :trace_id_b, 'success', :metadata_b, CURRENT_TIMESTAMP)
                     """
                 ),
                 {
