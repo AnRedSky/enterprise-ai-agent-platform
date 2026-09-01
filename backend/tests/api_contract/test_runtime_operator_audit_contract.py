@@ -26,6 +26,16 @@ def _schema_max_length(schema: dict) -> int:
     raise AssertionError(f"schema does not expose maxLength: {schema}")
 
 
+def _schema_format(schema: dict) -> str:
+    """读取 OpenAPI schema 格式，兼容 nullable UUID 的 anyOf 表示。"""
+    if "format" in schema:
+        return schema["format"]
+    for variant in schema.get("anyOf", []):
+        if variant.get("format"):
+            return variant["format"]
+    raise AssertionError(f"schema does not expose format: {schema}")
+
+
 def test_operator_audit_query_route_is_registered_as_get_only():
     routes = {
         (route.path, tuple(sorted(route.methods or [])))
@@ -107,4 +117,4 @@ def test_operator_audit_query_exposes_filter_bounds():
     assert _schema_max_length(schemas["resource_id"]) == 100
     assert _schema_max_length(schemas["status"]) == 20
     assert _schema_max_length(schemas["trace_id"]) == 64
-    assert schemas["operator_action_id"]["format"] == "uuid"
+    assert _schema_format(schemas["operator_action_id"]) == "uuid"
