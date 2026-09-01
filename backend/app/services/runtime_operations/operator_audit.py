@@ -58,6 +58,7 @@ class OperatorAuditQueryService:
         page: int = 1,
         page_size: int = 50,
         action: str | None = None,
+        operator_action_id: UUID | None = None,
         resource_type: str | None = None,
         resource_id: str | None = None,
         actor_id: UUID | None = None,
@@ -74,6 +75,7 @@ class OperatorAuditQueryService:
             page: 从 1 开始的页码。
             page_size: 单页数量，统一限制在 1 到 100。
             action: 可选 Operator Action 完整动作名精确匹配，例如 `operator.workflow_execution.retry`。
+            operator_action_id: 可选 Operator Action 持久事实标识，用于直接定位 AuditLog 治理关联。
             resource_type: 可选资源类型精确匹配。
             resource_id: 可选资源标识精确匹配。
             actor_id: 可选操作人 UUID 精确匹配。
@@ -89,7 +91,7 @@ class OperatorAuditQueryService:
         Raises:
             ValueError: 当 since 晚于 until 时抛出。
 
-        设计意图：Operator Action 的合规事实已经由 OperatorActionGovernanceService 写入 AuditLog；本服务只建立查询入口，避免 RuntimeOperationAudit 与 AuditLog 形成第二套 Operator Action 事实源。
+        设计意图：Operator Action 的合规事实已经由 OperatorActionGovernanceService 写入 AuditLog；本服务只建立查询入口，避免 RuntimeOperationAudit 与 AuditLog 形成第二套 Operator Action 事实源。operator_action_id 是正式治理关联键，允许管理端直接从 Operator Action 事实定位审计记录。
         """
         if since is not None and until is not None and since > until:
             raise ValueError("since must not be later than until")
@@ -103,6 +105,8 @@ class OperatorAuditQueryService:
         )
         if action is not None:
             stmt = stmt.where(AuditLog.action == action)
+        if operator_action_id is not None:
+            stmt = stmt.where(AuditLog.operator_action_id == operator_action_id)
         if resource_type is not None:
             stmt = stmt.where(AuditLog.resource_type == resource_type)
         if resource_id is not None:

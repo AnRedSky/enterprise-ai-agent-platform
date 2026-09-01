@@ -30,6 +30,7 @@ class OperatorAuditItem(BaseModel):
     id: UUID
     tenant_id: UUID | None
     actor_id: UUID | None
+    operator_action_id: UUID | None
     action: str = Field(max_length=100)
     resource_type: str = Field(max_length=50)
     resource_id: str | None = Field(default=None, max_length=100)
@@ -63,6 +64,7 @@ async def query_operator_audit(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     action: str | None = Query(None, min_length=9, max_length=100),
+    operator_action_id: UUID | None = Query(None),
     resource_type: str | None = Query(None, min_length=1, max_length=50),
     resource_id: str | None = Query(None, min_length=1, max_length=100),
     actor_id: UUID | None = Query(None),
@@ -81,6 +83,7 @@ async def query_operator_audit(
             page=page,
             page_size=page_size,
             action=action,
+            operator_action_id=operator_action_id,
             resource_type=resource_type,
             resource_id=resource_id,
             actor_id=actor_id,

@@ -65,6 +65,26 @@ def test_operator_audit_query_accepts_admin_role_before_database_access(monkeypa
     assert response.json() == {"items": [], "page": 1, "page_size": 50, "total": 0}
 
 
+def test_operator_audit_query_forwards_operator_action_id_to_service(monkeypatch):
+    """管理员可以直接按 Operator Action 正式关联键查询 Canonical AuditLog。"""
+    captured: dict = {}
+
+    async def _contract_result(self, tenant_id, **kwargs):
+        captured.update(kwargs)
+        return {"items": [], "page": kwargs["page"], "page_size": kwargs["page_size"], "total": 0}
+
+    monkeypatch.setattr(OperatorAuditQueryService, "query", _contract_result)
+    operator_action_id = uuid4()
+    token = create_token(uuid4(), ["admin"], tenant_id=uuid4())
+    response = client.get(
+        "/api/v1/runtime/operations/operator-audits",
+        params={"operator_action_id": str(operator_action_id)},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert captured["operator_action_id"] == operator_action_id
+
+
 def test_operator_audit_query_rejects_invalid_page_size_at_contract_boundary():
     response = client.get("/api/v1/runtime/operations/operator-audits", params={"page_size": 101})
     assert response.status_code == 401
@@ -87,3 +107,4 @@ def test_operator_audit_query_exposes_filter_bounds():
     assert _schema_max_length(schemas["resource_id"]) == 100
     assert _schema_max_length(schemas["status"]) == 20
     assert _schema_max_length(schemas["trace_id"]) == 64
+    assert schemas["operator_action_id"]["format"] == "uuid"

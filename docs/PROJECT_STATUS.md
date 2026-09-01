@@ -30,13 +30,14 @@
 - Runtime Audit / Trace Correlation 响应 Contract 已从 `list[Any]` 收紧为明确的 Trace / Audit Item 类型，并增加 Trace ID 输入边界；
 - Runtime Audit / Trace Correlation 历史审计恢复路径已补齐：正式 `workflow_execution_id` 优先，缺失时通过 tenant-scoped `trace_id` 恢复当前 Workflow Execution，不猜测旧 `execution_id` 映射；
 - Operator Audit Query Service 已基于 AuditLog 唯一事实源实现 tenant-scoped 分页、精确过滤和时间窗口校验；
-- Operator Audit Query API Contract 已实现，响应模型明确为 `OperatorAuditQueryResponse` / `OperatorAuditItem`，查询参数包含 page、page_size、action、resource_type、resource_id、actor_id、status、workflow_execution_id、trace_id、since、until；
+- Operator Audit Query API Contract 已实现，响应模型明确为 `OperatorAuditQueryResponse` / `OperatorAuditItem`，查询参数包含 page、page_size、action、operator_action_id、resource_type、resource_id、actor_id、status、workflow_execution_id、trace_id、since、until；
 - Operator Audit Query 已增加 admin-only 访问治理；
-- `0051_operator_audit_query_indexes` 已将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`。
+- `0051_operator_audit_query_indexes` 已将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`；
+- `0055_operator_audit_operator_action_index` 已为直接 Operator Action → AuditLog 查询补充 tenant-scoped 复合索引。
 
 ## 3. 最新本地反馈与根因
 
-开发者执行 `26_operator_audit_query_performance_gate.ps1` 时，targeted regression 暴露 `audit_logs.operator_action_id` 缺失，以及 Runtime Audit / Trace Correlation 单元测试 mock 未覆盖新增的直接 Operator Action → Audit 查询调用。此前 Gate 的 `alembic upgrade head` 还暴露 migration graph 存在多个 head。
+开发者第一次执行 `26_operator_audit_query_performance_gate.ps1` 时，targeted regression 暴露 `audit_logs.operator_action_id` 缺失；第二次执行时 targeted regression 已通过，但 `uv run alembic upgrade head` 仍暴露本地 migration graph 存在多个 head。当前远端 `main` 已通过 `0054_merge_operator_governance_heads` 收敛该图；若本地仍报告多个 head，应先确认工作树确实同步到远端 `main` 最新提交，再执行 Gate，不应修改数据库 revision 以绕过 migration graph。
 
 根因进一步确认：`0048_operator_action_audit_lineage`、`0051_operator_audit_query_indexes` 与 `0053_operator_action_result_resource_type` 所在 migration 链存在多个独立分支；`0048` 还依赖 `0049` 创建的 Operator Action 表，却没有声明 Alembic `depends_on`。
 
@@ -48,6 +49,7 @@
 - 新增 PostgreSQL Acceptance，验证 `audit_logs.operator_action_id`、`operator_action_idempotencies.result_resource_type` 以及 Operator Action → AuditLog 外键真实存在；
 - 修正 Runtime Audit / Trace Correlation 单元测试 mock，使其与直接 Operator Action → Audit 查询行为一致；
 - 更新 `26_operator_audit_query_performance_gate.ps1`，显式验证单一 migration head，并把治理闭环 PostgreSQL schema acceptance 纳入 Gate；
+- 新增 `0055_operator_audit_operator_action_index` 与 `operator_action_id` 精确过滤，进一步收敛 Canonical AuditLog 查询路径；
 - 错误记录：`docs/04-errors/2026-09-01-operator-governance-migration-head-and-schema-drift.md`。
 
 ## 5. 下一执行顺序
