@@ -2,7 +2,7 @@
 
 ## 状态
 
-进行中：第二个核心页面 `WorkflowLifecycle` 完成第一批公共 UI 模式迁移，并修复空列表状态在异步加载完成后的状态收敛问题。
+进行中：第二个核心页面 `WorkflowLifecycle` 完成第一批公共 UI 模式迁移，并继续收敛异步列表状态的确定性转换。
 
 ## 范围
 
@@ -24,20 +24,23 @@ Expected: "empty"
 Received: "loading"
 ```
 
-但页面文本已经出现“暂无工作流”。
+同时页面文本已经出现“暂无工作流”。这说明空状态文案已经可见，但测试观察到的共享 `StatePanel.state` 仍可能停留在 Loading 状态。
 
 ### 根因
 
-`load()` 原先在收到空数组后继续进入统一 `finally` 才结束 `loading` 生命周期。空列表没有详情请求，但 Loading 标记仍承担整个生命周期数据加载过程，造成空状态渲染与 Loading 状态收敛之间存在异步窗口。
+页面状态此前通过 `permissionDenied`、`error`、`loading` 和列表数据组合计算。空列表路径虽然已经提前返回，但 Empty 状态仍间接依赖统一 `finally` 对 `loading` 的关闭，状态转换与组件更新之间存在不必要的异步窗口。
 
 ### 修复
 
-- `workflowApi.list()` 成功返回后立即判断工作流列表是否为空。
-- 空列表时清空 `selectedId` 并直接结束本轮加载路径，不进入 `loadDetails()`。
-- `finally` 仍作为统一兜底，保证异常路径和正常非空路径的 Loading 状态最终关闭。
-- 详情加载继续使用独立 `detailLoading`，避免将 Workflow 列表状态与 Version / Trigger / Execution 详情状态混为一谈。
+- 引入仅用于视图呈现的 `PageState`：`loading | empty | error | permission | success`。
+- `load()` 开始时明确进入 `loading`。
+- `workflowApi.list()` 返回空数组后立即将 `pageState` 设置为 `empty`，并清空 `selectedId`，不进入详情加载。
+- 正常非空列表在详情加载完成后进入 `success`。
+- 403 明确进入 `permission`，其他列表异常进入 `error`。
+- `loading` 仅负责刷新按钮和请求期间反馈，不再作为 Empty / Error / Permission 的唯一状态推导来源。
+- `detailLoading` 继续独立管理 Version / Trigger / Scheduler / Execution 详情请求。
 
-该修复不新增 API、不复制后端状态机，也不改变已有 Workflow / Runtime 深链行为。
+该 `PageState` 只描述前端页面呈现状态，不复制 Workflow 后端生命周期状态机；不新增 API，也不改变已有 Workflow / Runtime 深链行为。
 
 ## Contract / 安全边界
 
@@ -65,7 +68,7 @@ Received: "loading"
 6. Execution → Runtime 深链保持真实 ID；
 7. 空列表中文状态及 `StatePanel.state === "empty"` 契约。
 
-远端 GitHub 环境不运行 Node/Vitest，因此本轮修复后的测试结果需要由用户本地环境执行确认，不能将未执行的门禁标记为通过。
+远端 GitHub 环境不运行 Node/Vitest，因此本轮修复后的测试结果必须由用户本地环境执行确认，不能将未执行的门禁标记为通过。
 
 ## 本地验证
 

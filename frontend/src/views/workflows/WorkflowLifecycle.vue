@@ -8,6 +8,8 @@ import PageToolbar from "@/components/ui/PageToolbar.vue";
 import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
 
+type PageState = "loading" | "empty" | "error" | "permission" | "success";
+
 const route = useRoute();
 const router = useRouter();
 const workflows = ref<Workflow[]>([]);
@@ -20,11 +22,11 @@ const loading = ref(false);
 const detailLoading = ref(false);
 const error = ref("");
 const permissionDenied = ref(false);
+const pageState = ref<PageState>("loading");
 
 const selected = computed(() => workflows.value.find((item) => item.id === selectedId.value));
 const publishedVersion = computed(() => versions.value.find((item) => item.id === selected.value?.published_version_id));
 const latestExecution = computed(() => executions.value[0]);
-const pageState = computed(() => permissionDenied.value ? "permission" : error.value ? "error" : loading.value ? "loading" : workflows.value.length === 0 ? "empty" : "success");
 const stateTitle = computed(() => ({ loading: "正在加载工作流", empty: "暂无工作流", permission: "无权查看工作流", error: "工作流加载失败" } as Record<string, string>)[pageState.value] ?? "工作流");
 const stateDescription = computed(() => ({ loading: "正在同步工作流生命周期数据。", empty: "当前没有可用工作流，请先创建工作流。", permission: "当前账号没有工作流访问权限，请联系管理员。", error: "无法同步工作流数据，请检查服务状态后重试。" } as Record<string, string>)[pageState.value] ?? "");
 const lifecycleSteps = computed(() => [
@@ -43,6 +45,7 @@ const formatTime = (value?: string | null) => value ? new Date(value).toLocaleSt
 
 async function load() {
   loading.value = true;
+  pageState.value = "loading";
   error.value = "";
   permissionDenied.value = false;
   try {
@@ -52,13 +55,16 @@ async function load() {
     else if (!selectedId.value || !workflows.value.some((item) => item.id === selectedId.value)) selectedId.value = workflows.value[0]?.id || "";
     if (!workflows.value.length) {
       selectedId.value = "";
+      pageState.value = "empty";
       return;
     }
     if (selectedId.value) await loadDetails(selectedId.value);
+    pageState.value = "success";
   } catch (e: any) {
     workflows.value = [];
     permissionDenied.value = e?.response?.status === 403;
     error.value = permissionDenied.value ? "" : "工作流生命周期数据加载失败，请刷新后重试。";
+    pageState.value = permissionDenied.value ? "permission" : "error";
   } finally { loading.value = false; }
 }
 
