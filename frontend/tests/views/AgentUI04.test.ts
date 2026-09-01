@@ -69,7 +69,9 @@ describe("AgentWorkbench UI-04", () => {
     const wrapper = mountView(); await flushPromises();
     const button = wrapper.findAll("button").find((node) => node.text() === "对话调试");
     expect(button).toBeDefined();
-    await button!.trigger("click"); await flushPromises();
-    expect(wrapper.findAllComponents(StatePanel).some((panel) => panel.props("state") === "permission")).toBe(true);
+    await button!.trigger("click");
+    await vi.waitFor(() => expect((wrapper.vm as any).chatContextState).toBe("permission"));
+    expect(api.getPublishedVersion).toHaveBeenCalledWith("a1");
+    expect(wrapper.text()).toContain("无权加载调试配置");
   });
 });
