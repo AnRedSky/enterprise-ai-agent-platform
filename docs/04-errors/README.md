@@ -40,6 +40,7 @@
 | ERR-0032 | 2026-08-30 | Runtime Metric Contract 部分指标导出与 Real Acceptance fixture 唯一键冲突 |
 | ERR-0033 | 2026-08-31 | Global Runtime Operations Agent Filter SQL Contract 漂移 |
 | ERR-0034 | 2026-08-31 | Runtime Audit Query actor 参数 Annotated 默认值冲突 |
+| ERR-0035 | 2026-09-01 | Operator Audit Real Acceptance actor 外键夹具未显式建立持久化依赖顺序 |
 
 ## 迁移规则
 
