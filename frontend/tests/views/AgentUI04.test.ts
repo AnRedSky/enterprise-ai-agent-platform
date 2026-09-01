@@ -37,7 +37,7 @@ function mountView() {
 }
 
 describe("AgentWorkbench UI-04", () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => { vi.resetAllMocks(); });
 
   it("uses shared loading state while agents are loading", async () => {
     api.listAgents.mockReturnValueOnce(new Promise(() => {}));
@@ -67,11 +67,13 @@ describe("AgentWorkbench UI-04", () => {
     api.listAgents.mockResolvedValueOnce([agentRow]);
     api.getPublishedVersion.mockRejectedValueOnce({ response: { status: 403 } });
     const wrapper = mountView(); await flushPromises();
+
     const button = wrapper.findAll("button").find((node) => node.text() === "对话调试");
     expect(button).toBeDefined();
     await button!.trigger("click");
+
+    await vi.waitFor(() => expect(api.getPublishedVersion).toHaveBeenCalledWith("a1"));
     await vi.waitFor(() => expect((wrapper.vm as any).chatContextState).toBe("permission"));
-    expect(api.getPublishedVersion).toHaveBeenCalledWith("a1");
     expect(wrapper.text()).toContain("无权加载调试配置");
   });
 });
