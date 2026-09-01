@@ -1,11 +1,14 @@
 """Runtime Operator Action 审计查询 API Contract 测试。
 
-职责：验证 Operator Action 审计查询的 HTTP 方法、鉴权、参数边界和响应契约。
+职责：验证 Operator Action 审计查询的 HTTP 方法、鉴权、管理员权限、参数边界和响应契约。
 边界：只验证 API Contract，不启动服务，不访问真实数据库。
 """
 
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
+from app.core.security import create_token
 from app.main import app
 
 
@@ -34,6 +37,24 @@ def test_operator_audit_query_route_is_registered_as_get_only():
 def test_operator_audit_query_requires_bearer_authentication():
     response = client.get("/api/v1/runtime/operations/operator-audits")
     assert response.status_code == 401
+
+
+def test_operator_audit_query_requires_admin_role():
+    token = create_token(uuid4(), ["user"], tenant_id=uuid4())
+    response = client.get(
+        "/api/v1/runtime/operations/operator-audits",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403
+
+
+def test_operator_audit_query_accepts_admin_role_before_database_access():
+    token = create_token(uuid4(), ["admin"], tenant_id=uuid4())
+    response = client.get(
+        "/api/v1/runtime/operations/operator-audits",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code != 403
 
 
 def test_operator_audit_query_rejects_invalid_page_size_at_contract_boundary():
