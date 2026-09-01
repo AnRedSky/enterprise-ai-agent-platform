@@ -46,6 +46,11 @@ async def test_operator_audit_query_is_canonical_tenant_scoped_and_filterable() 
                 WorkflowVersion(id=version_b, workflow_id=workflow_b, version="1", created_by=user_b, definition={}, status="draft"),
                 WorkflowExecution(id=execution_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, created_by=user_a, status="failed", input_data={}),
                 WorkflowExecution(id=execution_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=version_b, created_by=user_b, status="failed", input_data={}),
+            ])
+            # AuditLog.actor_id 是 users 外键。先显式 flush 基础身份和运行事实，
+            # 再写入审计事实，避免验收夹具依赖 ORM flush 排序实现而在真实 PostgreSQL 下产生外键竞态。
+            await db.flush()
+            db.add_all([
                 AuditLog(id=audit_a, actor_id=user_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, workflow_execution_id=execution_a, action="operator.workflow_execution.retry", resource_type="workflow_execution", resource_id=str(execution_a), trace_id=str(execution_a), status="success", metadata_json={"fixture": suffix}, created_at=now - timedelta(minutes=2)),
                 AuditLog(id=audit_b, actor_id=user_b, tenant_id=tenant_b, workflow_id=workflow_b, workflow_version_id=version_b, workflow_execution_id=execution_b, action="operator.workflow_execution.retry", resource_type="workflow_execution", resource_id=str(execution_b), trace_id=str(execution_b), status="success", metadata_json={"fixture": suffix}, created_at=now - timedelta(minutes=1)),
                 AuditLog(id=non_operator, actor_id=user_a, tenant_id=tenant_a, workflow_id=workflow_a, workflow_version_id=version_a, workflow_execution_id=execution_a, action="workflow.execution.read", resource_type="workflow_execution", resource_id=str(execution_a), trace_id=str(execution_a), status="success", metadata_json={"fixture": suffix}, created_at=now),
