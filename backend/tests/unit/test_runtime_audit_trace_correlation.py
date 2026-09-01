@@ -77,6 +77,32 @@ async def test_paged_audits_includes_legacy_audit_resolved_by_trace() -> None:
 
 
 @pytest.mark.asyncio
+async def test_paged_audits_action_filter_excludes_legacy_when_execution_has_no_matching_formal_action() -> None:
+    tenant_id, execution_id = uuid4(), uuid4()
+    audit = MagicMock()
+
+    count_result = MagicMock(scalar_one=MagicMock(return_value=0))
+    rows_result = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=[count_result, rows_result])
+
+    result = await RuntimeAuditTraceCorrelationService(db)._paged_audits(
+        tenant_id,
+        execution_id,
+        page=1,
+        page_size=50,
+        action="operator.workflow_execution.run",
+    )
+
+    assert result["items"] == []
+    assert result["total"] == 0
+    statement = db.execute.await_args_list[0].args[0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": False}))
+    assert "audit_logs.action" in compiled
+    assert "audit_logs.workflow_execution_id" in compiled
+
+
+@pytest.mark.asyncio
 async def test_by_operator_action_without_execution_keeps_requested_page_size() -> None:
     tenant_id, action_id = uuid4(), uuid4()
     action = MagicMock(
