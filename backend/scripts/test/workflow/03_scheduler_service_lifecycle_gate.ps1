@@ -33,13 +33,13 @@ function Get-ProtectedProcessSnapshot {
 
 $before = Get-ProtectedProcessSnapshot
 Write-Host "[1/3] Scheduler Service 生命周期单元测试"
-uv run pytest -q tests/unit/test_service_entrypoints.py
+uv run pytest -q -W error tests/unit/test_service_entrypoints.py
 if ($LASTEXITCODE -ne 0) {
     throw "Scheduler Service lifecycle unit test failed."
 }
 
 Write-Host "[2/3] 取消传播与统一清理回归"
-uv run pytest -q tests/unit/test_service_entrypoints.py -k "scheduler_service"
+uv run pytest -q -W error tests/unit/test_service_entrypoints.py -k "scheduler_service"
 if ($LASTEXITCODE -ne 0) {
     throw "Scheduler Service focused regression failed."
 }
