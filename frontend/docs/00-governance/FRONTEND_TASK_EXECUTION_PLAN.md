@@ -1,11 +1,11 @@
 # 前端长期任务执行计划
 
 ## UI-03
-状态：进行中。已完成工具管理、平台工作台、知识库管理三个核心页面迁移。
+状态：进行中。已完成工具管理、平台工作台、知识库管理三个核心页面迁移，并开始 Workflow 生命周期工作台公共模式收敛。
 
 公共模式：PageHeader / PageToolbar / MetricCard / SurfaceCard。
 
-已迁移：ToolWorkbench、DashboardOverview、KnowledgeWorkbench。
+已迁移：ToolWorkbench、DashboardOverview、KnowledgeWorkbench；本轮新增 WorkflowLifecycle 第一批公共容器迁移。
 
 ## UI-04
 状态：**Core Regression 已完成用户本地 targeted 验证，进入 UI-05。**
@@ -14,7 +14,7 @@
 
 标准状态：Loading / Empty / Error / Permission / Success。
 
-已迁移：Workflow、RuntimeObservabilityOverview、AuditLogPanel、AgentWorkbench、DashboardOverview、KnowledgeWorkbench、ToolWorkbench。
+已迁移：Workflow、RuntimeObservabilityOverview、AuditLogPanel、AgentWorkbench、DashboardOverview、KnowledgeWorkbench、ToolWorkbench；本轮继续收敛 WorkflowLifecycle。
 
 ### UI-04 Core Regression
 
@@ -22,29 +22,24 @@
 
 ## UI-05 Form / Dialog / Drawer / Confirm
 
-状态：**进行中：ToolWorkbench 第一批迁移已实现。**
+状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 第二个核心页面已开始公共模式迁移。**
 
 原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。
 
-### 第一批：ToolWorkbench Confirm
+### ToolWorkbench
 
-- 新增公共 `src/components/ui/ConfirmDialog.vue`。
-- ToolWorkbench 的停用、启用和解绑操作统一经过公共确认组件。
-- ConfirmDialog 只负责展示、loading、confirm/cancel 事件，不包含 Tool 领域规则。
-- 创建、绑定、执行三个现有 Dialog 暂不整体重构，避免一次性改变成熟业务链路。
-- 高风险操作继续由后端权限和正式 API 最终裁决。
-- 新增 `tests/components/ConfirmDialog.test.ts`；更新 `tests/views/Tools.test.ts` 验证危险操作进入公共确认模式。
+- 公共 `src/components/ui/ConfirmDialog.vue` 已接入停用、启用和解绑。
+- 创建 Dialog 已完成名称必填、`input_schema` JSON 对象校验、提交 loading、成功关闭/重置、失败保留输入和响应式宽度。
+- 用户本地 `Tools.test.ts` 8/8 通过，`ConfirmDialog.test.ts` 3/3 通过；合计 11/11 通过。
+- 本轮本地失败已定位为测试夹具与 Element Plus 表格事件/渲染契约不一致，生产代码未被用于绕过测试。
 - 设计记录：`docs/01-design/UI_05_TOOL_FORM_DIALOG_MIGRATION.md`。
 
-### 本轮回归修复
+### 第二个核心页面：WorkflowLifecycle
 
-- 用户本地 `Tools.test.ts` 暴露测试夹具问题：此前将 `el-table` 与 `el-table-column` 简化为布尔 stub，导致真实行操作按钮无法渲染，测试错误地得到 `undefined`。
-- 本轮仅调整测试夹具：使用 Element Plus 的真实 `ElTable` / `ElTableColumn`，同时保留轻量按钮与其他非目标组件 stub，并注册无副作用的 `loading` 指令和 `el-icon` stub，确保测试环境与应用入口的组件注册边界一致。
-- 未修改 ToolWorkbench 业务实现；该失败属于测试环境与组件契约不一致，不应通过改变生产代码绕过。
-
-### 下一批
-
-继续 ToolWorkbench 的创建 Dialog 表单统一：校验、提交 loading、成功关闭、失败保留输入和响应式宽度；完成 targeted/full 门禁后再选择第二个核心页面迁移。
+- 使用公共 `PageHeader`、`SurfaceCard`、`StatePanel`，统一页面标题、内容容器和 Loading / Empty / Error / Permission 状态。
+- 保留真实 Workflow / Version / Trigger / Scheduler / Execution 关联和 Runtime 深链。
+- 增加针对公共模式和页面状态契约的 targeted regression tests。
+- 设计记录：`docs/01-design/UI_05_WORKFLOW_LIFECYCLE_MIGRATION.md`。
 
 ## 固定执行流程
 
@@ -59,11 +54,21 @@
   → 用户本地完整验证
 ```
 
-UI-05 本地验证：
+## 本地验证
+
+ToolWorkbench：
 
 ```powershell
 cd frontend
+npm run test:unit -- --run tests/views/Tools.test.ts
 npm run test:unit -- --run tests/components/ConfirmDialog.test.ts tests/views/Tools.test.ts
+```
+
+WorkflowLifecycle：
+
+```powershell
+cd frontend
+npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts
 npm test
 npm run build
 npm run test:gate
@@ -71,3 +76,7 @@ npm run test:final
 ```
 
 远端执行环境不运行 Node/Vitest/build，因此未实际执行的门禁不得标记为通过。
+
+## 下一任务
+
+用户本地验证 WorkflowLifecycle targeted test 通过后，继续同一页面的 UI-05 交互收敛，再选择下一个核心页面；不进行跨页面大规模重构，不新增平行 API client、状态机或 Dialog。

@@ -1,20 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import WorkflowLifecycle from "@/views/workflows/WorkflowLifecycle.vue";
+import PageHeader from "@/components/ui/PageHeader.vue";
+import SurfaceCard from "@/components/ui/SurfaceCard.vue";
+import StatePanel from "@/components/ui/StatePanel.vue";
 import { workflowApi } from "@/api/workflows";
 
 const router = { push: vi.fn() };
 const route = { query: {} as Record<string, string> };
 vi.mock("vue-router", () => ({ useRouter: () => router, useRoute: () => route }));
-vi.mock("@/api/workflows", () => ({
-  workflowApi: {
-    list: vi.fn(),
-    versions: vi.fn(),
-    triggers: vi.fn(),
-    listExecutions: vi.fn(),
-    schedule: vi.fn(),
-  },
-}));
+vi.mock("@/api/workflows", () => ({ workflowApi: { list: vi.fn(), versions: vi.fn(), triggers: vi.fn(), listExecutions: vi.fn(), schedule: vi.fn() } }));
 
 const global = {
   stubs: {
@@ -31,6 +26,7 @@ const global = {
     "el-table": { template: "<div><slot/></div>" },
     "el-table-column": { template: "<span/>" },
     "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
+    "el-icon": { template: "<span><slot/></span>" },
   },
   directives: { loading: () => undefined },
 };
@@ -49,6 +45,29 @@ beforeEach(() => {
 });
 
 describe("WorkflowLifecycle", () => {
+  it("uses shared page header and surface card patterns", async () => {
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("订单审批"));
+    expect(wrapper.findComponent(PageHeader).exists()).toBe(true);
+    expect(wrapper.findAllComponents(SurfaceCard).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("uses the shared state panel for an ordinary list failure", async () => {
+    vi.mocked(workflowApi.list).mockRejectedValueOnce(new Error("backend failure"));
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.findComponent(StatePanel).props("state")).toBe("error"));
+    expect(wrapper.findComponent(StatePanel).props("title")).toBe("工作流加载失败");
+    expect(wrapper.text()).toContain("无法同步工作流数据，请检查服务状态后重试。");
+  });
+
+  it("uses the shared permission state for a forbidden list request", async () => {
+    vi.mocked(workflowApi.list).mockRejectedValueOnce({ response: { status: 403 } });
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.findComponent(StatePanel).props("state")).toBe("permission"));
+    expect(wrapper.findComponent(StatePanel).props("title")).toBe("无权查看工作流");
+    expect(wrapper.text()).toContain("当前账号没有工作流访问权限，请联系管理员。");
+  });
+
   it("以真实 workflow/version/trigger/execution 数据构建生命周期工作台", async () => {
     const wrapper = mount(WorkflowLifecycle, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("订单审批"));
@@ -70,21 +89,13 @@ describe("WorkflowLifecycle", () => {
     const wrapper = mount(WorkflowLifecycle, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("进入 Runtime 诊断"));
     await (wrapper.vm as any).openRuntimeExecution(execution);
-    expect(router.push).toHaveBeenCalledWith({
-      path: "/runtime",
-      query: {
-        tab: "executions",
-        source: "workflow-lifecycle",
-        execution_id: "e1",
-        workflow_id: "w1",
-        workflow_version_id: "v2",
-      },
-    });
+    expect(router.push).toHaveBeenCalledWith({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: "e1", workflow_id: "w1", workflow_version_id: "v2" } });
   });
 
   it("无工作流时提供明确中文空状态", async () => {
     vi.mocked(workflowApi.list).mockResolvedValue({ data: [] } as never);
     const wrapper = mount(WorkflowLifecycle, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("暂无工作流，请先创建工作流。"));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("暂无工作流"));
+    expect(wrapper.findComponent(StatePanel).props("state")).toBe("empty");
   });
 });
