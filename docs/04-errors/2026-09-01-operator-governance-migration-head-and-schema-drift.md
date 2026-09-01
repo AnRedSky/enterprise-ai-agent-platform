@@ -7,31 +7,33 @@
 1. PostgreSQL 中 `audit_logs.operator_action_id` 不存在，而 ORM `AuditLog` 与 Runtime Audit / Trace Correlation 已经依赖该字段；
 2. Alembic 执行 `upgrade head` 报告存在多个 head，导致真实数据库验收无法进入 migration 与 PostgreSQL acceptance 阶段。
 
-当前 `OperatorActionIdempotency` ORM 使用 `result_resource_type`，而早期 `0049_operator_action_idempotency` 创建表时没有该列；后续已有 `0053_operator_action_result_resource_type` 负责补齐该字段。
+随后第二次执行 targeted regression 已通过，但 migration gate 明确输出：
+
+```text
+0013_remove_legacy_audit_execution_fk (head)
+0055_operator_audit_operator_action_index (head)
+```
 
 ## 2. 根因
 
-当前 migration graph 存在多个 Operator Governance 相关分支：
+当前 migration graph 存在两个没有被最终 merge 收敛的分支：
 
-- `0047 -> 0048_operator_action_audit_lineage`；
-- `0049 -> 0050 -> 0051_runtime_operator... -> 0052_runtime_audit_action_outcome_index -> 0053_operator_action_result_resource_type`；
-- `0050 -> 0051_operator_audit_query_indexes`。
+- `0012_execution_event_metadata -> 0013_remove_legacy_audit_execution_fk`；
+- `0053_operator_action_result_resource_type -> 0054_merge_operator_governance_heads -> 0055_operator_audit_operator_action_index`。
 
-`0048_operator_action_audit_lineage` 虽然从 `0047` 独立产生，但其 DDL 外键依赖 `0049_operator_action_idempotency` 创建的 `operator_action_idempotencies` 表。原 migration 未声明这一运行时依赖。
+此前 `0054_merge_operator_governance_heads` 只合并了 `0048_operator_action_audit_lineage`、`0051_operator_audit_query_indexes`、`0053_operator_action_result_resource_type` 三个 Operator Governance 分支，并未包含历史 `0013_remove_legacy_audit_execution_fk`。
 
-因此这里同时存在两个工程问题：migration graph 多 head，以及独立 lineage 分支缺少 DDL 依赖声明。多 head 又使 `upgrade head` 无法继续，最终表现为数据库缺失 `audit_logs.operator_action_id`。
+因此 `0055` 继续位于 Operator Governance 分支末端时，历史 `0013` 仍然是独立 head。`uv run alembic upgrade head` 无法选择唯一目标，导致 Gate 停止。
+
+第一次 Contract 失败中的 `audit_logs.operator_action_id` 缺失属于数据库事实与当前 ORM/Contract 不一致的表现；当前 Contract 已通过 Service mock 隔离真实数据库，第二次执行已证明该 Contract 路径本身已经恢复稳定。migration graph 的多 head 是本次 Gate 无法进入真实 PostgreSQL 验收的独立阻塞因素。
 
 ## 3. 修复
 
-- 保留原有 `0048/0049/0050/0051/0052/0053` revision ID；
-- 为 `0048_operator_action_audit_lineage` 增加 `depends_on = "0049_operator_action_idempotency"`，保证全新数据库先创建 Operator Action 表，再创建 AuditLog 外键；
-- 新增 `0054_merge_operator_governance_heads`，一次性合并：
-  - `0053_operator_action_result_resource_type`；
-  - `0051_operator_audit_query_indexes`；
-  - `0048_operator_action_audit_lineage`；
-- 恢复原有 `0053_operator_action_result_resource_type`，保留结果类型回填与失败结果清理逻辑；
-- Runtime Audit / Trace Correlation 单元测试 mock 已同步覆盖直接 Operator Action → Audit 查询路径；
-- 新增 PostgreSQL Acceptance，验证 `audit_logs.operator_action_id`、`operator_action_idempotencies.result_resource_type` 及 Operator Action → AuditLog 外键实际存在。
+- 保留 `0048_operator_action_audit_lineage` 的 `depends_on = "0049_operator_action_idempotency"`；
+- 保留 `0054_merge_operator_governance_heads` 原有三分支 merge，不重写历史 revision；
+- 保留 `0055_operator_audit_operator_action_index` 的 Canonical Operator Audit 查询索引；
+- **新增 `0056_merge_legacy_audit_and_operator_governance_heads`，父节点为 `0055_operator_audit_operator_action_index` 与 `0013_remove_legacy_audit_execution_fk`，将两个现存 head 收敛为唯一 head；**
+- 不修改 `alembic_version`，不使用 `stamp` 绕过 migration，不删除历史 migration，不重写已经存在的 revision ID。
 
 ## 4. 验证设计
 
@@ -48,4 +50,4 @@ Gate 不自动创建、启动、重启或停止 API、Scheduler、Worker、Postg
 
 ## 5. 设计边界
 
-本修复采用 `depends_on + additive merge migration` 收敛历史分支，不重写已经存在的 revision ID，也不删除历史 Runtime Audit migration，避免破坏已经应用这些 migration 的数据库环境。
+本修复采用新增 merge migration 收敛历史分支，不修改已发布 revision 的父节点，避免破坏已经应用旧 migration 的数据库环境。`0056` 是纯 merge 节点，业务 DDL 仍由既有父 migration 提供，因此不会重复创建或删除历史 schema。

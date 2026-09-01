@@ -37,30 +37,36 @@
 
 ## 3. 最新本地反馈与根因
 
-开发者第一次执行 `26_operator_audit_query_performance_gate.ps1` 时，targeted regression 暴露 `audit_logs.operator_action_id` 缺失；第二次执行时 targeted regression 已通过，但 `uv run alembic upgrade head` 仍暴露本地 migration graph 存在多个 head。当前远端 `main` 已通过 `0054_merge_operator_governance_heads` 收敛该图；若本地仍报告多个 head，应先确认工作树确实同步到远端 `main` 最新提交，再执行 Gate，不应修改数据库 revision 以绕过 migration graph。
+开发者第一次执行 `26_operator_audit_query_performance_gate.ps1` 时，targeted regression 暴露 `audit_logs.operator_action_id` 缺失；第二次执行时 targeted regression 已通过，但 `uv run alembic upgrade head` 暴露 migration graph 存在两个 head：
 
-根因进一步确认：`0048_operator_action_audit_lineage`、`0051_operator_audit_query_indexes` 与 `0053_operator_action_result_resource_type` 所在 migration 链存在多个独立分支；`0048` 还依赖 `0049` 创建的 Operator Action 表，却没有声明 Alembic `depends_on`。
+```text
+0013_remove_legacy_audit_execution_fk (head)
+0055_operator_audit_operator_action_index (head)
+```
+
+根因不是测试数据或服务启动问题，而是历史 `0013_remove_legacy_audit_execution_fk` 分支从 `0012_execution_event_metadata` 独立产生后，一直没有被后续 Operator Governance merge 收敛。此前 `0054_merge_operator_governance_heads` 只合并了 `0048`、`0051`、`0053` 三条 Operator Governance 分支，`0055` 又继续从 `0054` 向前形成新的 head，因此历史 `0013` 仍然保持为独立 head。
 
 ## 4. 当前 Backend 修复
 
-- 为 `0048_operator_action_audit_lineage` 增加 `depends_on = "0049_operator_action_idempotency"`，确保全新数据库按 DDL 依赖顺序执行；
-- 新增 `0054_merge_operator_governance_heads`，一次性合并 `0053_operator_action_result_resource_type`、`0051_operator_audit_query_indexes`、`0048_operator_action_audit_lineage` 三个 Operator Governance head；
-- 恢复原有 `0053_operator_action_result_resource_type`，保留其结果类型回填与失败结果清理逻辑；
-- 新增 PostgreSQL Acceptance，验证 `audit_logs.operator_action_id`、`operator_action_idempotencies.result_resource_type` 以及 Operator Action → AuditLog 外键真实存在；
-- 修正 Runtime Audit / Trace Correlation 单元测试 mock，使其与直接 Operator Action → Audit 查询行为一致；
-- 更新 `26_operator_audit_query_performance_gate.ps1`，显式验证单一 migration head，并把治理闭环 PostgreSQL schema acceptance 纳入 Gate；
-- 新增 `0055_operator_audit_operator_action_index` 与 `operator_action_id` 精确过滤，进一步收敛 Canonical AuditLog 查询路径；
-- 错误记录：`docs/04-errors/2026-09-01-operator-governance-migration-head-and-schema-drift.md`。
+- 为 `0048_operator_action_audit_lineage` 保留 `depends_on = "0049_operator_action_idempotency"`，确保全新数据库按 DDL 依赖顺序执行；
+- `0054_merge_operator_governance_heads` 保留原有三分支 merge 语义，不重写已经存在的 revision；
+- `0055_operator_audit_operator_action_index` 保留 Canonical Operator Audit 直接关联查询索引；
+- **新增 `0056_merge_legacy_audit_and_operator_governance_heads`，以 `0055_operator_audit_operator_action_index` 与 `0013_remove_legacy_audit_execution_fk` 为双父节点，正式收敛历史 AuditLog 分支与当前 Operator Governance 分支；**
+- 不修改已有 revision ID，不通过 `stamp`、手工修改 `alembic_version` 或删除历史 migration 绕过图结构；
+- Operator Audit Contract 中管理员路径已使用 Service mock 隔离真实数据库，保证 API Contract 不因本地 schema 漂移而误报 Contract 失败；
+- `26_operator_audit_query_performance_gate.ps1` 继续严格执行 `uv run alembic upgrade head` 与唯一 head 校验，并保持不自动启动任何服务。
 
 ## 5. 下一执行顺序
 
 ```text
-① 开发者重新执行 Operator Governance Gate
-② 确认 Alembic 单一 head + migration upgrade
-③ 确认 Operator Action → Audit → Result Resource PostgreSQL Acceptance
-④ 扫描 Execution / Trace 端到端治理链仍存在的真实业务缺口
-⑤ Backend-first 推进下一项 Operator Governance / Audit 能力
-⑥ 前端测试与 Browser E2E 暂不作为当前 Backend 主线阻塞条件
+① 开发者同步远端 main 最新提交
+② 执行 uv run alembic heads，确认仅有 0056_merge_legacy_audit_and_operator_governance_heads
+③ 执行 uv run alembic upgrade head
+④ 重新执行 Operator Governance Gate
+⑤ 确认 Operator Action → Audit → Result Resource PostgreSQL Acceptance
+⑥ 扫描 Execution / Trace 端到端治理链仍存在的真实业务缺口
+⑦ Backend-first 推进下一项 Operator Governance / Audit 能力
+⑧ 前端测试与 Browser E2E 暂不作为当前 Backend 主线阻塞条件
 ```
 
 ## 6. Backend 验收规则
