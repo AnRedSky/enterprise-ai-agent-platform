@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   listAgents: vi.fn(),
   listVersions: vi.fn(),
   getPublishedVersion: vi.fn(),
+  streamChat: vi.fn(),
 }));
 vi.mock("@/api/agents", () => ({
   ...api,
@@ -15,7 +16,7 @@ vi.mock("@/api/agents", () => ({
   publishAgent: vi.fn(),
   archiveAgent: vi.fn(),
 }));
-vi.mock("@/api/chat", () => ({ streamChat: vi.fn() }));
+vi.mock("@/api/chat", () => ({ streamChat: api.streamChat }));
 vi.mock("element-plus", () => ({
   ElMessage: { success: vi.fn(), error: vi.fn() },
   ElMessageBox: { confirm: vi.fn() },
@@ -76,5 +77,32 @@ describe("AgentWorkbench UI-04", () => {
     expect(api.getPublishedVersion).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect((wrapper.vm as any).chatContextState).toBe("permission"));
     expect(wrapper.text()).toContain("无权加载调试配置");
+  });
+
+  it("follows the backend SSE chat contract and maps lifecycle events", async () => {
+    api.listAgents.mockResolvedValueOnce([agentRow]);
+    api.getPublishedVersion.mockResolvedValueOnce({ id: "v1", agent_id: "a1", version: "v1", model_id: "model", system_prompt: "prompt" });
+    api.streamChat.mockImplementationOnce(async (_payload, onEvent) => {
+      onEvent({ type: "start", request_id: "req-1", trace_id: "trace-1", session_id: "session-1", agent_id: "a1", agent_version: "v1", model_id: "model", memory_count: 0 });
+      onEvent({ type: "delta", content: "hello" });
+      onEvent({ type: "delta", content: " world" });
+      onEvent({ type: "done", execution_id: "exec-1", latency_ms: 12 });
+    });
+    const wrapper = mountView(); await flushPromises();
+
+    (wrapper.vm as any).chatContextState = "success";
+    (wrapper.vm as any).input = "hello";
+    await (wrapper.vm as any).execute();
+
+    expect(api.streamChat).toHaveBeenCalledTimes(1);
+    expect(api.streamChat.mock.calls[0][0]).toEqual({ agent_id: "a1", input: "hello", session_id: undefined });
+    expect(api.streamChat.mock.calls[0][1]).toEqual(expect.any(Function));
+    expect(api.streamChat.mock.calls[0][2]).toEqual(expect.any(AbortSignal));
+    expect((wrapper.vm as any).requestId).toBe("req-1");
+    expect((wrapper.vm as any).traceId).toBe("trace-1");
+    expect((wrapper.vm as any).sessionId).toBe("session-1");
+    expect((wrapper.vm as any).executionId).toBe("exec-1");
+    expect((wrapper.vm as any).messages[1].content).toBe("hello world");
+    expect((wrapper.vm as any).chatState).toBe("completed");
   });
 });
