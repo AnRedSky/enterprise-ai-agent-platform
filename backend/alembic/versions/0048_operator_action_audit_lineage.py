@@ -7,7 +7,9 @@ import sqlalchemy as sa
 revision = "0048_operator_action_audit_lineage"
 down_revision = "0047_merge_runtime_operations_alerts"
 branch_labels = None
-depends_on = None
+# 该分支从 0047 独立产生，但实际 DDL 依赖 0049 创建的 Operator Action 表。
+# 使用 depends_on 保持历史 revision ID 不变，同时保证全新数据库按依赖顺序执行。
+depends_on = "0049_operator_action_idempotency"
 
 
 def upgrade() -> None:

@@ -38,11 +38,12 @@
 
 开发者执行 `26_operator_audit_query_performance_gate.ps1` 时，targeted regression 暴露 `audit_logs.operator_action_id` 缺失，以及 Runtime Audit / Trace Correlation 单元测试 mock 未覆盖新增的直接 Operator Action → Audit 查询调用。此前 Gate 的 `alembic upgrade head` 还暴露 migration graph 存在多个 head。
 
-根因进一步确认：`0048_operator_action_audit_lineage`、`0051_operator_audit_query_indexes` 与 `0053_operator_action_result_resource_type` 所在 migration 链存在多个独立分支。`0049_operator_action_idempotency` 创建表时遗漏当前 ORM 使用的 `result_resource_type`，后续已有 `0053` 负责补齐该字段，但没有最终 merge revision 收敛全部 head。
+根因进一步确认：`0048_operator_action_audit_lineage`、`0051_operator_audit_query_indexes` 与 `0053_operator_action_result_resource_type` 所在 migration 链存在多个独立分支；`0048` 还依赖 `0049` 创建的 Operator Action 表，却没有声明 Alembic `depends_on`。
 
 ## 4. 当前 Backend 修复
 
-- 新增 `0054_merge_operator_governance_heads`，一次性合并 `0053_operator_action_result_resource_type`、`0051_operator_audit_query_indexes`、`0048_operator_action_audit_lineage` 三个 Operator Governance migration head；
+- 为 `0048_operator_action_audit_lineage` 增加 `depends_on = "0049_operator_action_idempotency"`，确保全新数据库按 DDL 依赖顺序执行；
+- 新增 `0054_merge_operator_governance_heads`，一次性合并 `0053_operator_action_result_resource_type`、`0051_operator_audit_query_indexes`、`0048_operator_action_audit_lineage` 三个 Operator Governance head；
 - 恢复原有 `0053_operator_action_result_resource_type`，保留其结果类型回填与失败结果清理逻辑；
 - 新增 PostgreSQL Acceptance，验证 `audit_logs.operator_action_id`、`operator_action_idempotencies.result_resource_type` 以及 Operator Action → AuditLog 外键真实存在；
 - 修正 Runtime Audit / Trace Correlation 单元测试 mock，使其与直接 Operator Action → Audit 查询行为一致；
