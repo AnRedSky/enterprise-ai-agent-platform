@@ -65,6 +65,7 @@ class AuditLogItem(BaseModel):
     workflow_id: UUID | None = None
     workflow_version_id: UUID | None = None
     workflow_execution_id: UUID | None = None
+    operator_action_id: UUID | None = None
     execution_id: UUID | None = None
     action: str
     status: str

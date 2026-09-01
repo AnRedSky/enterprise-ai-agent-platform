@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -112,6 +112,63 @@ class OperatorActionGovernanceService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def _ensure_operator_action(
+        self,
+        *,
+        actor_id: UUID,
+        tenant_id: UUID,
+        resource_type: str,
+        resource_id: UUID,
+        action: str,
+        result_resource_type: str,
+        result_resource_id: UUID,
+        idempotency_key: str | None,
+        status: str,
+        error_code: str | None = None,
+    ) -> OperatorActionIdempotency:
+        """确保每个已执行 Operator Action 都拥有可追踪的持久事实。
+
+        Args:
+            actor_id: 发起运维操作的用户。
+            tenant_id: 当前租户边界。
+            resource_type: 操作目标资源类型。
+            resource_id: 操作目标资源标识。
+            action: 操作名称。
+            result_resource_type: 最终结果资源类型。
+            result_resource_id: 最终结果资源标识。
+            idempotency_key: 客户端幂等键；非幂等入口使用内部唯一键。
+            status: Operator Action 最终状态。
+            error_code: 失败时的结构化错误码。
+
+        Returns:
+            已存在或新建的 Operator Action 持久事实。
+        """
+        if idempotency_key:
+            record = (await self.db.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == idempotency_key,
+            ))).scalar_one_or_none()
+            if record is None:
+                raise HTTPException(status_code=409, detail="Operator Action 幂等事实不存在")
+        else:
+            record = OperatorActionIdempotency(
+                tenant_id=tenant_id,
+                actor_id=actor_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                action=action,
+                idempotency_key=f"internal:{uuid4()}",
+                status=status,
+            )
+            self.db.add(record)
+            await self.db.flush()
+        record.status = status
+        record.result_resource_type = result_resource_type if status == "succeeded" else None
+        record.result_resource_id = result_resource_id if status == "succeeded" else None
+        record.error_code = error_code
+        await self.db.flush()
+        return record
+
     async def _audit(
         self,
         *,
@@ -124,16 +181,32 @@ class OperatorActionGovernanceService:
         workflow_id: UUID | None = None,
         workflow_version_id: UUID | None = None,
         workflow_execution_id: UUID | None = None,
+        idempotency_key: str | None = None,
         error_code: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """写入 Operator Action 审计事实；调用方负责事务提交。"""
+        """写入与 Operator Action 强关联的审计事实；调用方负责事务提交。"""
+        result_resource_type = "workflow_execution" if workflow_execution_id is not None else resource_type
+        result_resource_id = workflow_execution_id or resource_id
+        operator_action = await self._ensure_operator_action(
+            actor_id=actor_id,
+            tenant_id=tenant_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            action=action,
+            result_resource_type=result_resource_type,
+            result_resource_id=result_resource_id,
+            idempotency_key=idempotency_key,
+            status=status,
+            error_code=error_code,
+        )
         self.db.add(AuditLog(
             actor_id=actor_id,
             tenant_id=tenant_id,
             workflow_id=workflow_id,
             workflow_version_id=workflow_version_id,
             workflow_execution_id=workflow_execution_id,
+            operator_action_id=operator_action.id,
             action=f"operator.{resource_type}.{action}",
             resource_type=resource_type,
             resource_id=str(resource_id),
@@ -336,6 +409,7 @@ class OperatorActionGovernanceService:
             actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_execution", resource_id=execution_id,
             action=action, status="success", workflow_id=execution.workflow_id,
             workflow_version_id=execution.workflow_version_id, workflow_execution_id=result.id,
+            idempotency_key=idempotency_key,
             metadata={"idempotency_key_present": idempotency_key is not None, "confirmed": confirm},
         )
         await self.db.commit()
@@ -400,6 +474,7 @@ class OperatorActionGovernanceService:
             actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_trigger", resource_id=trigger_id,
             action=action, status="success", workflow_id=workflow.id,
             workflow_execution_id=result.id if isinstance(result, WorkflowExecution) else None,
+            idempotency_key=idempotency_key,
             metadata={"confirmed": confirm, "idempotency_key_present": idempotency_key is not None},
         )
         await self.db.commit()

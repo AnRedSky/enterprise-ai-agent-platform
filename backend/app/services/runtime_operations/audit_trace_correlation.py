@@ -85,50 +85,54 @@ class RuntimeAuditTraceCorrelationService:
     async def _paged_audits(
         self,
         tenant_id: UUID,
-        execution_id: UUID,
+        execution_id: UUID | None,
         page: int,
         page_size: int,
         *,
         action: str | None = None,
         status: str | None = None,
+        operator_action_id: UUID | None = None,
     ) -> AuditPage:
-        """查询正式 Audit 以及可由同租户 Trace 安全恢复的历史 Audit。"""
+        """查询正式 Audit、Operator Action 直连 Audit 以及历史 Trace 恢复 Audit。"""
         page, page_size, offset = self._page(page, page_size)
-        trace_ids = select(WorkflowTraceEvent.trace_id).where(
-            WorkflowTraceEvent.tenant_id == tenant_id,
-            WorkflowTraceEvent.execution_id == execution_id,
-        )
-        execution_audit_scope = or_(
-            AuditLog.workflow_execution_id == execution_id,
-            (
-                AuditLog.workflow_execution_id.is_(None)
-                & AuditLog.trace_id.in_(trace_ids)
-            ),
-        )
+        execution_audit_scope = None
+        if execution_id is not None:
+            trace_ids = select(WorkflowTraceEvent.trace_id).where(
+                WorkflowTraceEvent.tenant_id == tenant_id,
+                WorkflowTraceEvent.execution_id == execution_id,
+            )
+            execution_audit_scope = or_(
+                AuditLog.workflow_execution_id == execution_id,
+                (
+                    AuditLog.workflow_execution_id.is_(None)
+                    & AuditLog.trace_id.in_(trace_ids)
+                ),
+            )
+        if operator_action_id is not None:
+            direct_scope = AuditLog.operator_action_id == operator_action_id
+            scope = direct_scope if execution_audit_scope is None else or_(execution_audit_scope, direct_scope)
+        else:
+            scope = execution_audit_scope
+        if scope is None:
+            return {"items": [], "page": page, "page_size": page_size, "total": 0}
         stmt = select(AuditLog).where(
             AuditLog.tenant_id == tenant_id,
-            execution_audit_scope,
+            scope,
         )
         if action:
-            # Legacy Audit 没有规范化 action 与 workflow_execution_id，不能简单用
-            # ``workflow_execution_id IS NULL`` 绕过 action 过滤。只有当前 execution
-            # 存在同 action 的正式 Audit 时，Legacy Audit 才作为该 action 查询的
-            # 历史兼容记录返回。使用独立 alias 避免 EXISTS 与外层 AuditLog 错误相关。
             formal_audit = aliased(AuditLog)
             matching_formal_action = select(formal_audit.id).where(
                 formal_audit.tenant_id == tenant_id,
                 formal_audit.workflow_execution_id == execution_id,
                 formal_audit.action == action,
-            ).exists()
-            stmt = stmt.where(
-                or_(
-                    AuditLog.action == action,
-                    (
-                        AuditLog.workflow_execution_id.is_(None)
-                        & matching_formal_action
-                    ),
+            ).exists() if execution_id is not None else None
+            action_scope = AuditLog.action == action
+            if matching_formal_action is not None:
+                action_scope = or_(
+                    action_scope,
+                    AuditLog.workflow_execution_id.is_(None) & matching_formal_action,
                 )
-            )
+            stmt = stmt.where(action_scope)
         if status:
             stmt = stmt.where(AuditLog.status == status)
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
@@ -183,6 +187,26 @@ class RuntimeAuditTraceCorrelationService:
                 .limit(1)
             )
         ).scalar_one_or_none()
+
+    async def _operator_action(self, tenant_id: UUID, operator_action_id: UUID) -> OperatorActionIdempotency | None:
+        return (
+            await self.db.execute(
+                select(OperatorActionIdempotency).where(
+                    OperatorActionIdempotency.tenant_id == tenant_id,
+                    OperatorActionIdempotency.id == operator_action_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    @staticmethod
+    def _empty_response(action: OperatorActionIdempotency, page: int, page_size: int, audit_page: int, audit_page_size: int) -> CorrelationResponse:
+        return {
+            "execution": None,
+            "traces": {"items": [], "page": page, "page_size": page_size, "total": 0},
+            "audits": {"items": [], "page": audit_page, "page_size": audit_page_size, "total": 0},
+            "operator_actions": [action],
+            "focus_operator_action_id": action.id,
+        }
 
     async def by_execution(
         self,
@@ -287,6 +311,24 @@ class RuntimeAuditTraceCorrelationService:
         if audit is None:
             return None
         execution_id = await self._execution_id_from_audit(tenant_id, audit)
+        if execution_id is None and audit.operator_action_id is not None:
+            action = await self._operator_action(tenant_id, audit.operator_action_id)
+            if action is None:
+                return None
+            page, page_size, _ = self._page(trace_page, trace_page_size)
+            audit_page_number, audit_page_size_normalized, _ = self._page(audit_page, audit_page_size)
+            return {
+                "execution": None,
+                "traces": {"items": [], "page": page, "page_size": page_size, "total": 0},
+                "audits": await self._paged_audits(
+                    tenant_id, None, audit_page, audit_page_size,
+                    action=audit_action, status=audit_status,
+                    operator_action_id=action.id,
+                ),
+                "operator_actions": [action],
+                "focus_audit_id": audit.id,
+                "focus_operator_action_id": action.id,
+            }
         if execution_id is None:
             return None
         result = await self.by_execution(
@@ -303,6 +345,7 @@ class RuntimeAuditTraceCorrelationService:
         )
         if result is not None:
             result["focus_audit_id"] = audit.id
+            result["focus_operator_action_id"] = audit.operator_action_id
         return result
 
     async def by_operator_action(
@@ -319,14 +362,7 @@ class RuntimeAuditTraceCorrelationService:
         audit_action: str | None = None,
         audit_status: str | None = None,
     ) -> CorrelationResponse | None:
-        action = (
-            await self.db.execute(
-                select(OperatorActionIdempotency).where(
-                    OperatorActionIdempotency.tenant_id == tenant_id,
-                    OperatorActionIdempotency.id == operator_action_id,
-                )
-            )
-        ).scalar_one_or_none()
+        action = await self._operator_action(tenant_id, operator_action_id)
         if action is None:
             return None
         execution_id = (
@@ -335,12 +371,16 @@ class RuntimeAuditTraceCorrelationService:
             else action.resource_id if action.resource_type == "workflow_execution" else None
         )
         if execution_id is None:
-            page, page_size, _ = self._page(trace_page, trace_page_size)
+            trace_page_number, trace_page_size_normalized, _ = self._page(trace_page, trace_page_size)
             audit_page_number, audit_page_size_normalized, _ = self._page(audit_page, audit_page_size)
             return {
                 "execution": None,
-                "traces": {"items": [], "page": page, "page_size": page_size, "total": 0},
-                "audits": {"items": [], "page": audit_page_number, "page_size": audit_page_size_normalized, "total": 0},
+                "traces": {"items": [], "page": trace_page_number, "page_size": trace_page_size_normalized, "total": 0},
+                "audits": await self._paged_audits(
+                    tenant_id, None, audit_page, audit_page_size,
+                    action=audit_action, status=audit_status,
+                    operator_action_id=action.id,
+                ),
                 "operator_actions": [action],
                 "focus_operator_action_id": action.id,
             }
@@ -358,5 +398,14 @@ class RuntimeAuditTraceCorrelationService:
         )
         if result is None:
             return None
+        result["audits"] = await self._paged_audits(
+            tenant_id,
+            execution_id,
+            audit_page,
+            audit_page_size,
+            action=audit_action,
+            status=audit_status,
+            operator_action_id=action.id,
+        )
         result["focus_operator_action_id"] = action.id
         return result
