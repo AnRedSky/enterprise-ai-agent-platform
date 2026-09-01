@@ -25,7 +25,7 @@ const agentRow = { id: "a1", name: "Agent", model_id: "model", status: "publishe
 
 function mountView() {
   return mount(AgentWorkbench, { global: { stubs: {
-    "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" },
+    "el-button": { emits: ["click"], template: "<button @click=\"$emit('click')\"><slot /></button>" },
     "el-table": { template: "<div><slot /></div>" },
     "el-table-column": { template: "<div><slot :row=\"agentRow\" /></div>", data: () => ({ agentRow }) },
     "el-tag": { template: "<span><slot /></span>" }, "el-alert": true,
