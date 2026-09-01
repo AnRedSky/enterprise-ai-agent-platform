@@ -65,7 +65,7 @@ describe("AgentWorkbench UI-04", () => {
 
   it("separates chat context permission from chat context error", async () => {
     api.listAgents.mockResolvedValueOnce([agentRow]);
-    api.getPublishedVersion.mockRejectedValueOnce({ response: { status: 403 } });
+    api.getPublishedVersion.mockRejectedValue({ response: { status: 403 } });
     const wrapper = mountView(); await flushPromises();
 
     const button = wrapper.findAll("button").find((node) => node.text() === "对话调试");
@@ -73,6 +73,7 @@ describe("AgentWorkbench UI-04", () => {
     await button!.trigger("click");
 
     await vi.waitFor(() => expect(api.getPublishedVersion).toHaveBeenCalledWith("a1"));
+    expect(api.getPublishedVersion).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect((wrapper.vm as any).chatContextState).toBe("permission"));
     expect(wrapper.text()).toContain("无权加载调试配置");
   });
