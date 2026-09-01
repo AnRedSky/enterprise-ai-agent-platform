@@ -91,24 +91,35 @@ class RuntimeAuditTraceCorrelationService:
         action: str | None = None,
         status: str | None = None,
     ) -> AuditPage:
-        """查询正式 Audit 以及可由同租户 Trace 安全恢复的历史 Audit。"""
+        """查询正式 Audit 以及可由同租户 Trace 安全恢复的历史 Audit。
+
+        历史 Audit 没有正式 ``workflow_execution_id``，因此 execution 级过滤必须
+        保留通过 tenant-scoped trace 恢复出来的记录；否则带 ``audit_action``
+        的查询会把历史审计事实错误地从同一 Execution 的结果集中删除。
+        """
         page, page_size, offset = self._page(page, page_size)
         trace_ids = select(WorkflowTraceEvent.trace_id).where(
             WorkflowTraceEvent.tenant_id == tenant_id,
             WorkflowTraceEvent.execution_id == execution_id,
         )
-        stmt = select(AuditLog).where(
-            AuditLog.tenant_id == tenant_id,
-            or_(
-                AuditLog.workflow_execution_id == execution_id,
-                (
-                    AuditLog.workflow_execution_id.is_(None)
-                    & AuditLog.trace_id.in_(trace_ids)
-                ),
+        execution_audit_scope = or_(
+            AuditLog.workflow_execution_id == execution_id,
+            (
+                AuditLog.workflow_execution_id.is_(None)
+                & AuditLog.trace_id.in_(trace_ids)
             ),
         )
+        stmt = select(AuditLog).where(
+            AuditLog.tenant_id == tenant_id,
+            execution_audit_scope,
+        )
         if action:
-            stmt = stmt.where(AuditLog.action == action)
+            stmt = stmt.where(
+                or_(
+                    AuditLog.action == action,
+                    AuditLog.workflow_execution_id.is_(None),
+                )
+            )
         if status:
             stmt = stmt.where(AuditLog.status == status)
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
