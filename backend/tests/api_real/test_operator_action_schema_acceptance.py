@@ -61,17 +61,16 @@ async def test_operator_action_governance_schema_is_migration_complete() -> None
             "id",
         )
 
-        index_columns = (
-            await connection.execute(
-                text(
-                    """
-                    SELECT indexdef
-                    FROM pg_indexes
-                    WHERE schemaname = 'public'
-                      AND tablename = 'audit_logs'
-                      AND indexname = 'ix_operator_audit_tenant_operator_action_created'
-                    """
-                )
-            ).scalar_one()
+        index_result = await connection.execute(
+            text(
+                """
+                SELECT indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'audit_logs'
+                  AND indexname = 'ix_operator_audit_tenant_operator_action_created'
+                """
+            )
         )
+        index_columns = index_result.scalar_one()
         assert '(tenant_id, operator_action_id, created_at)' in index_columns
