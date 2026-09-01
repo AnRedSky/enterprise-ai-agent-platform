@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.core.security import create_token
 from app.main import app
+from app.services.runtime_operations import OperatorAuditQueryService
 
 
 client = TestClient(app)
@@ -48,13 +49,20 @@ def test_operator_audit_query_requires_admin_role():
     assert response.status_code == 403
 
 
-def test_operator_audit_query_accepts_admin_role_before_database_access():
+def test_operator_audit_query_accepts_admin_role_before_database_access(monkeypatch):
+    """管理员鉴权通过后，Contract 测试不得触碰真实数据库。"""
+
+    async def _contract_result(self, tenant_id, **kwargs):
+        return {"items": [], "page": kwargs["page"], "page_size": kwargs["page_size"], "total": 0}
+
+    monkeypatch.setattr(OperatorAuditQueryService, "query", _contract_result)
     token = create_token(uuid4(), ["admin"], tenant_id=uuid4())
     response = client.get(
         "/api/v1/runtime/operations/operator-audits",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code != 403
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "page": 1, "page_size": 50, "total": 0}
 
 
 def test_operator_audit_query_rejects_invalid_page_size_at_contract_boundary():
