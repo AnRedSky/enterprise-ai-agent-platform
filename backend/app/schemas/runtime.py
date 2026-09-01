@@ -279,6 +279,7 @@ class RuntimeOperatorActionItem(BaseModel):
     action: str
     idempotency_key: str
     status: str
+    result_resource_type: str | None = None
     result_resource_id: UUID | None = None
     error_code: str | None = None
     created_at: datetime
