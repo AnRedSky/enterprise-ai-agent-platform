@@ -87,7 +87,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "[4/7] Database migration/head verification"
-& uv run alembic upgrade head
+& uv run alembic upgrade heads
 if ($LASTEXITCODE -ne 0) {
     throw "Gate failed: Database migration/head verification"
 }
