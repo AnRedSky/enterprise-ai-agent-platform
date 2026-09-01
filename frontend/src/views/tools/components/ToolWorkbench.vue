@@ -2,7 +2,7 @@
   <div class="page">
     <PageHeader title="工具管理" description="管理工具的注册、启停、绑定、解绑和执行；创建及治理操作受管理员权限保护。">
       <template #actions>
-        <el-button v-if="isAdmin" type="primary" @click="createVisible = true">创建工具</el-button>
+        <el-button v-if="isAdmin" type="primary" @click="openCreate">创建工具</el-button>
       </template>
     </PageHeader>
 
@@ -31,12 +31,20 @@
       </SurfaceCard>
     </template>
 
-    <el-dialog v-model="createVisible" title="创建工具" width="620px">
+    <el-dialog v-model="createVisible" title="创建工具" width="min(620px, calc(100vw - 32px))" @closed="clearCreateErrors">
       <el-form label-width="110px">
-        <el-form-item label="名称" required><el-input v-model="createForm.name" /></el-form-item>
-        <el-form-item label="描述"><el-input v-model="createForm.description" /></el-form-item>
-        <el-form-item label="接口地址"><el-input v-model="createForm.endpoint" placeholder="可选；禁止执行未经授权的地址" /></el-form-item>
-        <el-form-item label="输入结构"><el-input v-model="createForm.input_schema" type="textarea" :rows="8" /></el-form-item>
+        <el-form-item label="名称" required :error="createErrors.name">
+          <el-input v-model="createForm.name" maxlength="100" show-word-limit @input="createErrors.name = ''" />
+        </el-form-item>
+        <el-form-item label="描述" :error="createErrors.description">
+          <el-input v-model="createForm.description" maxlength="500" show-word-limit @input="createErrors.description = ''" />
+        </el-form-item>
+        <el-form-item label="接口地址" :error="createErrors.endpoint">
+          <el-input v-model="createForm.endpoint" placeholder="可选；禁止执行未经授权的地址" @input="createErrors.endpoint = ''" />
+        </el-form-item>
+        <el-form-item label="输入结构" required :error="createErrors.input_schema">
+          <el-input v-model="createForm.input_schema" type="textarea" :rows="8" @input="createErrors.input_schema = ''" />
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="createVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="create">创建</el-button></template>
     </el-dialog>
@@ -77,6 +85,7 @@ const permissionDenied = ref(false), createVisible = ref(false), bindVisible = r
 const selectedTool = ref<Tool | null>(null), selectedAgent = ref(''), bindingAction = ref<BindingAction>('bind'), pendingAction = ref<ConfirmAction | null>(null);
 const argumentsText = ref('{}\n'), executionResult = ref('');
 const createForm = ref({ name: '', description: '', endpoint: '', input_schema: '{}' });
+const createErrors = ref({ name: '', description: '', endpoint: '', input_schema: '' });
 const isAdmin = computed(() => getRoles().includes('admin'));
 const pageState = computed(() => permissionDenied.value ? 'permission' : error.value ? 'error' : loading.value ? 'loading' : tools.value.length === 0 ? 'empty' : 'success');
 const stateTitle = computed(() => ({ loading: '正在加载工具', empty: '暂无可用工具', permission: '无权查看工具', error: '工具加载失败' } as Record<string, string>)[pageState.value] ?? '工具');
@@ -86,12 +95,25 @@ const confirmDescription = computed(() => pendingAction.value === 'unbind' ? `�
 const confirmText = computed(() => pendingAction.value === 'unbind' ? '确认解绑' : selectedTool.value?.enabled ? '确认停用' : '确认启用');
 const confirmDanger = computed(() => pendingAction.value === 'unbind' || Boolean(selectedTool.value?.enabled));
 
+function openCreate() { createErrors.value = { name: '', description: '', endpoint: '', input_schema: '' }; createVisible.value = true; }
+function clearCreateErrors() { createErrors.value = { name: '', description: '', endpoint: '', input_schema: '' }; }
+function validateCreateForm() {
+  createErrors.value = { name: '', description: '', endpoint: '', input_schema: '' };
+  let valid = true;
+  if (!createForm.value.name.trim()) { createErrors.value.name = '请输入工具名称。'; valid = false; }
+  try {
+    const parsed = JSON.parse(createForm.value.input_schema || '{}');
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) { createErrors.value.input_schema = '输入结构必须是 JSON 对象。'; valid = false; }
+  } catch { createErrors.value.input_schema = '输入结构不是有效的 JSON，请检查格式。'; valid = false; }
+  return valid;
+}
+
 async function load() { loading.value = true; error.value = ''; permissionDenied.value = false; try { [tools.value, agents.value] = await Promise.all([listTools(), listAgents()]); } catch (e: any) { console.error(e); permissionDenied.value = e?.response?.status === 403; error.value = permissionDenied.value ? '' : getToolUserError(e, '工具数据加载失败，请稍后重试'); } finally { loading.value = false; } }
-async function handleStateAction() { if (pageState.value === 'empty') { createVisible.value = true; return; } if (pageState.value === 'error') await load(); }
+async function handleStateAction() { if (pageState.value === 'empty') { openCreate(); return; } if (pageState.value === 'error') await load(); }
 function requestToggle(tool: Tool) { selectedTool.value = tool; pendingAction.value = 'toggle'; confirmVisible.value = true; }
 function requestUnbind(tool: Tool) { selectedTool.value = tool; pendingAction.value = 'unbind'; selectedAgent.value = agents.value[0]?.id || ''; confirmVisible.value = true; }
 async function confirmAction() { if (!selectedTool.value || !pendingAction.value) return; confirmLoading.value = true; try { if (pendingAction.value === 'toggle') { await (selectedTool.value.enabled ? disableTool(selectedTool.value.id) : enableTool(selectedTool.value.id)); ElMessage.success(selectedTool.value.enabled ? '工具已停用' : '工具已启用'); } else { if (!selectedAgent.value) { ElMessage.warning('请选择智能体'); return; } await unbindTool(selectedTool.value.id, selectedAgent.value); ElMessage.success('工具解绑成功'); } confirmVisible.value = false; await load(); } catch (e) { console.error(e); ElMessage.error(getToolUserError(e, pendingAction.value === 'unbind' ? '工具解绑失败，请稍后重试' : '工具状态更新失败，请稍后重试')); } finally { confirmLoading.value = false; pendingAction.value = null; } }
-async function create() { try { const input_schema = JSON.parse(createForm.value.input_schema || '{}'); saving.value = true; await createTool({ ...createForm.value, input_schema, enabled: true }); createVisible.value = false; await load(); ElMessage.success('工具创建成功'); } catch (e) { console.error(e); ElMessage.error(getToolUserError(e, '工具创建失败，请稍后重试')); } finally { saving.value = false; } }
+async function create() { if (!validateCreateForm()) return; try { const input_schema = JSON.parse(createForm.value.input_schema || '{}') as Record<string, unknown>; saving.value = true; await createTool({ name: createForm.value.name.trim(), description: createForm.value.description.trim(), endpoint: createForm.value.endpoint.trim() || undefined, input_schema, enabled: true }); createVisible.value = false; createForm.value = { name: '', description: '', endpoint: '', input_schema: '{}' }; clearCreateErrors(); await load(); ElMessage.success('工具创建成功'); } catch (e) { console.error(e); ElMessage.error(getToolUserError(e, '工具创建失败，请稍后重试')); } finally { saving.value = false; } }
 function openBind(tool: Tool, action: BindingAction) { selectedTool.value = tool; bindingAction.value = action; selectedAgent.value = agents.value[0]?.id || ''; bindVisible.value = true; }
 async function applyBinding() { if (!selectedTool.value || !selectedAgent.value) return; saving.value = true; try { if (bindingAction.value === 'bind') { await bindTool(selectedTool.value.id, selectedAgent.value); ElMessage.success('工具绑定成功'); } else { await unbindTool(selectedTool.value.id, selectedAgent.value); ElMessage.success('工具解绑成功'); } bindVisible.value = false; } catch (e) { console.error(e); ElMessage.error(getToolUserError(e, '工具绑定关系更新失败，请稍后重试')); } finally { saving.value = false; } }
 function openExecute(tool: Tool) { selectedTool.value = tool; selectedAgent.value = agents.value[0]?.id || ''; argumentsText.value = '{}\n'; executionResult.value = ''; executeVisible.value = true; }
