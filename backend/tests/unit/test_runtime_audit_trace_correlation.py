@@ -113,8 +113,10 @@ async def test_by_operator_action_without_execution_keeps_requested_page_size() 
         resource_id=uuid4(),
     )
     action_result = MagicMock(scalar_one_or_none=MagicMock(return_value=action))
+    audit_count = MagicMock(scalar_one=MagicMock(return_value=0))
+    audit_rows = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
     db = MagicMock()
-    db.execute = AsyncMock(return_value=action_result)
+    db.execute = AsyncMock(side_effect=[action_result, audit_count, audit_rows])
 
     result = await RuntimeAuditTraceCorrelationService(db).by_operator_action(
         tenant_id,
@@ -142,8 +144,10 @@ async def test_by_operator_action_rejects_untyped_result_as_execution() -> None:
         resource_id=uuid4(),
     )
     action_result = MagicMock(scalar_one_or_none=MagicMock(return_value=action))
+    audit_count = MagicMock(scalar_one=MagicMock(return_value=0))
+    audit_rows = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
     db = MagicMock()
-    db.execute = AsyncMock(return_value=action_result)
+    db.execute = AsyncMock(side_effect=[action_result, audit_count, audit_rows])
 
     result = await RuntimeAuditTraceCorrelationService(db).by_operator_action(tenant_id, action_id)
 

@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**Canonical Operator Audit 查询性能与数据库事实源对齐**。
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**、**Runtime Audit / Trace Correlation 响应 Contract 硬化与历史审计关联硬化**、**Operator Audit Query Service / API Contract 第一实现**、**Operator Audit 管理员访问治理**。
+- 当前任务：**Operator Action → Audit → Result Resource → Execution/Trace 治理闭环与数据库事实源对齐**。
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**、**Runtime Audit / Trace Correlation 响应 Contract 硬化与历史审计关联硬化**、**Operator Audit Query Service / API Contract 第一实现**、**Operator Audit 管理员访问治理**、**Canonical Operator Audit 查询索引事实源对齐**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -32,34 +32,32 @@
 - Operator Audit Query Service 已基于 AuditLog 唯一事实源实现 tenant-scoped 分页、精确过滤和时间窗口校验；
 - Operator Audit Query API Contract 已实现，响应模型明确为 `OperatorAuditQueryResponse` / `OperatorAuditItem`，查询参数包含 page、page_size、action、resource_type、resource_id、actor_id、status、workflow_execution_id、trace_id、since、until；
 - Operator Audit Query 已增加 admin-only 访问治理；
-- 新增 `0051_operator_audit_query_indexes`，将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`。
+- `0051_operator_audit_query_indexes` 已将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`。
 
-## 3. Backend 最近验收基线
+## 3. 最新本地反馈与根因
 
-开发者已反馈 Runtime correlation 与 Operator Audit Access Gate 的 targeted/default regression 均达到既定断言；Operator Audit Access Gate 当前唯一阻塞曾为 Windows + asyncpg 在 pytest 默认事件循环关闭后的连接终止 warning，开发者已反馈该本地测试修复通过。
+开发者执行 `26_operator_audit_query_performance_gate.ps1` 时，targeted regression 暴露 `audit_logs.operator_action_id` 缺失，以及 Runtime Audit / Trace Correlation 单元测试 mock 未覆盖新增的直接 Operator Action → Audit 查询调用。此前 Gate 的 `alembic upgrade head` 还暴露 migration graph 存在多个 head。
 
-当前 Canonical Operator Audit Query Performance Gate 已完成代码与 Acceptance 实现，Real PostgreSQL / Backend Regression 尚未由本仓库工具实际执行，因此不预填通过结果。
+根因进一步确认：`0048_operator_action_audit_lineage` 与主链上的 `0048_webhook_delivery_consumer_group` 均从 `0047` 分叉；同时 `0049_operator_action_idempotency` 创建表时遗漏当前 ORM 已使用的 `result_resource_type` 字段。
 
-## 4. 当前 Backend 任务
+## 4. 当前 Backend 修复
 
-### Canonical Operator Audit 查询性能与事实源对齐 — 已实现，等待本地 Gate
+- 新增 `0052_merge_operator_audit_lineage`，合并 `0051_operator_audit_query_indexes` 与 `0048_operator_action_audit_lineage` 两条 migration 分支，恢复单一 Alembic head；
+- 新增 `0053_operator_action_result_resource_type`，补齐 Operator Action 最终结果资源类型字段；
+- 新增 PostgreSQL Acceptance，验证 `audit_logs.operator_action_id`、`operator_action_idempotencies.result_resource_type` 以及 Operator Action → AuditLog 外键真实存在；
+- 修正 Runtime Audit / Trace Correlation 单元测试 mock，使其与直接 Operator Action → Audit 查询行为一致；
+- 更新 `26_operator_audit_query_performance_gate.ps1`，显式验证单一 migration head，并把治理闭环 PostgreSQL schema acceptance 纳入 Gate；
+- 错误记录：`docs/04-errors/2026-09-01-operator-governance-migration-head-and-schema-drift.md`。
 
-- `OperatorAuditQueryService` 继续以 `AuditLog` 为唯一 Operator Action 审计事实源；
-- 发现既有 `0050_runtime_audit_query_indexes` 面向历史 `runtime_operation_audits`，与当前 Canonical `AuditLog` 查询路径不一致；
-- 新增 `0051_operator_audit_query_indexes`，覆盖 action、actor、resource、workflow execution、trace 五类常用 tenant-scoped 查询；
-- 新增 Real PostgreSQL Acceptance 验证索引实际落在 `audit_logs` 且 tenant_id 为首列；
-- 新增 `26_operator_audit_query_performance_gate.ps1`，自动执行 targeted regression、PostgreSQL readiness、Alembic head、Real PostgreSQL Acceptance 与服务启动边界检查；
-- 错误记录：`docs/04-errors/2026-09-01-operator-audit-query-index-source-drift.md`；
-- 下一步由开发者本地执行 26 Gate，确认 migration / PostgreSQL Acceptance / warning-free 后继续扫描 Operator Governance / Audit 的下一项真实业务缺口。
-
-## 5. Backend 下一执行顺序
+## 5. 下一执行顺序
 
 ```text
-① 开发者执行 26_operator_audit_query_performance_gate
-② 若通过，确认 warning-free 与 Real PostgreSQL Acceptance
-③ 扫描 Operator Audit Governance 的真实业务缺口
-④ Backend-first 推进下一项 Operator Governance / Audit 能力
-⑤ 前端测试与 Browser E2E 暂不作为当前 Backend 主线阻塞条件
+① 开发者重新执行 Operator Governance Gate
+② 确认 Alembic 单一 head + migration upgrade
+③ 确认 Operator Action → Audit → Result Resource PostgreSQL Acceptance
+④ 扫描 Execution / Trace 端到端治理链仍存在的真实业务缺口
+⑤ Backend-first 推进下一项 Operator Governance / Audit 能力
+⑥ 前端测试与 Browser E2E 暂不作为当前 Backend 主线阻塞条件
 ```
 
 ## 6. Backend 验收规则
