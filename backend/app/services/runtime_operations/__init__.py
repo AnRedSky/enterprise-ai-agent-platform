@@ -12,6 +12,7 @@ from .destination_registry import DestinationRegistryService
 from .enterprise import RuntimeOperationsEnterpriseService
 from .metrics_contract import RuntimeMetricContract
 from .notification_scheduler import RuntimeNotificationScheduler
+from .operator_audit import OperatorAuditPage, OperatorAuditQueryService
 from .operator_governance import OperatorActionDefinition, OperatorActionGovernanceService
 from .provider_health import ProviderHealthResult, RuntimeProviderHealthService
 from .scheduler import RuntimeAlertScheduler
@@ -23,6 +24,8 @@ __all__ = [
     "DestinationRegistryService",
     "OperatorActionDefinition",
     "OperatorActionGovernanceService",
+    "OperatorAuditPage",
+    "OperatorAuditQueryService",
     "ProviderHealthResult",
     "RuntimeAlertEvaluator",
     "RuntimeAlertScheduler",
