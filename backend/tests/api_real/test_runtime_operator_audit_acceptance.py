@@ -10,7 +10,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import delete
 
 from app.infrastructure.db.session import SessionLocal
