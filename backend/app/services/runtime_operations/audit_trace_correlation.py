@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.audit import AuditLog
 from app.models.operator_action import OperatorActionIdempotency
@@ -109,17 +110,22 @@ class RuntimeAuditTraceCorrelationService:
             execution_audit_scope,
         )
         if action:
-            legacy_action_scope = select(AuditLog.id).where(
-                AuditLog.tenant_id == tenant_id,
-                AuditLog.workflow_execution_id == execution_id,
-                AuditLog.action == action,
+            # Legacy Audit 没有规范化 action 与 workflow_execution_id，不能简单用
+            # ``workflow_execution_id IS NULL`` 绕过 action 过滤。只有当前 execution
+            # 存在同 action 的正式 Audit 时，Legacy Audit 才作为该 action 查询的
+            # 历史兼容记录返回。使用独立 alias 避免 EXISTS 与外层 AuditLog 错误相关。
+            formal_audit = aliased(AuditLog)
+            matching_formal_action = select(formal_audit.id).where(
+                formal_audit.tenant_id == tenant_id,
+                formal_audit.workflow_execution_id == execution_id,
+                formal_audit.action == action,
             ).exists()
             stmt = stmt.where(
                 or_(
                     AuditLog.action == action,
                     (
                         AuditLog.workflow_execution_id.is_(None)
-                        & legacy_action_scope
+                        & matching_formal_action
                     ),
                 )
             )
