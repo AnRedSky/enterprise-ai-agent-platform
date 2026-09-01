@@ -50,6 +50,10 @@ async function load() {
     const requestedId = typeof route.query.workflow_id === "string" ? route.query.workflow_id : "";
     if (requestedId && workflows.value.some((item) => item.id === requestedId)) selectedId.value = requestedId;
     else if (!selectedId.value || !workflows.value.some((item) => item.id === selectedId.value)) selectedId.value = workflows.value[0]?.id || "";
+    if (!workflows.value.length) {
+      selectedId.value = "";
+      return;
+    }
     if (selectedId.value) await loadDetails(selectedId.value);
   } catch (e: any) {
     workflows.value = [];
