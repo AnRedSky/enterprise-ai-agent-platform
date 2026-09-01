@@ -124,7 +124,11 @@ class RuntimeAuditTraceCorrelationService:
         action: str | None = None,
         status: str | None = None,
     ) -> AuditPage:
-        """查询 Execution 的 AuditLog，并以 created_at + id 保证稳定排序。
+        """查询 Execution 的 AuditLog，并兼容仅保留 trace_id 的历史审计。
+
+        正式 Audit 使用 workflow_execution_id 直接关联；历史 Audit 可能没有该外键，
+        此时仅允许通过当前 tenant 下 Trace 的 trace_id 恢复 Execution，不使用 legacy
+        execution_id 字段猜测映射关系。
 
         Args:
             tenant_id: 当前认证上下文中的租户标识。
@@ -135,12 +139,22 @@ class RuntimeAuditTraceCorrelationService:
             status: 可选的 Audit 状态精确过滤条件。
 
         Returns:
-            包含 AuditLog ORM 对象及分页元数据的只读结果。
+            包含正式与可安全恢复的历史 AuditLog 及分页元数据的只读结果。
         """
         page, page_size, offset = self._page(page, page_size)
+        trace_ids = select(WorkflowTraceEvent.trace_id).where(
+            WorkflowTraceEvent.tenant_id == tenant_id,
+            WorkflowTraceEvent.execution_id == execution_id,
+        )
         stmt = select(AuditLog).where(
             AuditLog.tenant_id == tenant_id,
-            AuditLog.workflow_execution_id == execution_id,
+            (
+                AuditLog.workflow_execution_id == execution_id
+                | (
+                    (AuditLog.workflow_execution_id.is_(None))
+                    & AuditLog.trace_id.in_(trace_ids)
+                )
+            ),
         )
         if action:
             stmt = stmt.where(AuditLog.action == action)
