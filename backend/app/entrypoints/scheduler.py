@@ -38,10 +38,10 @@ async def _run_notification_service(notification_scheduler: RuntimeNotificationS
 async def run_scheduler_service() -> None:
     """启动并监督独立 Scheduler Service 的全部后台生命周期。
 
-    三个领域循环共同组成既有调度职责；Notification Routing Scheduler 作为
+    四个领域循环共同组成既有调度职责；Notification Routing Scheduler 作为
     Integration Event -> Delivery Fact 的周期编排加入同一 Supervisor。RuntimeTelemetry
     与 Scheduler Service 同生命周期创建和销毁，避免每个租户或每轮调度重复创建 SDK Provider。
-    任一循环发生未处理异常时统一取消其他任务并传播异常，避免服务处于半存活状态。
+    任一循环发生未处理异常或被取消时统一取消其他任务并传播原始终止原因，避免服务处于半存活状态。
     """
     scheduler = ScheduledTriggerScheduler(settings.scheduler_poll_interval_seconds)
     recovery_scheduler = WorkflowRecoveryScheduler(
@@ -61,6 +61,8 @@ async def run_scheduler_service() -> None:
         logger.info("Scheduler Service started")
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
         for task in done:
+            if task.cancelled():
+                raise asyncio.CancelledError
             exception = task.exception()
             if exception is not None:
                 raise exception

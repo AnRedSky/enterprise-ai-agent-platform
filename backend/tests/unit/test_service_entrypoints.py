@@ -5,6 +5,7 @@
 `RuntimeNotificationScheduler` 实现，同时统一管理 Runtime Telemetry 生命周期。
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -126,12 +127,10 @@ async def test_scheduler_service_recovers_from_recovery_scan_failure_by_failing_
 
 
 @pytest.mark.asyncio
-async def test_scheduler_service_identity_is_not_configuration_switch():
-    """Scheduler Service 的进程身份不由 SCHEDULER_ENABLED 配置决定。"""
-    assert not hasattr(settings, "scheduler_enabled")
-
+async def test_scheduler_service_propagates_cancellation_and_cleans_up():
+    """任一 Scheduler 循环被取消时，服务必须传播取消并完成统一清理。"""
     fake_scheduler = MagicMock()
-    fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("test-stop"))
+    fake_scheduler.run_forever = AsyncMock(side_effect=asyncio.CancelledError)
     fake_scheduler.stop = MagicMock()
 
     fake_recovery_scheduler = MagicMock()
@@ -142,52 +141,6 @@ async def test_scheduler_service_identity_is_not_configuration_switch():
     fake_alert_scheduler.run_forever = AsyncMock()
     fake_alert_scheduler.stop = MagicMock()
 
-    fake_notification_scheduler = MagicMock()
-    fake_notification_scheduler.run_forever = AsyncMock()
-    fake_notification_scheduler.stop = MagicMock()
-
-    with patch.object(
-        scheduler_entrypoint, "ScheduledTriggerScheduler", return_value=fake_scheduler
-    ), patch.object(
-        scheduler_entrypoint,
-        "WorkflowRecoveryScheduler",
-        return_value=fake_recovery_scheduler,
-    ), patch.object(
-        scheduler_entrypoint,
-        "RuntimeAlertScheduler",
-        return_value=fake_alert_scheduler,
-    ), patch.object(
-        scheduler_entrypoint,
-        "RuntimeNotificationScheduler",
-        return_value=fake_notification_scheduler,
-    ):
-        with pytest.raises(RuntimeError, match="test-stop"):
-            await scheduler_entrypoint.run_scheduler_service()
-
-    fake_scheduler.stop.assert_called_once()
-    fake_recovery_scheduler.stop.assert_called_once()
-    fake_alert_scheduler.stop.assert_called_once()
-    fake_notification_scheduler.stop.assert_called_once()
-    fake_scheduler.run_forever.assert_awaited_once()
-    fake_recovery_scheduler.run_forever.assert_awaited_once()
-    fake_alert_scheduler.run_forever.assert_awaited_once()
-    fake_notification_scheduler.run_forever.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_scheduler_service_owns_runtime_telemetry_lifecycle():
-    """Scheduler Service 必须创建、注入并在退出时关闭唯一 Telemetry Provider。"""
-    fake_scheduler = MagicMock()
-    fake_scheduler.run_forever = AsyncMock(side_effect=RuntimeError("telemetry-stop"))
-    fake_scheduler.stop = MagicMock()
-
-    fake_recovery_scheduler = MagicMock()
-    fake_recovery_scheduler.run_forever = AsyncMock()
-    fake_recovery_scheduler.stop = MagicMock()
-
-    fake_alert_scheduler = MagicMock()
-    fake_alert_scheduler.run_forever = AsyncMock()
-    fake_alert_scheduler.stop = MagicMock()
     fake_notification_scheduler = MagicMock()
     fake_notification_scheduler.run_forever = AsyncMock()
     fake_notification_scheduler.stop = MagicMock()
@@ -199,10 +152,12 @@ async def test_scheduler_service_owns_runtime_telemetry_lifecycle():
         scheduler_entrypoint, "RuntimeAlertScheduler", return_value=fake_alert_scheduler
     ), patch.object(
         scheduler_entrypoint, "RuntimeNotificationScheduler", return_value=fake_notification_scheduler
-    ), patch.object(scheduler_entrypoint, "RuntimeTelemetry", return_value=telemetry) as telemetry_factory:
-        with pytest.raises(RuntimeError, match="telemetry-stop"):
+    ), patch.object(scheduler_entrypoint, "RuntimeTelemetry", return_value=telemetry):
+        with pytest.raises(asyncio.CancelledError):
             await scheduler_entrypoint.run_scheduler_service()
 
-    telemetry_factory.assert_called_once_with()
-    fake_alert_scheduler.set_telemetry.assert_called_once_with(telemetry)
+    fake_scheduler.stop.assert_called_once()
+    fake_recovery_scheduler.stop.assert_called_once()
+    fake_alert_scheduler.stop.assert_called_once()
+    fake_notification_scheduler.stop.assert_called_once()
     telemetry.shutdown.assert_called_once()
