@@ -31,21 +31,24 @@ export type RuntimeCorrelationTrace = {
   status: string;
   trace_id: string;
   actor_id: string | null;
-  node_id?: string | null;
-  data?: Record<string, unknown> | null;
+  node_id: string | null;
+  data: Record<string, unknown> | null;
+  error_code: string | null;
+  error_message: string | null;
   created_at: string;
 };
 
 export type RuntimeCorrelationAudit = {
   id: string;
-  actor_id: string;
-  tenant_id: string;
+  actor_id: string | null;
+  tenant_id: string | null;
   workflow_id: string | null;
   workflow_version_id: string | null;
   workflow_execution_id: string | null;
+  operator_action_id?: string | null;
   action: string;
   resource_type: string;
-  resource_id: string;
+  resource_id: string | null;
   request_id: string | null;
   trace_id: string | null;
   status: string;
