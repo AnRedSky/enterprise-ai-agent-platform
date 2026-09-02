@@ -94,7 +94,7 @@ class RuntimeAuditTraceCorrelationService:
         status: str | None = None,
         operator_action_id: UUID | None = None,
     ) -> AuditPage:
-        """查询正式 Audit、Operator Action 直连 Audit 以及历史 Trace 恢复 Audit。"""
+        """按 Execution 或指定 Operator Action 查询正式 Audit 与历史 Trace 恢复 Audit。"""
         page, page_size, offset = self._page(page, page_size)
         execution_audit_scope = None
         if execution_id is not None:
@@ -405,9 +405,11 @@ class RuntimeAuditTraceCorrelationService:
         )
         if result is None:
             return None
+        # Operator Action 反查只返回与当前幂等事实直接关联的 Audit；Execution 级生命周期 Audit
+        # 仍由 by_execution 保持完整查询语义，避免两种查询入口混淆聚合层级。
         result["audits"] = await self._paged_audits(
             tenant_id,
-            execution_id,
+            None,
             audit_page,
             audit_page_size,
             action=audit_action,
