@@ -78,6 +78,45 @@ Acceptance 不再把全局 Counter 当成测试数据唯一性证明，而改为
 
 这保持了 Scheduler Runtime 的多租户生产语义，同时使 PostgreSQL Acceptance 在共享开发数据库中可重复执行。
 
+## 第四层根因：异步 SQLAlchemy Result 消费缺少 await
+
+第三层修复后，用户本地真实 PostgreSQL Gate 继续执行到 Acceptance 查询阶段，但在读取测试租户的 `workflow_executions` 时失败：
+
+```text
+AttributeError: 'coroutine' object has no attribute 'mappings'
+RuntimeWarning: coroutine 'AsyncSession.execute' was never awaited
+```
+
+根因是 `AsyncSession.execute()` 是异步方法，原测试在该查询链上直接调用：
+
+```python
+await verify_session.execute(...).mappings().all()
+```
+
+运算顺序导致 `.mappings()` 实际作用于尚未 await 的 coroutine，而不是 SQLAlchemy `Result`。这同时产生 `RuntimeWarning`，在项目“警告视为错误”的测试策略下属于必须修复的问题。
+
+这是测试实现错误，不是 Scheduler Runtime 生产代码错误；不能通过放宽 warning 或修改生产 Runtime 来规避。
+
+## 第四层修复
+
+将该查询统一改为先等待 `AsyncSession.execute()`，再消费 Result：
+
+```python
+executions = (
+    await verify_session.execute(
+        text(...),
+        {"tenant_id": tenant_id},
+    )
+).mappings().all()
+```
+
+并保持同一测试中其他异步查询采用相同结构。这样可以确保：
+
+- SQL 查询真正完成后才访问 Result；
+- 不再产生未 await coroutine 警告；
+- `-W error` 下测试行为稳定；
+- 不改变 Scheduler Runtime 生产行为或多租户计数语义。
+
 ## 边界测试
 
 `backend/tests/integration/test_workflow_scheduler_runtime_boundaries.py` 动态生成并清理：
