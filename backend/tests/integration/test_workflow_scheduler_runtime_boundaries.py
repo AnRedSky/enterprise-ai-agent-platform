@@ -70,6 +70,8 @@ async def _cleanup(tenant_id, workflow_ids: list, version_ids: list, trigger_ids
 
 async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, version_id, definition: dict) -> None:
     """创建一个已发布 Workflow，允许边界测试显式注入历史脏 Definition。"""
+    # workflows.published_version_id 与 workflow_versions.workflow_id 构成相互依赖的外键。
+    # 先以空 published_version_id 建立 Workflow，再写 Version，最后回填发布版本，才能满足数据库约束。
     db.add(
         Workflow(
             id=workflow_id,
@@ -77,9 +79,10 @@ async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, versio
             owner_id=user_id,
             tenant_id=tenant_id,
             status="published",
-            published_version_id=version_id,
+            published_version_id=None,
         )
     )
+    await db.flush()
     db.add(
         WorkflowVersion(
             id=version_id,
@@ -91,6 +94,10 @@ async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, versio
         )
     )
     await db.flush()
+    await db.execute(
+        text("UPDATE workflows SET published_version_id = :version_id WHERE id = :workflow_id"),
+        {"version_id": version_id, "workflow_id": workflow_id},
+    )
 
 
 @pytest.mark.asyncio
