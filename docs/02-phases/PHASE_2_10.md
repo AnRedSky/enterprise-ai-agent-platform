@@ -34,6 +34,25 @@ cd backend
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.10\26_operator_audit_query_performance_gate.ps1
 ```
 
+### 2.10-II / II-09 Operator Action Result Lineage
+
+状态：**实现完成，等待最新代码的开发者本地 Backend Regression / Real PostgreSQL Gate 实际反馈**。
+
+已完成：
+- Retry Operator Action 的 `WorkflowExecutionService.retry()` 增加 `*, commit: bool = True`，默认保持直接调用兼容；
+- Operator Governance Retry / Resume 均使用 `commit=False`，由 Governance 在 Result Resource、Operator Action、Audit 全部 flush 成功后统一提交；
+- 新增最终 Operator Audit 失败的真实 PostgreSQL 回滚验收，验证 Retry Execution、Operator Action Idempotency、Audit 与 Trace 不留下半提交事实；
+- Phase 2.10 Result Lineage Gate 已纳入正常链路与事务回滚两条 Real PostgreSQL Acceptance；
+- 修复 Real Acceptance 中全局 AsyncEngine 默认连接池跨 pytest function-scoped event loop 复用 asyncpg Connection 的问题，测试改用独立 `NullPool` Engine，保持生产连接池配置不变；
+- 保持 tenant boundary、Idempotency-Key 冲突与并发安全语义不变。
+
+对应 Gate：
+
+```powershell
+cd backend
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\phase-2.10\25_operator_action_result_lineage_gate.ps1
+```
+
 ## 2.10-I 当前进度
 
 Phase 2.10-I 已完成 Runtime Notification Lifecycle、Worker tenant/consumer-group 隔离、Claim Competition、Retry/Lease、Dead Letter Replay、Fallback、SLO/Metrics、Runtime Audit、Integration Event 幂等与 Canonical Metrics Export Contract。
