@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**Durable Resume Operator Action 幂等、Audit 与 Result Resource 治理闭环**。
-- 最近完成：**II-09 Operator Action Result Lineage Acceptance**、Retry 事务边界收敛，以及 **#84 Durable Resume Operator Action 幂等审计收敛实现**。
+- 当前任务：**Durable Scheduler 多实例租约失效恢复与 misfire 边界收敛**。
+- 最近完成：**#84 Durable Resume Operator Action 幂等审计收敛**、Scheduler Repository 多实例 lease 并发与 slot 幂等覆盖。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -36,41 +36,47 @@
 - `0051_operator_audit_query_indexes` 已将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`；
 - `0055_operator_audit_operator_action_index` 已为直接 Operator Action → AuditLog 查询补充 tenant-scoped 复合索引；
 - Runtime Correlation 的 `AuditLogItem` 已暴露既有 `resource_type`、`resource_id`、`request_id`、`trace_id`，使 Execution / Trace / Audit / Operator Action 深链响应能够完整表达已有审计事实；
-- **II-09 已新增 Retry Operator Action → Idempotency Result Resource → AuditLog → Workflow Execution → Workflow Trace 的真实 PostgreSQL 验收；**
-- **#84 已将 Durable Resume 的底层确定性 Resume Execution 幂等键收敛到 Operator Action Governance，重放直接复用同一 Result Resource，不重复生成 Operator Audit。**
+- II-09 已新增 Retry Operator Action → Idempotency Result Resource → AuditLog → Workflow Execution → Workflow Trace 的真实 PostgreSQL 验收；
+- #84 已将 Durable Resume 的底层确定性 Resume Execution 幂等键收敛到 Operator Action Governance，重放直接复用同一 Result Resource，不重复生成 Operator Audit；
+- Phase 2.4 Scheduler Repository 已补齐真实 PostgreSQL 多实例 lease 并发唯一 owner、tenant isolation 与 schedule slot 幂等验证；
+- Scheduler misfire 规则已补齐 `skip / fire_once / catch_up` 的确定性单元覆盖；
+- Scheduler lease 失效恢复已新增真实 PostgreSQL 验收：过期 lease 可由新 owner 抢占，旧 owner 不能释放新 owner 的 lease。
 
 ## 3. 最新本地反馈
 
-开发者当前已反馈：
+开发者已反馈最新 main 基线结果：
 
-- Runtime Correlation Contract：`6 passed in 1.32s`；
-- Retry Operator Action Result Lineage + Transaction Rollback Real PostgreSQL Acceptance：`2 passed in 1.87s`；
-- Operator Action Result Lineage Gate：Runtime Contract、Retry Lineage、Rollback、服务边界均通过；
-- Backend default regression：`1044 passed, 3 skipped, 79 deselected in 37.85s`。
+- Scheduler Repository concurrency integration：`3 passed in 0.77s`；
+- Scheduler Lease Concurrency Gate：`3 passed in 0.82s`，并确认未执行任何服务生命周期操作；
+- Backend default regression：`1044 passed, 4 skipped, 80 deselected in 36.86s`；
+- Operator Action Result Lineage Gate：Runtime Correlation Contract、Retry Lineage、Rollback、Resume Lineage 与服务边界均通过；
+- Resume Operator Action Acceptance：`1 passed in 1.53s`。
 
-上述结果对应 #75 完成后的基线。#84 新增 Resume 幂等实现后的最新 Resume Acceptance 尚未获得开发者本地实际输出，因此不得预填为通过。
+以上结果均来自开发者实际本地执行，不使用 GitHub Actions 作为验收依据。
+
+本轮新增 Scheduler Misfire / Lease Gate 尚未获得开发者本地实际输出，因此暂不标记为通过。
 
 ## 4. 当前 Backend 修复 / 开发
 
-- Retry / Resume 均支持由上层 Governance 控制事务提交边界；
-- Retry Operator Action 在 Result Resource、Audit、Execution、Trace 全部完成后统一提交；
-- Retry Audit 失败时不留下半提交 Retry Execution 或 Operator Action；
-- **Resume Operator Action 在客户端未提供 Idempotency-Key 时，根据原始 Execution + Checkpoint sequence 生成稳定内部治理键；**
-- **相同 Resume 请求重放时，在进入 Workflow Execution Resume 服务前复用已有 Operator Action Result Resource，避免重复 Audit；**
-- 新增 `test_operator_action_resume_lineage_acceptance.py`，验证 Resume Result Resource、Operator Action、Audit、Execution、Trace 的幂等闭环；
-- `25_operator_action_result_lineage_gate.ps1` 已纳入 Resume Real PostgreSQL Acceptance，并继续保持不自动启动任何受保护服务。
+- Scheduler Repository 使用单条 PostgreSQL `UPDATE` 原子 claim，租约有效期由 `lease_owner + lease_expires_at` 成对表达；
+- 过期 lease 可被新 Scheduler owner 重新抢占；重新抢占后旧 owner 的 release 会因 owner 条件失败，不会清理新 owner 的 lease；
+- `schedule_slot_key` 使用 PostgreSQL 唯一约束收敛重复槽位 claim；
+- misfire 规划保持在 `workflow_scheduler/misfire.py` 单一正式入口，不在 Runtime 复制算法；
+- `skip` 丢弃历史积压并回到未来 interval；`fire_once` 单轮只补一次；`catch_up` 按 `catch_up_limit` 有界补跑，剩余积压继续沿调度轴处理；
+- 新增 `tests/unit/services/workflow_scheduler/test_misfire.py`，锁定上述时间边界与参数校验；
+- 新增 `tests/integration/test_workflow_scheduler_lease_expiry.py`，锁定真实 PostgreSQL lease reclaim / stale-owner fencing；
+- 新增 `scripts/test/phase-2.4/21_scheduler_misfire_lease_gate.ps1`，只检查 PostgreSQL readiness 并运行 targeted tests，禁止自动启动或停止 API / Scheduler / Worker / PostgreSQL / Redis。
 
 ## 5. 下一执行顺序
 
 ```text
-① 开发者同步远端 main 最新提交
-② 执行 uv run alembic heads，确认仅有 0056_merge_legacy_audit_and_operator_governance_heads
-③ 执行 uv run alembic upgrade head
-④ 执行 Runtime Correlation Contract regression
-⑤ 执行 #84 Durable Resume Operator Action Real PostgreSQL Acceptance / Result Lineage Gate
-⑥ 扫描 Execution / Trace / Audit / Operator Action 端到端治理链剩余真实业务缺口
-⑦ Backend-first 推进下一项 Operator Governance / Audit 能力
-⑧ 前端测试与 Browser E2E 暂不作为当前 Backend 主线阻塞条件
+① 执行 Scheduler Misfire / Lease Gate，确认新增边界测试在开发者本地 PostgreSQL 通过
+② 若通过，进入 Scheduler Runtime Real PostgreSQL Acceptance
+③ 验证 skip / fire_once / catch_up → WorkflowSchedule → ScheduleSlot → WorkflowExecution
+④ 验证 Scheduler Audit / Trace 与 tenant/workflow/execution 关联
+⑤ 验证 lease 失败恢复、slot 幂等与 Execution 幂等不重复
+⑥ 更新 Phase 2.4 Acceptance 汇总并评估是否达到 Passed
+⑦ Backend-first 继续推进 Operator Governance / Runtime 剩余真实业务缺口
 ```
 
 ## 6. Backend 验收规则
