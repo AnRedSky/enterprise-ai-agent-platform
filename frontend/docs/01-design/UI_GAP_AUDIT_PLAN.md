@@ -30,8 +30,8 @@
 | P1 | Model Providers | 已补齐 | 已补齐 | 已补齐 | 待验证 |
 | P1 | Integrations | 已补齐 | 已补齐 | 已有真实创建闭环 | 待验证 |
 | P1 | Operations Console | 第一轮建立统一 PageHeader Shell | 子工作台待统一 | 现有真实操作待收敛 | 开发中 |
-| P1 | Audit | 基础模式已建立 | 待收敛 | 读操作为主 | 待处理 |
-| P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 收尾 |
+| P1 | Audit | 第一轮建立统一 PageHeader Shell | 已有五态 | 读操作为主 | 开发中 |
+| P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 开发中 |
 
 ## 3. 已完成的代码主线
 
@@ -113,17 +113,38 @@ Targeted：`frontend/tests/views/IntegrationsUI03UI05.test.ts`。
 
 实际路由为 `/runtime/operations`，页面主体为 `integrations/OperationsConsole.vue`；Backend Contract 已确认覆盖 Runtime Overview、Global Posture、Alert、Provider、Metrics、Runtime Audit、Dead Letter replay 等既有子工作台。
 
-本轮先建立公共 UI 壳层：
+本轮完成第一层公共 UI 壳层迁移：
 
 - 新增 `OperationsConsoleWorkbench.vue`，使用统一 `PageHeader`；
-- 路由 `/runtime/operations` 切换到共享页面壳层，但保留现有 Operations Console 子工作台和真实 API 操作；
-- 保留现有窗口范围、刷新和子工作台操作，不改变 Backend Contract；
-- 不引入任何推测 API，不改变 Provider/Alert/Delivery 的 durable ID；
-- 目标测试：`frontend/tests/views/OperationsConsoleUI03.test.ts`；
-- 当前仍需继续完成 Operations Console 内部 `PageToolbar` / `SurfaceCard` / `MetricCard` / `StatePanel` 五态统一、操作错误态收敛、后端刷新真值及 Runtime correlation 审计。
+- `/runtime/operations` 改由共享页面壳层承载，保留既有子工作台与真实 API；
+- 保留窗口范围、刷新和现有运维操作，不改变 Backend Contract；
+- 不引入推测 API，不改变 Provider/Alert/Delivery durable ID；
+- Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`，**未执行**。
 
-Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`。  
-状态：**未执行**。
+剩余必须继续收敛：Operations Console 内部 `PageToolbar` / `SurfaceCard` / `MetricCard` / `StatePanel` 五态、操作错误态、后端刷新真值、权限态以及 Runtime correlation。
+
+### P1-07-A Audit
+
+第一轮完成审计页公共壳层与 Runtime correlation 基线：
+
+- 新增 `AuditLogWorkbench.vue` 并统一使用 `PageHeader`；
+- `/runtime/audit` 通过共享页面壳层进入既有 Audit 子工作台；
+- Audit → Runtime 使用后端返回的 `execution_id` 构造 `/runtime?execution_id=...&source=audit`，不依赖表格位置或分页顺序；
+- 保留现有 `StatePanel` 的 Loading / Permission / Error / Empty / Success 语义；
+- Targeted：`frontend/tests/views/AuditLogUI03Correlation.test.ts`，**未执行**。
+
+剩余必须继续收敛：Audit 内部 `PageToolbar` / `SurfaceCard` 一致性，以及与 Runtime focused durable facts 的回归覆盖。
+
+### P1-08-A Dashboard
+
+Dashboard 已建立公共 UI 模式，本轮补齐最近执行的 durable deep link：
+
+- 最近执行不再只能进入 `/runtime` 首页；
+- 用户点击具体 Execution 时使用该行后端返回的 `execution_id`；
+- 深链为 `/runtime?execution_id=<real-id>&source=dashboard`；
+- 不根据数组第一项、时间或分页位置推断目标执行。
+
+Targeted：`frontend/tests/views/DashboardConsistency.test.ts`，**未执行**。
 
 ## 4. Contract 与安全原则
 
@@ -170,9 +191,10 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 ## 7. 当前队列
 
 1. P1-06-A Operations Console 内部 UI-03/UI-04/UI-05 与 Runtime correlation 收敛。
-2. P1-07-A Audit Gap Audit + Runtime correlation regression。
-3. P1-08-A Dashboard 与全站一致性回归脚本。
-4. 全部任务完成后统一执行测试与构建验证。
+2. P1-07-A Audit 内部公共模式与 Runtime focused durable facts regression。
+3. P1-08-A Dashboard consistency 收尾。
+4. 全站一致性 Gap Audit：原始 `el-card` / 自定义状态 / action loading / optimistic mutation / deep link / durable ID / stale-data 清理。
+5. 全部任务完成后统一执行测试与构建验证。
 
 ## 8. 原子任务记录规范
 
