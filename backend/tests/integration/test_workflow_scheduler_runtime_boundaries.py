@@ -65,7 +65,7 @@ async def _cleanup(tenant_id, workflow_ids: list, version_ids: list, trigger_ids
             for workflow_id in workflow_ids:
                 await db.execute(text("DELETE FROM workflows WHERE id = :id"), {"id": workflow_id})
             await db.execute(text("DELETE FROM users WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"id": tenant_id})
+            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"tenant_id": tenant_id})
 
 
 async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, version_id, definition: dict) -> None:
