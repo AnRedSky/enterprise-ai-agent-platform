@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import timedelta
 from uuid import uuid4
@@ -165,6 +166,101 @@ async def test_scheduler_repository_claim_release_and_tenant_isolation() -> None
             now=now,
         ) is True
         await session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_repository_concurrent_claim_has_single_winner() -> None:
+    """验证两个 Scheduler 实例同时竞争同一到期 Schedule 时只有一个 owner 成功。"""
+    tenant_id = uuid4()
+    user_id = uuid4()
+    workflow_id = uuid4()
+    workflow_version_id = uuid4()
+    trigger_id = uuid4()
+    schedule_id = uuid4()
+    now = utcnow_naive()
+
+    async with SessionLocal() as setup_session:
+        async with setup_session.begin():
+            setup_session.add_all(
+                [
+                    Tenant(id=tenant_id, name=f"scheduler-race-{tenant_id}"),
+                    User(
+                        id=user_id,
+                        username=f"scheduler-race-{user_id}",
+                        password_hash="integration-test",
+                        tenant_id=tenant_id,
+                    ),
+                    Workflow(
+                        id=workflow_id,
+                        name=f"scheduler-race-{workflow_id}",
+                        owner_id=user_id,
+                        tenant_id=tenant_id,
+                        status="published",
+                    ),
+                    WorkflowVersion(
+                        id=workflow_version_id,
+                        workflow_id=workflow_id,
+                        version="1",
+                        definition={},
+                        status="published",
+                        created_by=user_id,
+                    ),
+                    WorkflowTrigger(
+                        id=trigger_id,
+                        tenant_id=tenant_id,
+                        workflow_id=workflow_id,
+                        name=f"scheduled-race-{trigger_id}",
+                        trigger_type="scheduled",
+                        status="enabled",
+                        created_by=user_id,
+                        config={},
+                    ),
+                ]
+            )
+            await setup_session.flush()
+            setup_session.add(
+                WorkflowSchedule(
+                    id=schedule_id,
+                    tenant_id=tenant_id,
+                    trigger_id=trigger_id,
+                    workflow_id=workflow_id,
+                    enabled=True,
+                    status="enabled",
+                    timezone="UTC",
+                    schedule_expression="interval:60",
+                    next_run_at=now - timedelta(seconds=1),
+                    misfire_policy="skip",
+                    catch_up_limit=10,
+                    updated_at=now,
+                )
+            )
+
+    async def claim(owner: str):
+        async with SessionLocal() as session:
+            repository = WorkflowSchedulerRepository(session)
+            claimed = await repository.claim_due_lease(
+                schedule_id=schedule_id,
+                tenant_id=tenant_id,
+                owner=owner,
+                now=now,
+                lease_expires_at=now + timedelta(minutes=1),
+            )
+            await session.commit()
+            return claimed
+
+    first, second = await asyncio.gather(claim("scheduler-a"), claim("scheduler-b"))
+    winners = [claim_result for claim_result in (first, second) if claim_result is not None]
+    assert len(winners) == 1
+    assert winners[0].lease_owner in {"scheduler-a", "scheduler-b"}
+
+    async with SessionLocal() as verify_session:
+        persisted = await WorkflowSchedulerRepository(verify_session).get_schedule_for_trigger(
+            tenant_id=tenant_id,
+            trigger_id=trigger_id,
+        )
+        assert persisted is not None
+        assert persisted.lease_owner == winners[0].lease_owner
+        assert persisted.lease_expires_at is not None
 
 
 @pytest.mark.asyncio
