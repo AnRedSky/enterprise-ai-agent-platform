@@ -25,10 +25,18 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 - 仅当 Workflow 已发布且 Trigger 为 `enabled` 时允许操作；草稿、归档或停用 Trigger 不在前端绕过后端约束执行。
 - 使用共享 `ConfirmDialog` 明确告知本次以空 `input_data` 提交 Execution，避免无感知的写操作。
 - 提交继续复用已有 `workflowApi.invokeTrigger(workflowId, triggerId, {})`，不新增 API client 或后端接口。
-- 成功后立即重新加载当前 Workflow 的 Version / Trigger / Execution / Scheduler 数据，使生命周期阶段和最近运行保持真实后端状态。
-- 403 显示权限错误，其他异常提示提交失败；最终权限与业务状态仍由后端裁决。
+- 提交期间禁止重复确认；成功后清理 dialog target，并重新加载当前 Workflow 的 Version / Trigger / Execution / Scheduler 数据。
+- 取消确认不会产生 API 写操作，并清理 dialog target，避免关闭后残留旧 Trigger 上下文。
+- 403 显示权限错误，其他异常提示提交失败；失败时保留确认上下文以便用户决定重试或取消；最终权限与业务状态仍由后端裁决。
 
-该实现只收敛 WorkflowLifecycle 的实际操作入口，不重新实施已经完成的 UI-03 / UI-04 公共组件迁移，也不把后端 Workflow 状态机复制到前端。
+### Execution 生命周期操作
+
+- `pending`：允许 Run / Cancel；`running`：允许 Cancel；`failed`：允许 Retry / Resume；其他状态不提供生命周期变更按钮。
+- 所有变更操作必须经过共享 `ConfirmDialog`，Cancel 使用危险样式。
+- 提交期间禁止重复确认；成功后清理 Execution target / action，再重新读取后端 Execution 列表，不在前端直接修改状态。
+- 取消确认不会调用任何生命周期 API，并清理 target / action，避免后续打开 dialog 时复用上一条 Execution。
+- 403 明确提示权限不足；409 / 422 提示后端状态机拒绝并要求刷新；其他异常保留当前 dialog 上下文并提示失败，便于用户重新确认。
+- Runtime / Trace / Audit 入口始终使用真实 Execution ID 和后端返回的 Workflow / Version ID。
 
 ## 之前已完成的状态收敛
 
@@ -51,7 +59,7 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 
 ## Contract / 安全边界
 
-本轮不新增后端 API，不修改生命周期状态定义。查询继续复用 `workflowApi.list`、`versions`、`triggers`、`schedule`、`listExecutions`；手动操作复用既有 `invokeTrigger`。403 仅用于页面 Permission / 操作错误展示；业务权限仍由后端最终裁决。
+本轮不新增后端 API，不修改生命周期状态定义。查询继续复用 `workflowApi.list`、`versions`、`triggers`、`schedule`、`listExecutions`；手动操作复用既有 `invokeTrigger`，Execution 操作复用既有 `runExecution` / `cancelExecution` / `retryExecution` / `resumeExecution`。403 仅用于页面 Permission / 操作错误展示；业务权限与状态机仍由后端最终裁决。
 
 ## 状态与操作契约
 
@@ -64,6 +72,7 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 | Success | 展示生命周期、真实版本、触发器和 Execution | 手动 Trigger 可提交运行；Execution 可进入 Runtime |
 | Detail Error | 当前工作流详情加载失败，说明受影响数据并提供“重新加载” | 重新加载当前 workflow_id |
 | Manual Trigger | 已发布 + enabled 时显示“立即运行” | ConfirmDialog → invokeTrigger → 刷新 Execution |
+| Execution Action | 按真实后端状态暴露 Run / Cancel / Retry / Resume | ConfirmDialog → 生命周期 API → 刷新 Execution |
 
 ## 测试
 
@@ -77,7 +86,10 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 6. Execution → Runtime 深链保持真实 ID；
 7. 空列表中文状态及 `StatePanel.state === "empty"` 契约；
 8. 详情请求失败进入共享 Error 状态并可重新加载；
-9. Manual Trigger 经过确认后调用真实 `invokeTrigger`，并重新加载 Execution。
+9. Manual Trigger 经过确认后调用真实 `invokeTrigger`，并重新加载 Execution；
+10. 取消 Manual Trigger 确认不会写入，并清理 Trigger target；
+11. Execution 状态矩阵暴露合法生命周期操作并调用对应真实 API；
+12. 取消 Execution 确认不会写入，并清理 Execution target / action。
 
 远端 GitHub 环境不运行 Node/Vitest，因此本轮代码提交前不虚报本地测试结果；用户本地验证结果以实际命令输出为准。
 
@@ -95,4 +107,4 @@ npm run test:final
 
 ## 下一步
 
-继续围绕同一核心页面收敛 Execution 操作闭环：基于真实 Execution 状态提供 `pending / running / failed / cancelled` 的合法操作入口，并统一进入 Runtime 的诊断上下文；不重复 UI-03 / UI-04 公共模式迁移，不复制后端状态机。
+继续围绕同一核心页面收敛 Trigger / Scheduler 操作边界与失败恢复体验；若后端已有对应真实操作 Contract，则继续复用既有 API，不在前端复制状态机或新增平行 client。
