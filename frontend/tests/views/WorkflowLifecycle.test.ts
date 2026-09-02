@@ -16,7 +16,7 @@ const global = {
     "el-card": { template: "<div><slot name='header'/><slot/></div>" },
     "el-select": { props: ["modelValue"], emits: ["update:modelValue"], template: "<div><slot/></div>" },
     "el-option": { template: "<option><slot/></option>" },
-    "el-button": { props: ["loading"], template: `<button @click="$emit('click')"><slot/></button>` },
+    "el-button": { props: ["loading"], emits: ["click"], template: `<button @click="$emit('click')"><slot/></button>` },
     "el-tag": { template: "<span><slot/></span>" },
     "el-empty": { props: ["description"], template: "<div>{{ description }}</div>" },
     "el-row": { template: "<div><slot/></div>" },
@@ -97,5 +97,18 @@ describe("WorkflowLifecycle", () => {
     const wrapper = mount(WorkflowLifecycle, { global });
     await vi.waitFor(() => expect(wrapper.text()).toContain("暂无工作流"));
     expect(wrapper.findComponent(StatePanel).props("state")).toBe("empty");
+  });
+
+  it("详情请求失败时显示共享错误状态并支持重新加载", async () => {
+    vi.mocked(workflowApi.versions).mockRejectedValueOnce(new Error("detail failure"));
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.findComponent(StatePanel).props("title")).toBe("工作流详情加载失败"));
+    expect(wrapper.text()).toContain("无法同步当前工作流的版本、触发器或运行数据。");
+
+    await (wrapper.vm as any).retryDetails();
+    await vi.waitFor(() => expect(wrapper.findComponent(StatePanel).exists()).toBe(false));
+    expect(workflowApi.versions).toHaveBeenCalledTimes(2);
+    expect(workflowApi.triggers).toHaveBeenCalledTimes(2);
+    expect(workflowApi.listExecutions).toHaveBeenCalledTimes(2);
   });
 });

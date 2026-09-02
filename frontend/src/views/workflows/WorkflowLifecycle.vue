@@ -21,6 +21,7 @@ const selectedId = ref(typeof route.query.workflow_id === "string" ? route.query
 const loading = ref(false);
 const detailLoading = ref(false);
 const error = ref("");
+const detailError = ref("");
 const permissionDenied = ref(false);
 const pageState = ref<PageState>("loading");
 
@@ -70,6 +71,7 @@ async function load() {
 
 async function loadDetails(id: string) {
   detailLoading.value = true;
+  detailError.value = "";
   try {
     const [versionResponse, triggerResponse, executionResponse] = await Promise.all([workflowApi.versions(id), workflowApi.triggers(id), workflowApi.listExecutions(id)]);
     versions.value = versionResponse.data;
@@ -83,12 +85,13 @@ async function loadDetails(id: string) {
     triggers.value = [];
     executions.value = [];
     schedules.value = {};
-    ElMessage.error("工作流生命周期详情加载失败，请稍后重试。");
+    detailError.value = "无法同步当前工作流的版本、触发器或运行数据。请重试；若持续失败，请检查服务状态。";
   } finally { detailLoading.value = false; }
 }
 
 async function selectWorkflow(id: string) { selectedId.value = id; await loadDetails(id); }
 function handleStateAction() { if (pageState.value === "error" || pageState.value === "permission") void load(); }
+function retryDetails() { if (selectedId.value) void loadDetails(selectedId.value); }
 function openRuntimeExecution(execution: WorkflowExecution) { void router.push({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: execution.id, workflow_id: execution.workflow_id, workflow_version_id: execution.workflow_version_id } }); }
 function openScheduledExecution(executionId?: string | null) { if (!executionId) return; void router.push({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: executionId, ...(selected.value ? { workflow_id: selected.value.id } : {}) } }); }
 onMounted(load);
@@ -115,13 +118,16 @@ onMounted(load);
         <div v-for="(step, index) in lifecycleSteps" :key="step.label" class="step" :class="{ done: step.done, active: step.active }"><span class="step-index">{{ step.done ? "✓" : index + 1 }}</span><strong>{{ step.label }}</strong><span>{{ step.done ? "已完成" : step.active ? "当前关注" : "待进入" }}</span><i v-if="index < lifecycleSteps.length - 1">→</i></div>
       </section>
 
-      <div class="detail-grid" v-loading="detailLoading">
-        <SurfaceCard title="版本与发布" description="当前生效版本"><el-descriptions v-if="publishedVersion" :column="2" border><el-descriptions-item label="版本">v{{ publishedVersion.version }}</el-descriptions-item><el-descriptions-item label="状态"><el-tag type="success">{{ displayStatus(publishedVersion.status) }}</el-tag></el-descriptions-item><el-descriptions-item label="版本标识">{{ publishedVersion.id }}</el-descriptions-item><el-descriptions-item label="发布时间">{{ formatTime(publishedVersion.created_at) }}</el-descriptions-item></el-descriptions><el-empty v-else description="尚未发布可生效版本" /></SurfaceCard>
-        <SurfaceCard title="最近运行" :description="`${executions.length} 条运行记录`"><template v-if="latestExecution"><div class="execution-line"><el-tag>{{ displayStatus(latestExecution.status) }}</el-tag><strong>{{ latestExecution.id }}</strong></div><div class="muted">创建于 {{ formatTime(latestExecution.created_at) }}</div><div v-if="latestExecution.current_node_id" class="muted">当前节点：{{ latestExecution.current_node_id }}</div><div v-if="latestExecution.error_code" class="error-code">错误代码：{{ latestExecution.error_code }}</div><div class="execution-actions"><el-button size="small" type="primary" plain @click="openRuntimeExecution(latestExecution)">进入 Runtime 诊断</el-button></div></template><el-empty v-else description="暂无运行记录" /></SurfaceCard>
-      </div>
+      <StatePanel v-if="detailError" state="error" title="工作流详情加载失败" :description="detailError" action-label="重新加载" :loading="detailLoading" @action="retryDetails" />
+      <template v-else>
+        <div class="detail-grid" v-loading="detailLoading">
+          <SurfaceCard title="版本与发布" description="当前生效版本"><el-descriptions v-if="publishedVersion" :column="2" border><el-descriptions-item label="版本">v{{ publishedVersion.version }}</el-descriptions-item><el-descriptions-item label="状态"><el-tag type="success">{{ displayStatus(publishedVersion.status) }}</el-tag></el-descriptions-item><el-descriptions-item label="版本标识">{{ publishedVersion.id }}</el-descriptions-item><el-descriptions-item label="发布时间">{{ formatTime(publishedVersion.created_at) }}</el-descriptions-item></el-descriptions><el-empty v-else description="尚未发布可生效版本" /></SurfaceCard>
+          <SurfaceCard title="最近运行" :description="`${executions.length} 条运行记录`"><template v-if="latestExecution"><div class="execution-line"><el-tag>{{ displayStatus(latestExecution.status) }}</el-tag><strong>{{ latestExecution.id }}</strong></div><div class="muted">创建于 {{ formatTime(latestExecution.created_at) }}</div><div v-if="latestExecution.current_node_id" class="muted">当前节点：{{ latestExecution.current_node_id }}</div><div v-if="latestExecution.error_code" class="error-code">错误代码：{{ latestExecution.error_code }}</div><div class="execution-actions"><el-button size="small" type="primary" plain @click="openRuntimeExecution(latestExecution)">进入 Runtime 诊断</el-button></div></template><el-empty v-else description="暂无运行记录" /></SurfaceCard>
+        </div>
 
-      <SurfaceCard class="trigger-card" title="触发与调度" description="以真实后端 Trigger / Scheduler 状态为准"><el-table v-if="triggers.length" :data="triggers" border><el-table-column prop="name" label="触发器" min-width="180" /><el-table-column label="类型" width="110"><template #default="{ row }">{{ displayTriggerType(row.trigger_type) }}</template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ displayStatus(row.status) }}</el-tag></template></el-table-column><el-table-column label="下次运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.next_run_at) : '-' }}</template></el-table-column><el-table-column label="最近运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.last_run_at) : '-' }}</template></el-table-column><el-table-column label="最近 Execution" min-width="220"><template #default="{ row }"><el-button v-if="schedules[row.id]?.last_execution_id" link type="primary" @click="openScheduledExecution(schedules[row.id]?.last_execution_id)">{{ schedules[row.id]?.last_execution_id }}</el-button><span v-else>-</span></template></el-table-column></el-table><el-empty v-else description="暂无触发器，发布工作流后可配置手动、定时或 Webhook 入口。" /></SurfaceCard>
-      <el-alert v-if="selected.status === 'archived'" title="该工作流已归档，生命周期数据保持可观测但不再允许继续变更。" type="warning" :closable="false" show-icon />
+        <SurfaceCard class="trigger-card" title="触发与调度" description="以真实后端 Trigger / Scheduler 状态为准"><el-table v-if="triggers.length" :data="triggers" border><el-table-column prop="name" label="触发器" min-width="180" /><el-table-column label="类型" width="110"><template #default="{ row }">{{ displayTriggerType(row.trigger_type) }}</template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ displayStatus(row.status) }}</el-tag></template></el-table-column><el-table-column label="下次运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.next_run_at) : '-' }}</template></el-table-column><el-table-column label="最近运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.last_run_at) : '-' }}</template></el-table-column><el-table-column label="最近 Execution" min-width="220"><template #default="{ row }"><el-button v-if="schedules[row.id]?.last_execution_id" link type="primary" @click="openScheduledExecution(schedules[row.id]?.last_execution_id)">{{ schedules[row.id]?.last_execution_id }}</el-button><span v-else>-</span></template></el-table-column></el-table><el-empty v-else description="暂无触发器，发布工作流后可配置手动、定时或 Webhook 入口。" /></SurfaceCard>
+        <el-alert v-if="selected.status === 'archived'" title="该工作流已归档，生命周期数据保持可观测但不再允许继续变更。" type="warning" :closable="false" show-icon />
+      </template>
     </template>
   </main>
 </template>
