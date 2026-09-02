@@ -2,21 +2,23 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkflowLifecycle from "@/views/workflows/WorkflowLifecycle.vue";
 
-const router = { push: vi.fn(), replace: vi.fn() };
-const workflowApi = {
-  list: vi.fn(),
-  versions: vi.fn(),
-  triggers: vi.fn(),
-  listExecutions: vi.fn(),
-  schedule: vi.fn(),
-  updateTrigger: vi.fn(),
-  deleteTrigger: vi.fn(),
-  invokeTrigger: vi.fn(),
-  runExecution: vi.fn(),
-  cancelExecution: vi.fn(),
-  retryExecution: vi.fn(),
-  resumeExecution: vi.fn(),
-};
+const { router, workflowApi } = vi.hoisted(() => ({
+  router: { push: vi.fn(), replace: vi.fn() },
+  workflowApi: {
+    list: vi.fn(),
+    versions: vi.fn(),
+    triggers: vi.fn(),
+    listExecutions: vi.fn(),
+    schedule: vi.fn(),
+    updateTrigger: vi.fn(),
+    deleteTrigger: vi.fn(),
+    invokeTrigger: vi.fn(),
+    runExecution: vi.fn(),
+    cancelExecution: vi.fn(),
+    retryExecution: vi.fn(),
+    resumeExecution: vi.fn(),
+  },
+}));
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({ query: {} }),
