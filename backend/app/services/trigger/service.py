@@ -1,12 +1,13 @@
 """Trigger 生命周期与执行入口服务。
 
 职责：管理 manual/scheduled/webhook Trigger 的查询、创建、更新、删除和触发执行入口。
-边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 持久化；Scheduled Trigger 负责创建 pending Execution 与首个 Durable Frontier，实际执行交给独立 Worker Service。
+边界：不承担 Workflow Registry、Execution 状态机或 Scheduler 调度算法；Scheduled Trigger 负责创建 pending Execution 与首个 Durable Frontier，实际执行交给独立 Worker Service。
 关键依赖：Workflow/WorkflowTrigger ORM、Workflow Execution/Governance 服务、Trigger 配置契约与 Workflow Runtime。
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import uuid
 from hashlib import sha256
 from uuid import UUID
@@ -21,10 +22,11 @@ from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trigger import WorkflowTrigger
 from app.runtime.workflow import WorkflowRuntime
 from app.services.integration.publisher import RuntimeIntegrationEventPublisher
+from app.services.trigger.schedule import validate_trigger_config
 from app.services.workflow import WorkflowExecutionService, WorkflowGovernanceService
 from app.services.workflow.frontier import WorkflowFrontierIdentity
 from app.services.workflow.frontier_repository import enqueue_frontier
-from app.services.trigger.schedule import validate_trigger_config
+from app.services.workflow_scheduler.repository import WorkflowSchedulerRepository
 
 
 class WorkflowTriggerService:
@@ -89,6 +91,39 @@ class WorkflowTriggerService:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 
+    async def _sync_scheduler_state(self, trigger: WorkflowTrigger, config: dict, *, now: datetime) -> None:
+        """让 Scheduled Trigger 生命周期与唯一持久化 Schedule 保持同一事务边界。"""
+        if trigger.trigger_type != "scheduled":
+            return
+        repository = WorkflowSchedulerRepository(self.db)
+        schedule = await repository.get_schedule_for_trigger(
+            tenant_id=trigger.tenant_id,
+            trigger_id=trigger.id,
+        )
+        if schedule is None:
+            await repository.ensure_schedule(
+                tenant_id=trigger.tenant_id,
+                trigger_id=trigger.id,
+                workflow_id=trigger.workflow_id,
+                timezone=config["timezone"],
+                interval_seconds=config["interval_seconds"],
+                enabled=trigger.status == "enabled",
+                now=now,
+                misfire_policy=config["misfire_policy"],
+                catch_up_limit=config["catch_up_limit"],
+            )
+            return
+        await repository.sync_schedule_config(
+            schedule_id=schedule.id,
+            tenant_id=trigger.tenant_id,
+            timezone=config["timezone"],
+            interval_seconds=config["interval_seconds"],
+            enabled=trigger.status == "enabled",
+            now=now,
+            misfire_policy=config["misfire_policy"],
+            catch_up_limit=config["catch_up_limit"],
+        )
+
     async def create(self, workflow: Workflow, actor_id: UUID, name: str, trigger_type: str, config: dict) -> WorkflowTrigger:
         if workflow.status == "archived":
             raise HTTPException(409, "归档 Workflow 不允许创建 Trigger")
@@ -97,10 +132,19 @@ class WorkflowTriggerService:
         if not name:
             raise HTTPException(422, "Trigger name 不能为空")
         config = self.validate_config(trigger_type, config)
-        trigger = WorkflowTrigger(tenant_id=workflow.tenant_id, workflow_id=workflow.id, name=name,
-                                  trigger_type=trigger_type, status="enabled", created_by=actor_id, config=config)
+        trigger = WorkflowTrigger(
+            tenant_id=workflow.tenant_id,
+            workflow_id=workflow.id,
+            name=name,
+            trigger_type=trigger_type,
+            status="enabled",
+            created_by=actor_id,
+            config=config,
+        )
         self.db.add(trigger)
         try:
+            await self.db.flush()
+            await self._sync_scheduler_state(trigger, config, now=datetime.now(UTC))
             await self.db.commit()
         except Exception as exc:
             from sqlalchemy.exc import IntegrityError
@@ -126,6 +170,8 @@ class WorkflowTriggerService:
                 candidate["secret_hash"] = (trigger.config or {}).get("secret_hash")
             candidate.pop("secret_configured", None)
             trigger.config = self.validate_config(trigger.trigger_type, candidate)
+        if trigger.trigger_type == "scheduled":
+            await self._sync_scheduler_state(trigger, trigger.config or {}, now=datetime.now(UTC))
         if commit:
             try:
                 await self.db.commit()
