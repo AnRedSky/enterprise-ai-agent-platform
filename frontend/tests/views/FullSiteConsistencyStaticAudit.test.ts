@@ -29,6 +29,11 @@ const forbiddenDurableFactPatterns: Array<[string, RegExp]> = [
   ["list ordering as relationship inference", /\b(?:items|rows|list|executions|traces|audits)\.(?:sort|reverse)\(/],
 ];
 
+const forbiddenOptimisticPatterns: Array<[string, RegExp]> = [
+  ["boolean optimistic toggle", /\b(?:row|item|provider|destination|subscription|trigger)\.enabled\s*=\s*!/],
+  ["status optimistic toggle", /\b(?:row|item|trigger|provider|execution)\.status\s*=\s*!/],
+];
+
 describe("full-site static consistency audit", () => {
   it("keeps all views on shared state/card primitives", () => {
     for (const file of files) {
@@ -48,6 +53,15 @@ describe("full-site static consistency audit", () => {
     }
   });
 
+  it("does not mutate durable status optimistically in view code", () => {
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      for (const [label, pattern] of forbiddenOptimisticPatterns) {
+        expect(source, `${relative(file)}: ${label}`).not.toMatch(pattern);
+      }
+    }
+  });
+
   it("keeps Workflow Trigger mutations explicitly guarded and backend-truth based", () => {
     const source = readFileSync(resolve(root, "src/views/workflow-triggers/index.vue"), "utf8");
     expect(source).toContain("const actionKey = ref(\"\")");
@@ -57,5 +71,16 @@ describe("full-site static consistency audit", () => {
     expect(source).toContain("execution.value.id");
     expect(source).not.toContain("workflows.value[0]");
     expect(source).not.toContain("ElMessage.error(error instanceof Error ? error.message");
+  });
+
+  it("keeps closed governance navigation anchored to durable IDs", () => {
+    const operations = readFileSync(resolve(root, "src/views/integrations/OperationsConsole.vue"), "utf8");
+    const correlation = readFileSync(resolve(root, "src/views/integrations/OperationsRuntimeCorrelation.vue"), "utf8");
+    const audit = readFileSync(resolve(root, "src/views/audit-log/components/AuditLogPanel.vue"), "utf8");
+    const dashboard = readFileSync(resolve(root, "src/views/dashboard/components/DashboardOverview.vue"), "utf8");
+    expect(operations).toContain("execution_id:id");
+    expect(correlation).toContain("audit.details?.workflow_execution_id");
+    expect(audit).toContain("execution_id: executionId");
+    expect(dashboard).toContain("execution_id: executionId");
   });
 });
