@@ -188,6 +188,7 @@ class OperatorActionGovernanceService:
         """写入与 Operator Action 强关联的审计事实；调用方负责事务提交。"""
         result_resource_type = "workflow_execution" if workflow_execution_id is not None else resource_type
         result_resource_id = workflow_execution_id or resource_id
+        operator_status = "succeeded" if status == "success" else status
         operator_action = await self._ensure_operator_action(
             actor_id=actor_id,
             tenant_id=tenant_id,
@@ -197,7 +198,7 @@ class OperatorActionGovernanceService:
             result_resource_type=result_resource_type,
             result_resource_id=result_resource_id,
             idempotency_key=idempotency_key,
-            status=status,
+            status=operator_status,
             error_code=error_code,
         )
         self.db.add(AuditLog(
