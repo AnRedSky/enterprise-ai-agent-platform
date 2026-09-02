@@ -1,7 +1,7 @@
 # Frontend UI 完整性 Gap Audit 与 P0/P1 补齐计划
 
-> 状态：执行中
-> 基线：`frontend` 当前已同步最新 `main`
+> 状态：执行中  
+> 基线：`frontend` 当前已同步最新 `main`  目标：建立可持续更新的全站 UI 完整性基线，并作为当前前端任务执行台账。  
 > 原则：真实 Backend Contract、公共 UI 模式、逐页补齐、targeted test、文档同步、原子提交。
 
 ## 1. 目标
@@ -110,6 +110,10 @@
 
 **第一批已开始实施。** `AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
 
+### P0-04 Agent Workbench
+
+当前审计已确认 `AgentWorkbench` 已覆盖 Create / Version / Publish / Archive，以及 Debug Chat 的加载、权限、错误、取消生成和成功状态；仍需继续核对 UI-05 的确认、重复提交保护、成功刷新和 Debug → Runtime 上下文闭环。该项暂不标记完成。
+
 ## 8. 下一批原子任务
 
 1. `P0-01`: Workflows 页面骨架迁移与列表状态统一。
@@ -117,3 +121,90 @@
 3. `P0-03`: Agent Workbench UI-05 操作闭环与 Debug → Runtime 上下文补齐。
 4. `P1-01`: Knowledge UI-03/UI-04/UI-05 Gap Audit 后逐项补齐。
 5. `P1-02`: Tools UI-03/UI-04/UI-05 Gap Audit 后逐项补齐。
+
+## 9. 任务执行跟踪规范
+
+本文件同时作为当前 UI Gap 主线的任务台账。每个任务必须记录“当前状态 + 下一原子任务 + 可验证事实”，不得仅记录计划。
+
+### 9.1 状态定义
+
+| 状态 | 使用条件 |
+|---|---|
+| 待处理 | 已进入路线图，尚未开始审计/实现 |
+| 审计中 | 正在核对页面、Contract、权限、状态或测试缺口 |
+| 开发中 | 已确定最小实现范围并正在修改代码 |
+| 待验证 | 代码已修改，但 targeted/full test/build/gate 尚未全部执行 |
+| 阻塞 | 有明确 Backend Contract、环境、权限或其他阻塞原因 |
+| 回归中 | 单页已完成，正在做跨页面一致性回归 |
+| 已完成 | Definition of Done 全部满足且有实际验证记录 |
+
+禁止使用“基本完成”“应该没问题”“已验证但未执行”等不可验收状态。
+
+### 9.2 原子任务记录格式
+
+每项任务遵循：
+
+```text
+### <Task ID> <日期>
+- 页面/模块：
+- Gap：
+- Contract：
+- 实现范围：
+- Targeted test：
+- Targeted result：
+- Full unit：
+- Build：
+- Gate：
+- Real API / E2E：
+- 已知限制/阻塞：
+- Commit：
+- 下一任务：
+```
+
+未实际执行的测试必须写“未执行”，不得写“通过”。
+
+### 9.3 执行顺序
+
+```text
+同步 main
+  ↓
+确认 Backend Contract
+  ↓
+页面 Gap Audit
+  ↓
+最小代码修改
+  ↓
+targeted test
+  ↓
+文档同步
+  ↓
+原子提交
+  ↓
+下一原子任务
+```
+
+### 9.4 当前执行队列
+
+| 顺序 | Task ID | 交付目标 | 状态 |
+|---|---|---|---|
+| 1 | P0-01-A | Workflows 页面公共 Header / SurfaceCard / 列表状态 | 开发中 |
+| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | 待处理 |
+| 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | 待处理 |
+| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | 开发中 |
+| 5 | P0-03-B | Agent Debug → Runtime durable ID 回归 | 待处理 |
+| 6 | P1-01-A | Knowledge 页面 Gap Audit | 待处理 |
+| 7 | P1-02-A | Tools 页面 Gap Audit | 待处理 |
+| 8 | P1-03-A | Organizations 页面 Gap Audit | 待处理 |
+| 9 | P1-04-A | Model Providers 页面 Gap Audit | 待处理 |
+| 10 | P1-05-A | Integrations 页面 Gap Audit | 待处理 |
+| 11 | P1-06-A | Operations Console Contract / Governance 对齐 | 待处理 |
+| 12 | P1-07-A | Audit 页面 Gap Audit | 待处理 |
+| 13 | P1-08-A | Dashboard 与全站一致性回归 | 收尾 |
+
+### 9.5 当前任务选择原则
+
+继续遵循：
+
+> **一个核心页面 → 公共模式迁移 → targeted test → 文档同步 → 原子提交 → 下一页面**
+
+若当前任务发现 Backend Contract 不完整，应标记“阻塞”，先回到 Contract/Backend 验证，不得用 Mock 或猜测继续固化前端行为。
