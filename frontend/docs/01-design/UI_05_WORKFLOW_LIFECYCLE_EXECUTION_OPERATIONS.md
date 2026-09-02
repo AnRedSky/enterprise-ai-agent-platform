@@ -169,6 +169,16 @@ npm run build
 
 本轮采用：**实现 → targeted test → 文档 → 原子提交**。
 
+## 问题记录：Audit Execution ID 可空导致构建类型错误
+
+2026-09-02 本地 targeted test 已通过 28/28，但 `npm run build` 在 `RuntimeCorrelations.vue` 报告 `string | null` 无法赋值给 `Record<string, string>`。
+
+根因：后端 `AuditLog.workflow_execution_id` 是可空字段。前端此前在 Audit Durable Fact 反向定位 WorkflowLifecycle 时直接将该字段作为 `execution_id`，虽然运行时存在 Execution correlation 时可以回退，但 TypeScript 无法证明该值非空。
+
+修复：保留后端可空 Contract，不通过类型断言掩盖问题；当选中 Audit Durable Fact 时优先使用其 `workflow_execution_id`，为空时回退到当前 correlation response 已确认的 `execution.id`。Trace Durable Fact 的 `execution_id` 仍保持必填事实来源。
+
+因此 URL 生成仍满足：`execution_id` 必须是后端已确认的真实 Execution ID，禁止生成空字符串或通过启发式推导。
+
 ## 下一步
 
 继续检查 Runtime correlation 后端 Contract 的 focused-record 语义与分页边界。如果后端已经保证按 Trace/Audit ID 查询时目标 Durable Fact 必然返回，则前端维持当前只读定位模型；如果 Contract 无法保证，则优先补充最小后端 focused-record contract，而不是在前端扩大分页或通过索引推导目标事实。
