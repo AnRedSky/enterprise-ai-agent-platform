@@ -73,6 +73,14 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 - 403 明确提示权限不足；409 / 422 提示后端状态机拒绝并要求刷新；其他异常保留当前 dialog 上下文并提示失败，便于用户重新确认。
 - Runtime / Trace / Audit 入口始终使用真实 Execution ID 和后端返回的 Workflow / Version ID。
 
+## 本轮补充：Runtime focused Durable Fact 反向定位
+
+- Runtime Correlations 的 Trace / Audit 具体事实优先消费后端 `focused_traces` / `focused_audit`，分页 `items` 仅承担浏览语义。
+- 从 focused Trace / Audit 返回 WorkflowLifecycle 时，必须携带该 Durable Fact 自身的 `workflow_id`、`workflow_execution_id` / `execution_id` 与 Trace / Audit ID；不能退回使用关联查询的默认 Execution 上下文覆盖真实事实。
+- Audit 与 Trace 的结构判别使用 Durable Fact 自身字段：Trace 有 `execution_id`，Audit 有 `workflow_execution_id`；不能仅凭 `trace_id` 判定类型，因为 Audit 同样可以携带 Trace ID。
+- 当 Audit 的 `workflow_execution_id` 为 `null` 时，才允许回退到关联响应中的 Execution ID；Workflow ID 优先使用 Audit 自身的 `workflow_id`。
+- 分页边界不会触发前端扩大 page size、循环翻页或通过时间/索引推导关系。
+
 ## 之前已完成的状态收敛
 
 ### 列表空状态确定性
@@ -117,23 +125,35 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 
 `frontend/tests/views/WorkflowLifecycle.test.ts` 覆盖原有生命周期、深链与 UI-05 确认行为。
 
-新增 `frontend/tests/views/WorkflowLifecycleTriggerManagement.test.ts` 覆盖：
+`frontend/tests/views/RuntimeCorrelations.test.ts` 覆盖：
+
+1. Trace / Audit 深链上下文；
+2. Durable Fact 具体事实展示；
+3. Audit 与 Trace 的结构身份判定；
+4. focused Trace / Audit 位于当前分页 `items` 之外时，仍使用 focused Durable Fact；
+5. focused Durable Fact 反向定位 WorkflowLifecycle 时保留真实 Execution / Workflow 上下文。
+
+`frontend/tests/views/WorkflowLifecycleTriggerManagement.test.ts` 覆盖：
 
 1. Scheduled Trigger 编辑器从真实 Trigger config 初始化；
 2. Scheduled Trigger 使用真实 PATCH Contract 更新并刷新详情；
 3. Webhook Trigger 更新时不读取、不回显、不发送现有 Secret；
 4. Trigger 删除需要显式确认，取消不会写入；
-5. Trigger 删除调用真实 DELETE Contract 并刷新详情。
+5. Trigger 删除调用真实 DELETE Contract 并刷新详情；
+6. 测试挂载显式注册 `v-loading` directive，避免测试环境产生与业务无关的 Vue warning；
+7. Vue Test Utils 对 `<script setup>` 暴露 ref 自动解包，因此断言直接访问 `triggerEditor` / `deleteTriggerTarget`，不使用多余的 `.value`。
 
-远端 GitHub 环境不运行 Node/Vitest，因此本轮不虚报本地测试结果；用户本地验证结果以实际命令输出为准。
+用户本地回归发现 focused Durable Fact 反向定位曾错误使用默认关联 Execution。根因是 `openWorkflowLifecycle()` 在无显式 fact 参数时只读取 `result.execution`，没有消费 `focusedTrace` / `focusedAudit`。现已修复为 `fact → focusedTrace → focusedAudit → correlated Execution` 的优先级，并保持分页边界不变。
 
 ## 本地验证
 
 ```powershell
 cd frontend
-npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/WorkflowLifecycleTriggerManagement.test.ts
+npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeCorrelations.test.ts tests/views/WorkflowLifecycleTriggerManagement.test.ts
 npm run build
 ```
+
+远端 GitHub 环境不运行 Node/Vitest，因此本轮不虚报本地测试结果；用户提供的本地测试输出用于根因定位，修复后应重新执行上述 targeted test 与 build。
 
 ## 下一步
 
