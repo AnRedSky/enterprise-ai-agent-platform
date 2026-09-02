@@ -65,8 +65,6 @@ assert counters["eligible"] == 1
 
 这一次不是生产 Runtime 又发现了 40 个错误候选，而是数据库中确实存在其他租户的合法到期 Scheduled Schedule。当前 Runtime 的设计是多租户全库轮询，因此 `eligible`、`dispatched`、`recovered` 属于 **本次 tick 的全局运行计数**，不能被单个验收租户解释为唯一值。
 
-测试原来的 `assert counters["eligible"] == 1` 隐含了“共享 PostgreSQL 中除测试数据外没有其他合法到期任务”的错误前提，既不符合多租户 Scheduler Runtime 的职责，也不能要求开发者清理或手工填写数据库测试信息。
-
 ## 第三层修复
 
 Acceptance 不再把全局 Counter 当成测试数据唯一性证明，而改为：
@@ -139,6 +137,39 @@ Key (published_version_id)=(...) is not present in table "workflow_versions".
 3. 最后使用参数化 SQL 回填 `workflows.published_version_id`，建立合法的发布版本引用。
 
 该顺序保持事务原子性，同时真实执行数据库外键约束，避免测试夹具依赖 ORM flush 偶然顺序。
+
+## 第六层根因：Acceptance 错误地假设 Scheduler Tick 后 Execution 必须仍为 pending
+
+用户本地真实 PostgreSQL Gate 在修复第五层夹具后进入 Scheduler Runtime Acceptance，失败位置为：
+
+```text
+assert all(row["status"] == "pending" for row in executions)
+E assert False
+```
+
+该断言隐含了“Scheduler tick 完成后没有 Worker 可以立即消费 Durable Frontier”的环境前提，但 Scheduler Runtime 的正式职责只是将 Schedule Slot 可靠地投递为 `pending Execution + Durable Frontier`；Worker 可以与 Scheduler 并行运行，并在 Scheduler `tick_once()` 返回前已经 claim Frontier、推进 Execution。
+
+因此在共享本地 PostgreSQL 环境中，如果 Worker 正在运行，观察到 `running` 或 `completed` 是合法的并发结果，不代表 Scheduler 丢失了 Execution，也不能通过停止 Worker、固定测试进程顺序或手工准备数据库来制造 `pending` 状态。
+
+这属于 Acceptance 测试契约错误，而不是 Scheduler Runtime 生产代码错误。
+
+## 第六层修复
+
+将 Scheduler Runtime Acceptance 的 Execution 状态断言调整为并发安全的契约：
+
+- 必须存在恰好两个由测试租户产生的 Execution；
+- 两个 Execution 必须与两个 Schedule Slot 一一对应；
+- Execution 必须处于 `pending`、`running` 或 `completed` 之一；
+- `failed` 不属于 Scheduler 成功交付的可接受结果，因此仍然立即失败；
+- Durable Frontier 同理允许 `pending`、`retry_wait`、`claimed`、`running`、`completed`，以容纳 Worker 在验收查询前已经推进的合法状态。
+
+这样既保留了对 Scheduler 持久化交付事实的严格验证，也不会把合法的 Scheduler/Worker 并发推进误判为测试失败。
+
+## 当前修复提交
+
+- `2d2a5a51cdd09c9bd49eca22406d81a01bdcbd21` — `test(scheduler): make runtime acceptance worker-safe`
+
+该修复只调整 Acceptance 测试契约，没有放宽生产 Execution 状态机，也没有修改 Scheduler Runtime 的 lease、slot、idempotency 或 dispatch 逻辑。
 
 ## 边界测试
 
