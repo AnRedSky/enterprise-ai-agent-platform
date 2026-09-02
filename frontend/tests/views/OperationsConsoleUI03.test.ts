@@ -6,17 +6,27 @@ import { dirname, resolve } from "node:path";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 
-describe("Operations Console UI-03 shared shell", () => {
-  it("routes /runtime/operations through the shared page shell", () => {
+describe("Operations Console UI-03/UI-04/UI-05", () => {
+  it("routes through the shared PageHeader shell", () => {
     const router = read("src/router/index.ts");
-    expect(router).toContain('/runtime/operations", component: () => import("../views/integrations/OperationsConsoleWorkbench.vue")');
-  });
-
-  it("uses PageHeader and preserves the existing operations sub-workbench", () => {
     const shell = read("src/views/integrations/OperationsConsoleWorkbench.vue");
-    expect(shell).toContain('import PageHeader from "@/components/ui/PageHeader.vue"');
-    expect(shell).toContain("<PageHeader");
-    expect(shell).toContain('import OperationsConsole from "./OperationsConsole.vue"');
-    expect(shell).toContain("<OperationsConsole />");
+    expect(router).toContain("OperationsConsoleWorkbench.vue");
+    expect(shell).toContain("PageHeader");
+    expect(shell).toContain("OperationsRuntimeCorrelation");
+  });
+  it("uses shared state panels for independently loaded workbenches", () => {
+    const source = read("src/views/integrations/OperationsConsole.vue");
+    for (const state of ["loading", "error", "empty"]) expect(source).toContain(`state=\"${state}\"`);
+    for (const loader of ["loadGlobal", "loadOverview", "loadAlerts", "loadProviders", "loadAudit", "loadMetrics", "loadDeadLetters"]) expect(source).toContain(loader);
+  });
+  it("protects high-impact actions and refreshes backend truth after mutation", () => {
+    const source = read("src/views/integrations/OperationsConsole.vue");
+    expect(source).toContain("ElMessageBox.confirm");
+    expect(source).toContain("if(replayingId.value)return");
+    expect(source).toContain("if(togglingProviderId.value)return");
+    expect(source).toContain("if(togglingRuleId.value)return");
+    expect(source).toContain("await loadProviders()");
+    expect(source).toContain("await loadAlerts()");
+    expect(source).toContain("await loadDeadLetters()");
   });
 });
