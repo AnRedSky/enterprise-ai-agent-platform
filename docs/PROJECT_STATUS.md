@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
 - 当前任务：**Operator Action → Audit → Result Resource → Execution/Trace 治理闭环与数据库事实源对齐**。
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**、**Runtime Audit / Trace Correlation 响应 Contract 硬化与历史审计关联硬化**、**Operator Audit Query Service / API Contract 第一实现**、**Operator Audit 管理员访问治理**、**Canonical Operator Audit 查询索引事实源对齐**。
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**、**Runtime Audit / Trace Correlation 响应 Contract 与历史审计关联硬化**、**Operator Audit Query Service / API Contract 第一实现**、**Operator Audit 管理员访问治理**、**Canonical Operator Audit 查询索引事实源对齐**、**II-08 Runtime Correlation Audit Fact Visibility Contract 扩展**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -29,11 +29,13 @@
 - Phase 2.10-II / II-07 Runtime Audit Query 主体、组合过滤及响应契约硬化已完成 Backend 实现；
 - Runtime Audit / Trace Correlation 响应 Contract 已从 `list[Any]` 收紧为明确的 Trace / Audit Item 类型，并增加 Trace ID 输入边界；
 - Runtime Audit / Trace Correlation 历史审计恢复路径已补齐：正式 `workflow_execution_id` 优先，缺失时通过 tenant-scoped `trace_id` 恢复当前 Workflow Execution，不猜测旧 `execution_id` 映射；
+- Runtime Trace Resolution 已补齐重复 Trace Event 与跨 Execution 歧义保护：同一 Execution 的重复 Trace Event 使用唯一 Execution 映射，跨 Execution 的同 Trace ID 返回 409，不通过首行猜测；
 - Operator Audit Query Service 已基于 AuditLog 唯一事实源实现 tenant-scoped 分页、精确过滤和时间窗口校验；
 - Operator Audit Query API Contract 已实现，响应模型明确为 `OperatorAuditQueryResponse` / `OperatorAuditItem`，查询参数包含 page、page_size、action、operator_action_id、resource_type、resource_id、actor_id、status、workflow_execution_id、trace_id、since、until；
 - Operator Audit Query 已增加 admin-only 访问治理；
 - `0051_operator_audit_query_indexes` 已将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`；
-- `0055_operator_audit_operator_action_index` 已为直接 Operator Action → AuditLog 查询补充 tenant-scoped 复合索引。
+- `0055_operator_audit_operator_action_index` 已为直接 Operator Action → AuditLog 查询补充 tenant-scoped 复合索引；
+- Runtime Correlation 的 `AuditLogItem` 已暴露既有 `resource_type`、`resource_id`、`request_id`、`trace_id`，使 Execution / Trace / Audit / Operator Action 深链响应能够完整表达已有审计事实。
 
 ## 3. 最新本地反馈与根因
 
@@ -54,7 +56,9 @@
 - **新增 `0056_merge_legacy_audit_and_operator_governance_heads`，以 `0055_operator_audit_operator_action_index` 与 `0013_remove_legacy_audit_execution_fk` 为双父节点，正式收敛历史 AuditLog 分支与当前 Operator Governance 分支；**
 - 不修改已有 revision ID，不通过 `stamp`、手工修改 `alembic_version` 或删除历史 migration 绕过图结构；
 - Operator Audit Contract 中管理员路径已使用 Service mock 隔离真实数据库，保证 API Contract 不因本地 schema 漂移而误报 Contract 失败；
-- `26_operator_audit_query_performance_gate.ps1` 继续严格执行 `uv run alembic upgrade head` 与唯一 head 校验，并保持不自动启动任何服务。
+- `26_operator_audit_query_performance_gate.ps1` 继续严格执行 `uv run alembic upgrade head` 与唯一 head 校验，并保持不自动启动任何服务；
+- Runtime Trace Resolution Regression Gate 已补齐重复 Trace 与跨 Execution 歧义验证，并通过开发者本地反馈；
+- Runtime Correlation Audit Item Contract 已补齐既有审计资源与 Trace 字段，不新增数据库列。
 
 ## 5. 下一执行顺序
 
@@ -62,7 +66,7 @@
 ① 开发者同步远端 main 最新提交
 ② 执行 uv run alembic heads，确认仅有 0056_merge_legacy_audit_and_operator_governance_heads
 ③ 执行 uv run alembic upgrade head
-④ 重新执行 Operator Governance Gate
+④ 重新执行 Operator Governance / Runtime Correlation Gate
 ⑤ 确认 Operator Action → Audit → Result Resource PostgreSQL Acceptance
 ⑥ 扫描 Execution / Trace 端到端治理链仍存在的真实业务缺口
 ⑦ Backend-first 推进下一项 Operator Governance / Audit 能力
