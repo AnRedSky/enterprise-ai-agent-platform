@@ -38,3 +38,16 @@ AgentWorkbench targeted test 至少验证：
 - request / trace / session / execution 标识能够正确回填；
 - delta 按顺序累积到当前 assistant 消息；
 - 取消不会被误判为普通失败。
+
+## 2026-09-02 回归修复记录
+
+本轮本地回归发现 `AgentUI04.test.ts` 仍按旧版 `streamChat` 调用方式构造测试：测试未建立真实 Agent 调试上下文，并断言旧的 `(payload, callback)` 调用契约。当前正式 API 已稳定为 `(payload, onEvent, signal)`，请求字段为 `agent_id / input / session_id`。
+
+修复策略为只调整测试夹具与断言，不修改生产 API Contract：
+
+- 通过 `openChat(agentRow)` 建立真实 Agent 与已发布版本上下文，使 `execute()` 满足生产页面的前置条件；
+- 按 `ChatRequest` 断言 `agent_id / input / session_id`；
+- 按正式参数位置断言 SSE 回调与 `AbortSignal`；
+- 保留 `start / delta / done` 生命周期事件以及 request / trace / session / execution 和 assistant 内容累积断言。
+
+这样可以避免为了适配过期测试而重新引入第二套聊天 Contract。
