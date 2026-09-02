@@ -293,6 +293,7 @@ class OperatorActionGovernanceService:
         definition = self.validate_request("workflow_execution", action, confirm=confirm, idempotency_key=idempotency_key)
         execution = await self._execution(execution_id, tenant_id, actor_id, is_admin)
         available = self.availability("workflow_execution", action, execution.status)
+        resume_checkpoint_sequence: int | None = None
         if action == "resume" and execution.status == "failed":
             execution_service = WorkflowExecutionService(self.db)
             checkpoint = await execution_service.checkpoint.latest(execution.id)
@@ -301,13 +302,23 @@ class OperatorActionGovernanceService:
                 execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint=checkpoint,
             )
             available["allowed"] = assessment.eligible
+            if assessment.eligible:
+                resume_checkpoint_sequence = assessment.checkpoint_sequence
         if not available["allowed"]:
             raise HTTPException(status_code=409, detail="当前 Workflow Execution 状态不允许执行该 Operator Action")
+
+        effective_idempotency_key = idempotency_key
+        if action == "resume":
+            if resume_checkpoint_sequence is None:
+                raise HTTPException(status_code=409, detail="Resume Candidate 缺少确定性 Checkpoint sequence")
+            if effective_idempotency_key is None:
+                effective_idempotency_key = f"internal:resume:{execution_id}:{resume_checkpoint_sequence}"
+
         idempotency_record = None
-        if definition.requires_idempotency_key:
+        if definition.requires_idempotency_key or action == "resume":
             idempotency_record = await self._claim_idempotency(
                 tenant_id=tenant_id, actor_id=actor_id, resource_type="workflow_execution",
-                resource_id=execution_id, action=action, idempotency_key=idempotency_key or "",
+                resource_id=execution_id, action=action, idempotency_key=effective_idempotency_key or "",
             )
             reused = await self._reuse_or_raise(idempotency_record)
             if reused is not None:
@@ -328,22 +339,22 @@ class OperatorActionGovernanceService:
             else:
                 result = await service.resume_from_latest_checkpoint(execution, actor_id, commit=False)
         except HTTPException as exc:
-            if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
+            if idempotency_record is None and effective_idempotency_key is not None:
+                await self._finish_idempotency(effective_idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
                 await self.db.commit()
             raise
         except Exception as exc:
-            if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
+            if idempotency_record is None and effective_idempotency_key is not None:
+                await self._finish_idempotency(effective_idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
                 await self.db.commit()
             raise HTTPException(status_code=500, detail="Operator Action 执行失败") from exc
-        if definition.requires_idempotency_key:
-            await self._finish_idempotency(idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
+        if effective_idempotency_key is not None:
+            await self._finish_idempotency(effective_idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
         await self._audit(
             actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_execution", resource_id=execution_id,
             action=action, status="success", workflow_id=execution.workflow_id,
             workflow_version_id=execution.workflow_version_id, workflow_execution_id=result.id,
-            idempotency_key=idempotency_key,
+            idempotency_key=effective_idempotency_key,
             metadata={"idempotency_key_present": idempotency_key is not None, "confirmed": confirm},
         )
         await self.db.commit()
