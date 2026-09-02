@@ -111,32 +111,8 @@ class WorkflowTriggerService:
         await self.db.refresh(trigger)
         return trigger
 
-    async def update(
-        self,
-        trigger: WorkflowTrigger,
-        name: str | None,
-        status: str | None,
-        config: dict | None,
-        *,
-        commit: bool = True,
-    ) -> WorkflowTrigger:
-        """更新 Trigger，并允许调用方控制事务提交边界。
-
-        Args:
-            trigger: 已在当前租户范围内加载的 Trigger。
-            name: 可选新的 Trigger 名称。
-            status: 可选新的 enabled/disabled 状态。
-            config: 可选新的 Trigger 配置。
-            commit: 是否由本方法提交事务；Operator Action 传入 False，使业务变更、幂等事实与审计共用一个事务。
-
-        Returns:
-            更新后的 Trigger ORM 实例。
-
-        Raises:
-            HTTPException: 名称、状态或配置不合法，或数据库唯一约束冲突。
-
-        设计意图：Trigger 更新既被普通 CRUD 调用，也被 Operator Governance 调用。默认提交保持旧调用方兼容；治理路径关闭内部 commit，避免审计失败后留下已提交的 Trigger 状态。
-        """
+    async def update(self, trigger: WorkflowTrigger, name: str | None, status: str | None, config: dict | None, *, commit: bool = True) -> WorkflowTrigger:
+        """更新 Trigger，并允许调用方控制事务提交边界。"""
         if name is not None:
             name = name.strip()
             if not name:
@@ -165,15 +141,7 @@ class WorkflowTriggerService:
         return trigger
 
     async def delete(self, trigger: WorkflowTrigger, *, commit: bool = True) -> None:
-        """删除 Trigger，并允许 Operator Governance 将删除与审计放入同一事务。
-
-        Args:
-            trigger: 已在当前租户范围内加载的 Trigger。
-            commit: 是否由本方法提交事务；治理路径传入 False。
-
-        Returns:
-            None。commit=False 时删除仅在当前事务中生效。
-        """
+        """删除 Trigger，并允许 Operator Governance 将删除与审计放入同一事务。"""
         await self.db.delete(trigger)
         if commit:
             await self.db.commit()
@@ -192,15 +160,7 @@ class WorkflowTriggerService:
 
     async def invoke_scheduled(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
                                idempotency_key: str, recovery: bool = False, return_created: bool = False):
-        """为 Scheduled Trigger 创建 pending Execution 与首个 Durable Frontier。
-
-        Scheduler 只负责把确定性 slot 投递为 Durable Work Item；Worker 负责 claim Frontier 并复用唯一 Workflow Runtime。
-        Execution 与 Frontier 在本次调用方事务中一起持久化，Scheduler 不在此处执行 Runtime。
-
-        Scheduled Trigger 必须使用与 Workflow 发布阶段完全一致的 Definition Contract。
-        已发布 Workflow 不允许通过 Scheduler 兼容路径绕过非空 nodes 校验，否则会产生
-        无法由 Worker Runtime 执行的 pending Execution。
-        """
+        """为 Scheduled Trigger 创建 pending Execution 与首个 Durable Frontier。"""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "scheduled":
@@ -232,13 +192,8 @@ class WorkflowTriggerService:
             decision_fingerprint=sha256(idempotency_key.encode("utf-8")).hexdigest(),
             node_ids=tuple(node["id"] for node in nodes),
         )
-        await enqueue_frontier(
-            self.db,
-            tenant_id=execution.tenant_id,
-            identity=frontier_identity,
-            node_ids=frontier_identity.node_ids,
-            now=execution.created_at,
-        )
+        await enqueue_frontier(self.db, tenant_id=execution.tenant_id, identity=frontier_identity,
+                               node_ids=frontier_identity.node_ids, now=execution.created_at)
         audit_action = "workflow.trigger.scheduled_recovery" if recovery else "workflow.trigger.scheduled"
         trace_event = "trigger.scheduled.recovery" if recovery else "trigger.scheduled"
         await self.governance.audit(execution, actor_id, audit_action, "success", metadata={
@@ -251,27 +206,20 @@ class WorkflowTriggerService:
             "interval_seconds": config["interval_seconds"], "recovery": recovery, "dispatch_mode": "durable_frontier",
         })
         await RuntimeIntegrationEventPublisher(self.db).publish(
-            tenant_id=execution.tenant_id,
-            event_type="scheduler.trigger.dispatched",
-            source=RuntimeIntegrationEventPublisher.SOURCE_SCHEDULER,
-            subject=str(execution.id),
+            tenant_id=execution.tenant_id, event_type="scheduler.trigger.dispatched",
+            source=RuntimeIntegrationEventPublisher.SOURCE_SCHEDULER, subject=str(execution.id),
             idempotency_key=f"scheduler-trigger:{trigger.id}:{idempotency_key}",
-            payload={
-                "trigger_id": str(trigger.id),
-                "workflow_id": str(workflow.id),
-                "workflow_version_id": str(version.id),
-                "execution_id": str(execution.id),
-                "scheduled_slot": input_data.get("scheduled_slot"),
-                "planned_at": input_data.get("planned_at"),
-                "recovery": recovery,
-                "dispatch_mode": "durable_frontier",
-            },
+            payload={"trigger_id": str(trigger.id), "workflow_id": str(workflow.id),
+                     "workflow_version_id": str(version.id), "execution_id": str(execution.id),
+                     "scheduled_slot": input_data.get("scheduled_slot"), "planned_at": input_data.get("planned_at"),
+                     "recovery": recovery, "dispatch_mode": "durable_frontier"},
         )
         await self.db.commit()
         return (execution, True) if return_created else execution
 
     async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
                      idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
+        """执行 Manual Trigger；Execution 创建与 Trigger Audit 在 Runtime 启动前共用一个提交边界。"""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "manual":
@@ -284,7 +232,9 @@ class WorkflowTriggerService:
                     raise HTTPException(409, "Idempotency-Key 已用于其他 Workflow Execution")
                 return existing
         execution_service = WorkflowExecutionService(self.db)
-        execution = await execution_service.create(workflow, version, actor_id, input_data, idempotency_key=idempotency_key)
+        execution = await execution_service.create(
+            workflow, version, actor_id, input_data, idempotency_key=idempotency_key, commit=False
+        )
         await self.governance.audit(execution, actor_id, "workflow.trigger.invoked", "success", metadata={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type})
         await self.governance.trace(execution, actor_id, "trigger.invoked", "pending", data={
