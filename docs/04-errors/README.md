@@ -41,6 +41,7 @@
 | ERR-0033 | 2026-08-31 | Global Runtime Operations Agent Filter SQL Contract 漂移 |
 | ERR-0034 | 2026-08-31 | Runtime Audit Query actor 参数 Annotated 默认值冲突 |
 | ERR-0035 | 2026-09-01 | Operator Audit Real Acceptance actor 外键夹具未显式建立持久化依赖顺序 |
+| ERR-0036 | 2026-09-02 | Real API Tenant 清理遗漏 Durable Integration Event 外键依赖 |
 
 ## 迁移规则
 
