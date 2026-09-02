@@ -128,9 +128,6 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                     },
                 )
             )
-            # WorkflowTrigger 与 WorkflowSchedule 目前没有 ORM relationship，SQLAlchemy
-            # 无法从模型关系推导两者的 INSERT 顺序。先 flush trigger，确保数据库 FK
-            # 在创建 schedule 时已经存在；这也是该验收 fixture 的真实持久化前置条件。
             await setup_session.flush()
             setup_session.add(
                 WorkflowSchedule(
@@ -152,9 +149,11 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
     scheduler = ScheduledTriggerScheduler(poll_interval_seconds=1, recovery_slots=2, lease_seconds=30)
     try:
         counters = await scheduler.tick_once(now_aware)
-        assert counters["eligible"] == 1, counters
-        assert counters["dispatched"] == 2, counters
-        assert counters["recovered"] == 1, counters
+        # Scheduler Runtime 是多租户全库轮询；共享 PostgreSQL 中可能已有其他租户的合法到期任务。
+        # 因此这里不能把全局 eligible/dispatched/recovered 当成“本测试租户唯一值”，只验证本测试事实闭环。
+        assert counters["eligible"] >= 1, counters
+        assert counters["dispatched"] >= 2, counters
+        assert counters["recovered"] >= 1, counters
         assert counters["failed"] == 0, counters
 
         async with SessionLocal() as verify_session:
@@ -192,8 +191,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "FROM workflow_executions WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                )
-            ).mappings().all()
+                ).mappings().all()
+            )
             assert len(executions) == 2, executions
             assert {row["id"] for row in executions} == {row["workflow_execution_id"] for row in slots}
             assert all(row["status"] == "pending" for row in executions)
@@ -208,8 +207,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                )
-            ).mappings().all()
+                ).mappings().all()
+            )
             assert len(frontiers) == 2, frontiers
             assert {row["execution_id"] for row in frontiers} == {row["id"] for row in executions}
             assert all(row["status"] == "pending" for row in frontiers)
@@ -221,8 +220,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                )
-            ).mappings().all()
+                ).mappings().all()
+            )
             traces = (
                 await verify_session.execute(
                     text(
@@ -230,8 +229,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                )
-            ).mappings().all()
+                ).mappings().all()
+            )
             assert len([row for row in audits if row["action"] == "workflow.trigger.scheduled"]) == 1, audits
             assert len([row for row in audits if row["action"] == "workflow.trigger.scheduled_recovery"]) == 1, audits
             assert len([row for row in traces if row["event_type"] == "trigger.scheduled"]) == 1, traces
