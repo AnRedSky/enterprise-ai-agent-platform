@@ -242,7 +242,7 @@ class RuntimeSchedulerTrigger(BaseModel):
 
 
 class RuntimeSchedulerDiagnosticsResponse(BaseModel):
-    """Scheduler Durable backlog 与 trigger 状态只读诊断 Contract。"""
+    """Scheduler Durable backlog 与 trigger 状态只读 Contract。"""
 
     generated_at: datetime
     liveness: str
@@ -283,9 +283,9 @@ class RuntimeOperatorActionItem(BaseModel):
     action: str
     idempotency_key: str
     status: str
+    error_code: str | None = None
     result_resource_type: str | None = None
     result_resource_id: UUID | None = None
-    error_code: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -317,5 +317,7 @@ class RuntimeCorrelationResponse(BaseModel):
     traces: RuntimeCorrelationTracePage
     audits: RuntimeCorrelationAuditPage
     operator_actions: list[RuntimeOperatorActionItem]
+    focused_traces: list[WorkflowTraceItem] = Field(default_factory=list)
+    focused_audit: AuditLogItem | None = None
     focus_audit_id: UUID | None = None
     focus_operator_action_id: UUID | None = None

@@ -38,6 +38,8 @@ class CorrelationResponse(TypedDict, total=False):
     traces: TracePage
     audits: AuditPage
     operator_actions: list[OperatorActionIdempotency]
+    focused_traces: list[WorkflowTraceEvent]
+    focused_audit: AuditLog | None
     focus_audit_id: UUID | None
     focus_operator_action_id: UUID | None
 
@@ -82,6 +84,20 @@ class RuntimeAuditTraceCorrelationService:
             )
         ).scalars().all()
         return {"items": list(rows), "page": page, "page_size": page_size, "total": total}
+
+    async def _focused_traces(self, tenant_id: UUID, trace_id: str) -> list[WorkflowTraceEvent]:
+        """按精确 Trace ID 返回全部匹配 Durable Facts，不受列表分页影响。"""
+        rows = (
+            await self.db.execute(
+                select(WorkflowTraceEvent)
+                .where(
+                    WorkflowTraceEvent.tenant_id == tenant_id,
+                    WorkflowTraceEvent.trace_id == trace_id,
+                )
+                .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
+            )
+        ).scalars().all()
+        return list(rows)
 
     async def _paged_audits(
         self,
@@ -205,6 +221,16 @@ class RuntimeAuditTraceCorrelationService:
         execution_ids = await self._execution_ids_from_trace(tenant_id, audit.trace_id)
         return self._resolve_unique_execution(execution_ids, audit.trace_id)
 
+    async def _audit(self, tenant_id: UUID, audit_id: UUID) -> AuditLog | None:
+        return (
+            await self.db.execute(
+                select(AuditLog).where(
+                    AuditLog.tenant_id == tenant_id,
+                    AuditLog.id == audit_id,
+                )
+            )
+        ).scalar_one_or_none()
+
     async def _operator_action(self, tenant_id: UUID, operator_action_id: UUID) -> OperatorActionIdempotency | None:
         return (
             await self.db.execute(
@@ -212,8 +238,8 @@ class RuntimeAuditTraceCorrelationService:
                     OperatorActionIdempotency.tenant_id == tenant_id,
                     OperatorActionIdempotency.id == operator_action_id,
                 )
-            )
-        ).scalar_one_or_none()
+            ).scalar_one_or_none()
+        )
 
     @staticmethod
     def _empty_response(action: OperatorActionIdempotency, page: int, page_size: int, audit_page: int, audit_page_size: int) -> CorrelationResponse:
@@ -222,6 +248,8 @@ class RuntimeAuditTraceCorrelationService:
             "traces": {"items": [], "page": page, "page_size": page_size, "total": 0},
             "audits": {"items": [], "page": audit_page, "page_size": audit_page_size, "total": 0},
             "operator_actions": [action],
+            "focused_traces": [],
+            "focused_audit": None,
             "focus_operator_action_id": action.id,
         }
 
@@ -261,6 +289,8 @@ class RuntimeAuditTraceCorrelationService:
                 status=audit_status,
             ),
             "operator_actions": await self._operator_actions(tenant_id, execution_id),
+            "focused_traces": [],
+            "focused_audit": None,
         }
 
     async def by_trace(
@@ -281,7 +311,8 @@ class RuntimeAuditTraceCorrelationService:
         execution_id = self._resolve_unique_execution(execution_ids, trace_id)
         if execution_id is None:
             return None
-        return await self.by_execution(
+        focused_traces = await self._focused_traces(tenant_id, trace_id)
+        result = await self.by_execution(
             tenant_id,
             execution_id,
             trace_page=trace_page,
@@ -293,6 +324,9 @@ class RuntimeAuditTraceCorrelationService:
             audit_action=audit_action,
             audit_status=audit_status,
         )
+        if result is not None:
+            result["focused_traces"] = focused_traces
+        return result
 
     async def by_audit(
         self,
@@ -308,14 +342,7 @@ class RuntimeAuditTraceCorrelationService:
         audit_action: str | None = None,
         audit_status: str | None = None,
     ) -> CorrelationResponse | None:
-        audit = (
-            await self.db.execute(
-                select(AuditLog).where(
-                    AuditLog.tenant_id == tenant_id,
-                    AuditLog.id == audit_id,
-                )
-            )
-        ).scalar_one_or_none()
+        audit = await self._audit(tenant_id, audit_id)
         if audit is None:
             return None
         execution_id = await self._execution_id_from_audit(tenant_id, audit)
@@ -333,6 +360,8 @@ class RuntimeAuditTraceCorrelationService:
                     operator_action_id=action.id,
                 ),
                 "operator_actions": [action],
+                "focused_traces": await self._focused_traces(tenant_id, audit.trace_id) if audit.trace_id else [],
+                "focused_audit": audit,
                 "focus_audit_id": audit.id,
                 "focus_operator_action_id": action.id,
             }
@@ -351,6 +380,8 @@ class RuntimeAuditTraceCorrelationService:
             audit_status=audit_status,
         )
         if result is not None:
+            result["focused_traces"] = await self._focused_traces(tenant_id, audit.trace_id) if audit.trace_id else []
+            result["focused_audit"] = audit
             result["focus_audit_id"] = audit.id
             result["focus_operator_action_id"] = audit.operator_action_id
         return result
@@ -389,6 +420,8 @@ class RuntimeAuditTraceCorrelationService:
                     operator_action_id=action.id,
                 ),
                 "operator_actions": [action],
+                "focused_traces": [],
+                "focused_audit": None,
                 "focus_operator_action_id": action.id,
             }
         result = await self.by_execution(
@@ -405,8 +438,6 @@ class RuntimeAuditTraceCorrelationService:
         )
         if result is None:
             return None
-        # Operator Action 反查只返回与当前幂等事实直接关联的 Audit；Execution 级生命周期 Audit
-        # 仍由 by_execution 保持完整查询语义，避免两种查询入口混淆聚合层级。
         result["audits"] = await self._paged_audits(
             tenant_id,
             None,
@@ -416,5 +447,7 @@ class RuntimeAuditTraceCorrelationService:
             status=audit_status,
             operator_action_id=action.id,
         )
+        result["focused_traces"] = []
+        result["focused_audit"] = None
         result["focus_operator_action_id"] = action.id
         return result
