@@ -36,12 +36,12 @@
 | P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | 核心链路已建立 | 进行中 |
 | P0 | Workflow Lifecycle | 已建立 | 已建立 | 核心闭环已建立 | 已建立 | 基本完成 |
 | P0 | Workflows | 待统一 | 部分已有 | 已有较多真实操作 | 待审计 | 进行中 |
-| P0 | Agents | 基础模式已建立 | 已有 | 待完整审计 | Runtime 链路待强化 | 进行中 |
+| P0 | Agents | 基础模式已建立 | Debug 已收敛 | 待完整审计 | Runtime 链路待强化 | 进行中 |
 | P1 | Knowledge | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Tools | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Organizations | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
 | P1 | Model Providers | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
-| P1 | Integrations | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
+| P1 | Integrations | 待统一 | 待审计 | 待完整审计 | Runtime 关联待审计 | 待处理 |
 | P1 | Operations Console | 待统一 | 待审计 | 待完整审计 | Runtime 关联待审计 | 待处理 |
 | P1 | Audit | 基础模式已建立 | 待全站收敛 | 读操作为主 | 与 Runtime 关联 | 待处理 |
 | P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 待审计 | 收尾 |
@@ -96,10 +96,24 @@
 - [ ] 文档同步
 - [ ] 原子提交
 
-## 7. 当前第一批实施项
+## 7. 当前实施进度
 
-**P0-01 Workflows 页面 UI-03/UI-04 收敛**：以现有真实 Workflow API 为边界，将页面结构逐步迁移到 `PageHeader` / `PageToolbar` / `SurfaceCard` / `StatePanel`，不改变既有业务 Contract；先完成页面骨架与列表状态，再处理 Detail/Execution 操作区。
+### P0-01 Workflows
 
-**P0-02 Runtime 工作台**：在现有 Durable Fact 深链基础上审计 Execution / Trace / Audit 页面之间的 ID 传递和状态恢复。
+现状审计确认：`workflows/index.vue` 已有真实 Workflow CRUD、Version、Publish、Execution、Retry、Resume、Cancel 及 Trace/Audit 查询，但页面仍存在较明显的自定义 `el-card` / header 结构，尚未完成 UI-03 公共模式迁移。下一步保持 API 与业务行为不变，只拆分页面骨架、列表状态和 Detail/Execution 操作区。
 
-**P0-03 Agent Debug**：审计 Agent Version、Debug、Runtime 三者的真实 ID 与操作 Contract。
+### P0-02 Runtime
+
+现有 Durable Fact 深链已完成关键修复。下一步审计 Execution / Trace / Audit 页面之间的 ID 传递、刷新恢复和错误状态，不重新设计已有 Contract。
+
+### P0-03 Agent Debug
+
+**第一批已开始实施。** `AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
+
+## 8. 下一批原子任务
+
+1. `P0-01`: Workflows 页面骨架迁移与列表状态统一。
+2. `P0-02`: Runtime Execution/Correlation 页面深链与状态恢复 Gap Audit。
+3. `P0-03`: Agent Workbench UI-05 操作闭环与 Debug → Runtime 上下文补齐。
+4. `P1-01`: Knowledge UI-03/UI-04/UI-05 Gap Audit 后逐项补齐。
+5. `P1-02`: Tools UI-03/UI-04/UI-05 Gap Audit 后逐项补齐。
