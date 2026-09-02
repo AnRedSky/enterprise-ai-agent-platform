@@ -210,7 +210,9 @@ async def test_scheduler_runtime_isolates_disabled_future_and_dirty_published_wo
                         status="enabled",
                         timezone="UTC",
                         schedule_expression=f"interval:{interval_seconds}",
-                        next_run_at=now - timedelta(seconds=interval_seconds),
+                        # 该测试验证 Due Candidate 边界，不验证 misfire skip。
+                        # 使用当前槽位作为 due 起点，确保选中一个正常可分发的 slot。
+                        next_run_at=now,
                         misfire_policy="skip",
                         catch_up_limit=10,
                         updated_at=now,
