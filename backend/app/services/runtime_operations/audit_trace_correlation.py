@@ -56,75 +56,29 @@ class RuntimeAuditTraceCorrelationService:
         normalized_size = min(max(page_size, 1), MAX_PAGE_SIZE)
         return normalized_page, normalized_size, (normalized_page - 1) * normalized_size
 
-    async def _paged_traces(
-        self,
-        tenant_id: UUID,
-        execution_id: UUID,
-        page: int,
-        page_size: int,
-        *,
-        event_type: str | None = None,
-        status: str | None = None,
-    ) -> TracePage:
+    async def _paged_traces(self, tenant_id: UUID, execution_id: UUID, page: int, page_size: int, *, event_type: str | None = None, status: str | None = None) -> TracePage:
         page, page_size, offset = self._page(page, page_size)
-        stmt = select(WorkflowTraceEvent).where(
-            WorkflowTraceEvent.tenant_id == tenant_id,
-            WorkflowTraceEvent.execution_id == execution_id,
-        )
+        stmt = select(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id == tenant_id, WorkflowTraceEvent.execution_id == execution_id)
         if event_type:
             stmt = stmt.where(WorkflowTraceEvent.event_type == event_type)
         if status:
             stmt = stmt.where(WorkflowTraceEvent.status == status)
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
-        rows = (
-            await self.db.execute(
-                stmt.order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
-                .offset(offset)
-                .limit(page_size)
-            )
-        ).scalars().all()
+        rows = (await self.db.execute(stmt.order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc()).offset(offset).limit(page_size))).scalars().all()
         return {"items": list(rows), "page": page, "page_size": page_size, "total": total}
 
     async def _focused_traces(self, tenant_id: UUID, trace_id: str) -> list[WorkflowTraceEvent]:
         """按精确 Trace ID 返回全部匹配 Durable Facts，不受列表分页影响。"""
-        rows = (
-            await self.db.execute(
-                select(WorkflowTraceEvent)
-                .where(
-                    WorkflowTraceEvent.tenant_id == tenant_id,
-                    WorkflowTraceEvent.trace_id == trace_id,
-                )
-                .order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc())
-            )
-        ).scalars().all()
+        rows = (await self.db.execute(select(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id == tenant_id, WorkflowTraceEvent.trace_id == trace_id).order_by(WorkflowTraceEvent.created_at.asc(), WorkflowTraceEvent.id.asc()))).scalars().all()
         return list(rows)
 
-    async def _paged_audits(
-        self,
-        tenant_id: UUID,
-        execution_id: UUID | None,
-        page: int,
-        page_size: int,
-        *,
-        action: str | None = None,
-        status: str | None = None,
-        operator_action_id: UUID | None = None,
-    ) -> AuditPage:
+    async def _paged_audits(self, tenant_id: UUID, execution_id: UUID | None, page: int, page_size: int, *, action: str | None = None, status: str | None = None, operator_action_id: UUID | None = None) -> AuditPage:
         """按 Execution 或指定 Operator Action 查询正式 Audit 与历史 Trace 恢复 Audit。"""
         page, page_size, offset = self._page(page, page_size)
         execution_audit_scope = None
         if execution_id is not None:
-            trace_ids = select(WorkflowTraceEvent.trace_id).where(
-                WorkflowTraceEvent.tenant_id == tenant_id,
-                WorkflowTraceEvent.execution_id == execution_id,
-            )
-            execution_audit_scope = or_(
-                AuditLog.workflow_execution_id == execution_id,
-                (
-                    AuditLog.workflow_execution_id.is_(None)
-                    & AuditLog.trace_id.in_(trace_ids)
-                ),
-            )
+            trace_ids = select(WorkflowTraceEvent.trace_id).where(WorkflowTraceEvent.tenant_id == tenant_id, WorkflowTraceEvent.execution_id == execution_id)
+            execution_audit_scope = or_(AuditLog.workflow_execution_id == execution_id, AuditLog.workflow_execution_id.is_(None) & AuditLog.trace_id.in_(trace_ids))
         if operator_action_id is not None:
             direct_scope = AuditLog.operator_action_id == operator_action_id
             scope = direct_scope if execution_audit_scope is None else or_(execution_audit_scope, direct_scope)
@@ -132,73 +86,36 @@ class RuntimeAuditTraceCorrelationService:
             scope = execution_audit_scope
         if scope is None:
             return {"items": [], "page": page, "page_size": page_size, "total": 0}
-        stmt = select(AuditLog).where(
-            AuditLog.tenant_id == tenant_id,
-            scope,
-        )
+        stmt = select(AuditLog).where(AuditLog.tenant_id == tenant_id, scope)
         if action:
             formal_audit = aliased(AuditLog)
-            matching_formal_action = select(formal_audit.id).where(
-                formal_audit.tenant_id == tenant_id,
-                formal_audit.workflow_execution_id == execution_id,
-                formal_audit.action == action,
-            ).exists() if execution_id is not None else None
+            matching_formal_action = select(formal_audit.id).where(formal_audit.tenant_id == tenant_id, formal_audit.workflow_execution_id == execution_id, formal_audit.action == action).exists() if execution_id is not None else None
             action_scope = AuditLog.action == action
             if matching_formal_action is not None:
-                action_scope = or_(
-                    action_scope,
-                    AuditLog.workflow_execution_id.is_(None) & matching_formal_action,
-                )
+                action_scope = or_(action_scope, AuditLog.workflow_execution_id.is_(None) & matching_formal_action)
             stmt = stmt.where(action_scope)
         if status:
             stmt = stmt.where(AuditLog.status == status)
         total = (await self.db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
-        rows = (
-            await self.db.execute(
-                stmt.order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
-                .offset(offset)
-                .limit(page_size)
-            )
-        ).scalars().all()
+        rows = (await self.db.execute(stmt.order_by(AuditLog.created_at.asc(), AuditLog.id.asc()).offset(offset).limit(page_size))).scalars().all()
         return {"items": list(rows), "page": page, "page_size": page_size, "total": total}
 
     async def _operator_actions(self, tenant_id: UUID, execution_id: UUID) -> list[OperatorActionIdempotency]:
         stmt = select(OperatorActionIdempotency).where(
             OperatorActionIdempotency.tenant_id == tenant_id,
             or_(
-                (
-                    (OperatorActionIdempotency.resource_type == "workflow_execution")
-                    & (OperatorActionIdempotency.resource_id == execution_id)
-                ),
-                (
-                    (OperatorActionIdempotency.result_resource_type == "workflow_execution")
-                    & (OperatorActionIdempotency.result_resource_id == execution_id)
-                ),
+                (OperatorActionIdempotency.resource_type == "workflow_execution") & (OperatorActionIdempotency.resource_id == execution_id),
+                (OperatorActionIdempotency.result_resource_type == "workflow_execution") & (OperatorActionIdempotency.result_resource_id == execution_id),
             ),
         ).order_by(OperatorActionIdempotency.created_at.asc(), OperatorActionIdempotency.id.asc())
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def _execution(self, tenant_id: UUID, execution_id: UUID) -> WorkflowExecution | None:
-        return (
-            await self.db.execute(
-                select(WorkflowExecution).where(
-                    WorkflowExecution.tenant_id == tenant_id,
-                    WorkflowExecution.id == execution_id,
-                )
-            )
-        ).scalar_one_or_none()
+        return (await self.db.execute(select(WorkflowExecution).where(WorkflowExecution.tenant_id == tenant_id, WorkflowExecution.id == execution_id))).scalar_one_or_none()
 
     async def _execution_ids_from_trace(self, tenant_id: UUID, trace_id: str) -> list[UUID]:
         """解析 Trace ID 对应的唯一 Execution；最多读取两个不同 Execution 以检测歧义。"""
-        result = await self.db.execute(
-            select(WorkflowTraceEvent.execution_id)
-            .where(
-                WorkflowTraceEvent.tenant_id == tenant_id,
-                WorkflowTraceEvent.trace_id == trace_id,
-            )
-            .distinct()
-            .limit(2)
-        )
+        result = await self.db.execute(select(WorkflowTraceEvent.execution_id).where(WorkflowTraceEvent.tenant_id == tenant_id, WorkflowTraceEvent.trace_id == trace_id).distinct().limit(2))
         return list(result.scalars().all())
 
     @staticmethod
@@ -207,10 +124,7 @@ class RuntimeAuditTraceCorrelationService:
         if not execution_ids:
             return None
         if len(execution_ids) > 1:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Trace ID maps to multiple Workflow Executions: {trace_id}",
-            )
+            raise HTTPException(status_code=409, detail=f"Trace ID maps to multiple Workflow Executions: {trace_id}")
         return execution_ids[0]
 
     async def _execution_id_from_audit(self, tenant_id: UUID, audit: AuditLog) -> UUID | None:
@@ -222,126 +136,35 @@ class RuntimeAuditTraceCorrelationService:
         return self._resolve_unique_execution(execution_ids, audit.trace_id)
 
     async def _audit(self, tenant_id: UUID, audit_id: UUID) -> AuditLog | None:
-        return (
-            await self.db.execute(
-                select(AuditLog).where(
-                    AuditLog.tenant_id == tenant_id,
-                    AuditLog.id == audit_id,
-                )
-            )
-        ).scalar_one_or_none()
+        result = await self.db.execute(select(AuditLog).where(AuditLog.tenant_id == tenant_id, AuditLog.id == audit_id))
+        return result.scalar_one_or_none()
 
     async def _operator_action(self, tenant_id: UUID, operator_action_id: UUID) -> OperatorActionIdempotency | None:
-        return (
-            await self.db.execute(
-                select(OperatorActionIdempotency).where(
-                    OperatorActionIdempotency.tenant_id == tenant_id,
-                    OperatorActionIdempotency.id == operator_action_id,
-                )
-            ).scalar_one_or_none()
-        )
+        result = await self.db.execute(select(OperatorActionIdempotency).where(OperatorActionIdempotency.tenant_id == tenant_id, OperatorActionIdempotency.id == operator_action_id))
+        return result.scalar_one_or_none()
 
     @staticmethod
     def _empty_response(action: OperatorActionIdempotency, page: int, page_size: int, audit_page: int, audit_page_size: int) -> CorrelationResponse:
-        return {
-            "execution": None,
-            "traces": {"items": [], "page": page, "page_size": page_size, "total": 0},
-            "audits": {"items": [], "page": audit_page, "page_size": audit_page_size, "total": 0},
-            "operator_actions": [action],
-            "focused_traces": [],
-            "focused_audit": None,
-            "focus_operator_action_id": action.id,
-        }
+        return {"execution": None, "traces": {"items": [], "page": page, "page_size": page_size, "total": 0}, "audits": {"items": [], "page": audit_page, "page_size": audit_page_size, "total": 0}, "operator_actions": [action], "focused_traces": [], "focused_audit": None, "focus_operator_action_id": action.id}
 
-    async def by_execution(
-        self,
-        tenant_id: UUID,
-        execution_id: UUID,
-        *,
-        trace_page: int = 1,
-        trace_page_size: int = 50,
-        audit_page: int = 1,
-        audit_page_size: int = 50,
-        trace_event_type: str | None = None,
-        trace_status: str | None = None,
-        audit_action: str | None = None,
-        audit_status: str | None = None,
-    ) -> CorrelationResponse | None:
+    async def by_execution(self, tenant_id: UUID, execution_id: UUID, *, trace_page: int = 1, trace_page_size: int = 50, audit_page: int = 1, audit_page_size: int = 50, trace_event_type: str | None = None, trace_status: str | None = None, audit_action: str | None = None, audit_status: str | None = None) -> CorrelationResponse | None:
         execution = await self._execution(tenant_id, execution_id)
         if execution is None:
             return None
-        return {
-            "execution": execution,
-            "traces": await self._paged_traces(
-                tenant_id,
-                execution_id,
-                trace_page,
-                trace_page_size,
-                event_type=trace_event_type,
-                status=trace_status,
-            ),
-            "audits": await self._paged_audits(
-                tenant_id,
-                execution_id,
-                audit_page,
-                audit_page_size,
-                action=audit_action,
-                status=audit_status,
-            ),
-            "operator_actions": await self._operator_actions(tenant_id, execution_id),
-            "focused_traces": [],
-            "focused_audit": None,
-        }
+        return {"execution": execution, "traces": await self._paged_traces(tenant_id, execution_id, trace_page, trace_page_size, event_type=trace_event_type, status=trace_status), "audits": await self._paged_audits(tenant_id, execution_id, audit_page, audit_page_size, action=audit_action, status=audit_status), "operator_actions": await self._operator_actions(tenant_id, execution_id), "focused_traces": [], "focused_audit": None}
 
-    async def by_trace(
-        self,
-        tenant_id: UUID,
-        trace_id: str,
-        *,
-        trace_page: int = 1,
-        trace_page_size: int = 50,
-        audit_page: int = 1,
-        audit_page_size: int = 50,
-        trace_event_type: str | None = None,
-        trace_status: str | None = None,
-        audit_action: str | None = None,
-        audit_status: str | None = None,
-    ) -> CorrelationResponse | None:
+    async def by_trace(self, tenant_id: UUID, trace_id: str, *, trace_page: int = 1, trace_page_size: int = 50, audit_page: int = 1, audit_page_size: int = 50, trace_event_type: str | None = None, trace_status: str | None = None, audit_action: str | None = None, audit_status: str | None = None) -> CorrelationResponse | None:
         execution_ids = await self._execution_ids_from_trace(tenant_id, trace_id)
         execution_id = self._resolve_unique_execution(execution_ids, trace_id)
         if execution_id is None:
             return None
         focused_traces = await self._focused_traces(tenant_id, trace_id)
-        result = await self.by_execution(
-            tenant_id,
-            execution_id,
-            trace_page=trace_page,
-            trace_page_size=trace_page_size,
-            audit_page=audit_page,
-            audit_page_size=audit_page_size,
-            trace_event_type=trace_event_type,
-            trace_status=trace_status,
-            audit_action=audit_action,
-            audit_status=audit_status,
-        )
+        result = await self.by_execution(tenant_id, execution_id, trace_page=trace_page, trace_page_size=trace_page_size, audit_page=audit_page, audit_page_size=audit_page_size, trace_event_type=trace_event_type, trace_status=trace_status, audit_action=audit_action, audit_status=audit_status)
         if result is not None:
             result["focused_traces"] = focused_traces
         return result
 
-    async def by_audit(
-        self,
-        tenant_id: UUID,
-        audit_id: UUID,
-        *,
-        trace_page: int = 1,
-        trace_page_size: int = 50,
-        audit_page: int = 1,
-        audit_page_size: int = 50,
-        trace_event_type: str | None = None,
-        trace_status: str | None = None,
-        audit_action: str | None = None,
-        audit_status: str | None = None,
-    ) -> CorrelationResponse | None:
+    async def by_audit(self, tenant_id: UUID, audit_id: UUID, *, trace_page: int = 1, trace_page_size: int = 50, audit_page: int = 1, audit_page_size: int = 50, trace_event_type: str | None = None, trace_status: str | None = None, audit_action: str | None = None, audit_status: str | None = None) -> CorrelationResponse | None:
         audit = await self._audit(tenant_id, audit_id)
         if audit is None:
             return None
@@ -351,34 +174,10 @@ class RuntimeAuditTraceCorrelationService:
             if action is None:
                 return None
             page, page_size, _ = self._page(trace_page, trace_page_size)
-            return {
-                "execution": None,
-                "traces": {"items": [], "page": page, "page_size": page_size, "total": 0},
-                "audits": await self._paged_audits(
-                    tenant_id, None, audit_page, audit_page_size,
-                    action=audit_action, status=audit_status,
-                    operator_action_id=action.id,
-                ),
-                "operator_actions": [action],
-                "focused_traces": await self._focused_traces(tenant_id, audit.trace_id) if audit.trace_id else [],
-                "focused_audit": audit,
-                "focus_audit_id": audit.id,
-                "focus_operator_action_id": action.id,
-            }
+            return {"execution": None, "traces": {"items": [], "page": page, "page_size": page_size, "total": 0}, "audits": await self._paged_audits(tenant_id, None, audit_page, audit_page_size, action=audit_action, status=audit_status, operator_action_id=action.id), "operator_actions": [action], "focused_traces": await self._focused_traces(tenant_id, audit.trace_id) if audit.trace_id else [], "focused_audit": audit, "focus_audit_id": audit.id, "focus_operator_action_id": action.id}
         if execution_id is None:
             return None
-        result = await self.by_execution(
-            tenant_id,
-            execution_id,
-            trace_page=trace_page,
-            trace_page_size=trace_page_size,
-            audit_page=audit_page,
-            audit_page_size=audit_page_size,
-            trace_event_type=trace_event_type,
-            trace_status=trace_status,
-            audit_action=audit_action,
-            audit_status=audit_status,
-        )
+        result = await self.by_execution(tenant_id, execution_id, trace_page=trace_page, trace_page_size=trace_page_size, audit_page=audit_page, audit_page_size=audit_page_size, trace_event_type=trace_event_type, trace_status=trace_status, audit_action=audit_action, audit_status=audit_status)
         if result is not None:
             result["focused_traces"] = await self._focused_traces(tenant_id, audit.trace_id) if audit.trace_id else []
             result["focused_audit"] = audit
@@ -386,67 +185,19 @@ class RuntimeAuditTraceCorrelationService:
             result["focus_operator_action_id"] = audit.operator_action_id
         return result
 
-    async def by_operator_action(
-        self,
-        tenant_id: UUID,
-        operator_action_id: UUID,
-        *,
-        trace_page: int = 1,
-        trace_page_size: int = 50,
-        audit_page: int = 1,
-        audit_page_size: int = 50,
-        trace_event_type: str | None = None,
-        trace_status: str | None = None,
-        audit_action: str | None = None,
-        audit_status: str | None = None,
-    ) -> CorrelationResponse | None:
+    async def by_operator_action(self, tenant_id: UUID, operator_action_id: UUID, *, trace_page: int = 1, trace_page_size: int = 50, audit_page: int = 1, audit_page_size: int = 50, trace_event_type: str | None = None, trace_status: str | None = None, audit_action: str | None = None, audit_status: str | None = None) -> CorrelationResponse | None:
         action = await self._operator_action(tenant_id, operator_action_id)
         if action is None:
             return None
-        execution_id = (
-            action.result_resource_id
-            if action.result_resource_type == "workflow_execution"
-            else action.resource_id if action.resource_type == "workflow_execution" else None
-        )
+        execution_id = action.result_resource_id if action.result_resource_type == "workflow_execution" else action.resource_id if action.resource_type == "workflow_execution" else None
         if execution_id is None:
             trace_page_number, trace_page_size_normalized, _ = self._page(trace_page, trace_page_size)
             audit_page_number, audit_page_size_normalized, _ = self._page(audit_page, audit_page_size)
-            return {
-                "execution": None,
-                "traces": {"items": [], "page": trace_page_number, "page_size": trace_page_size_normalized, "total": 0},
-                "audits": await self._paged_audits(
-                    tenant_id, None, audit_page, audit_page_size,
-                    action=audit_action, status=audit_status,
-                    operator_action_id=action.id,
-                ),
-                "operator_actions": [action],
-                "focused_traces": [],
-                "focused_audit": None,
-                "focus_operator_action_id": action.id,
-            }
-        result = await self.by_execution(
-            tenant_id,
-            execution_id,
-            trace_page=trace_page,
-            trace_page_size=trace_page_size,
-            audit_page=audit_page,
-            audit_page_size=audit_page_size,
-            trace_event_type=trace_event_type,
-            trace_status=trace_status,
-            audit_action=audit_action,
-            audit_status=audit_status,
-        )
+            return {"execution": None, "traces": {"items": [], "page": trace_page_number, "page_size": trace_page_size_normalized, "total": 0}, "audits": await self._paged_audits(tenant_id, None, audit_page, audit_page_size, action=audit_action, status=audit_status, operator_action_id=action.id), "operator_actions": [action], "focused_traces": [], "focused_audit": None, "focus_operator_action_id": action.id}
+        result = await self.by_execution(tenant_id, execution_id, trace_page=trace_page, trace_page_size=trace_page_size, audit_page=audit_page, audit_page_size=audit_page_size, trace_event_type=trace_event_type, trace_status=trace_status, audit_action=audit_action, audit_status=audit_status)
         if result is None:
             return None
-        result["audits"] = await self._paged_audits(
-            tenant_id,
-            None,
-            audit_page,
-            audit_page_size,
-            action=audit_action,
-            status=audit_status,
-            operator_action_id=action.id,
-        )
+        result["audits"] = await self._paged_audits(tenant_id, None, audit_page, audit_page_size, action=audit_action, status=audit_status, operator_action_id=action.id)
         result["focused_traces"] = []
         result["focused_audit"] = None
         result["focus_operator_action_id"] = action.id

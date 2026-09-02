@@ -22,6 +22,14 @@ try {
 
     Write-Host "[3/3] Mandatory tenant-safe real HTTP API gate"
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
+    if($LASTEXITCODE -eq 2){
+        Write-Host "============================================================"
+        Write-Host "[NOT RUN] Tenant-safe Real API validation was not executed because required protected services are unavailable."
+        Write-Host "[INFO] Backend Unit + migration gates passed; Real API gate must be rerun after services are available."
+        Write-Host "[INFO] No service was created, started, restarted, or stopped by this release gate."
+        Write-Host "============================================================"
+        exit 2
+    }
     if($LASTEXITCODE -ne 0){throw "Tenant-safe real API validation failed. Backend gate is blocked."}
 
     Write-Host "============================================================"

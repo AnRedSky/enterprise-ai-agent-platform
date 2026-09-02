@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 
@@ -108,31 +109,11 @@ def _create_delegation(client: httpx.Client, suffix: str) -> tuple[str, str, str
 
 
 async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix: str) -> uuid.UUID:
-    """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。
-
-    Real Gate 必须验证 RuntimeBridge 的版本快照一致性，因此测试 Fixture 不能只改 Delegation。
-    由于 Profile 创建接口不是本 Gate 的验收目标，Fixture 在 Claim 前直接完成数据库装配：
-    Target Agent version 与 Delegation 同时绑定同一个新建 Mock Profile，然后再进入真实 Claim/Worker 链路。
-
-    Args:
-        db: 当前真实 PostgreSQL 异步会话。
-        delegation_id: 待执行 Delegation ID。
-        suffix: 测试唯一后缀，用于避免 Provider/Profile 名称冲突。
-
-    Returns:
-        新建的 Mock Model Profile ID。
-
-    Raises:
-        AssertionError: Delegation、Target Agent version 或其租户对应 Organization 不存在。
-    """
+    """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。"""
     delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
-    target_version = (
-        await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))
-    ).scalar_one()
+    target_version = (await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))).scalar_one()
     target_agent = (await db.execute(select(Agent).where(Agent.id == target_version.agent_id))).scalar_one()
-    organization = (
-        await db.execute(select(Organization).where(Organization.tenant_id == delegation.tenant_id))
-    ).scalar_one_or_none()
+    organization = (await db.execute(select(Organization).where(Organization.tenant_id == delegation.tenant_id))).scalar_one_or_none()
     assert organization is not None
     assert target_agent.owner_id is not None
 
@@ -166,6 +147,19 @@ async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix:
     return mock_profile.id
 
 
+async def _wait_for_terminal_delegation(delegation_id: uuid.UUID, timeout_seconds: float = 30.0) -> AgentDelegation:
+    """等待任一合法 Worker 完成竞争中的 Delegation，不要求测试进程成为 owner。"""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        async with SessionLocal() as db:
+            delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
+            if delegation.status in {"completed", "failed", "cancelled", "timed_out"}:
+                return delegation
+        if asyncio.get_running_loop().time() >= deadline:
+            raise AssertionError(f"Delegation {delegation_id} did not reach a terminal state within {timeout_seconds}s")
+        await asyncio.sleep(0.2)
+
+
 @pytest.mark.asyncio
 async def test_b2_worker_execution_bridge_runs_target_agent_version():
     """验证 B1 Claim 后正式 Delegation Frontier Worker 真正执行 target Agent，并完成 Delegation。"""
@@ -182,36 +176,33 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         tenant_id = delegation_row.tenant_id
 
-    # 这里必须进入正式 Delegation discovery 入口，而不能调用通用 claim_one_frontier()。
-    # 本 Fixture 同时存在父 Workflow Frontier；通用 Frontier 调度优先级允许先消费父任务，
-    # 这会把“parent workflow must not run”送入模型 Provider，并制造与 B2 无关的 503。
+    # 现有 Worker 可以合法地先于本测试实例 Claim。同一个 Delegation 不能要求固定 owner，
+    # 否则会把真实 multi-worker 竞争误判成 B2 失败。
     frontier = await worker._claim_pending_delegation_frontier()
-    assert frontier is not None
-
-    async with SessionLocal() as db:
-        claimed = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-        worker_execution_id = claimed.worker_execution_id
-        assert worker_execution_id is not None
-        assert frontier.execution_id == worker_execution_id
-        context = await AgentDelegationRuntimeBridge.load(
-            db,
-            (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == worker_execution_id))).scalar_one(),
-        )
-        assert context is not None
-        assert context.target_agent_version_id == uuid.UUID(target_version_id)
-        assert context.target_agent_id == uuid.UUID(target_agent_id)
-        assert context.model_profile_id == claimed.model_profile_id
-        assert context.input_data["task_id"] == suffix
-        assert context.selected_context_refs == ("input:task_id",)
-        assert context.allowed_tools == ("tool:fixture.read",)
-        assert context.trace_id == claimed.trace_id
-
-    await worker.execute_frontier(frontier)
+    if frontier is not None:
+        async with SessionLocal() as db:
+            claimed = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+            worker_execution_id = claimed.worker_execution_id
+            assert worker_execution_id is not None
+            assert frontier.execution_id == worker_execution_id
+        await worker.execute_frontier(frontier)
+    else:
+        persisted = await _wait_for_terminal_delegation(delegation_uuid)
+        assert persisted.status in {"completed", "failed"}
 
     async with SessionLocal() as db:
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+        assert persisted.worker_execution_id is not None
         worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == persisted.worker_execution_id))).scalar_one()
-        worker_frontier = (await db.execute(select(WorkflowFrontier).where(WorkflowFrontier.execution_id == worker_execution.id))).scalar_one()
+        context = await AgentDelegationRuntimeBridge.load(db, worker_execution)
+        assert context is not None
+        assert context.target_agent_version_id == uuid.UUID(target_version_id)
+        assert context.target_agent_id == uuid.UUID(target_agent_id)
+        assert context.model_profile_id == persisted.model_profile_id
+        assert context.input_data["task_id"] == suffix
+        assert context.selected_context_refs == ("input:task_id",)
+        assert context.allowed_tools == ("tool:fixture.read",)
+        assert context.trace_id == persisted.trace_id
         assert worker_execution.workflow_version_id == uuid.UUID(workflow_version_id)
         assert worker_execution.status == "completed"
         assert worker_execution.output_data is not None
@@ -219,6 +210,7 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         assert worker_execution.output_data["agent_version"] is not None
         assert persisted.status == "completed"
         assert persisted.ended_at is not None
+        worker_frontier = (await db.execute(select(WorkflowFrontier).where(WorkflowFrontier.execution_id == worker_execution.id))).scalar_one()
         assert worker_frontier.status == "completed"
         assert worker_frontier.worker_owner is None
         assert worker_execution.tenant_id == tenant_id
@@ -243,12 +235,7 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
         assert claimed.worker_execution_id is not None
         stale_worker_execution_id = uuid.uuid4()
         with pytest.raises(HTTPException) as exc_info:
-            await complete_delegation(
-                db=db,
-                tenant_id=delegation_row.tenant_id,
-                delegation_id=delegation_uuid,
-                worker_execution_id=stale_worker_execution_id,
-            )
+            await complete_delegation(db=db, tenant_id=delegation_row.tenant_id, delegation_id=delegation_uuid, worker_execution_id=stale_worker_execution_id)
         assert exc_info.value.status_code == 409
         await db.rollback()
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
@@ -265,12 +252,7 @@ async def test_b3_failed_worker_execution_closes_delegation():
 
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
-        claimed = await claim_delegation(
-            db=db,
-            tenant_id=delegation_row.tenant_id,
-            delegation_id=delegation_row.id,
-            worker_owner=f"b3-failure-worker-{suffix}",
-        )
+        claimed = await claim_delegation(db=db, tenant_id=delegation_row.tenant_id, delegation_id=delegation_row.id, worker_owner=f"b3-failure-worker-{suffix}")
         assert claimed.worker_execution_id is not None
         worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == claimed.worker_execution_id))).scalar_one()
         worker_execution.status = "failed"

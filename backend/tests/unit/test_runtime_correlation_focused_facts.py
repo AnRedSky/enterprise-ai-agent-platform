@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -37,7 +37,10 @@ def _audit():
 
 @pytest.mark.asyncio
 async def test_trace_focus_is_returned_outside_the_paginated_page():
-    service = RuntimeAuditTraceCorrelationService(AsyncMock())
+    # This test replaces all DB-facing collaborators, so the DB object itself must
+    # remain synchronous to avoid creating un-awaited AsyncMock.execute coroutines
+    # during pytest teardown.
+    service = RuntimeAuditTraceCorrelationService(MagicMock())
     focused = [_trace()]
     service._execution_ids_from_trace = AsyncMock(return_value=[EXECUTION_ID])
     service._focused_traces = AsyncMock(return_value=focused)
@@ -59,7 +62,7 @@ async def test_trace_focus_is_returned_outside_the_paginated_page():
 
 @pytest.mark.asyncio
 async def test_audit_focus_is_returned_outside_the_paginated_page():
-    service = RuntimeAuditTraceCorrelationService(AsyncMock())
+    service = RuntimeAuditTraceCorrelationService(MagicMock())
     audit = _audit()
     service._audit = AsyncMock(return_value=audit)
     service.by_execution = AsyncMock(
