@@ -84,6 +84,18 @@ describe("full-site static consistency audit", () => {
     expect(source).not.toContain("ElMessage.error(error instanceof Error ? error.message");
   });
 
+  it("keeps Runtime Correlations on shared state/card primitives and durable facts", () => {
+    const source = readFileSync(resolve(root, "src/views/runtime/components/RuntimeCorrelations.vue"), "utf8");
+    expect(source).toContain('import StatePanel from "@/components/ui/StatePanel.vue"');
+    expect(source).toContain('import SurfaceCard from "@/components/ui/SurfaceCard.vue"');
+    expect(source).not.toContain("<el-card");
+    expect(source).not.toContain("<el-empty");
+    expect(source).toContain("execution.id");
+    expect(source).toContain("trace.trace_id");
+    expect(source).toContain("audit.id");
+    expect(source).toContain("audit.workflow_execution_id");
+  });
+
   it("keeps closed governance navigation anchored to durable IDs", () => {
     const operations = readFileSync(resolve(root, "src/views/integrations/OperationsConsole.vue"), "utf8");
     const correlation = readFileSync(resolve(root, "src/views/integrations/OperationsRuntimeCorrelation.vue"), "utf8");
