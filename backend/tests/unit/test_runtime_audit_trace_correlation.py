@@ -161,16 +161,18 @@ async def test_by_operator_action_rejects_untyped_result_as_execution() -> None:
 async def test_historical_audit_can_resolve_execution_from_tenant_scoped_trace() -> None:
     tenant_id, execution_id = uuid4(), uuid4()
     audit = MagicMock(workflow_execution_id=None, trace_id="legacy-trace")
-    db = MagicMock()
-    db.execute = AsyncMock(
-        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=execution_id))
+    trace_result = MagicMock(
+        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[execution_id])))
     )
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=trace_result)
 
     result = await RuntimeAuditTraceCorrelationService(db)._execution_id_from_audit(tenant_id, audit)
 
     assert result == execution_id
     statement = db.execute.await_args.args[0]
     compiled = str(statement.compile(compile_kwargs={"literal_binds": False}))
+    assert "DISTINCT" in compiled.upper()
     assert "workflow_trace_events.tenant_id" in compiled
     assert "workflow_trace_events.trace_id" in compiled
 
@@ -190,7 +192,9 @@ async def test_historical_audit_without_trace_id_cannot_guess_execution_mapping(
 @pytest.mark.asyncio
 async def test_by_trace_returns_none_for_unknown_tenant_scoped_trace() -> None:
     db = MagicMock()
-    trace_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    trace_result = MagicMock(
+        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    )
     db.execute = AsyncMock(return_value=trace_result)
 
     result = await RuntimeAuditTraceCorrelationService(db).by_trace(uuid4(), "missing-trace")
