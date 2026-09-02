@@ -44,6 +44,8 @@
 | ERR-0036 | 2026-09-02 | Real API Tenant 清理遗漏 Durable Integration Event 外键依赖 |
 | ERR-0037 | 2026-09-02 | Operator Action 幂等成功状态被审计状态覆盖 |
 | ERR-0038 | 2026-09-02 | Operator Action 反查 Audit 范围混入 Execution 生命周期审计 |
+| ERR-0039 | 2026-09-02 | PostgreSQL Real Acceptance 跨事件循环复用 AsyncEngine 连接 |
+| ERR-0040 | 2026-09-02 | Operator Action Result Lineage 两阶段提交边界 |
 
 ## 迁移规则
 
