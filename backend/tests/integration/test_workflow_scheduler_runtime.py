@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, timedelta, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -127,6 +127,10 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                     },
                 )
             )
+            # WorkflowTrigger 与 WorkflowSchedule 目前没有 ORM relationship，SQLAlchemy
+            # 无法从模型关系推导两者的 INSERT 顺序。先 flush trigger，确保数据库 FK
+            # 在创建 schedule 时已经存在；这也是该验收 fixture 的真实持久化前置条件。
+            await setup_session.flush()
             setup_session.add(
                 WorkflowSchedule(
                     id=schedule_id,
