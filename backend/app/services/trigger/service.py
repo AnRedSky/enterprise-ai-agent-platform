@@ -111,7 +111,32 @@ class WorkflowTriggerService:
         await self.db.refresh(trigger)
         return trigger
 
-    async def update(self, trigger: WorkflowTrigger, name: str | None, status: str | None, config: dict | None) -> WorkflowTrigger:
+    async def update(
+        self,
+        trigger: WorkflowTrigger,
+        name: str | None,
+        status: str | None,
+        config: dict | None,
+        *,
+        commit: bool = True,
+    ) -> WorkflowTrigger:
+        """更新 Trigger，并允许调用方控制事务提交边界。
+
+        Args:
+            trigger: 已在当前租户范围内加载的 Trigger。
+            name: 可选新的 Trigger 名称。
+            status: 可选新的 enabled/disabled 状态。
+            config: 可选新的 Trigger 配置。
+            commit: 是否由本方法提交事务；Operator Action 传入 False，使业务变更、幂等事实与审计共用一个事务。
+
+        Returns:
+            更新后的 Trigger ORM 实例。
+
+        Raises:
+            HTTPException: 名称、状态或配置不合法，或数据库唯一约束冲突。
+
+        设计意图：Trigger 更新既被普通 CRUD 调用，也被 Operator Governance 调用。默认提交保持旧调用方兼容；治理路径关闭内部 commit，避免审计失败后留下已提交的 Trigger 状态。
+        """
         if name is not None:
             name = name.strip()
             if not name:
@@ -125,20 +150,35 @@ class WorkflowTriggerService:
                 candidate["secret_hash"] = (trigger.config or {}).get("secret_hash")
             candidate.pop("secret_configured", None)
             trigger.config = self.validate_config(trigger.trigger_type, candidate)
-        try:
-            await self.db.commit()
-        except Exception as exc:
-            from sqlalchemy.exc import IntegrityError
-            if isinstance(exc, IntegrityError):
-                await self.db.rollback()
-                raise HTTPException(409, "同一 Workflow 下 Trigger name 已存在") from exc
-            raise
-        await self.db.refresh(trigger)
+        if commit:
+            try:
+                await self.db.commit()
+            except Exception as exc:
+                from sqlalchemy.exc import IntegrityError
+                if isinstance(exc, IntegrityError):
+                    await self.db.rollback()
+                    raise HTTPException(409, "同一 Workflow 下 Trigger name 已存在") from exc
+                raise
+            await self.db.refresh(trigger)
+        else:
+            await self.db.flush()
         return trigger
 
-    async def delete(self, trigger: WorkflowTrigger) -> None:
+    async def delete(self, trigger: WorkflowTrigger, *, commit: bool = True) -> None:
+        """删除 Trigger，并允许 Operator Governance 将删除与审计放入同一事务。
+
+        Args:
+            trigger: 已在当前租户范围内加载的 Trigger。
+            commit: 是否由本方法提交事务；治理路径传入 False。
+
+        Returns:
+            None。commit=False 时删除仅在当前事务中生效。
+        """
         await self.db.delete(trigger)
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
+        else:
+            await self.db.flush()
 
     async def _get_published_version(self, workflow: Workflow) -> WorkflowVersion:
         if workflow.status != "published" or workflow.published_version_id is None:
