@@ -90,7 +90,8 @@ describe("AgentWorkbench UI-04", () => {
     });
     const wrapper = mountView(); await flushPromises();
 
-    (wrapper.vm as any).chatContextState = "success";
+    await (wrapper.vm as any).openChat(agentRow);
+    await vi.waitFor(() => expect((wrapper.vm as any).chatContextState).toBe("success"));
     (wrapper.vm as any).input = "hello";
     await (wrapper.vm as any).execute();
 
