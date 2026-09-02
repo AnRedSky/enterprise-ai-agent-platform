@@ -11,10 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
-# The tenant-safe bootstrap is executed as a standalone script by PowerShell.
-# Python therefore puts this script's directory (not backend/) on sys.path.
-# Add the backend application root explicitly before importing app.* for the
-# fixture-only database recovery path.
+# Tenant-safe bootstrap 作为独立脚本由 PowerShell 调用，因此显式加入 backend 根目录。
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
@@ -31,7 +28,7 @@ _BOOTSTRAP_ORGANIZATION_ID: str | None = None
 
 
 def _run_fixture_db(operation):
-    """Run one fixture-only DB operation on a fresh async engine/loop."""
+    """在独立事件循环和专用 Engine 中执行仅用于测试夹具恢复的数据库操作。"""
     from app.core.config import settings
 
     async def _run():
@@ -47,7 +44,7 @@ def _run_fixture_db(operation):
 
 
 def _existing_tenant_organization(tenant_id: str):
-    """Read the tenant's singleton Organization for fixture recovery."""
+    """读取指定 Tenant 已存在的唯一 Organization，用于旧 Real API 夹具恢复。"""
     from app.models.organization import Organization
     from uuid import UUID
 
@@ -61,12 +58,7 @@ def _existing_tenant_organization(tenant_id: str):
 
 
 def _ensure_existing_organization_owner(organization_id: str, user_id: str) -> str:
-    """Make the fresh fixture user the sole active owner of a reused Organization.
-
-    This is test-fixture recovery only. It restores a deterministic owner boundary
-    when the local tenant already contains an Organization from an earlier real
-    API run, while the actual ownership mutations remain exercised through HTTP.
-    """
+    """确保本轮 owner 用户是唯一 active owner，供复用旧 Organization 的夹具使用。"""
     from app.models.organization import OrganizationMembership
     from uuid import UUID
 
@@ -105,7 +97,7 @@ def _ensure_existing_organization_owner(organization_id: str, user_id: str) -> s
 
 
 def _ensure_existing_organization_membership(organization_id: str, user_id: str) -> str:
-    """Create an active admin membership for the fresh fixture user."""
+    """恢复指定用户的 active admin membership，仅用于兼容旧测试夹具。"""
     from app.models.organization import OrganizationMembership
     from uuid import UUID
 
@@ -138,7 +130,7 @@ def _ensure_existing_organization_membership(organization_id: str, user_id: str)
 
 
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
-    """Create or reuse the owner's tenant-scoped Organization fixture."""
+    """创建或恢复 owner Tenant 的 Organization，并生成自动加入后的 admin 测试成员。"""
     global _BOOTSTRAP_ORGANIZATION_ID
 
     with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as owner_client:
@@ -191,8 +183,7 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
         )
 
     _BOOTSTRAP_ORGANIZATION_ID = str(organization["id"])
-    # Whether the Organization was newly created or recovered, establish a
-    # deterministic fixture owner before exercising ownership through HTTP.
+    # 旧 Organization 复用时，通过数据库夹具恢复 owner；实际成员权限仍通过 HTTP 更新。
     _ensure_existing_organization_owner(_BOOTSTRAP_ORGANIZATION_ID, owner_user_id)
 
     member_username = f"api_real_org_member_{uuid.uuid4().hex[:12]}"
@@ -203,11 +194,30 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
         "/auth/register",
         json={"username": member_username, "password": member_password},
     ).json()
+
+    # /auth/register 已按当前默认 Tenant 的 Organization 语义自动创建 member membership。
+    # 这里不能再次 POST /members，否则会稳定命中“用户已经属于该 Organization”的业务冲突。
+    members = _BOOTSTRAP.request(
+        client,
+        "GET",
+        f"/organizations/{organization['id']}/members",
+    ).json()
+    membership = next(
+        (item for item in members.get("items", []) if str(item.get("user_id")) == str(member["user_id"])),
+        None,
+    )
+    if membership is None:
+        raise RuntimeError(
+            "Registered fixture user is not present in the default Organization membership list: "
+            f"user_id={member['user_id']} organization_id={organization['id']}"
+        )
+
+    # 新注册用户默认是 member；通过正式 HTTP 管理接口提升为 admin，保持权限变更仍经过 API。
     membership = _BOOTSTRAP.request(
         client,
-        "POST",
-        f"/organizations/{organization['id']}/members",
-        json={"user_id": member["user_id"], "role": "admin"},
+        "PATCH",
+        f"/organizations/{organization['id']}/members/{membership['id']}",
+        json={"role": "admin"},
     ).json()
 
     with httpx.Client(base_url=_BOOTSTRAP.BASE_URL, timeout=_BOOTSTRAP.TIMEOUT) as member_client:
@@ -227,7 +237,7 @@ def create_governed_mock_agent(
     model_id: str = "mock-http-404",
     name_prefix: str = "API Retry Agent",
 ) -> str:
-    """Create a deterministic mock agent through the governed Provider/Profile path."""
+    """通过受治理 Provider/Profile 路径创建确定性的 mock Agent。"""
     if not _BOOTSTRAP_ORGANIZATION_ID:
         raise RuntimeError("Governed mock agent requires an initialized Organization fixture")
 
