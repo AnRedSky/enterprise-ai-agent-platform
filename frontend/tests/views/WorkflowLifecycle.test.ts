@@ -4,19 +4,20 @@ import WorkflowLifecycle from "@/views/workflows/WorkflowLifecycle.vue";
 import PageHeader from "@/components/ui/PageHeader.vue";
 import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
+import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 import { workflowApi } from "@/api/workflows";
 
 const router = { push: vi.fn() };
 const route = { query: {} as Record<string, string> };
 vi.mock("vue-router", () => ({ useRouter: () => router, useRoute: () => route }));
-vi.mock("@/api/workflows", () => ({ workflowApi: { list: vi.fn(), versions: vi.fn(), triggers: vi.fn(), listExecutions: vi.fn(), schedule: vi.fn() } }));
+vi.mock("@/api/workflows", () => ({ workflowApi: { list: vi.fn(), versions: vi.fn(), triggers: vi.fn(), listExecutions: vi.fn(), schedule: vi.fn(), invokeTrigger: vi.fn() } }));
 
 const global = {
   stubs: {
     "el-card": { template: "<div><slot name='header'/><slot/></div>" },
     "el-select": { props: ["modelValue"], emits: ["update:modelValue"], template: "<div><slot/></div>" },
     "el-option": { template: "<option><slot/></option>" },
-    "el-button": { props: ["loading"], emits: ["click"], template: `<button @click="$emit('click')"><slot/></button>` },
+    "el-button": { props: ["loading", "disabled"], emits: ["click"], template: `<button :disabled="disabled" @click="$emit('click')"><slot/></button>` },
     "el-tag": { template: "<span><slot/></span>" },
     "el-empty": { props: ["description"], template: "<div>{{ description }}</div>" },
     "el-row": { template: "<div><slot/></div>" },
@@ -27,6 +28,7 @@ const global = {
     "el-table-column": { template: "<span/>" },
     "el-alert": { props: ["title"], template: "<div>{{ title }}</div>" },
     "el-icon": { template: "<span><slot/></span>" },
+    "el-dialog": { props: ["modelValue", "title"], template: "<div v-if=\"modelValue\"><strong>{{ title }}</strong><slot/><slot name='footer'/></div>" },
   },
   directives: { loading: () => undefined },
 };
@@ -34,14 +36,16 @@ const global = {
 const workflow = { id: "w1", name: "订单审批", description: "", owner_id: "u1", tenant_id: "t1", status: "published", published_version_id: "v2", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:10:00Z" };
 const version = { id: "v2", workflow_id: "w1", version: 2, definition: {}, status: "published", created_by: "u1", created_at: "2026-08-30T08:05:00Z" };
 const execution = { id: "e1", tenant_id: "t1", workflow_id: "w1", workflow_version_id: "v2", created_by: "u1", status: "completed", input_data: {}, created_at: "2026-08-30T08:00:00Z" };
+const manualTrigger = { id: "t1", tenant_id: "t1", workflow_id: "w1", name: "人工执行", trigger_type: "manual", status: "enabled", config: {}, created_by: "u1", created_at: "2026-08-30T08:00:00Z", updated_at: "2026-08-30T08:00:00Z" };
 
 beforeEach(() => {
   vi.clearAllMocks();
   route.query = {};
   vi.mocked(workflowApi.list).mockResolvedValue({ data: [workflow] } as never);
   vi.mocked(workflowApi.versions).mockResolvedValue({ data: [version] } as never);
-  vi.mocked(workflowApi.triggers).mockResolvedValue({ data: [] } as never);
+  vi.mocked(workflowApi.triggers).mockResolvedValue({ data: [manualTrigger] } as never);
   vi.mocked(workflowApi.listExecutions).mockResolvedValue({ data: [execution] } as never);
+  vi.mocked(workflowApi.invokeTrigger).mockResolvedValue({ data: { ...execution, id: "e2", status: "pending" } } as never);
 });
 
 describe("WorkflowLifecycle", () => {
@@ -110,5 +114,20 @@ describe("WorkflowLifecycle", () => {
     expect(workflowApi.versions).toHaveBeenCalledTimes(2);
     expect(workflowApi.triggers).toHaveBeenCalledTimes(2);
     expect(workflowApi.listExecutions).toHaveBeenCalledTimes(2);
+  });
+
+  it("手动触发器可确认并提交一次真实 Execution，然后刷新生命周期数据", async () => {
+    const wrapper = mount(WorkflowLifecycle, { global });
+    await vi.waitFor(() => expect(wrapper.text()).toContain("立即运行"));
+
+    const action = wrapper.findAll("button").find((button) => button.text() === "立即运行");
+    expect(action).toBeDefined();
+    await action!.trigger("click");
+    expect(wrapper.findComponent(ConfirmDialog).exists()).toBe(true);
+    expect(wrapper.text()).toContain("本次使用空输入数据，是否继续？");
+
+    await (wrapper.vm as any).confirmInvoke();
+    expect(workflowApi.invokeTrigger).toHaveBeenCalledWith("w1", "t1", {});
+    await vi.waitFor(() => expect(workflowApi.listExecutions).toHaveBeenCalledTimes(2));
   });
 });
