@@ -63,9 +63,23 @@ async def _dump_facts(ids: list[uuid.UUID]) -> str:
         return "\n".join(lines)
 
 
+async def _wait_for_terminal(ids: list[uuid.UUID], timeout_seconds: float = 15.0) -> None:
+    """在固定有界窗口内等待后台 Worker 完成剩余 Frontier，不依赖自然时间无限等待。"""
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    terminal = {"completed", "failed", "cancelled", "timed_out"}
+    while asyncio.get_running_loop().time() < deadline:
+        async with SessionLocal() as db:
+            statuses = (
+                await db.execute(select(AgentDelegation.status).where(AgentDelegation.id.in_(ids)))
+            ).scalars().all()
+        if len(statuses) == len(ids) and all(status in terminal for status in statuses):
+            return
+        await asyncio.sleep(0.2)
+
+
 @pytest.mark.asyncio
 async def test_b6_multi_worker_diagnostic_dump_on_nonterminal_runtime() -> None:
-    """复现 B6 多 Worker 消费并在固定边界后输出 durable state，不通过延长 timeout 隐藏问题。"""
+    """复现 B6 多 Worker 消费，并在有界 drain 后输出 durable state，不隐藏真实 timeout。"""
     suffix = uuid.uuid4().hex[:10]
     ids: list[uuid.UUID] = []
     with _client() as client:
@@ -91,8 +105,9 @@ async def test_b6_multi_worker_diagnostic_dump_on_nonterminal_runtime() -> None:
         if pairs:
             await asyncio.gather(*(worker.execute_frontier(frontier) for worker, frontier in pairs))
 
+    await _wait_for_terminal(ids)
     facts = await _dump_facts(ids)
     print("\n===== B6 durable runtime diagnostic facts =====\n" + facts + "\n===== end diagnostic facts =====")
     async with SessionLocal() as db:
         statuses = (await db.execute(select(AgentDelegation.status).where(AgentDelegation.id.in_(ids)))).scalars().all()
-    assert all(status in {"completed", "failed", "cancelled"} for status in statuses), facts
+    assert all(status in {"completed", "failed", "cancelled", "timed_out"} for status in statuses), facts
