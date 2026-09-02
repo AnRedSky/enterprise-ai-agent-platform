@@ -18,22 +18,19 @@ async def _dispose_database_engine_between_async_tests(request):
     """隔离 pytest 异步事件循环与 SQLAlchemy 连接池的生命周期。
 
     Args:
-        request: 当前 pytest 测试上下文，用于判断测试是否属于需要外部数据库连接的场景。
+        request: 当前 pytest 测试上下文。保留该参数用于维持 fixture 的标准测试上下文接口。
 
     Returns:
-        无；数据库集成测试结束后释放本测试事件循环创建的数据库连接。
+        无；每个异步测试结束后释放当前测试可能创建的数据库连接。
 
     设计边界：pytest-asyncio 可以为不同异步测试创建不同事件循环，而 AsyncEngine 的连接池
-    会缓存绑定旧事件循环的 asyncpg Connection。若不在数据库集成测试之间释放连接池，后续测试
-    可能复用已经关闭事件循环上的连接，表现为 `Event loop is closed`、`proactor.send` 或
-    `Connection._cancel was never awaited` 警告。显式使用 function loop scope，使 dispose 与
-    创建数据库连接的测试事件循环处于同一生命周期。生产进程仍使用同一事件循环，不受该测试隔离措施影响。
+    会缓存绑定旧事件循环的 asyncpg Connection。只按 `integration` / `real_api` 标记释放连接
+    不足以覆盖未标记但实际访问数据库的测试，连接可能跨测试保留并在后续同步测试结束时以
+    `ResourceWarning: unclosed socket` 形式暴露。统一在每个异步测试结束时 dispose，避免测试
+    标记遗漏导致连接池跨事件循环泄漏。生产进程仍使用同一事件循环，不受该测试隔离措施影响。
     """
+    del request
     try:
         yield
     finally:
-        if (
-            request.node.get_closest_marker("integration") is not None
-            or request.node.get_closest_marker("real_api") is not None
-        ):
-            await engine.dispose()
+        await engine.dispose()
