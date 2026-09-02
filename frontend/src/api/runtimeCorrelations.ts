@@ -84,6 +84,10 @@ export type RuntimeCorrelationResponse = {
   traces: RuntimeCorrelationPage<RuntimeCorrelationTrace>;
   audits: RuntimeCorrelationPage<RuntimeCorrelationAudit>;
   operator_actions: RuntimeCorrelationOperatorAction[];
+  /** Exact Trace Durable Facts for a Trace focus, independent of list pagination. */
+  focused_traces?: RuntimeCorrelationTrace[];
+  /** Exact Audit Durable Fact for an Audit focus, independent of list pagination. */
+  focused_audit?: RuntimeCorrelationAudit | null;
   focus_audit_id?: string | null;
   focus_operator_action_id?: string | null;
 };
