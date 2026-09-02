@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
 - 当前任务：**Operator Action → Audit → Result Resource → Execution/Trace 治理闭环与数据库事实源对齐**。
-- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**、**Runtime Audit / Trace Correlation 响应 Contract 硬化与历史审计关联硬化**、**Operator Audit Query Service / API Contract 第一实现**、**Operator Audit 管理员访问治理**、**Canonical Operator Audit 查询索引事实源对齐**。
+- 最近完成：**II-01 Backend Operator Action Governance**、**II-02 Global Runtime Operations**、**II-03 Worker / Scheduler Diagnostics 第一切片**、**II-04 Audit / Trace Correlation Backend 第一切片**、**II-05 Controlled Batch Operations Backend 第一切片**、**II-06 Runtime Audit Query Backend 第一切片与查询性能强化**、**II-07 actor 精确过滤、actor + action、action + outcome 组合过滤硬化与查询响应契约硬化**、**Runtime Audit / Trace Correlation 响应 Contract 与历史审计关联硬化**、**Operator Audit Query Service / API Contract 第一实现**、**Operator Audit 管理员访问治理**、**Canonical Operator Audit 查询索引事实源对齐**、**II-08 Runtime Correlation Audit Fact Visibility Contract 扩展**、**II-09 Operator Action Result Lineage Acceptance 实现**。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -29,11 +29,14 @@
 - Phase 2.10-II / II-07 Runtime Audit Query 主体、组合过滤及响应契约硬化已完成 Backend 实现；
 - Runtime Audit / Trace Correlation 响应 Contract 已从 `list[Any]` 收紧为明确的 Trace / Audit Item 类型，并增加 Trace ID 输入边界；
 - Runtime Audit / Trace Correlation 历史审计恢复路径已补齐：正式 `workflow_execution_id` 优先，缺失时通过 tenant-scoped `trace_id` 恢复当前 Workflow Execution，不猜测旧 `execution_id` 映射；
+- Runtime Trace Resolution 已补齐重复 Trace Event 与跨 Execution 歧义保护：同一 Execution 的重复 Trace Event 使用唯一 Execution 映射，跨 Execution 的同 Trace ID 返回 409，不通过首行猜测；
 - Operator Audit Query Service 已基于 AuditLog 唯一事实源实现 tenant-scoped 分页、精确过滤和时间窗口校验；
 - Operator Audit Query API Contract 已实现，响应模型明确为 `OperatorAuditQueryResponse` / `OperatorAuditItem`，查询参数包含 page、page_size、action、operator_action_id、resource_type、resource_id、actor_id、status、workflow_execution_id、trace_id、since、until；
 - Operator Audit Query 已增加 admin-only 访问治理；
 - `0051_operator_audit_query_indexes` 已将 Canonical Operator Audit 常用 tenant-scoped 查询索引正式落到 `audit_logs`；
-- `0055_operator_audit_operator_action_index` 已为直接 Operator Action → AuditLog 查询补充 tenant-scoped 复合索引。
+- `0055_operator_audit_operator_action_index` 已为直接 Operator Action → AuditLog 查询补充 tenant-scoped 复合索引；
+- Runtime Correlation 的 `AuditLogItem` 已暴露既有 `resource_type`、`resource_id`、`request_id`、`trace_id`，使 Execution / Trace / Audit / Operator Action 深链响应能够完整表达已有审计事实；
+- **II-09 已新增 Retry Operator Action → Idempotency Result Resource → AuditLog → Workflow Execution → Workflow Trace 的真实 PostgreSQL 验收测试与 Gate。**
 
 ## 3. 最新本地反馈与根因
 
@@ -46,6 +49,8 @@
 
 根因不是测试数据或服务启动问题，而是历史 `0013_remove_legacy_audit_execution_fk` 分支从 `0012_execution_event_metadata` 独立产生后，一直没有被后续 Operator Governance merge 收敛。此前 `0054_merge_operator_governance_heads` 只合并了 `0048`、`0051`、`0053` 三条 Operator Governance 分支，`0055` 又继续从 `0054` 向前形成新的 head，因此历史 `0013` 仍然保持为独立 head。
 
+另外，开发者本轮反馈发现 Runtime Correlation Contract 测试将 nullable `resource_id` / `trace_id` 错误地断言为顶层 `type: string`，实际 OpenAPI 3.1 schema 使用 nullable union 表达，导致 `KeyError: 'type'`。该问题属于测试 Contract 断言根因，不是生产数据模型错误。
+
 ## 4. 当前 Backend 修复
 
 - 为 `0048_operator_action_audit_lineage` 保留 `depends_on = "0049_operator_action_idempotency"`，确保全新数据库按 DDL 依赖顺序执行；
@@ -54,7 +59,12 @@
 - **新增 `0056_merge_legacy_audit_and_operator_governance_heads`，以 `0055_operator_audit_operator_action_index` 与 `0013_remove_legacy_audit_execution_fk` 为双父节点，正式收敛历史 AuditLog 分支与当前 Operator Governance 分支；**
 - 不修改已有 revision ID，不通过 `stamp`、手工修改 `alembic_version` 或删除历史 migration 绕过图结构；
 - Operator Audit Contract 中管理员路径已使用 Service mock 隔离真实数据库，保证 API Contract 不因本地 schema 漂移而误报 Contract 失败；
-- `26_operator_audit_query_performance_gate.ps1` 继续严格执行 `uv run alembic upgrade head` 与唯一 head 校验，并保持不自动启动任何服务。
+- `26_operator_audit_query_performance_gate.ps1` 继续严格执行 `uv run alembic upgrade head` 与唯一 head 校验，并保持不自动启动任何服务；
+- Runtime Trace Resolution Regression Gate 已补齐重复 Trace 与跨 Execution 歧义验证，并通过开发者本地反馈；
+- Runtime Correlation Audit Item Contract 已补齐既有审计资源与 Trace 字段，不新增数据库列；
+- **Runtime Correlation Contract 测试已改为按 nullable schema 语义断言，不再错误绑定 Pydantic / OpenAPI 的单一序列化形态；**
+- **新增 `test_operator_action_result_lineage_acceptance.py`，通过正式 Operator Action Governance Service 验证 Retry 的 Idempotency Result Resource、Audit、Execution 与 Trace 完整链路；**
+- **新增 `25_operator_action_result_lineage_gate.ps1`，只做 PostgreSQL readiness 检查和服务边界检查，不自动启动任何受保护服务。**
 
 ## 5. 下一执行顺序
 
@@ -62,9 +72,9 @@
 ① 开发者同步远端 main 最新提交
 ② 执行 uv run alembic heads，确认仅有 0056_merge_legacy_audit_and_operator_governance_heads
 ③ 执行 uv run alembic upgrade head
-④ 重新执行 Operator Governance Gate
-⑤ 确认 Operator Action → Audit → Result Resource PostgreSQL Acceptance
-⑥ 扫描 Execution / Trace 端到端治理链仍存在的真实业务缺口
+④ 执行 Runtime Correlation Contract regression
+⑤ 执行 II-09 Operator Action Result Lineage Real PostgreSQL Acceptance / Gate
+⑥ 扫描 Execution / Trace / Audit / Operator Action 端到端治理链仍存在的真实业务缺口
 ⑦ Backend-first 推进下一项 Operator Governance / Audit 能力
 ⑧ 前端测试与 Browser E2E 暂不作为当前 Backend 主线阻塞条件
 ```

@@ -33,6 +33,20 @@ def test_runtime_correlation_requires_bearer_authentication():
     assert response.status_code == 401
 
 
+def _assert_nullable_string_schema(schema: dict) -> None:
+    """验证 OpenAPI 3.1 下字符串字段的 nullable 表达，不绑定 Pydantic 的具体序列化形态。"""
+    if schema.get("type") == "string":
+        assert schema.get("nullable") is True
+        return
+    if isinstance(schema.get("type"), list):
+        assert "string" in schema["type"]
+        assert "null" in schema["type"]
+        return
+    branches = schema.get("anyOf")
+    assert isinstance(branches, list)
+    assert {branch.get("type") for branch in branches} == {"string", "null"}
+
+
 def test_runtime_correlation_exposes_concrete_trace_and_audit_item_schemas():
     schemas = app.openapi()["components"]["schemas"]
     correlation = schemas["RuntimeCorrelationResponse"]
@@ -45,6 +59,11 @@ def test_runtime_correlation_exposes_concrete_trace_and_audit_item_schemas():
     audit_page = schemas["RuntimeCorrelationAuditPage"]
     assert trace_page["properties"]["items"]["items"]["$ref"].endswith("/WorkflowTraceItem")
     assert audit_page["properties"]["items"]["items"]["$ref"].endswith("/AuditLogItem")
+
+    audit_item = schemas["AuditLogItem"]["properties"]
+    assert audit_item["resource_type"]["type"] == "string"
+    _assert_nullable_string_schema(audit_item["resource_id"])
+    _assert_nullable_string_schema(audit_item["trace_id"])
 
 
 def test_runtime_trace_identifier_exposes_max_length_contract():
