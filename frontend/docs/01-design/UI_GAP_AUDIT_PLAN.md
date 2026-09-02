@@ -33,10 +33,10 @@
 
 | 优先级 | 页面 | UI-03 | UI-04 | UI-05 | 深链/诊断 | 状态 |
 |---|---|---|---|---|---|---|
-| P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | **P0-02-A 已审计并补回归** | 待验证 |
+| P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | P0-02-A 已审计并补回归 | 待验证 |
 | P0 | Workflow Lifecycle | 已建立 | 已建立 | 核心闭环已建立 | 已建立 | 基本完成 |
-| P0 | Workflows | 已建立 | **P0-01-B 已补齐** | **P0-01-B 已补齐** | durable ID 保持 | 待验证 |
-| P0 | Agents | 基础模式已建立 | Debug 已收敛 | 待完整审计 | Runtime 链路待强化 | 进行中 |
+| P0 | Workflows | 已建立 | P0-01-B 已补齐 | P0-01-B 已补齐 | durable ID 保持 | 待验证 |
+| P0 | Agents | 基础模式已建立 | Debug 已收敛 | **P0-03-A 已补齐关键防护** | Runtime 链路待强化 | 待验证 |
 | P1 | Knowledge | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Tools | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Organizations | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
@@ -108,14 +108,7 @@ Targeted test：`frontend/tests/views/WorkflowsUI03.test.ts`。
 
 ### P0-01-B Workflows UI-04/05
 
-已完成第一轮补齐：
-
-- Version 区域增加 Loading / Empty / Error / Permission 状态；
-- Execution / Audit 失败时清理 stale 数据，避免旧数据继续伪装成当前事实；
-- Trace 增加 Loading 状态，并在请求期间阻止重复查询；
-- Create / Edit / Delete / Create Version / Publish 增加统一 action loading 与并发保护；
-- 已归档 Workflow 保持只读，危险操作仍由确认框保护；
-- 成功状态继续以 Backend refresh 后的数据为准，不本地伪造持久状态。
+已完成第一轮补齐：Version Loading/Empty/Error/Permission、Execution/Audit stale-data 清理、Trace Loading 与重复查询保护、Create/Edit/Delete/Create Version/Publish action loading 与并发保护、Archived read-only 与确认框保护。
 
 Targeted regression：`frontend/tests/views/WorkflowsUI04UI05.test.ts`。
 
@@ -123,31 +116,36 @@ Targeted regression：`frontend/tests/views/WorkflowsUI04UI05.test.ts`。
 
 ### P0-02-A Runtime Execution / Correlation 深链状态恢复
 
-代码审计结论：`RuntimeExecutions.vue` 已以真实 `execution_id` 作为深链恢复主键；当 URL 中的 `execution_id` 不在当前分页结果中时，`load()` 会直接调用 `openById(execution_id)` 获取持久化详情，而不是根据列表位置推断。Execution 关系导航使用后端返回的 `workflow_id` 与目标 Execution ID，source 使用固定的 `runtime-relation`。
+代码审计确认 `RuntimeExecutions.vue` 使用真实 `execution_id` 恢复深链；当目标 Execution 不在当前分页列表中时直接 `openById(execution_id)`，不通过列表位置推断。关系导航使用后端 `workflow_id` 与目标 Execution ID，并固定携带 `source=runtime-relation`。
 
-新增 targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，覆盖：
-
-- 深链 Execution 不在当前分页列表时仍按精确 `execution_id` 恢复；
-- 关系导航保持真实目标 Execution ID，并携带后端 workflow ID。
-
-本轮未新增 Backend Contract；仅对既有 durable-ID 行为增加回归保护。
+Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，覆盖分页列表缺少目标 Execution 时的精确恢复及关系导航 durable ID。
 
 当前测试状态：**未执行**。
 
-### P0-03 Agent Debug
+### P0-03-A Agent Workbench UI-05
+
+本轮完成关键操作安全修复：
+
+- 移除 `发布最新版本` 入口；原实现通过 `listVersions(agent.id)[0]` 依赖数组顺序选择版本，不符合 durable fact 规则；现在必须在版本列表中基于明确 `version.id` 发布。
+- Archive 增加 `archivingAgentId` loading 与重复操作保护。
+- Create / Create Version / Publish 增加并发保护，并在请求期间保持取消按钮不可重复提交。
+- Archive 继续要求明确确认，取消确认不会调用后端。
+- 成功操作继续 `load()`，以 Backend 返回事实刷新页面状态。
+
+新增 targeted regression：`frontend/tests/views/AgentWorkbenchUI05.test.ts`，覆盖显式 version ID 发布、无“发布最新版本”推断入口、Archive confirmation、取消归档与成功刷新。
+
+当前测试状态：**未执行**。
+
+### P0-04 Agent Debug
 
 第一批已开始实施。`AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
-
-### P0-04 Agent Workbench
-
-当前审计已确认 `AgentWorkbench` 已覆盖 Create / Version / Publish / Archive，以及 Debug Chat 的加载、权限、错误、取消生成和成功状态；仍需继续核对 UI-05 的确认、重复提交保护、成功刷新和 Debug → Runtime 上下文闭环。该项暂不标记完成。
 
 ## 8. 下一批原子任务
 
 1. `P0-01-A`: 执行 `WorkflowsUI03.test.ts`，修复实际失败项。
 2. `P0-01-B`: 执行 `WorkflowsUI04UI05.test.ts`，修复实际失败项。
 3. `P0-02-A`: 执行 `RuntimeDeepLinkRecovery.test.ts`，修复实际失败项。
-4. `P0-03-A`: Agent Workbench UI-05 操作闭环与 Debug → Runtime 上下文补齐。
+4. `P0-03-A`: 执行 `AgentWorkbenchUI05.test.ts`，修复实际失败项。
 5. `P0-03-B`: Agent Debug → Runtime durable ID 回归。
 6. `P1-01-A`: Knowledge UI-03/UI-04/UI-05 Gap Audit。
 7. `P1-02-A`: Tools UI-03/UI-04/UI-05 Gap Audit。
@@ -220,7 +218,7 @@ targeted test
 | 1 | P0-01-A | Workflows 页面公共 Header / SurfaceCard / 列表状态 | **待验证** |
 | 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | **待验证** |
 | 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | **待验证** |
-| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | 开发中 |
+| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | **待验证** |
 | 5 | P0-03-B | Agent Debug → Runtime durable ID 回归 | 待处理 |
 | 6 | P1-01-A | Knowledge 页面 Gap Audit | 待处理 |
 | 7 | P1-02-A | Tools 页面 Gap Audit | 待处理 |
