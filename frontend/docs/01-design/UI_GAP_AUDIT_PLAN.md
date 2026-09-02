@@ -29,9 +29,9 @@
 | P1 | Organizations | 已补齐 | 已补齐 | 已补齐 | 待验证 |
 | P1 | Model Providers | 已补齐 | 已补齐 | 已补齐 | 待验证 |
 | P1 | Integrations | 已补齐 | 已补齐 | 已有真实创建闭环 | 待验证 |
-| P1 | Operations Console | 第一轮建立统一 PageHeader Shell | 子工作台待统一 | 现有真实操作待收敛 | 开发中 |
-| P1 | Audit | 第一轮建立统一 PageHeader Shell | 已有五态 | 读操作为主 | 开发中 |
-| P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 开发中 |
+| P1 | Operations Console | 已建立 | 已收敛 | 已收敛 | 本轮收口完成 |
+| P1 | Audit | 已建立 | 已收敛 | 只读查询闭环 | 本轮收口完成 |
+| P1 | Dashboard | 已建立 | 已收敛 | 以导航为主 | 本轮收口完成 |
 | P1 | Workflow Triggers | 已迁移共享状态与 SurfaceCard | 已补齐页面/Trigger/Scheduler 五态子集 | 已补齐按实体 ID 的 action loading、确认与 Backend refresh | 本轮收口 |
 
 ## 3. 已完成的代码主线
@@ -114,62 +114,72 @@ Targeted：`frontend/tests/views/IntegrationsUI03UI05.test.ts`。
 
 实际路由为 `/runtime/operations`，页面主体为 `integrations/OperationsConsole.vue`；Backend Contract 已确认覆盖 Runtime Overview、Global Posture、Alert、Provider、Metrics、Runtime Audit、Dead Letter replay 等既有子工作台。
 
-本轮完成第一层公共 UI 壳层迁移：
+本轮已完成内部统一收口：
 
-- 新增 `OperationsConsoleWorkbench.vue`，使用统一 `PageHeader`；
-- `/runtime/operations` 改由共享页面壳层承载，保留既有子工作台与真实 API；
-- 保留窗口范围、刷新和现有运维操作，不改变 Backend Contract；
-- 不引入推测 API，不改变 Provider/Alert/Delivery durable ID；
-- Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`，**未执行**。
+- 页面壳层与内部子工作台统一使用 `PageHeader` / `PageToolbar` / `MetricCard` / `SurfaceCard` / `StatePanel`；
+- 各独立查询域维护自己的 Loading / Empty / Error / Permission 语义；
+- reload 失败清空受影响的旧数据，避免 stale-data；
+- Provider / Alert / Dead Letter 等 mutation 使用实体 durable ID、action loading、duplicate-submit protection；
+- mutation 成功后重新读取 Backend facts，不使用本地 optimistic rollback 作为最终状态；
+- 高影响操作使用确认闭环；
+- Operations → Runtime / Audit → Runtime 保留真实 `execution_id` / `workflow_execution_id` / `audit_id` / `delivery.id`；
+- Runtime correlation 仅依据 Backend 返回的 durable correlation facts，不按列表位置推断。
 
-剩余必须继续收敛：Operations Console 内部 `PageToolbar` / `SurfaceCard` / `MetricCard` / `StatePanel` 五态、操作错误态、后端刷新真值、权限态以及 Runtime correlation。
+Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`、`frontend/tests/views/OperationsRuntimeCorrelation.test.ts`。  
+状态：**未执行**。
 
 ### P1-07-A Audit
 
-第一轮完成审计页公共壳层与 Runtime correlation 基线：
+`/runtime/audit` 已完成内部一致性收口：
 
-- 新增 `AuditLogWorkbench.vue` 并统一使用 `PageHeader`；
-- `/runtime/audit` 通过共享页面壳层进入既有 Audit 子工作台；
-- Audit → Runtime 使用后端返回的 `execution_id` 构造 `/runtime?execution_id=...&source=audit`，不依赖表格位置或分页顺序；
-- 保留现有 `StatePanel` 的 Loading / Permission / Error / Empty / Success 语义；
-- Targeted：`frontend/tests/views/AuditLogUI03Correlation.test.ts`，**未执行**。
+- `AuditLogWorkbench.vue` 使用统一 `PageHeader`；
+- `AuditLogPanel.vue` 内部统一使用 `PageToolbar` / `SurfaceCard` / `StatePanel`；
+- 移除 `v-loading` / 自定义空态，Loading / Permission / Error / Empty 统一由 `StatePanel` 表达；
+- 保留状态筛选与分页，查询按钮具备 loading 防重复提交；
+- 查询失败主动清空 `items` / `total`，不保留 stale audit data；
+- Audit 记录的 Execution 导航只使用后端返回的 `execution_id`，构造 `/runtime?execution_id=<real-id>&source=audit`；
+- Audit 本身保持只读，不新增未经确认的 mutation API；
+- unknown action/status 保留可诊断信息，不静默伪装成正常状态。
 
-剩余必须继续收敛：Audit 内部 `PageToolbar` / `SurfaceCard` 一致性，以及与 Runtime focused durable facts 的回归覆盖。
+Targeted：`frontend/tests/views/AuditLogUI03Correlation.test.ts`、`frontend/tests/views/AuditDashboardConsistency.test.ts`。  
+状态：**未执行**。
 
 ### P1-08-A Dashboard
 
-Dashboard 已建立公共 UI 模式，本轮补齐最近执行的 durable deep link：
+Dashboard 已完成一致性收口：
 
-- 最近执行不再只能进入 `/runtime` 首页；
-- 用户点击具体 Execution 时使用该行后端返回的 `execution_id`；
-- 深链为 `/runtime?execution_id=<real-id>&source=dashboard`；
-- 不根据数组第一项、时间或分页位置推断目标执行。
+- 保持 `PageHeader` / `MetricCard` / `SurfaceCard` / `StatePanel`；
+- 移除 `v-loading` 与 raw `el-empty`；最近执行空态统一使用 `StatePanel`；
+- 聚合查询失败时主动清空指标与最近执行数据，避免 stale dashboard facts；
+- 最近 Execution 继续使用后端返回的 `execution_id` 构造 `/runtime?execution_id=<real-id>&source=dashboard`；
+- 不根据数组首项、时间或分页位置推断目标执行；
+- Dashboard 保持导航职责，不新增未经确认的写操作。
 
-Targeted：`frontend/tests/views/DashboardConsistency.test.ts`，**未执行**。
+Targeted：`frontend/tests/views/DashboardConsistency.test.ts`、`frontend/tests/views/AuditDashboardConsistency.test.ts`。  
+状态：**未执行**。
 
-### Full-site consistency closeout：Workflow Trigger 发现并修复
+### Full-site consistency closeout
 
-全站静态审计发现 `src/views/workflow-triggers/index.vue` 仍是旧式页面，存在：
+已建立全站静态一致性审计脚本：
 
-- 原生 `el-card` / `v-loading` / `el-empty`，未遵循统一 SurfaceCard / StatePanel；
-- `workflows.value[0]` 自动选择 Workflow，违反 durable ID 原则；
-- 单一 `actionLoading` 覆盖所有行操作，无法提供实体级 duplicate-submit 防护；
-- 查询失败后保留 stale `triggers` / `schedulerStatus`；
-- mutation 后需要以 Backend refresh 为最终真值；
-- Runtime 跳转必须使用真实 `execution.id` 或 Scheduler 返回的 `last_execution_id`。
+`frontend/tests/views/FullSiteConsistencyStaticAudit.test.ts`
 
-已直接修复：
+覆盖：
 
-- 迁移 `PageHeader` / `SurfaceCard` / `StatePanel`；
-- 页面、Trigger、Scheduler 分层管理 Loading / Empty / Error / Permission 状态；
-- 移除数组首项自动选择，要求显式 Workflow ID；
-- `actionKey` 按 `trigger.id` 区分 toggle/delete/invoke，阻止重复提交；
-- delete / enable / disable 使用 ConfirmDialog 等价确认闭环；
-- mutation 成功后重新读取 Trigger Backend facts，不本地伪造状态；
-- 查询失败清空 stale 数据；
-- Runtime deep link 保留真实 `execution.id` / `last_execution_id`。
+- raw `el-card` / `v-loading` / `el-empty` / `el-result`；
+- `[0]` 数组位置实体推断；
+- `sort/reverse` 列表顺序关系推断；
+- Workflow Trigger action guard / Backend refresh；
+- 核心 P0/P1 页面共享 UI primitive；
+- Operations / Audit / Dashboard / Trigger durable deep-link。
 
-Targeted：`frontend/tests/views/FullSiteConsistencyStaticAudit.test.ts`、`frontend/tests/views/FullSiteConsistencyGapAudit.test.ts`，**未执行**。
+另有：
+
+`frontend/tests/views/FullSiteConsistencyGapAudit.test.ts`
+
+用于核心页面 inventory、durable ID、Runtime correlation 回归检查。
+
+Targeted：以上脚本均**未执行**。
 
 ## 4. Contract 与安全原则
 
@@ -215,42 +225,6 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 
 ## 7. 当前队列
 
-1. P1-06-A Operations Console 内部 UI-03/UI-04/UI-05 与 Runtime correlation 收敛。
-2. P1-07-A Audit 内部公共模式与 Runtime focused durable facts regression。
-3. P1-08-A Dashboard consistency 收尾。
-4. 全站一致性 Gap Audit：原始 `el-card` / 自定义状态 / action loading / optimistic mutation / deep link / durable ID / stale-data 清理；当前已关闭 Workflow Trigger 旧式实现，并建立静态防回归审计。
-5. 全部任务完成后统一执行测试与构建验证。
-
-## 8. 原子任务记录规范
-
-```text
-### <Task ID>
-- 页面/模块：
-- Gap：
-- Contract：
-- 实现范围：
-- Targeted test：
-- Targeted result：未执行
-- Full unit：未执行
-- Build：未执行
-- Gate：未执行
-- Real API / E2E：未执行
-- 已知限制/阻塞：
-- Commit：
-- 下一任务：
-```
-
-## 9. Full-site Static Audit Baseline
-
-本轮建立 `frontend/tests/views/FullSiteConsistencyStaticAudit.test.ts`，作为全站一致性防回归门槛脚本，当前仅创建、**未执行**。
-
-审计规则覆盖：
-
-- 所有 `src/views/**/*.vue` 禁止重新引入 raw `el-card`；
-- 禁止 `v-loading` 取代统一 StatePanel 状态模型；
-- 禁止 raw `el-empty` / `el-result` 绕过共享状态模式；
-- 禁止通过数组首项建立实体关系；
-- 禁止通过 `sort/reverse` 建立“最新/关联”关系；
-- Workflow Trigger mutation 必须使用实体级 `actionKey`、Backend refresh 和真实 Execution ID。
-
-该脚本与 `FullSiteConsistencyGapAudit.test.ts` 共同作为最终全站一致性回归入口；按照当前开发策略，两个测试均保持 **未执行**。
+1. **全站最终 Gap Audit**：继续扫描所有 `frontend/src/views` 与相关共享组件，重点检查 UI-03/UI-04/UI-05、optimistic mutation、stale-data、permission、durable ID、deep-link、raw backend error。
+2. 修复最终审计发现并补 targeted tests（仍不执行）。
+3. 完成最终文档收口后，才统一进入测试执行阶段。
