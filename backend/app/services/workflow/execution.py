@@ -41,7 +41,8 @@ class WorkflowExecutionService:
         self.checkpoint_recovery = WorkflowExecutionCheckpointRecoveryService()
 
     async def create(self, workflow: Workflow, version: WorkflowVersion, actor_id: UUID, input_data: dict,
-                     idempotency_key: str | None = None) -> WorkflowExecution:
+                     idempotency_key: str | None = None, *, commit: bool = True) -> WorkflowExecution:
+        """创建 pending Execution，并由调用方选择是否立即提交事务。"""
         if workflow.published_version_id != version.id or version.status != "published":
             raise HTTPException(409, "只能执行当前已发布版本")
         WorkflowRuntime.validate_definition(version.definition)
@@ -84,8 +85,9 @@ class WorkflowExecutionService:
         await self.governance.trace(execution, actor_id, "execution.created", "pending", data={
             "input_keys": sorted(input_data.keys()), "idempotency_key_present": idempotency_key is not None,
         })
-        await self.db.commit()
-        await self.db.refresh(execution)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(execution)
         return execution
 
     async def get(self, execution_id: UUID, tenant_id: UUID, actor_id: UUID, admin: bool = False) -> WorkflowExecution:
@@ -110,13 +112,8 @@ class WorkflowExecutionService:
         return list(result.scalars().all())
 
     @staticmethod
-    def _validate_execution_fencing(
-        *,
-        expected_worker_owner: str | None,
-        expected_worker_attempt: int,
-        locked_worker_owner: str | None,
-        locked_worker_attempt: int,
-    ) -> None:
+    def _validate_execution_fencing(*, expected_worker_owner: str | None, expected_worker_attempt: int,
+                                    locked_worker_owner: str | None, locked_worker_attempt: int) -> None:
         """校验 Execution ownership + fencing generation，阻断 stale Worker。"""
         if expected_worker_owner is None:
             return
@@ -140,32 +137,9 @@ class WorkflowExecutionService:
         )
         return locked
 
-    async def _terminalize_owned_frontier_for_execution(
-        self,
-        execution: WorkflowExecution,
-        target_status: str,
-        now: datetime,
-    ) -> None:
-        """在 Execution 终态事务内关闭当前 Worker 正在执行的唯一 Frontier。
-
-        Args:
-            execution: 已通过 Execution fencing 并持有行锁的 Execution。
-            target_status: Execution 即将进入的终态。
-            now: 本次终态事务使用的统一时间。
-
-        Returns:
-            None。Frontier 状态变更与 Execution 终态变更留在同一个事务。
-
-        Raises:
-            HTTPException: 存在未由当前 Worker 持有的活动 Frontier，或当前 Frontier lease/generation 无效。
-
-        设计意图：Durable Worker 的 Runtime 必须先完成 Node/Execution 事实，再结束 Frontier；但 Runtime
-        的 Execution transition 与 Frontier completion 原本互相阻塞，导致“Runtime 已完成但 Frontier 仍
-        running”时无法提交任何一侧。这里在已经锁住 Execution 后，只允许关闭当前 Execution owner、当前
-        fencing generation、仍在有效 lease 内的 running Frontier，并与 Execution terminalization 共用一个
-        DB transaction，从根上消除 B2/B6 的 terminalization race。其他 pending/retry_wait/claimed/running
-        Frontier 仍然拒绝，避免把尚未执行的 sibling 错误标记为 completed/failed。
-        """
+    async def _terminalize_owned_frontier_for_execution(self, execution: WorkflowExecution,
+                                                        target_status: str, now: datetime) -> None:
+        """在 Execution 终态事务内关闭当前 Worker 正在执行的唯一 Frontier。"""
         result = await self.db.execute(
             select(WorkflowFrontier)
             .where(
@@ -196,19 +170,7 @@ class WorkflowExecutionService:
 
     async def _assert_no_active_frontiers_for_terminal_transition(self, execution: WorkflowExecution, now: datetime,
                                                                   target_status: str) -> None:
-        """终止 Execution 前验证 Frontier 生命周期，并原子关闭当前 Worker 的执行 Frontier。
-
-        Args:
-            execution: 已通过 `_lock_execution` 获得行锁的当前 Execution。
-            now: 本次 Execution terminalization 的统一时间。
-            target_status: 即将写入 Execution 的终态。
-
-        Returns:
-            None。当前 Worker 的唯一 running Frontier 会在同一事务中先进入相同终态。
-
-        Raises:
-            HTTPException: 存在未执行 sibling Frontier 或 ownership/fencing 不一致。
-        """
+        """终止 Execution 前验证 Frontier 生命周期，并原子关闭当前 Worker 的执行 Frontier。"""
         await self._terminalize_owned_frontier_for_execution(execution, target_status, now)
 
     def _validate_run_owner(self, execution: WorkflowExecution, worker_owner: str | None) -> None:
@@ -223,8 +185,9 @@ class WorkflowExecutionService:
 
     async def transition(self, execution: WorkflowExecution, target_status: str, node_id: str | None = None,
                          error_code: str | None = None, error_message: str | None = None,
-                         output_data: dict | None = None, actor_id: UUID | None = None) -> WorkflowExecution:
-        """推进 Execution 状态，并在终态转换时原子释放 Worker ownership 与当前 Durable Frontier。"""
+                         output_data: dict | None = None, actor_id: UUID | None = None,
+                         *, commit: bool = True) -> WorkflowExecution:
+        """推进 Execution 状态，并允许调用方控制事务提交边界。"""
         if target_status not in self.EXECUTION_STATES:
             raise HTTPException(400, "不支持的 Execution 状态")
         execution = await self._lock_execution(execution)
@@ -260,29 +223,20 @@ class WorkflowExecutionService:
             await self.governance.audit(execution, audit_actor, f"workflow.execution.{target_status}",
                                         "success" if target_status == "completed" else target_status,
                                         error_code=error_code)
-        await self.db.commit()
-        await self.db.refresh(execution)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(execution)
         return execution
 
-    async def cancel(self, execution: WorkflowExecution, actor_id: UUID, reason: str | None = None) -> WorkflowExecution:
+    async def cancel(self, execution: WorkflowExecution, actor_id: UUID, reason: str | None = None,
+                     *, commit: bool = True) -> WorkflowExecution:
+        """取消 Execution，并允许 Operator Governance 延迟提交。"""
         message = reason.strip() if reason and reason.strip() else "Workflow Execution cancelled by operator"
         return await self.transition(execution, "cancelled", error_code="EXECUTION_CANCELLED",
-                                     error_message=message, actor_id=actor_id)
+                                     error_message=message, actor_id=actor_id, commit=commit)
 
     async def retry(self, execution: WorkflowExecution, actor_id: UUID, *, commit: bool = True) -> WorkflowExecution:
-        """为 failed Execution 创建 Retry Execution，并由调用方控制事务提交边界。
-
-        Args:
-            execution: 已失败且需要重试的原始 Execution。
-            actor_id: 发起 Retry 的操作者。
-            commit: 是否在本方法内提交 Retry 事务；治理 Operator Action 必须传入 False，使 Retry、幂等事实、Audit 与 Result Resource 共用一个事务。
-
-        Returns:
-            新创建或当前事务中的 Retry Execution。
-
-        设计意图：默认 `commit=True` 保持现有直接调用方兼容；Operator Action 场景通过 `commit=False`
-        把 Retry 持久化延迟到 Result Resource、Operator Action 和 Audit 全部成功之后，避免审计失败留下半提交事实。
-        """
+        """为 failed Execution 创建 Retry Execution，并由调用方控制事务提交边界。"""
         execution = await self._lock_execution(execution)
         if execution.status != "failed":
             raise HTTPException(409, "只有 failed Execution 可以 Retry")
@@ -324,14 +278,12 @@ class WorkflowExecutionService:
             raise HTTPException(409, f"Execution 不满足 Durable Resume 条件: {assessment.reason_code}")
         if assessment.resume_idempotency_key is None or assessment.checkpoint_sequence is None:
             raise HTTPException(409, "Resume Candidate 缺少确定性幂等键")
-
         version = (await self.db.execute(
             select(WorkflowVersion).where(WorkflowVersion.id == execution.workflow_version_id)
         )).scalar_one_or_none()
         if version is None:
             raise HTTPException(409, "Workflow Execution 原始版本不存在")
         WorkflowRuntime.validate_definition(version.definition, allow_legacy_empty_nodes=True)
-
         existing = (await self.db.execute(select(WorkflowExecution).where(
             WorkflowExecution.tenant_id == execution.tenant_id,
             WorkflowExecution.idempotency_key == assessment.resume_idempotency_key,
@@ -340,16 +292,11 @@ class WorkflowExecutionService:
             if existing.resume_of_execution_id != execution.id or existing.resume_checkpoint_sequence != assessment.checkpoint_sequence:
                 raise HTTPException(409, "Resume 幂等键已绑定其他 Execution")
             return existing
-
         resume_execution = WorkflowExecution(
-            tenant_id=execution.tenant_id,
-            workflow_id=execution.workflow_id,
-            workflow_version_id=execution.workflow_version_id,
-            created_by=actor_id,
-            resume_of_execution_id=execution.id,
-            resume_checkpoint_sequence=assessment.checkpoint_sequence,
-            idempotency_key=assessment.resume_idempotency_key,
-            status="pending",
+            tenant_id=execution.tenant_id, workflow_id=execution.workflow_id,
+            workflow_version_id=execution.workflow_version_id, created_by=actor_id,
+            resume_of_execution_id=execution.id, resume_checkpoint_sequence=assessment.checkpoint_sequence,
+            idempotency_key=assessment.resume_idempotency_key, status="pending",
             input_data=dict(assessment.state_data or {}),
         )
         try:
@@ -366,28 +313,21 @@ class WorkflowExecutionService:
             if existing.resume_of_execution_id != execution.id or existing.resume_checkpoint_sequence != assessment.checkpoint_sequence:
                 raise HTTPException(409, "Resume 幂等键已绑定其他 Execution")
             return existing
-
         await self.governance.audit(execution, actor_id, "workflow.execution.resume_requested", "success", metadata={
-            "resume_execution_id": str(resume_execution.id),
-            "checkpoint_id": str(assessment.checkpoint_id) if assessment.checkpoint_id else None,
-            "checkpoint_sequence": assessment.checkpoint_sequence,
-            "workflow_version_id": str(execution.workflow_version_id),
+            "resume_execution_id": str(resume_execution.id), "checkpoint_id": str(assessment.checkpoint_id) if assessment.checkpoint_id else None,
+            "checkpoint_sequence": assessment.checkpoint_sequence, "workflow_version_id": str(execution.workflow_version_id),
         })
         await self.governance.trace(execution, actor_id, "execution.resume_requested", execution.status, data={
-            "resume_execution_id": str(resume_execution.id),
-            "checkpoint_id": str(assessment.checkpoint_id) if assessment.checkpoint_id else None,
+            "resume_execution_id": str(resume_execution.id), "checkpoint_id": str(assessment.checkpoint_id) if assessment.checkpoint_id else None,
             "checkpoint_sequence": assessment.checkpoint_sequence,
         })
         await self.governance.audit(resume_execution, actor_id, "workflow.execution.created", "success", metadata={
-            "creation_mode": "durable_resume",
-            "resume_of_execution_id": str(execution.id),
+            "creation_mode": "durable_resume", "resume_of_execution_id": str(execution.id),
             "resume_checkpoint_sequence": assessment.checkpoint_sequence,
         })
         await self.governance.trace(resume_execution, actor_id, "execution.created", "pending", data={
-            "creation_mode": "durable_resume",
-            "resume_of_execution_id": str(execution.id),
-            "resume_checkpoint_sequence": assessment.checkpoint_sequence,
-            "workflow_version_id": str(execution.workflow_version_id),
+            "creation_mode": "durable_resume", "resume_of_execution_id": str(execution.id),
+            "resume_checkpoint_sequence": assessment.checkpoint_sequence, "workflow_version_id": str(execution.workflow_version_id),
         })
         if commit:
             await self.db.commit()
@@ -438,26 +378,18 @@ class WorkflowExecutionService:
         if target_status in {"completed", "failed", "skipped"}:
             node.ended_at = now
         if is_retry:
-            await self.governance.trace(
-                execution, execution.created_by, "node.retry.scheduled", "running",
-                node_id=node_id, data={"attempt": node.attempt},
-            )
+            await self.governance.trace(execution, execution.created_by, "node.retry.scheduled", "running",
+                                        node_id=node_id, data={"attempt": node.attempt})
         await self.governance.trace(execution, execution.created_by, "node.state_changed", target_status,
-                                     node_id=node_id, error_code=error_code, error_message=error_message,
-                                     data={"attempt": node.attempt})
+                                    node_id=node_id, error_code=error_code, error_message=error_message,
+                                    data={"attempt": node.attempt})
         if target_status == "completed":
             await self.checkpoint.append_next_in_transaction(
-                execution_id=execution.id,
-                execution_status=execution.status,
+                execution_id=execution.id, execution_status=execution.status,
                 state_data=dict(output_data if output_data is not None else (node.output_data or {})),
-                checkpoint_reason="node.completed",
-                node_id=node.node_id,
-                node_attempt=node.attempt,
-                node_status=node.status,
-                input_data=node.input_data,
-                output_data=node.output_data,
-                worker_owner=execution.worker_owner,
-                expected_worker_owner=execution.worker_owner,
+                checkpoint_reason="node.completed", node_id=node.node_id, node_attempt=node.attempt,
+                node_status=node.status, input_data=node.input_data, output_data=node.output_data,
+                worker_owner=execution.worker_owner, expected_worker_owner=execution.worker_owner,
                 expected_worker_attempt=int(execution.worker_attempt or 0),
             )
         if commit:
@@ -466,34 +398,35 @@ class WorkflowExecutionService:
         return node
 
     async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID, admin: bool = False,
-                  allow_legacy_empty_nodes: bool = False, worker_owner: str | None = None) -> WorkflowExecution:
-        """执行已发布 Workflow，并区分 HTTP 手动执行与已认领 Worker 的执行身份。"""
+                  allow_legacy_empty_nodes: bool = False, worker_owner: str | None = None,
+                  *, commit: bool = True) -> WorkflowExecution:
+        """执行已发布 Workflow；commit=False 时不在状态转换处主动提交事务。"""
         execution = await self._lock_execution(execution)
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以 Run")
         self._validate_run_owner(execution, worker_owner)
-        await self.transition(execution, "running", actor_id=actor_id)
+        await self.transition(execution, "running", actor_id=actor_id, commit=commit)
         runtime = WorkflowRuntime(self.db, execution_service=self)
         try:
             await runtime.execute(execution, version, actor_id, admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
         except CircuitOpenError:
-            await self.transition(execution, "failed", error_code="CIRCUIT_OPEN", error_message="Circuit Breaker is open", actor_id=actor_id)
+            await self.transition(execution, "failed", error_code="CIRCUIT_OPEN", error_message="Circuit Breaker is open", actor_id=actor_id, commit=commit)
             raise HTTPException(503, "Circuit Breaker is open")
         except HTTPException as exc:
             if exc.status_code == 504:
                 detail = str(exc.detail)
-                timeout_code = "WORKFLOW_TIMEOUT" if detail in {
-                    "Workflow deadline exceeded", "Retry backoff exceeds workflow deadline"
-                } else "NODE_TIMEOUT"
-                await self.transition(execution, "failed", error_code=timeout_code, error_message=detail, actor_id=actor_id)
+                timeout_code = "WORKFLOW_TIMEOUT" if detail in {"Workflow deadline exceeded", "Retry backoff exceeds workflow deadline"} else "NODE_TIMEOUT"
+                await self.transition(execution, "failed", error_code=timeout_code, error_message=detail, actor_id=actor_id, commit=commit)
             else:
-                await self.transition(execution, "failed", error_code=f"HTTP_{exc.status_code}", error_message=str(exc.detail), actor_id=actor_id)
+                await self.transition(execution, "failed", error_code=f"HTTP_{exc.status_code}", error_message=str(exc.detail), actor_id=actor_id, commit=commit)
             raise
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as exc:
             error_code = "CONNECTION_ERROR" if isinstance(exc, ConnectionError) else "NODE_TIMEOUT"
-            await self.transition(execution, "failed", error_code=error_code, error_message=str(exc), actor_id=actor_id)
+            await self.transition(execution, "failed", error_code=error_code, error_message=str(exc), actor_id=actor_id, commit=commit)
             raise
         except Exception as exc:
-            await self.transition(execution, "failed", error_code="RUNTIME_ERROR", error_message=str(exc), actor_id=actor_id)
+            await self.transition(execution, "failed", error_code="RUNTIME_ERROR", error_message=str(exc), actor_id=actor_id, commit=commit)
             raise HTTPException(500, "Workflow Runtime 执行失败") from exc
-        return await self._lock_execution(execution)
+        if commit:
+            return await self._lock_execution(execution)
+        return execution
