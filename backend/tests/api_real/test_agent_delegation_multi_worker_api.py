@@ -17,10 +17,12 @@ from sqlalchemy import select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
-from app.models.core import AuditLog
+from app.models.core import Agent, AgentVersion, AuditLog
+from app.models.model_provider import ModelProfile, ModelProvider
+from app.models.organization import Organization
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow_worker import WorkflowWorker
-from tests.api_real.test_agent_delegation_bridge_api import _bind_deterministic_mock_profile, _client, _create_delegation
+from tests.api_real.test_agent_delegation_bridge_api import _client, _create_delegation
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -84,13 +86,59 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
             )
             fixtures.append((delegation_id, parent_execution_id))
 
+    # 先一次性锁住全部 Fixture Delegation，再在同一事务内创建 Mock Profile。
+    # 本地允许已有后台 Worker 并发运行；如果逐条 commit，后台 Worker 可能在 profile 尚未装配时
+    # 抢先 Claim，随后因 Runtime 上下文不完整进入 failed。一次事务完成全部 Fixture 装配后才释放锁，
+    # 保证“可被 Claim”与“Runtime 依赖完整”同时成立。
     async with SessionLocal() as db:
-        for index, (delegation_id, _) in enumerate(fixtures):
-            await _bind_deterministic_mock_profile(
-                db,
-                uuid.UUID(delegation_id),
-                f"{suffix}-{index}",
+        delegation_ids = [uuid.UUID(item[0]) for item in fixtures]
+        delegation_rows = (
+            await db.execute(
+                select(AgentDelegation)
+                .where(AgentDelegation.id.in_(delegation_ids))
+                .with_for_update()
             )
+        ).scalars().all()
+        assert len(delegation_rows) == len(fixtures)
+
+        for index, delegation in enumerate(sorted(delegation_rows, key=lambda item: str(item.id))):
+            target_version = (
+                await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))
+            ).scalar_one()
+            target_agent = (await db.execute(select(Agent).where(Agent.id == target_version.agent_id))).scalar_one()
+            organization = (
+                await db.execute(select(Organization).where(Organization.tenant_id == delegation.tenant_id))
+            ).scalar_one_or_none()
+            assert organization is not None
+            assert target_agent.owner_id is not None
+
+            mock_provider = ModelProvider(
+                organization_id=organization.id,
+                name=f"phase-28-mock-provider-{suffix}-{index}",
+                provider_type="mock",
+                provider_name="phase-28-real-gate",
+                enabled=True,
+                metadata_json={"purpose": "phase-2.8-real-gate"},
+            )
+            db.add(mock_provider)
+            await db.flush()
+
+            mock_profile = ModelProfile(
+                provider_id=mock_provider.id,
+                name=f"phase-28-mock-profile-{suffix}-{index}",
+                model_type="chat",
+                model_name="mock-model",
+                capabilities={},
+                parameters={},
+                enabled=True,
+                is_default=False,
+            )
+            db.add(mock_profile)
+            await db.flush()
+            target_version.model_profile_id = mock_profile.id
+            delegation.model_profile_id = mock_profile.id
+
+        await db.commit()
 
     worker_a = WorkflowWorker(concurrency=1, lease_seconds=60)
     worker_b = WorkflowWorker(concurrency=1, lease_seconds=60)
