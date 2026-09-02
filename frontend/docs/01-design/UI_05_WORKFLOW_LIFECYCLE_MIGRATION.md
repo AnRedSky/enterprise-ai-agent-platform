@@ -13,6 +13,41 @@
 - 保留现有 Runtime 深链参数：`execution_id`、`workflow_id`、`workflow_version_id`、`source`。
 - 小屏幕下工作流选择区、生命周期步骤和详情卡片自动收缩为可读布局。
 
+## 本轮收敛：Trigger 真实写 Contract
+
+后端 `main` 已确认存在完整的 Trigger 生命周期写入口，因此本轮前端不再把 Scheduled / Webhook Trigger 永久锁定为只读，而是仅消费已存在的真实 Contract：
+
+- `PATCH /workflows/{workflow_id}/triggers/{trigger_id}`：支持 `name`、`status`、`config` 更新。
+- Scheduled config 由后端 `ScheduledTriggerConfig` 校验：IANA timezone、60-86400 秒 interval、misfire policy、catch-up limit。
+- Webhook config 支持 `event_id_field` 与可选的新 `secret`；后端只持久化 SHA-256 摘要，更新时未提交新 Secret 会保留原摘要，前端绝不读取或回显旧 Secret。
+- `DELETE /workflows/{workflow_id}/triggers/{trigger_id}`：已存在真实删除 Contract，前端通过确认对话框闭环调用。
+- `GET /workflows/{workflow_id}/triggers/{trigger_id}/schedule` 仍是 Scheduler 只读 Contract。
+- 当前仍不存在 Scheduler 配置写 API，因此 Scheduler 修改继续保持只读，不在前端伪造接口。
+
+### Scheduled Trigger 配置编辑
+
+- 仅对 `scheduled` Trigger 显示“编辑配置”。
+- 表单字段严格对应后端 Contract：`name`、`timezone`、`interval_seconds`、`misfire_policy`、`catch_up_limit`。
+- `catch_up_limit` 仅在 `catch_up` 策略下可编辑；最终合法性仍由后端 422 Contract 裁决。
+- 保存调用既有 `workflowApi.updateTrigger(...)`，成功后重新加载 Version / Trigger / Execution / Scheduler 数据，不在前端直接推算 `next_run_at`。
+- 403 / 409 / 422 / 其他异常均有明确错误反馈。
+
+### Webhook Trigger 配置编辑
+
+- 仅对 `webhook` Trigger 显示“编辑配置”。
+- 表单支持 `name`、`event_id_field` 与可选新 Secret。
+- Secret 留空表示保持现有 Secret；前端不会把 `secret_hash` 当作可编辑值，也不会向 API 发送现有摘要。
+- 后端返回的 `secret_configured` 仅用于事实展示，不构成 Secret 读取能力。
+- 保存成功后重新读取 Trigger 数据，保证页面状态以服务端事实为准。
+
+### Trigger 删除
+
+- 删除必须经过 `ConfirmDialog`，明确提示删除的是 Trigger 入口，不删除既有 Execution / Trace / Audit Durable Facts。
+- 提交期间禁止重复确认；成功后清理 delete target 并重新加载当前 Workflow 详情。
+- 403 显示权限错误；409 显示后端运行时依赖/状态拒绝；其他异常显示删除失败。
+- 取消确认不产生 DELETE 请求并清理 target，避免旧 Trigger 上下文残留。
+- 归档 Workflow 在前端不提供编辑/删除入口；页面仍保持只读观测。
+
 ## 本轮收敛：实际操作链路
 
 WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的真实运行闭环：
@@ -27,7 +62,7 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 - 提交继续复用已有 `workflowApi.invokeTrigger(workflowId, triggerId, {})`，不新增 API client 或后端接口。
 - 提交期间禁止重复确认；成功后清理 dialog target，并重新加载当前 Workflow 的 Version / Trigger / Execution / Scheduler 数据。
 - 取消确认不会产生 API 写操作，并清理 dialog target，避免关闭后残留旧 Trigger 上下文。
-- 403 显示权限错误，其他异常提示提交失败；失败时保留确认上下文以便用户决定重试或取消；最终权限与业务状态仍由后端裁决。
+- 403 / 409 / 422 / 其他异常均由明确反馈呈现，最终权限与业务状态仍由后端裁决。
 
 ### Execution 生命周期操作
 
@@ -59,7 +94,7 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 
 ## Contract / 安全边界
 
-本轮不新增后端 API，不修改生命周期状态定义。查询继续复用 `workflowApi.list`、`versions`、`triggers`、`schedule`、`listExecutions`；手动操作复用既有 `invokeTrigger`，Execution 操作复用既有 `runExecution` / `cancelExecution` / `retryExecution` / `resumeExecution`。403 仅用于页面 Permission / 操作错误展示；业务权限与状态机仍由后端最终裁决。
+本轮不新增后端 API，也不新增前端平行 API client。Trigger 编辑/删除严格复用现有 `workflowApi.updateTrigger` / `workflowApi.deleteTrigger`；查询继续复用 `workflowApi.list`、`versions`、`triggers`、`schedule`、`listExecutions`；手动操作复用既有 `invokeTrigger`，Execution 操作复用既有 `runExecution` / `cancelExecution` / `retryExecution` / `resumeExecution`。Scheduler 没有 HTTP 写 Contract，因此仍保持只读。业务权限与状态机仍由后端最终裁决。
 
 ## 状态与操作契约
 
@@ -69,42 +104,37 @@ WorkflowLifecycle 不再只做生命周期只读观测，开始承载最小的�
 | Empty | 暂无工作流，并说明下一步 | 进入工作流创建流程 |
 | Error | 工作流加载失败，提供通俗原因 | 重试 |
 | Permission | 无权查看工作流 | 联系管理员 / 重试 |
-| Success | 展示生命周期、真实版本、触发器和 Execution | 手动 Trigger 可提交运行；Execution 可进入 Runtime |
+| Success | 展示生命周期、真实版本、触发器和 Execution | Manual Trigger 可运行；Scheduled/Webhook 可编辑；Trigger 可删除；Execution 可进入 Runtime |
 | Detail Error | 当前工作流详情加载失败，说明受影响数据并提供“重新加载” | 重新加载当前 workflow_id |
 | Manual Trigger | 已发布 + enabled 时显示“立即运行” | ConfirmDialog → invokeTrigger → 刷新 Execution |
+| Scheduled Trigger | 编辑真实 config | Form → updateTrigger → 刷新 Trigger / Scheduler |
+| Webhook Trigger | 编辑 event_id / 可选新 Secret | Form → updateTrigger → 刷新 Trigger |
+| Trigger Delete | 明确确认后删除 | ConfirmDialog → deleteTrigger → 刷新 Trigger / Scheduler |
+| Scheduler | 展示真实 next/last run、lease、misfire 等状态 | 暂无写操作；等待后端 Scheduler write Contract |
 | Execution Action | 按真实后端状态暴露 Run / Cancel / Retry / Resume | ConfirmDialog → 生命周期 API → 刷新 Execution |
 
 ## 测试
 
-`frontend/tests/views/WorkflowLifecycle.test.ts` 覆盖：
+`frontend/tests/views/WorkflowLifecycle.test.ts` 覆盖原有生命周期、深链与 UI-05 确认行为。
 
-1. 公共 PageHeader / SurfaceCard 模式；
-2. 普通列表错误进入共享 Error 状态；
-3. 403 进入共享 Permission 状态；
-4. 真实 workflow/version/trigger/execution 生命周期数据；
-5. Workflow 深链恢复；
-6. Execution → Runtime 深链保持真实 ID；
-7. 空列表中文状态及 `StatePanel.state === "empty"` 契约；
-8. 详情请求失败进入共享 Error 状态并可重新加载；
-9. Manual Trigger 经过确认后调用真实 `invokeTrigger`，并重新加载 Execution；
-10. 取消 Manual Trigger 确认不会写入，并清理 Trigger target；
-11. Execution 状态矩阵暴露合法生命周期操作并调用对应真实 API；
-12. 取消 Execution 确认不会写入，并清理 Execution target / action。
+新增 `frontend/tests/views/WorkflowLifecycleTriggerManagement.test.ts` 覆盖：
 
-远端 GitHub 环境不运行 Node/Vitest，因此本轮代码提交前不虚报本地测试结果；用户本地验证结果以实际命令输出为准。
+1. Scheduled Trigger 编辑器从真实 Trigger config 初始化；
+2. Scheduled Trigger 使用真实 PATCH Contract 更新并刷新详情；
+3. Webhook Trigger 更新时不读取、不回显、不发送现有 Secret；
+4. Trigger 删除需要显式确认，取消不会写入；
+5. Trigger 删除调用真实 DELETE Contract 并刷新详情。
+
+远端 GitHub 环境不运行 Node/Vitest，因此本轮不虚报本地测试结果；用户本地验证结果以实际命令输出为准。
 
 ## 本地验证
 
 ```powershell
 cd frontend
-npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts
-npm run test:unit -- --run tests/views/AgentUI04.test.ts tests/components/ConfirmDialog.test.ts
-npm test
+npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/WorkflowLifecycleTriggerManagement.test.ts
 npm run build
-npm run test:gate
-npm run test:final
 ```
 
 ## 下一步
 
-继续围绕同一核心页面收敛 Trigger / Scheduler 操作边界与失败恢复体验；若后端已有对应真实操作 Contract，则继续复用既有 API，不在前端复制状态机或新增平行 client。
+继续保持 Scheduler 写操作只读边界。只有当后端提供并确认 Scheduler 配置修改、Trigger → Scheduler 同步、lease / misfire / idempotency 等完整 Write Contract 后，才进入前端 Scheduler 操作闭环；不在前端推导或伪造 Scheduler 状态。
