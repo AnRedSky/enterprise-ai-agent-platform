@@ -52,9 +52,11 @@ function openExecution() {
 function openWorkflowLifecycle(fact?: RuntimeCorrelationTrace | RuntimeCorrelationAudit) {
   if (!result.value?.execution) return;
   const execution = result.value.execution;
-  const query: Record<string, string> = { workflow_id: execution.workflow_id, execution_id: execution.id, source: "runtime-correlation" };
-  if (fact && "trace_id" in fact && fact.trace_id) query.trace_id = fact.trace_id;
-  else if (fact && "id" in fact && fact.id) query.audit_id = fact.id;
+  const executionId = fact && "execution_id" in fact ? fact.execution_id : fact && "workflow_execution_id" in fact ? fact.workflow_execution_id : execution.id;
+  const workflowId = fact?.workflow_id || execution.workflow_id;
+  const query: Record<string, string> = { workflow_id: workflowId, execution_id: executionId, source: "runtime-correlation" };
+  if (fact && "execution_id" in fact && fact.trace_id) query.trace_id = fact.trace_id;
+  else if (fact && "workflow_execution_id" in fact && fact.id) query.audit_id = fact.id;
   else if (focusType.value === "trace" && focusId.value) query.trace_id = focusId.value;
   else if (focusType.value === "audit" && focusId.value) query.audit_id = focusId.value;
   void router.push({ path: "/workflows/lifecycle", query });
@@ -62,17 +64,18 @@ function openWorkflowLifecycle(fact?: RuntimeCorrelationTrace | RuntimeCorrelati
 function openTrace(traceId: string) {
   if (!traceId) return;
   selectedTraceId.value = traceId;
-  void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "trace", focus_id: traceId, execution_id: result.value?.execution?.id || "", workflow_id: result.value?.execution?.workflow_id || "", workflow_version_id: result.value?.execution?.workflow_version_id || "" } });
+  const trace = result.value?.traces.items.find((item) => item.trace_id === traceId);
+  const execution = result.value?.execution;
+  void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "trace", focus_id: traceId, execution_id: trace?.execution_id || execution?.id || "", workflow_id: trace?.workflow_id || execution?.workflow_id || "", workflow_version_id: trace?.workflow_version_id || execution?.workflow_version_id || "" } });
 }
 function openAudit(auditId: string) {
   if (!auditId) return;
   selectedAuditId.value = auditId;
-  void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "audit", focus_id: auditId, execution_id: result.value?.execution?.id || "", workflow_id: result.value?.execution?.workflow_id || "", workflow_version_id: result.value?.execution?.workflow_version_id || "" } });
+  const audit = result.value?.audits.items.find((item) => item.id === auditId);
+  const execution = result.value?.execution;
+  void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "audit", focus_id: auditId, execution_id: audit?.workflow_execution_id || execution?.id || "", workflow_id: audit?.workflow_id || execution?.workflow_id || "", workflow_version_id: audit?.workflow_version_id || execution?.workflow_version_id || "" } });
 }
-function openAuditTrace(traceId: string) {
-  if (!traceId) return;
-  openTrace(traceId);
-}
+function openAuditTrace(traceId: string) { if (traceId) openTrace(traceId); }
 function selectTrace(trace: RuntimeCorrelationTrace) { selectedTraceId.value = trace.trace_id; }
 function selectAudit(audit: RuntimeCorrelationAudit) { selectedAuditId.value = audit.id; }
 </script>
@@ -95,5 +98,5 @@ function selectAudit(audit: RuntimeCorrelationAudit) { selectedAuditId.value = a
 </template>
 
 <style scoped>
-.correlation-workspace{padding:4px 0}.section-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.eyebrow{font-size:10px;font-weight:700;letter-spacing:.08em;color:#667085}.section-heading h2{margin:4px 0;font-size:18px;color:#101828}.section-heading p{margin:0;font-size:12px;color:#667085}.relation-card,.fact-card{margin-top:14px}.card-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.card-actions{display:flex;align-items:center;gap:8px}.el-pagination{margin-top:12px;justify-content:flex-end}.fact-json{margin:0;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}@media(max-width:700px){.section-heading{flex-direction:column}.el-form{display:flex;flex-direction:column;align-items:stretch}.el-form .el-select,.el-form .el-input{width:100%!important}.card-actions{flex-wrap:wrap}}
+.correlation-workspace{padding:4px 0}.section-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.eyebrow{font-size:10px;font-weight:700;letter-spacing:.08em;color:#667085}.section-heading h2{margin:4px 0;font-size:18px;color:#101828}.section-heading p{margin:0;font-size:12px;color:#667085}.relation-card,.fact-card{margin-top:14px}.card-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.card-actions{display:flex;align-items:center;gap:8px}.el-pagination{margin-top:12px;justify-content:flex-end}.fact-json{margin:0;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}@media(max-width:700px){.section-heading{flex-direction:column}.el-form{display:flex;flex-direction:column;align-items:stretch}.el-input,.el-select,.el-button{width:100%!important}}
 </style>
