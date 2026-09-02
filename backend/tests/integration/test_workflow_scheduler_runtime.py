@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import UTC, timedelta, datetime
 from uuid import uuid4
 
 import pytest
@@ -71,7 +71,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
     workflow_version_id = uuid4()
     trigger_id = uuid4()
     schedule_id = uuid4()
-    now = utcnow_naive()
+    now_aware = datetime.now(UTC)
+    now = now_aware.replace(tzinfo=None)
     interval_seconds = 60
 
     async with SessionLocal() as setup_session:
@@ -145,7 +146,7 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
 
     scheduler = ScheduledTriggerScheduler(poll_interval_seconds=1, recovery_slots=2, lease_seconds=30)
     try:
-        counters = await scheduler.tick_once(now.replace(tzinfo=None))
+        counters = await scheduler.tick_once(now_aware)
         assert counters["eligible"] == 1, counters
         assert counters["dispatched"] == 2, counters
         assert counters["recovered"] == 1, counters
