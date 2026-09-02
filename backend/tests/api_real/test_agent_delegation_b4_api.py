@@ -18,7 +18,7 @@ from app.models.workflow_execution import WorkflowExecution
 from app.services.agent_delegation.claim import claim_delegation
 from app.services.workflow_worker import WorkflowWorker
 from app.services.workflow_worker.runtime_entry import execute_claimed_execution
-from tests.api_real.test_agent_delegation_bridge_api import _bind_deterministic_mock_profile, _client, _create_delegation
+from tests.api_real.test_agent_delegation_bridge_api import _client, _create_delegation
 
 pytestmark = pytest.mark.real_api
 
@@ -47,14 +47,19 @@ async def test_b4_cancel_ends_delegation_without_changing_parent_execution() -> 
 
 @pytest.mark.asyncio
 async def test_b4_timeout_closes_child_without_terminalizing_parent() -> None:
-    """验证已到期 Delegation 在 Worker Runtime 中进入 timed_out，父 Execution 保持非终态。"""
+    """验证已到期 Delegation 在 Worker Runtime 中进入 timed_out，父 Execution 保持非终态。
+
+    本场景只验证 Claim 后的 timeout 分支。timeout 判断发生在 Runtime 真正执行 Target
+    Agent 之前，因此不需要先绑定 Model Profile；提前绑定会人为扩大 pending → claim 的
+    时间窗口，使本地已有后台 Worker 有机会先认领该 Fixture，导致测试无法验证自己的
+    generation。测试因此先 Claim，再设置已过期 timeout，保持状态机事实完全确定。
+    """
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
         delegation_id, _, _, _, parent_execution_id = _create_delegation(client, f"b4-timeout-{suffix}")
 
     async with SessionLocal() as db:
         delegation_uuid = uuid.UUID(delegation_id)
-        await _bind_deterministic_mock_profile(db, delegation_uuid, suffix)
         delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         claimed = await claim_delegation(
             db=db,
