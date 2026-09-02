@@ -35,7 +35,7 @@
 |---|---|---|---|---|---|---|
 | P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | 核心链路已建立 | 进行中 |
 | P0 | Workflow Lifecycle | 已建立 | 已建立 | 核心闭环已建立 | 已建立 | 基本完成 |
-| P0 | Workflows | **P0-01-A 已迁移** | 部分已有 | 已有较多真实操作 | 待审计 | 进行中 |
+| P0 | Workflows | **已建立** | **P0-01-B 已补齐** | **P0-01-B 已补齐** | durable ID 保持 | 待验证 |
 | P0 | Agents | 基础模式已建立 | Debug 已收敛 | 待完整审计 | Runtime 链路待强化 | 进行中 |
 | P1 | Knowledge | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Tools | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
@@ -100,15 +100,26 @@
 
 ### P0-01-A Workflows UI-03
 
-**代码实现已完成，等待实际测试验证。** `workflows/index.vue` 已引入 `PageHeader`、`SurfaceCard`、`StatePanel`，页面主骨架、工作流列表和详情区域不再依赖页面级 `el-card` header。保留现有 Workflow CRUD、Version、Publish、Execution、Retry、Resume、Cancel、Trace、Audit API 与 durable ID 关系，不新增 Backend Contract。
+代码实现已完成：`workflows/index.vue` 使用 `PageHeader`、`SurfaceCard`、`StatePanel` 统一页面骨架，并保留现有 Workflow CRUD、Version、Publish、Execution、Retry、Resume、Cancel、Trace、Audit API 与 durable ID 关系。
 
-新增 targeted test：`frontend/tests/views/WorkflowsUI03.test.ts`，覆盖公共 PageHeader / SurfaceCard 使用以及空列表共享 StatePanel。
+Targeted test：`frontend/tests/views/WorkflowsUI03.test.ts`。
 
-当前测试状态：**未执行**。因此 P0-01-A 暂不标记“已完成”，下一步必须先执行 targeted test，并根据真实输出处理编译/运行问题。
+当前测试状态：**未执行**。因此 P0-01-A 不标记“已完成”。
 
 ### P0-01-B Workflows UI-04/05
 
-待 P0-01-A targeted test 验证后继续。重点检查 Detail / Execution / Version / Audit / Trace 的 Loading、Empty、Error、Permission、Success 与操作闭环，不改变已有真实 API 行为。
+已完成第一轮补齐：
+
+- Version 区域增加 Loading / Empty / Error / Permission 状态；
+- Execution / Audit 失败时清理 stale 数据，避免旧数据继续伪装成当前事实；
+- Trace 增加 Loading 状态，并在请求期间阻止重复查询；
+- Create / Edit / Delete / Create Version / Publish 增加统一 action loading 与并发保护；
+- 已归档 Workflow 保持只读，危险操作仍由确认框保护；
+- 成功状态继续以 Backend refresh 后的数据为准，不本地伪造持久状态。
+
+新增 targeted regression：`frontend/tests/views/WorkflowsUI04UI05.test.ts`，覆盖 Execution Permission、Audit Error、Trace Loading/并发保护、Archived Read-only。
+
+当前测试状态：**未执行**。由于当前 GitHub 开发环境未提供项目 Node/Vitest 运行时，本轮没有伪造测试结果；必须在本地正式依赖环境执行 targeted → full unit → build → gate 后才能转为“已完成”。
 
 ### P0-02 Runtime
 
@@ -116,7 +127,7 @@
 
 ### P0-03 Agent Debug
 
-**第一批已开始实施。** `AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
+第一批已开始实施。`AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
 
 ### P0-04 Agent Workbench
 
@@ -125,7 +136,7 @@
 ## 8. 下一批原子任务
 
 1. `P0-01-A`: 执行 `WorkflowsUI03.test.ts`，修复实际失败项。
-2. `P0-01-B`: Workflows UI-04 / UI-05 targeted regression。
+2. `P0-01-B`: 执行 `WorkflowsUI04UI05.test.ts`，修复实际失败项。
 3. `P0-02-A`: Runtime Execution/Correlation 页面深链与状态恢复 Gap Audit。
 4. `P0-03-A`: Agent Workbench UI-05 操作闭环与 Debug → Runtime 上下文补齐。
 5. `P1-01-A`: Knowledge UI-03/UI-04/UI-05 Gap Audit。
@@ -197,7 +208,7 @@ targeted test
 | 顺序 | Task ID | 交付目标 | 状态 |
 |---|---|---|---|
 | 1 | P0-01-A | Workflows 页面公共 Header / SurfaceCard / 列表状态 | **待验证** |
-| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | 待处理 |
+| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | **待验证** |
 | 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | 待处理 |
 | 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | 开发中 |
 | 5 | P0-03-B | Agent Debug → Runtime durable ID 回归 | 待处理 |
