@@ -22,7 +22,7 @@
 
 ## UI-05 Form / Dialog / Drawer / Confirm
 
-状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 第二个核心页面已开始公共模式迁移；RuntimeCorrelations 已完成 Durable Fact focused-record 定位；WorkflowLifecycle Execution / Manual Trigger 确认交互已完成第一轮闭环。**
+状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 已完成 Manual Trigger / Execution 确认闭环，并继续关闭真实 Trigger 配置与删除缺口；RuntimeCorrelations 已完成 Durable Fact focused-record 定位。**
 
 原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。
 
@@ -38,10 +38,15 @@
 
 - 使用公共 `PageHeader`、`SurfaceCard`、`StatePanel`，统一页面标题、内容容器和 Loading / Empty / Error / Permission 状态。
 - 保留真实 Workflow / Version / Trigger / Scheduler / Execution 关联和 Runtime 深链。
-- 增加针对公共模式和页面状态契约的 targeted regression tests。
 - Execution 状态矩阵已形成真实操作入口：`pending → Run / Cancel`、`running → Cancel`、`failed → Retry / Resume`，终态不暴露生命周期变更。
 - Manual Trigger 与 Execution 操作统一使用 `ConfirmDialog`，提交期间防重复确认，取消后清理 target/action，成功后刷新后端真实状态。
-- 403 / 409 / 422 / 通用异常分别提供可理解的操作反馈，失败时不伪造本地 Execution 状态。
+- 已确认 Scheduled / Webhook Trigger 配置存在真实 `PATCH /workflows/{workflow_id}/triggers/{trigger_id}` Contract；前端新增配置编辑表单，严格复用既有 `workflowApi.updateTrigger`。
+- Scheduled 编辑严格使用后端 timezone / interval / misfire / catch-up Contract，不在前端计算 Scheduler `next_run_at`。
+- Webhook 编辑只允许提交新 Secret；留空时不发送 Secret，页面不读取或回显后端 `secret_hash`。
+- 已确认 Trigger 删除存在真实 `DELETE /workflows/{workflow_id}/triggers/{trigger_id}` Contract；前端新增 ConfirmDialog、loading、403/409/通用错误处理以及成功刷新闭环。
+- 归档 Workflow 不提供 Trigger 编辑/删除入口，保持只读观测边界。
+- Scheduler 当前仅存在 GET 状态 Contract，没有确认过的 HTTP Write Contract，因此仍保持只读，不伪造 Scheduler API。
+- 403 / 409 / 422 / 通用异常分别提供可理解的操作反馈，失败时不伪造本地 Trigger / Scheduler / Execution 状态。
 - Runtime / Trace / Audit 入口继续只传递后端真实 Durable ID。
 - 设计记录：`docs/01-design/UI_05_WORKFLOW_LIFECYCLE_MIGRATION.md`。
 
@@ -78,11 +83,11 @@ npm run test:unit -- --run tests/views/Tools.test.ts
 npm run test:unit -- --run tests/components/ConfirmDialog.test.ts tests/views/Tools.test.ts
 ```
 
-WorkflowLifecycle / RuntimeCorrelations：
+WorkflowLifecycle / RuntimeCorrelations / Trigger Management：
 
 ```powershell
 cd frontend
-npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeCorrelations.test.ts
+npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeCorrelations.test.ts tests/views/WorkflowLifecycleTriggerManagement.test.ts
 npm run build
 npm run test:unit
 npm run test:gate
@@ -92,4 +97,4 @@ npm run test:gate
 
 ## 下一任务
 
-继续 UI-05 主线：先执行 WorkflowLifecycle / RuntimeCorrelations targeted regression + build 验证；稳定后审查 Trigger / Scheduler 是否已有真实启停/配置 API Contract，再决定是否继续在 WorkflowLifecycle 增加操作入口。若后端无对应 Contract，则不在前端虚构操作。随后再选择下一个核心页面。不进行跨页面大规模重构，不新增平行 API client、状态机或 Dialog。
+继续 UI-05 主线：先执行 WorkflowLifecycle / RuntimeCorrelations / Trigger Management targeted regression + build 验证；Scheduler 仍保持只读，直到后端提供完整的 Scheduler Write Contract（配置修改、Trigger → Scheduler 同步、lease / misfire / idempotency 等）。不在前端虚构操作，不新增平行 API client、状态机或 Dialog。稳定后再选择下一个核心页面。
