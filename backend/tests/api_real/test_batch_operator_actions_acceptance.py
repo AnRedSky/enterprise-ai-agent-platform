@@ -15,6 +15,7 @@ from sqlalchemy import delete, select
 from app.infrastructure.db.session import SessionLocal
 from app.models.core import AuditLog, Tenant, User
 from app.models.integration_event import IntegrationEventRecord
+from app.models.operator_action import OperatorActionIdempotency
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
 from app.services.runtime_operations.batch_operator_actions import BatchOperatorActionService
@@ -83,6 +84,10 @@ async def test_batch_operator_action_is_tenant_scoped_and_partially_completable(
                 )
             )
             await db.execute(delete(AuditLog).where(AuditLog.workflow_execution_id.in_([execution_a, execution_b])))
+            # Operator Action 的 actor_id 是 users 的 RESTRICT 外键，必须在删除用户前清理幂等事实。
+            await db.execute(delete(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.actor_id.in_([user_a, user_b])
+            ))
             await db.execute(delete(WorkflowExecution).where(WorkflowExecution.id.in_([execution_a, execution_b])))
             await db.execute(delete(WorkflowVersion).where(WorkflowVersion.id.in_([version_a, version_b])))
             await db.execute(delete(Workflow).where(Workflow.id.in_([workflow_a, workflow_b])))

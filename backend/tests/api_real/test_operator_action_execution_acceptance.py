@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.core import AuditLog, Tenant, User
+from app.models.operator_action import OperatorActionIdempotency
 from app.models.workflow import Workflow
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.runtime_operations import OperatorActionGovernanceService
@@ -81,6 +82,11 @@ async def test_operator_trigger_actions_reuse_domain_service_and_write_audit():
     finally:
         async with SessionLocal() as db:
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id.in_([tenant_a, tenant_b])))
+            # Operator Action 的 actor_id 是 users 的 RESTRICT 外键；先清理幂等事实，
+            # 再删除测试用户，避免真实 PostgreSQL 在清理阶段留下 FK 失败。
+            await db.execute(delete(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.actor_id.in_([user_a, user_b])
+            ))
             await db.execute(delete(WorkflowTrigger).where(WorkflowTrigger.id.in_([trigger_a, trigger_b])))
             await db.execute(delete(Workflow).where(Workflow.id.in_([workflow_a, workflow_b])))
             await db.execute(delete(User).where(User.id.in_([user_a, user_b])))

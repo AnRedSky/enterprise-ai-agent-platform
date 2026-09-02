@@ -47,6 +47,7 @@
 | ERR-0039 | 2026-09-02 | PostgreSQL Real Acceptance 跨事件循环复用 AsyncEngine 连接 |
 | ERR-0040 | 2026-09-02 | Operator Action Result Lineage 两阶段提交边界 |
 | ERR-0041 | 2026-09-02 | Tenant Safe Real API Bootstrap 重复创建 Membership |
+| ERR-0042 | 2026-09-02 | Backend 回归中 AsyncEngine 连接池标记遗漏导致 unclosed socket 警告 |
 
 ## 迁移规则
 
