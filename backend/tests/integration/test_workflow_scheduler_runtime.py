@@ -49,6 +49,7 @@ async def _cleanup(tenant_id, workflow_id, workflow_version_id, trigger_id, sche
         async with db.begin():
             await db.execute(text("DELETE FROM audit_logs WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
             await db.execute(text("DELETE FROM workflow_trace_events WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+            await db.execute(text("DELETE FROM integration_events WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
             await db.execute(text("DELETE FROM workflow_node_executions WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
             await db.execute(text("DELETE FROM workflow_frontiers WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
             await db.execute(text("DELETE FROM workflow_schedule_slots WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
@@ -100,7 +101,7 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                     id=workflow_version_id,
                     workflow_id=workflow_id,
                     version="1",
-                    definition={},
+                    definition={"nodes": []},
                     status="published",
                     created_by=user_id,
                 )
