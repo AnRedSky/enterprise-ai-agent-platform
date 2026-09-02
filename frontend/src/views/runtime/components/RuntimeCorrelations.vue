@@ -55,8 +55,8 @@ function openWorkflowLifecycle(fact?: RuntimeCorrelationTrace | RuntimeCorrelati
   const executionId = fact && "execution_id" in fact ? fact.execution_id : fact && "workflow_execution_id" in fact ? fact.workflow_execution_id : execution.id;
   const workflowId = fact?.workflow_id || execution.workflow_id;
   const query: Record<string, string> = { workflow_id: workflowId, execution_id: executionId, source: "runtime-correlation" };
-  if (fact && "trace_id" in fact && fact.trace_id) query.trace_id = fact.trace_id;
-  else if (fact && "id" in fact && fact.id) query.audit_id = fact.id;
+  if (fact && "execution_id" in fact && fact.trace_id) query.trace_id = fact.trace_id;
+  else if (fact && "workflow_execution_id" in fact && fact.id) query.audit_id = fact.id;
   else if (focusType.value === "trace" && focusId.value) query.trace_id = focusId.value;
   else if (focusType.value === "audit" && focusId.value) query.audit_id = focusId.value;
   void router.push({ path: "/workflows/lifecycle", query });
@@ -75,10 +75,7 @@ function openAudit(auditId: string) {
   const execution = result.value?.execution;
   void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "audit", focus_id: auditId, execution_id: audit?.workflow_execution_id || execution?.id || "", workflow_id: audit?.workflow_id || execution?.workflow_id || "", workflow_version_id: audit?.workflow_version_id || execution?.workflow_version_id || "" } });
 }
-function openAuditTrace(traceId: string) {
-  if (!traceId) return;
-  openTrace(traceId);
-}
+function openAuditTrace(traceId: string) { if (traceId) openTrace(traceId); }
 function selectTrace(trace: RuntimeCorrelationTrace) { selectedTraceId.value = trace.trace_id; }
 function selectAudit(audit: RuntimeCorrelationAudit) { selectedAuditId.value = audit.id; }
 </script>
