@@ -55,7 +55,7 @@
 
 以上结果均来自开发者实际本地执行，不使用 GitHub Actions 作为验收依据。
 
-Scheduler Runtime PostgreSQL Acceptance 首次本地执行发现两类问题：Workflow Definition fixture 缺少 `nodes` 数组，以及 cleanup 漏删 Runtime Integration Event。两项均已修复，但修复后的 Runtime Gate 尚未获得新的开发者本地实际输出，因此暂不标记为通过。
+Scheduler Runtime PostgreSQL Acceptance 仍未通过。首次本地执行暴露了 fixture FK 顺序、Workflow Definition fixture 以及 cleanup 漏删 Integration Event 问题；随后进一步检查发现生产代码 `WorkflowTriggerService.invoke_scheduled()` 使用 `allow_legacy_empty_nodes=True` 绕过了 Workflow Registry 的严格发布 Definition Contract。这是当前仍需修复的真实 Backend 问题，修复后的 Runtime Gate 尚未获得新的开发者本地实际输出，因此暂不标记为通过。
 
 ## 4. 当前 Backend 修复 / 开发
 
@@ -68,18 +68,20 @@ Scheduler Runtime PostgreSQL Acceptance 首次本地执行发现两类问题：W
 - 新增 `scripts/test/phase-2.4/21_scheduler_misfire_lease_gate.ps1`，只检查 PostgreSQL readiness 并运行 targeted tests，禁止自动启动或停止 API / Scheduler / Worker / PostgreSQL / Redis；
 - 新增 `tests/integration/test_workflow_scheduler_runtime.py` 与 `scripts/test/phase-2.4/22_scheduler_runtime_gate.ps1`，验证 Scheduler Runtime 的 Schedule → Slot → Execution → Frontier → Audit/Trace 持久化闭环；
 - 修复 Runtime Acceptance Fixture：显式 flush `WorkflowTrigger` 后再创建 `WorkflowSchedule`，消除无 ORM relationship 时 SQLAlchemy INSERT 顺序不确定导致的 PostgreSQL FK violation；
-- 修复 Runtime Acceptance Fixture：WorkflowVersion 使用 `{"nodes": []}`，满足 `WorkflowRuntime.validate_definition()` 的 Definition 输入契约并保留历史空节点兼容路径；
-- 修复 Runtime Acceptance Cleanup：删除测试租户前清理 `integration_events`，避免 Runtime Integration Event 的 tenant 外键阻止测试数据回收。
+- 修复 Runtime Acceptance Cleanup：删除测试租户前清理 `integration_events`，避免 Runtime Integration Event 的 tenant 外键阻止测试数据回收；
+- 修复 Scheduler Scheduled Trigger Definition Contract：禁止 `invoke_scheduled()` 通过 `allow_legacy_empty_nodes=True` 绕过 Workflow Registry 发布校验；Scheduler 只能向 Worker 投递正式可执行的 published Workflow Definition；
+- Runtime Acceptance fixture 使用包含最小合法 `input` node 的 Definition，真实覆盖 `WorkflowVersion → ScheduleSlot → WorkflowExecution → Frontier` 链路。
 
 ## 5. 下一执行顺序
 
 ```text
-① 重新执行 Scheduler Runtime Real PostgreSQL Acceptance，确认 Definition 与 cleanup 修复后进入真实 Runtime tick
-② 验证 skip / fire_once / catch_up → WorkflowSchedule → ScheduleSlot → WorkflowExecution
-③ 验证 Scheduler Audit / Trace / Integration Event 与 tenant/workflow/execution 关联
-④ 验证 lease 失败恢复、slot 幂等与 Execution 幂等不重复
-⑤ 更新 Phase 2.4 Acceptance 汇总并评估是否达到 Passed
-⑥ Backend-first 继续推进 Operator Governance / Runtime 剩余真实业务缺口
+① 执行 Scheduler Runtime targeted Unit / Real PostgreSQL Acceptance，确认严格 Definition Contract 修复
+② 检查数据库中历史非法 published Workflow 数据，区分正式业务数据与旧测试残留，不通过 Scheduler 兼容逻辑掩盖脏数据
+③ 验证 skip / fire_once / catch_up → WorkflowSchedule → ScheduleSlot → WorkflowExecution
+④ 验证 Scheduler Audit / Trace / Integration Event 与 tenant/workflow/execution 关联
+⑤ 验证 lease 失败恢复、slot 幂等与 Execution 幂等不重复
+⑥ 更新 Phase 2.4 Acceptance 汇总并评估是否达到 Passed
+⑦ Backend-first 继续推进 Operator Governance / Runtime 剩余真实业务缺口
 ```
 
 ## 6. Backend 验收规则
