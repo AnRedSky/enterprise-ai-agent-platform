@@ -10,6 +10,7 @@ import httpx
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 from app.services.workflow_scheduler.runtime import ScheduledTriggerScheduler
@@ -30,8 +31,6 @@ def scheduler_event_loop():
     """
     loop = asyncio.new_event_loop()
     try:
-        # 不把专用循环注册为当前事件循环。pytest-asyncio 可能在测试阶段管理并关闭
-        # 当前循环；本模块的异步操作全部显式通过 _run_async 驱动专用循环。
         yield loop
     finally:
         if not loop.is_closed():
@@ -66,24 +65,20 @@ def _client() -> httpx.Client:
     )
 
 
+def _test_engine():
+    """创建不跨事件循环复用连接的测试数据库引擎。"""
+    return create_async_engine(settings.database_url, poolclass=NullPool, pool_pre_ping=True)
+
+
 async def _execution_rows(idempotency_key: str) -> list[dict]:
-    """读取指定 Scheduler slot 的真实 WorkflowExecution。
-
-    参数：
-        idempotency_key: Scheduler 统一生成的 slot 幂等键。
-
-    返回值：
-        按创建时间排序的真实 WorkflowExecution 行。
-    """
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    """读取指定 Scheduler slot 的真实 WorkflowExecution。"""
+    engine = _test_engine()
     try:
         async with engine.connect() as connection:
             result = await connection.execute(
                 text(
                     "SELECT id, status, idempotency_key, input_data "
-                    "FROM workflow_executions "
-                    "WHERE idempotency_key = :idempotency_key "
-                    "ORDER BY created_at ASC"
+                    "FROM workflow_executions WHERE idempotency_key = :idempotency_key ORDER BY created_at ASC"
                 ),
                 {"idempotency_key": idempotency_key},
             )
@@ -93,23 +88,14 @@ async def _execution_rows(idempotency_key: str) -> list[dict]:
 
 
 async def _scheduled_execution_rows(trigger_id: str) -> list[dict]:
-    """读取指定 Scheduled Trigger 已产生的真实 Execution，避免测试在 interval 边界计算陈旧 slot。
-
-    参数：
-        trigger_id: Scheduled Trigger 的 UUID 字符串。
-
-    返回值：
-        当前 Trigger 对应的全部 Scheduler Execution，按创建时间排序。
-    """
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    """读取指定 Scheduled Trigger 已产生的真实 Execution。"""
+    engine = _test_engine()
     try:
         async with engine.connect() as connection:
             result = await connection.execute(
                 text(
                     "SELECT id, status, idempotency_key, input_data "
-                    "FROM workflow_executions "
-                    "WHERE idempotency_key LIKE :prefix "
-                    "ORDER BY created_at ASC"
+                    "FROM workflow_executions WHERE idempotency_key LIKE :prefix ORDER BY created_at ASC"
                 ),
                 {"prefix": f"scheduled:{trigger_id}:%"},
             )
@@ -119,15 +105,8 @@ async def _scheduled_execution_rows(trigger_id: str) -> list[dict]:
 
 
 async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
-    """读取真实 PostgreSQL 中与 WorkflowExecution 绑定的 Audit/Trace 记录。
-
-    参数：
-        execution_id: WorkflowExecution 的 UUID 字符串。
-
-    返回值：
-        AuditLog 与 WorkflowTraceEvent 两组真实持久化记录。
-    """
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    """读取真实 PostgreSQL 中与 WorkflowExecution 绑定的 Audit/Trace 记录。"""
+    engine = _test_engine()
     try:
         async with engine.connect() as connection:
             audit_result = await connection.execute(
@@ -150,41 +129,19 @@ async def _governance_rows(execution_id: str) -> tuple[list[dict], list[dict]]:
 
 
 async def _seed_scheduler_backlog(trigger_id: str, next_run_at: datetime, interval_seconds: int) -> None:
-    """直接把真实 Scheduler 持久化状态回拨一个槽位，模拟服务重启后存在历史积压的生产状态。
-
-    参数：
-        trigger_id: Scheduled Trigger 的 UUID 字符串。
-        next_run_at: 要写入 Scheduler 的历史计划时间。
-        interval_seconds: Scheduler interval 秒数，用于生成持久化表达式。
-
-    返回值：
-        无；函数直接更新 PostgreSQL 中的 Scheduler 状态。
-    """
-    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    """把 API 创建的唯一 Scheduler 状态回拨到指定历史槽位，不重复创建 Schedule。"""
+    engine = _test_engine()
     try:
         async with engine.begin() as connection:
-            trigger = (
-                await connection.execute(
-                    text(
-                        "SELECT tenant_id, workflow_id FROM workflow_triggers "
-                        "WHERE id = :trigger_id"
-                    ),
-                    {"trigger_id": trigger_id},
-                )
-            ).mappings().one()
             await connection.execute(
                 text(
-                    "INSERT INTO workflow_schedules "
-                    "(id, tenant_id, trigger_id, workflow_id, enabled, status, timezone, "
-                    "schedule_expression, next_run_at, misfire_policy, catch_up_limit, updated_at) "
-                    "VALUES (:id, :tenant_id, :trigger_id, :workflow_id, true, 'enabled', 'UTC', "
-                    ":schedule_expression, :next_run_at, 'catch_up', 2, :updated_at)"
+                    "UPDATE workflow_schedules SET next_run_at = :next_run_at, "
+                    "schedule_expression = :schedule_expression, misfire_policy = 'catch_up', "
+                    "catch_up_limit = 2, updated_at = :updated_at "
+                    "WHERE trigger_id = :trigger_id"
                 ),
                 {
-                    "id": uuid.uuid4(),
-                    "tenant_id": trigger["tenant_id"],
                     "trigger_id": uuid.UUID(trigger_id),
-                    "workflow_id": trigger["workflow_id"],
                     "schedule_expression": f"interval:{interval_seconds}",
                     "next_run_at": next_run_at.replace(tzinfo=None),
                     "updated_at": datetime.now(UTC).replace(tzinfo=None),
@@ -199,16 +156,7 @@ def _wait_for_scheduled_execution(
     idempotency_key: str,
     timeout_seconds: float = 15.0,
 ) -> list[dict]:
-    """轮询真实 PostgreSQL，等待指定 slot 的 Execution 进入终态。
-
-    参数：
-        loop: 当前模块复用的测试事件循环。
-        idempotency_key: 目标 Scheduler slot 的统一幂等键。
-        timeout_seconds: 最大等待秒数。
-
-    返回值：
-        当前数据库中该幂等键对应的全部 Execution 行。
-    """
+    """轮询真实 PostgreSQL，等待指定 slot 的 Execution 进入终态。"""
     deadline = time.monotonic() + timeout_seconds
     terminal_states = {"completed", "failed", "cancelled"}
     while time.monotonic() < deadline:
@@ -224,16 +172,7 @@ def _wait_for_trigger_execution(
     trigger_id: str,
     timeout_seconds: float = 15.0,
 ) -> list[dict]:
-    """轮询指定 Trigger 的真实 Execution，规避 interval 槽位边界导致的测试竞态。
-
-    参数：
-        loop: 当前模块复用的测试事件循环。
-        trigger_id: Scheduled Trigger 的 UUID 字符串。
-        timeout_seconds: 最大等待秒数。
-
-    返回值：
-        当前 Trigger 对应的已持久化 Execution 行。
-    """
+    """轮询指定 Trigger 的真实 Execution。"""
     deadline = time.monotonic() + timeout_seconds
     terminal_states = {"completed", "failed", "cancelled"}
     while time.monotonic() < deadline:
@@ -292,6 +231,9 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
 
+        # API 创建时 Schedule 的 next_run_at 是当前时间；测试必须显式构造有效的“到期”事实，
+        # 而不是依赖后台 Scheduler 自然等待一个 interval。这样同时覆盖真实持久化 Schedule 与 Runtime。
+        _run_async(scheduler_event_loop, _seed_scheduler_backlog(trigger_id, datetime.now(UTC), 60))
         rows = _wait_for_trigger_execution(scheduler_event_loop, trigger_id)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
@@ -350,16 +292,16 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, now, config["interval_seconds"])
 
         async def dispatch_from_two_workers():
-            """使用两个独立 Scheduler 实例竞争同一个持久化 slot。
-
-            返回值：
-                两个 worker 的 tick 计数结果。
-            """
+            """使用两个独立 Scheduler 实例竞争同一个持久化 slot。"""
             first = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
             second = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
             return await asyncio.gather(first.tick_once(now), second.tick_once(now))
 
         try:
+            _run_async(
+                scheduler_event_loop,
+                _seed_scheduler_backlog(trigger_id, now, config["interval_seconds"]),
+            )
             counters = _run_async(scheduler_event_loop, dispatch_from_two_workers())
             rows = _wait_for_scheduled_execution(scheduler_event_loop, runtime_key)
             assert len(rows) == 1, rows
