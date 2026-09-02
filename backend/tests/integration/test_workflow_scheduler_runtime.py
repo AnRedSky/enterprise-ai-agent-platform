@@ -191,8 +191,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "FROM workflow_executions WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                ).mappings().all()
-            )
+                )
+            ).mappings().all()
             assert len(executions) == 2, executions
             assert {row["id"] for row in executions} == {row["workflow_execution_id"] for row in slots}
             assert all(row["status"] == "pending" for row in executions)
@@ -207,8 +207,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                ).mappings().all()
-            )
+                )
+            ).mappings().all()
             assert len(frontiers) == 2, frontiers
             assert {row["execution_id"] for row in frontiers} == {row["id"] for row in executions}
             assert all(row["status"] == "pending" for row in frontiers)
@@ -220,8 +220,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                ).mappings().all()
-            )
+                )
+            ).mappings().all()
             traces = (
                 await verify_session.execute(
                     text(
@@ -229,8 +229,8 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                         "WHERE tenant_id = :tenant_id ORDER BY created_at ASC"
                     ),
                     {"tenant_id": tenant_id},
-                ).mappings().all()
-            )
+                )
+            ).mappings().all()
             assert len([row for row in audits if row["action"] == "workflow.trigger.scheduled"]) == 1, audits
             assert len([row for row in audits if row["action"] == "workflow.trigger.scheduled_recovery"]) == 1, audits
             assert len([row for row in traces if row["event_type"] == "trigger.scheduled"]) == 1, traces
