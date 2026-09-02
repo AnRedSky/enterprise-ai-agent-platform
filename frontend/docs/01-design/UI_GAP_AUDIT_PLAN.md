@@ -33,10 +33,10 @@
 
 | 优先级 | 页面 | UI-03 | UI-04 | UI-05 | 深链/诊断 | 状态 |
 |---|---|---|---|---|---|---|
-| P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | 核心链路已建立 | 进行中 |
+| P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | P0-02-A 已审计并补回归 | 待验证 |
 | P0 | Workflow Lifecycle | 已建立 | 已建立 | 核心闭环已建立 | 已建立 | 基本完成 |
-| P0 | Workflows | **P0-01-A 已迁移** | 部分已有 | 已有较多真实操作 | 待审计 | 进行中 |
-| P0 | Agents | 基础模式已建立 | Debug 已收敛 | 待完整审计 | Runtime 链路待强化 | 进行中 |
+| P0 | Workflows | 已建立 | P0-01-B 已补齐 | P0-01-B 已补齐 | durable ID 保持 | 待验证 |
+| P0 | Agents | 基础模式已建立 | Debug 已收敛 | **P0-03-A 已补齐关键防护** | Runtime 链路待强化 | 待验证 |
 | P1 | Knowledge | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Tools | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
 | P1 | Organizations | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
@@ -100,36 +100,55 @@
 
 ### P0-01-A Workflows UI-03
 
-**代码实现已完成，等待实际测试验证。** `workflows/index.vue` 已引入 `PageHeader`、`SurfaceCard`、`StatePanel`，页面主骨架、工作流列表和详情区域不再依赖页面级 `el-card` header。保留现有 Workflow CRUD、Version、Publish、Execution、Retry、Resume、Cancel、Trace、Audit API 与 durable ID 关系，不新增 Backend Contract。
+代码实现已完成：`workflows/index.vue` 使用 `PageHeader`、`SurfaceCard`、`StatePanel` 统一页面骨架，并保留现有 Workflow CRUD、Version、Publish、Execution、Retry、Resume、Cancel、Trace、Audit API 与 durable ID 关系。
 
-新增 targeted test：`frontend/tests/views/WorkflowsUI03.test.ts`，覆盖公共 PageHeader / SurfaceCard 使用以及空列表共享 StatePanel。
+Targeted test：`frontend/tests/views/WorkflowsUI03.test.ts`。
 
-当前测试状态：**未执行**。因此 P0-01-A 暂不标记“已完成”，下一步必须先执行 targeted test，并根据真实输出处理编译/运行问题。
+当前测试状态：**未执行**。因此 P0-01-A 不标记“已完成”。
 
 ### P0-01-B Workflows UI-04/05
 
-待 P0-01-A targeted test 验证后继续。重点检查 Detail / Execution / Version / Audit / Trace 的 Loading、Empty、Error、Permission、Success 与操作闭环，不改变已有真实 API 行为。
+已完成第一轮补齐：Version Loading/Empty/Error/Permission、Execution/Audit stale-data 清理、Trace Loading 与重复查询保护、Create/Edit/Delete/Create Version/Publish action loading 与并发保护、Archived read-only 与确认框保护。
 
-### P0-02 Runtime
+Targeted regression：`frontend/tests/views/WorkflowsUI04UI05.test.ts`。
 
-现有 Durable Fact 深链已完成关键修复。下一步审计 Execution / Trace / Audit 页面之间的 ID 传递、刷新恢复和错误状态，不重新设计已有 Contract。
+当前测试状态：**未执行**。当前 GitHub 开发环境未提供项目 Node/Vitest 运行时，本轮没有伪造测试结果。
 
-### P0-03 Agent Debug
+### P0-02-A Runtime Execution / Correlation 深链状态恢复
 
-**第一批已开始实施。** `AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
+代码审计确认 `RuntimeExecutions.vue` 使用真实 `execution_id` 恢复深链；当目标 Execution 不在当前分页列表中时直接 `openById(execution_id)`，不通过列表位置推断。关系导航使用后端 `workflow_id` 与目标 Execution ID，并固定携带 `source=runtime-relation`。
 
-### P0-04 Agent Workbench
+Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，覆盖分页列表缺少目标 Execution 时的精确恢复及关系导航 durable ID。
 
-当前审计已确认 `AgentWorkbench` 已覆盖 Create / Version / Publish / Archive，以及 Debug Chat 的加载、权限、错误、取消生成和成功状态；仍需继续核对 UI-05 的确认、重复提交保护、成功刷新和 Debug → Runtime 上下文闭环。该项暂不标记完成。
+当前测试状态：**未执行**。
+
+### P0-03-A Agent Workbench UI-05
+
+本轮完成关键操作安全修复：
+
+- 移除 `发布最新版本` 入口；原实现通过 `listVersions(agent.id)[0]` 依赖数组顺序选择版本，不符合 durable fact 规则；现在必须在版本列表中基于明确 `version.id` 发布。
+- Archive 增加 `archivingAgentId` loading 与重复操作保护。
+- Create / Create Version / Publish 增加并发保护，并在请求期间保持取消按钮不可重复提交。
+- Archive 继续要求明确确认，取消确认不会调用后端。
+- 成功操作继续 `load()`，以 Backend 返回事实刷新页面状态。
+
+新增 targeted regression：`frontend/tests/views/AgentWorkbenchUI05.test.ts`，覆盖显式 version ID 发布、无“发布最新版本”推断入口、Archive confirmation、取消归档与成功刷新。
+
+当前测试状态：**未执行**。
+
+### P0-04 Agent Debug
+
+第一批已开始实施。`AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
 
 ## 8. 下一批原子任务
 
 1. `P0-01-A`: 执行 `WorkflowsUI03.test.ts`，修复实际失败项。
-2. `P0-01-B`: Workflows UI-04 / UI-05 targeted regression。
-3. `P0-02-A`: Runtime Execution/Correlation 页面深链与状态恢复 Gap Audit。
-4. `P0-03-A`: Agent Workbench UI-05 操作闭环与 Debug → Runtime 上下文补齐。
-5. `P1-01-A`: Knowledge UI-03/UI-04/UI-05 Gap Audit。
-6. `P1-02-A`: Tools UI-03/UI-04/UI-05 Gap Audit。
+2. `P0-01-B`: 执行 `WorkflowsUI04UI05.test.ts`，修复实际失败项。
+3. `P0-02-A`: 执行 `RuntimeDeepLinkRecovery.test.ts`，修复实际失败项。
+4. `P0-03-A`: 执行 `AgentWorkbenchUI05.test.ts`，修复实际失败项。
+5. `P0-03-B`: Agent Debug → Runtime durable ID 回归。
+6. `P1-01-A`: Knowledge UI-03/UI-04/UI-05 Gap Audit。
+7. `P1-02-A`: Tools UI-03/UI-04/UI-05 Gap Audit。
 
 ## 9. 任务执行跟踪规范
 
@@ -197,9 +216,9 @@ targeted test
 | 顺序 | Task ID | 交付目标 | 状态 |
 |---|---|---|---|
 | 1 | P0-01-A | Workflows 页面公共 Header / SurfaceCard / 列表状态 | **待验证** |
-| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | 待处理 |
-| 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | 待处理 |
-| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | 开发中 |
+| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | **待验证** |
+| 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | **待验证** |
+| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | **待验证** |
 | 5 | P0-03-B | Agent Debug → Runtime durable ID 回归 | 待处理 |
 | 6 | P1-01-A | Knowledge 页面 Gap Audit | 待处理 |
 | 7 | P1-02-A | Tools 页面 Gap Audit | 待处理 |
