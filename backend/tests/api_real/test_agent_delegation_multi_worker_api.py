@@ -20,7 +20,7 @@ from app.models.agent_delegation import AgentDelegation
 from app.models.core import AuditLog
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.workflow_worker import WorkflowWorker
-from tests.api_real.test_agent_delegation_bridge_api import _create_delegation
+from tests.api_real.test_agent_delegation_bridge_api import _bind_deterministic_mock_profile, _create_delegation
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
 TOKEN = os.getenv("ACCESS_TOKEN")
@@ -42,16 +42,7 @@ def _client() -> httpx.Client:
 
 
 async def _delegation_statuses(delegation_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
-    """读取本次验收 Delegation 当前状态。
-
-    Args:
-        delegation_ids: 本次验收创建的 Delegation 标识。
-
-    Returns:
-        dict[uuid.UUID, str]: Delegation 标识到 durable status 的映射。
-
-    事务边界：仅执行只读查询，不改变本次验收数据。
-    """
+    """读取本次验收 Delegation 当前状态。"""
     async with SessionLocal() as db:
         rows = (
             await db.execute(
@@ -87,11 +78,19 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
 
     with _client() as client:
         for index in range(4):
-            delegation_id, _, _, _, parent_execution_id = await _create_delegation(
+            delegation_id, _, _, _, parent_execution_id = _create_delegation(
                 client,
                 f"b6-multi-worker-{suffix}-{index}",
             )
             fixtures.append((delegation_id, parent_execution_id))
+
+    async with SessionLocal() as db:
+        for index, (delegation_id, _) in enumerate(fixtures):
+            await _bind_deterministic_mock_profile(
+                db,
+                uuid.UUID(delegation_id),
+                f"{suffix}-{index}",
+            )
 
     worker_a = WorkflowWorker(concurrency=1, lease_seconds=60)
     worker_b = WorkflowWorker(concurrency=1, lease_seconds=60)
@@ -99,7 +98,6 @@ async def test_delegation_is_consumed_by_multiple_worker_instances_through_durab
     worker_b.owner = f"b6-worker-b-{suffix}"
     delegation_ids = [uuid.UUID(item[0]) for item in fixtures]
 
-    # 本验收同时存在父 Workflow 的普通 Frontier，因此必须直接调用正式 Delegation Frontier discovery 入口。
     # Gate 明确允许已有后台 Worker 并发执行；当前测试 Worker 不要求垄断全部 Claim ownership。
     deadline = asyncio.get_running_loop().time() + 10.0
     first_round = await asyncio.gather(
