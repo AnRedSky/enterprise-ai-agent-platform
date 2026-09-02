@@ -12,8 +12,8 @@ describe("Audit and Dashboard consistency contract", () => {
     expect(source).toContain("PageToolbar");
     expect(source).toContain("SurfaceCard");
     expect(source).toContain("StatePanel");
-    expect(source).not.toMatch(/<el-card\\b/);
-    expect(source).not.toMatch(/\\bv-loading\\s*=/);
+    expect(source).not.toMatch(/<el-card\b/);
+    expect(source).not.toMatch(/\bv-loading\s*=/);
     expect(source).toContain("items.value = [];");
     expect(source).toContain("total.value = 0;");
     expect(source).toContain("execution_id: executionId");
@@ -26,9 +26,9 @@ describe("Audit and Dashboard consistency contract", () => {
     expect(source).toContain("MetricCard");
     expect(source).toContain("SurfaceCard");
     expect(source).toContain("StatePanel");
-    expect(source).not.toMatch(/<el-card\\b/);
-    expect(source).not.toMatch(/\\bv-loading\\s*=/);
-    expect(source).not.toMatch(/<el-empty\\b/);
+    expect(source).not.toMatch(/<el-card\b/);
+    expect(source).not.toMatch(/\bv-loading\s*=/);
+    expect(source).not.toMatch(/<el-empty\b/);
     expect(source).toContain("function clearData()");
     expect(source).toContain("clearData();");
     expect(source).toContain("execution_id: executionId");
