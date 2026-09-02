@@ -52,7 +52,7 @@ function openExecution() {
 function openWorkflowLifecycle(fact?: RuntimeCorrelationTrace | RuntimeCorrelationAudit) {
   if (!result.value?.execution) return;
   const execution = result.value.execution;
-  const executionId = fact && "execution_id" in fact ? fact.execution_id : fact && "workflow_execution_id" in fact ? fact.workflow_execution_id : execution.id;
+  const executionId = fact && "execution_id" in fact ? fact.execution_id : fact && "workflow_execution_id" in fact ? fact.workflow_execution_id || execution.id : execution.id;
   const workflowId = fact?.workflow_id || execution.workflow_id;
   const query: Record<string, string> = { workflow_id: workflowId, execution_id: executionId, source: "runtime-correlation" };
   if (fact && "execution_id" in fact && fact.trace_id) query.trace_id = fact.trace_id;
