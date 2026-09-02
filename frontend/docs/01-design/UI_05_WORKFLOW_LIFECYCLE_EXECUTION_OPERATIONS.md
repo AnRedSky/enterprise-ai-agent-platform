@@ -82,7 +82,15 @@ Audit 具体事实可直接返回 WorkflowLifecycle，使用该记录自身的�
 
 ### 深链与分页边界
 
-当前具体事实面板只在目标 Durable Fact 已出现在当前后端分页结果中时展示；页面不会为了“看起来完整”而复制后端关联查询或猜测目标所在页。后续如需保证任意深链目标跨分页可见，应由后端 Contract 提供明确的 focused fact，而不是前端扩大分页或推导目标位置。
+列表 `traces.items` / `audits.items` 仍严格遵循分页参数，只表达当前列表页。**深链目标不再依赖目标必须落在当前分页页内。** 后端 Runtime correlation Contract 已补充 focused-record 语义：
+
+- `/runtime/correlations/traces/{trace_id}` 返回 `focused_traces`，按当前 tenant + 精确 `trace_id` 查询全部匹配的 Trace Durable Facts，不受 `trace_page` / `trace_page_size` 影响；
+- `/runtime/correlations/audits/{audit_id}` 返回 `focused_audit`，按当前 tenant + 精确 `audit_id` 查询目标 Audit Durable Fact，不受 `audit_page` / `audit_page_size` 影响；
+- Audit 自带 `trace_id` 时，同时返回对应 `focused_traces`；
+- Trace ID 如果对应多个 Trace Event，则返回全部匹配 Durable Facts，禁止通过时间、排序、索引或“第一条”猜测单一事实；
+- 目标不存在或不属于当前 tenant 时，仍由既有 404 / 关联解析 Contract 处理；Trace 映射多个 Execution 时保持 409 歧义保护。
+
+因此前端不得扩大分页，也不得为了补齐深链目标重新复制后端关联查询。
 
 ## 诊断链路
 
@@ -100,7 +108,7 @@ Runtime correlation 查询以真实 Trace ID 或 Audit ID 为 focus，后端返�
 
 ### 具体 Trace / Audit → WorkflowLifecycle
 
-从列表中选择具体 Durable Fact 时，回退导航必须使用该行本身携带的真实 `trace_id` / `audit_id`。这样即使当前查询根是 Execution，也可以从具体 Audit / Trace 准确返回对应 WorkflowLifecycle 上下文。
+从列表中选择具体 Durable Fact 时，回退导航必须使用该行本身携带的真实 `trace_id` / `audit_id`。对于分页外的深链目标，前端应使用后端 focused-record Contract 提供的 Durable Fact，不得通过分页扩大或关系推导获得目标。
 
 ### Audit → Trace
 
@@ -127,19 +135,40 @@ WorkflowLifecycle 不重新查询或推导关联关系；它只把当前页面�
 9. 切换 Execution 时清除旧诊断上下文。
 10. 清除上下文只影响 URL 与页面焦点，不修改任何服务端事实。
 11. 具体 Trace/Audit 面板只展示后端已经返回的 Durable Fact 字段。
+12. 深链目标跨分页时只允许消费后端 `focused_traces` / `focused_audit`，禁止前端扩大分页或复制关联 SQL 逻辑。
 
 ## API 边界
 
-复用既有 API，不新增后端接口：
+Runtime correlation API 保持既有四个入口，不新增额外查询接口：
 
-- `workflowApi.listExecutions(workflowId)`
 - `runtimeCorrelationsApi.execution(executionId)`
 - `runtimeCorrelationsApi.trace(traceId)`
 - `runtimeCorrelationsApi.audit(auditId)`
+- `runtimeCorrelationsApi.operatorAction(operatorActionId)`
 
-本轮同步后端 Contract 的字段事实：`WorkflowTraceEvent` 包含 `node_id`、`actor_id`、`data`、`error_code`、`error_message`；`AuditLog` 包含 `workflow_execution_id`、`operator_action_id`、`trace_id`、`request_id`、`metadata` 等字段。前端类型保持这些可空字段与后端模型一致。
+Response 在既有分页集合之外新增：
+
+- `focused_traces: WorkflowTraceItem[]`：Trace focus 的精确 Durable Facts；默认空数组；不受列表分页影响。
+- `focused_audit: AuditLogItem | null`：Audit focus 的精确 Durable Fact；默认 `null`；不受列表分页影响。
+
+后端字段事实保持：`WorkflowTraceEvent` 包含 `node_id`、`actor_id`、`data`、`error_code`、`error_message`；`AuditLog` 包含 `workflow_execution_id`、`operator_action_id`、`trace_id`、`request_id`、`metadata` 等字段。前端类型保持这些可空字段与后端模型一致。
+
+## Contract 审查结论
+
+2026-09-02 审查 `backend/app/services/runtime_operations/audit_trace_correlation.py` 与 `/api/v1/runtime/correlations/{executions,traces,audits,operator-actions}` 后确认：原实现的 Trace / Audit focus 仅通过 `by_trace` / `by_audit` 解析 Execution，再调用 `by_execution` 的分页列表；因此无法保证目标 Durable Fact 位于当前页。
+
+根因不是前端定位逻辑，而是后端 response 缺少 focused-record Contract。此次采用最小后端修复：保留现有分页语义，仅增加精确 focused fact 查询结果，不改变分页总数、不扩大默认 page size、不改变 tenant scope、不通过时间或排序推导关系。
+
+Trace 使用 `focused_traces` 而不是单一 `focused_trace`，因为同一 `trace_id` 在 `WorkflowTraceEvent` 中可能对应多个事件；返回全部精确匹配事实可以避免后端再次引入“第一条”猜测。Audit 使用唯一 `audit_id`，因此返回单一 `focused_audit`。
 
 ## Regression Test
+
+Backend：
+
+- `test_trace_focus_is_returned_outside_the_paginated_page`：验证 Trace focus 即使 `traces.items` 当前页为空，`focused_traces` 仍返回目标 Durable Facts。
+- `test_audit_focus_is_returned_outside_the_paginated_page`：验证 Audit focus 即使 `audits.items` 当前页为空，`focused_audit` 仍返回目标 Durable Fact。
+
+Frontend：
 
 `WorkflowLifecycle.test.ts` 覆盖：
 
@@ -157,9 +186,12 @@ WorkflowLifecycle 不重新查询或推导关联关系；它只把当前页面�
 - 具体 Audit Durable Fact 字段定位；
 - 从具体 Trace 返回 WorkflowLifecycle 使用该行真实 Trace ID；
 - 从具体 Audit 返回 WorkflowLifecycle 使用该行真实 Audit ID；
-- Audit 自带真实 Trace ID 时继续进入 Trace focus。
+- Audit 自带真实 Trace ID 时继续进入 Trace focus；
+- Audit `workflow_execution_id` 为空时回退到已确认的 Execution correlation。
 
 ## 本地验证
+
+Frontend：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
@@ -167,7 +199,21 @@ npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/Run
 npm run build
 ```
 
-本轮采用：**实现 → targeted test → 文档 → 原子提交**。
+Backend：
+
+```powershell
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
+pytest -q tests/unit/test_runtime_correlation_focused_facts.py
+```
+
+主线完成后再执行完整门禁：
+
+```powershell
+npm run test:unit
+npm run test:gate
+```
+
+本轮采用：**Contract 审查 → 最小后端 focused-record Contract → targeted regression → 前端类型对齐 → 文档 → 原子提交**。
 
 ## 问题记录：Audit Execution ID 可空导致构建类型错误
 
@@ -181,4 +227,4 @@ npm run build
 
 ## 下一步
 
-继续检查 Runtime correlation 后端 Contract 的 focused-record 语义与分页边界。如果后端已经保证按 Trace/Audit ID 查询时目标 Durable Fact 必然返回，则前端维持当前只读定位模型；如果 Contract 无法保证，则优先补充最小后端 focused-record contract，而不是在前端扩大分页或通过索引推导目标事实。
+继续推进 RuntimeCorrelations 前端具体事实定位：消费后端 `focused_traces` / `focused_audit`，使 Trace/Audit 深链目标即使位于分页外也能直接展示，并补充对应 frontend regression test。仍禁止扩大分页和关系推导。
