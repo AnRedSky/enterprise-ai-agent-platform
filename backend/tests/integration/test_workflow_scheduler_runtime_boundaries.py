@@ -65,7 +65,7 @@ async def _cleanup(tenant_id, workflow_ids: list, version_ids: list, trigger_ids
             for workflow_id in workflow_ids:
                 await db.execute(text("DELETE FROM workflows WHERE id = :id"), {"id": workflow_id})
             await db.execute(text("DELETE FROM users WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"id": tenant_id})
+            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"tenant_id": tenant_id})
 
 
 async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, version_id, definition: dict) -> None:
@@ -95,7 +95,7 @@ async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, versio
 
 @pytest.mark.asyncio
 async def test_scheduler_runtime_isolates_disabled_future_and_dirty_published_workflows() -> None:
-    """验证全库存在脏 Definition 时，Runtime 只处理真正到期的 enabled Schedule。"""
+    """验证全库存在脏 Definition 时，Runtime 只处理本测试租户真正到期的 enabled Schedule。"""
     tenant_id = uuid4()
     user_id = uuid4()
     target_workflow_id = uuid4()
@@ -255,7 +255,6 @@ async def test_scheduler_runtime_isolates_disabled_future_and_dirty_published_wo
         assert counters["eligible"] >= 1, counters
         assert counters["dispatched"] >= 1, counters
         assert counters["failed"] == 0, counters
-        assert counters["contention"] >= 0, counters
 
         async with SessionLocal() as db:
             dirty_executions = (
