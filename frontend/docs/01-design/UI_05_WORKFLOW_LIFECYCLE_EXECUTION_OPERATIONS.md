@@ -38,6 +38,50 @@ Audit: focus_type=audit, focus_id=<audit_id>
 
 切换到另一条 Execution 或主动清除上下文时，旧 Trace/Audit ID 必须清除，避免跨 Execution 污染诊断上下文。
 
+## Trace / Audit 具体事实定位
+
+Runtime correlations 的列表记录直接映射后端 `WorkflowTraceEvent` / `AuditLog` Durable Facts。前端不得从事件时间、索引或字符串自行拼装诊断事实。
+
+### Trace 事实
+
+选中具体 Trace 记录后展示后端返回的：
+
+- Trace ID；
+- Execution ID；
+- Workflow ID / Workflow Version ID；
+- Event Type；
+- Node ID；
+- Actor ID；
+- Status；
+- Error Code / Error Message；
+- Data JSON；
+- Created At。
+
+Trace ID 仍可继续进入 Runtime correlation，保持 Execution / Workflow / Version 上下文。
+
+### Audit 事实
+
+选中具体 Audit 记录后展示后端返回的：
+
+- Audit ID；
+- Action；
+- Execution ID；
+- Workflow ID / Workflow Version ID；
+- Trace ID；
+- Actor ID；
+- Resource Type / Resource ID；
+- Request ID；
+- Status；
+- Error Code；
+- Metadata；
+- Created At。
+
+Audit ID 仍可继续进入 Runtime correlation，保持 Execution / Workflow / Version 上下文。
+
+### 深链与分页边界
+
+当前具体事实面板只在目标 Durable Fact 已出现在当前后端分页结果中时展示；页面不会为了“看起来完整”而复制后端关联查询或猜测目标所在页。后续如需保证任意深链目标跨分页可见，应由后端 Contract 提供明确的 focused fact，而不是前端推导。
+
 ## 诊断链路
 
 ### Execution → Runtime
@@ -70,6 +114,7 @@ WorkflowLifecycle 不重新查询或推导关联关系；它只把当前页面�
 6. WorkflowLifecycle 接收诊断上下文只负责展示与透传，不负责建立新的关联图。
 7. 切换 Execution 时清除旧诊断上下文。
 8. 清除上下文只影响 URL 与页面焦点，不修改任何服务端事实。
+9. 具体 Trace/Audit 面板只展示后端已经返回的 Durable Fact 字段。
 
 ## API 边界
 
@@ -79,6 +124,8 @@ WorkflowLifecycle 不重新查询或推导关联关系；它只把当前页面�
 - `runtimeCorrelationsApi.execution(executionId)`
 - `runtimeCorrelationsApi.trace(traceId)`
 - `runtimeCorrelationsApi.audit(auditId)`
+
+本轮同步后端 Contract 的字段事实：`WorkflowTraceEvent` 包含 `node_id`、`actor_id`、`data`、`error_code`、`error_message`；`AuditLog` 包含 `workflow_execution_id`、`operator_action_id`、`trace_id`、`request_id`、`metadata` 等字段。前端类型保持这些可空字段与后端模型一致。
 
 ## Regression Test
 
@@ -91,7 +138,11 @@ WorkflowLifecycle 不重新查询或推导关联关系；它只把当前页面�
 - 清除上下文不改变当前 Execution；
 - 切换 Execution 后不会携带旧 Trace/Audit ID。
 
-`RuntimeCorrelations.test.ts` 覆盖 Trace / Audit focus → WorkflowLifecycle 的反向定位。
+`RuntimeCorrelations.test.ts` 进一步覆盖：
+
+- Trace / Audit focus → WorkflowLifecycle 的反向定位；
+- 具体 Trace Durable Fact 的字段定位；
+- 具体 Audit Durable Fact 的字段定位。
 
 ## 本地验证
 
@@ -101,8 +152,8 @@ npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/Run
 npm run build
 ```
 
-本轮仍采用：**实现 → targeted test → 文档 → 原子提交**。
+本轮采用：**实现 → targeted test → 文档 → 原子提交**。
 
 ## 下一步
 
-进入下一层 **Trace / Audit 具体事实定位**：优先基于后端返回的真实 Trace / Audit Durable Facts 建立具体记录定位，不在前端复制关联规则或虚构 ID。
+继续检查 Trace/Audit 深链在分页场景下的后端 Contract 能力；若后端提供 focused fact，则补齐任意 Trace/Audit ID 的跨分页精确定位。否则保持当前“只展示已返回 Durable Fact”的边界，不在前端制造关联事实。
