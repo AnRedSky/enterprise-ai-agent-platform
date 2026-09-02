@@ -75,6 +75,13 @@ Invoke-Test "Real PostgreSQL Operator Action transaction rollback acceptance" @(
     "--tb=long",
     "-W", "error"
 )
+Invoke-Test "Real PostgreSQL Operator Resume lineage acceptance" @(
+    "-q",
+    "tests/api_real/test_operator_action_resume_lineage_acceptance.py",
+    "-m", "real_api",
+    "--tb=long",
+    "-W", "error"
+)
 
 Write-Host "[4/4] Service startup boundary"
 $afterServices = @(Get-ServiceProcessSnapshot)
@@ -87,7 +94,8 @@ if ($created.Count -gt 0) {
 
 Write-Host "[PASS] Runtime Correlation nullable Audit fields are represented by the actual OpenAPI contract."
 Write-Host "[PASS] Retry Operator Action persisted a succeeded Idempotency result resource."
-Write-Host "[PASS] Operator Action -> Audit -> Result Resource -> Execution/Trace lineage was verified in PostgreSQL."
-Write-Host "[PASS] Operator Action Audit failure rollback was verified in PostgreSQL."
+Write-Host "[PASS] Retry Operator Action -> Audit -> Result Resource -> Execution/Trace lineage was verified in PostgreSQL."
+Write-Host "[PASS] Retry Operator Action Audit failure rollback was verified in PostgreSQL."
+Write-Host "[PASS] Resume Operator Action replay reused the same Result Resource and produced one Operator Audit."
 Write-Host "[PASS] No protected service process appeared during the gate."
 Write-Host "[PASS] Operator Action Result Lineage Gate completed."
