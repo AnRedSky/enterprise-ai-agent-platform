@@ -175,17 +175,22 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         await _bind_deterministic_mock_profile(db, delegation_uuid, suffix)
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         tenant_id = delegation_row.tenant_id
+        current_status = delegation_row.status
 
-    # 现有 Worker 可以合法地先于本测试实例 Claim。同一个 Delegation 不能要求固定 owner，
-    # 否则会把真实 multi-worker 竞争误判成 B2 失败。
-    frontier = await worker._claim_pending_delegation_frontier()
-    if frontier is not None:
-        async with SessionLocal() as db:
-            claimed = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-            worker_execution_id = claimed.worker_execution_id
-            assert worker_execution_id is not None
-            assert frontier.execution_id == worker_execution_id
-        await worker.execute_frontier(frontier)
+    # 真实环境允许后台 Worker 先于本测试实例完成 Claim；只有 pending 才由当前测试 Worker 尝试竞争。
+    # 已进入 running/terminal 的 Delegation 不能再次 Claim，这是生产状态机的合法保护，而不是测试失败。
+    if current_status == "pending":
+        frontier = await worker._claim_pending_delegation_frontier()
+        if frontier is not None:
+            async with SessionLocal() as db:
+                claimed = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+                worker_execution_id = claimed.worker_execution_id
+                assert worker_execution_id is not None
+                assert frontier.execution_id == worker_execution_id
+            await worker.execute_frontier(frontier)
+        else:
+            persisted = await _wait_for_terminal_delegation(delegation_uuid)
+            assert persisted.status in {"completed", "failed"}
     else:
         persisted = await _wait_for_terminal_delegation(delegation_uuid)
         assert persisted.status in {"completed", "failed"}
@@ -226,12 +231,7 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
         delegation_uuid = delegation_row.id
-        claimed = await claim_delegation(
-            db=db,
-            tenant_id=delegation_row.tenant_id,
-            delegation_id=delegation_uuid,
-            worker_owner=f"b3-worker-{suffix}",
-        )
+        claimed = await claim_delegation(db=db, tenant_id=delegation_row.tenant_id, delegation_id=delegation_uuid, worker_owner=f"b3-worker-{suffix}")
         assert claimed.worker_execution_id is not None
         stale_worker_execution_id = uuid.uuid4()
         with pytest.raises(HTTPException) as exc_info:
