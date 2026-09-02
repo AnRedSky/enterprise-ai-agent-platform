@@ -20,7 +20,6 @@ from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 from app.services.workflow_scheduler.misfire import build_due_slots, choose_misfire_slots, next_run_after_misfire
 from app.services.workflow_scheduler.models import MisfirePolicy
 from app.services.workflow_scheduler.repository import WorkflowSchedulerRepository
-from app.services.trigger import WorkflowTriggerService
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +127,10 @@ class ScheduledTriggerScheduler:
 
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
         """从 Repository 原子发现真正到期的持久化 Schedule 并执行到期槽位。"""
+        # 延迟导入 Trigger Service，避免 Trigger Service -> Scheduler Repository -> Scheduler Runtime
+        # 与 Scheduler Runtime -> Trigger Service 在包初始化阶段形成循环依赖。
+        from app.services.trigger import WorkflowTriggerService
+
         now = now or datetime.now(UTC)
         counters = {
             "eligible": 0,
@@ -176,8 +179,6 @@ class ScheduledTriggerScheduler:
                         slot_key=self.planned_slot_key(trigger.id, claimed.next_run_at, config["interval_seconds"]),
                         payload={"owner": self.owner, "lease_expires_at": (now + timedelta(seconds=self.lease_seconds)).isoformat()},
                     )
-                    # Lease claim 与 lease.acquired 事实保持同一事务；之后再提交，
-                    # 避免出现数据库已经授予 ownership 但 Durable Event 不存在的窗口。
                     await db.commit()
 
                     planned_at = claimed.next_run_at.replace(tzinfo=UTC) if claimed.next_run_at.tzinfo is None else claimed.next_run_at.astimezone(UTC)
@@ -286,7 +287,6 @@ class ScheduledTriggerScheduler:
                             payload={"recovered": True, "selected_slot_count": len(selected_slots)},
                         )
 
-                    # Slot bind 与 Scheduler runtime facts 是同一事务的幂等持久化边界。
                     await db.commit()
 
                     if len(due_slots) > 1:
@@ -338,23 +338,3 @@ class ScheduledTriggerScheduler:
                         "Scheduled Trigger dispatch failed",
                         extra={"trigger_id": trigger_id_text, "workflow_id": workflow_id_text},
                     )
-        return counters
-
-    async def run_forever(self) -> None:
-        """持续轮询 Scheduler，生命周期停止由 stop() 控制。"""
-        self._stop_event.clear()
-        while not self._stop_event.is_set():
-            try:
-                await self.tick_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Scheduled Trigger scheduler tick failed")
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval_seconds)
-            except asyncio.TimeoutError:
-                continue
-
-    def stop(self) -> None:
-        """请求结束后台轮询循环。"""
-        self._stop_event.set()
