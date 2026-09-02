@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowTrigger, type SchedulerStatus, type WorkflowVersion } from "@/api/workflows";
+import { workflowApi, type Workflow, type WorkflowExecution, type WorkflowTrigger, type SchedulerStatus, type WorkflowVersion, type ScheduledMisfirePolicy } from "@/api/workflows";
 import PageHeader from "@/components/ui/PageHeader.vue";
 import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 import StatePanel from "@/components/ui/StatePanel.vue";
@@ -11,6 +11,16 @@ import ConfirmDialog from "@/components/ui/ConfirmDialog.vue";
 type PageState = "loading" | "empty" | "error" | "permission" | "success";
 type ExecutionAction = "run" | "cancel" | "retry" | "resume";
 type DiagnosticFocus = "trace" | "audit";
+type TriggerEditor = {
+  trigger: WorkflowTrigger | null;
+  name: string;
+  timezone: string;
+  interval_seconds: number;
+  misfire_policy: ScheduledMisfirePolicy;
+  catch_up_limit: number;
+  event_id_field: string;
+  secret: string;
+};
 const route = useRoute();
 const router = useRouter();
 const workflows = ref<Workflow[]>([]);
@@ -35,6 +45,12 @@ const executionDialogVisible = ref(false);
 const executionActionLoading = ref(false);
 const executionAction = ref<ExecutionAction | null>(null);
 const executionTarget = ref<WorkflowExecution | null>(null);
+const triggerEditorVisible = ref(false);
+const triggerEditorLoading = ref(false);
+const triggerEditor = ref<TriggerEditor>({ trigger: null, name: "", timezone: "UTC", interval_seconds: 300, misfire_policy: "skip", catch_up_limit: 10, event_id_field: "event_id", secret: "" });
+const deleteTriggerDialogVisible = ref(false);
+const deleteTriggerLoading = ref(false);
+const deleteTriggerTarget = ref<WorkflowTrigger | null>(null);
 
 const selected = computed(() => workflows.value.find((item) => item.id === selectedId.value));
 const publishedVersion = computed(() => versions.value.find((item) => item.id === selected.value?.published_version_id));
@@ -66,47 +82,16 @@ function executionActions(execution: WorkflowExecution) {
   return [];
 }
 function lifecycleQuery(executionId?: string) {
-  return {
-    ...(selected.value ? { workflow_id: selected.value.id } : {}),
-    ...(executionId ? { execution_id: executionId } : {}),
-    source: "workflow-lifecycle",
-  };
+  return { ...(selected.value ? { workflow_id: selected.value.id } : {}), ...(executionId ? { execution_id: executionId } : {}), source: "workflow-lifecycle" };
 }
-function focusExecution(execution: WorkflowExecution) {
-  focusedExecutionId.value = execution.id;
-  diagnosticTraceId.value = "";
-  diagnosticAuditId.value = "";
-  void router.replace({ path: "/workflows/lifecycle", query: lifecycleQuery(execution.id) });
-}
-function openRuntimeExecution(execution: WorkflowExecution) {
-  focusedExecutionId.value = execution.id;
-  void router.push({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: execution.id, workflow_id: execution.workflow_id, workflow_version_id: execution.workflow_version_id } });
-}
-function openRuntimeCorrelations(execution: WorkflowExecution, focus?: DiagnosticFocus, focusId?: string) {
-  focusedExecutionId.value = execution.id;
-  const query: Record<string, string> = { tab: "correlations", source: "workflow-lifecycle", focus_type: focus ?? "execution", focus_id: focusId ?? execution.id, execution_id: execution.id, workflow_id: execution.workflow_id, workflow_version_id: execution.workflow_version_id };
-  void router.push({ path: "/runtime", query });
-}
-function continueDiagnostic() {
-  if (!focusedExecution.value || !diagnosticFocus.value || !diagnosticFocusId.value) return;
-  openRuntimeCorrelations(focusedExecution.value, diagnosticFocus.value, diagnosticFocusId.value);
-}
-function clearDiagnosticContext() {
-  diagnosticTraceId.value = "";
-  diagnosticAuditId.value = "";
-  void router.replace({ path: "/workflows/lifecycle", query: lifecycleQuery(focusedExecutionId.value || undefined) });
-}
-function openScheduledExecution(executionId?: string | null) {
-  if (!executionId) return;
-  const execution = executions.value.find((item) => item.id === executionId);
-  if (execution) return openRuntimeExecution(execution);
-  void router.push({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: executionId, ...(selected.value ? { workflow_id: selected.value.id } : {}) } });
-}
+function focusExecution(execution: WorkflowExecution) { focusedExecutionId.value = execution.id; diagnosticTraceId.value = ""; diagnosticAuditId.value = ""; void router.replace({ path: "/workflows/lifecycle", query: lifecycleQuery(execution.id) }); }
+function openRuntimeExecution(execution: WorkflowExecution) { focusedExecutionId.value = execution.id; void router.push({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: execution.id, workflow_id: execution.workflow_id, workflow_version_id: execution.workflow_version_id } }); }
+function openRuntimeCorrelations(execution: WorkflowExecution, focus?: DiagnosticFocus, focusId?: string) { focusedExecutionId.value = execution.id; const query: Record<string, string> = { tab: "correlations", source: "workflow-lifecycle", focus_type: focus ?? "execution", focus_id: focusId ?? execution.id, execution_id: execution.id, workflow_id: execution.workflow_id, workflow_version_id: execution.workflow_version_id }; void router.push({ path: "/runtime", query }); }
+function continueDiagnostic() { if (!focusedExecution.value || !diagnosticFocus.value || !diagnosticFocusId.value) return; openRuntimeCorrelations(focusedExecution.value, diagnosticFocus.value, diagnosticFocusId.value); }
+function clearDiagnosticContext() { diagnosticTraceId.value = ""; diagnosticAuditId.value = ""; void router.replace({ path: "/workflows/lifecycle", query: lifecycleQuery(focusedExecutionId.value || undefined) }); }
+function openScheduledExecution(executionId?: string | null) { if (!executionId) return; const execution = executions.value.find((item) => item.id === executionId); if (execution) return openRuntimeExecution(execution); void router.push({ path: "/runtime", query: { tab: "executions", source: "workflow-lifecycle", execution_id: executionId, ...(selected.value ? { workflow_id: selected.value.id } : {}) } }); }
 async function load() {
-  loading.value = true;
-  pageState.value = "loading";
-  error.value = "";
-  permissionDenied.value = false;
+  loading.value = true; pageState.value = "loading"; error.value = ""; permissionDenied.value = false;
   try {
     workflows.value = (await workflowApi.list()).data;
     const requestedId = typeof route.query.workflow_id === "string" ? route.query.workflow_id : "";
@@ -115,34 +100,22 @@ async function load() {
     if (!workflows.value.length) { selectedId.value = ""; pageState.value = "empty"; return; }
     if (selectedId.value) await loadDetails(selectedId.value);
     pageState.value = "success";
-  } catch (e: any) {
-    workflows.value = [];
-    permissionDenied.value = e?.response?.status === 403;
-    error.value = permissionDenied.value ? "" : "工作流生命周期数据加载失败，请刷新后重试。";
-    pageState.value = permissionDenied.value ? "permission" : "error";
-  } finally { loading.value = false; }
+  } catch (e: any) { workflows.value = []; permissionDenied.value = e?.response?.status === 403; error.value = permissionDenied.value ? "" : "工作流生命周期数据加载失败，请刷新后重试。"; pageState.value = permissionDenied.value ? "permission" : "error"; }
+  finally { loading.value = false; }
 }
 async function loadDetails(id: string) {
-  detailLoading.value = true;
-  detailError.value = "";
+  detailLoading.value = true; detailError.value = "";
   try {
     const [versionResponse, triggerResponse, executionResponse] = await Promise.all([workflowApi.versions(id), workflowApi.triggers(id), workflowApi.listExecutions(id)]);
-    versions.value = versionResponse.data;
-    triggers.value = triggerResponse.data;
-    executions.value = executionResponse.data;
+    versions.value = versionResponse.data; triggers.value = triggerResponse.data; executions.value = executionResponse.data;
     const scheduled = triggers.value.filter((item) => item.trigger_type === "scheduled");
     const results = await Promise.all(scheduled.map(async (trigger) => [trigger.id, (await workflowApi.schedule(id, trigger.id)).data] as const));
     schedules.value = Object.fromEntries(results);
     const requestedExecutionId = typeof route.query.execution_id === "string" ? route.query.execution_id : "";
     if (requestedExecutionId && executions.value.some((item) => item.id === requestedExecutionId)) focusedExecutionId.value = requestedExecutionId;
     else if (!focusedExecutionId.value || !executions.value.some((item) => item.id === focusedExecutionId.value)) focusedExecutionId.value = executions.value[0]?.id || "";
-  } catch {
-    versions.value = [];
-    triggers.value = [];
-    executions.value = [];
-    schedules.value = {};
-    detailError.value = "无法同步当前工作流的版本、触发器或运行数据。请重试；若持续失败，请检查服务状态。";
-  } finally { detailLoading.value = false; }
+  } catch { versions.value = []; triggers.value = []; executions.value = []; schedules.value = {}; detailError.value = "无法同步当前工作流的版本、触发器或运行数据。请重试；若持续失败，请检查服务状态。"; }
+  finally { detailLoading.value = false; }
 }
 async function selectWorkflow(id: string) { selectedId.value = id; focusedExecutionId.value = ""; diagnosticTraceId.value = ""; diagnosticAuditId.value = ""; await loadDetails(id); }
 function handleStateAction() { if (pageState.value === "error" || pageState.value === "permission") void load(); }
@@ -152,53 +125,70 @@ function cancelInvoke() { if (invokeLoading.value) return; invokeDialogVisible.v
 async function confirmInvoke() {
   if (!selectedId.value || !invokeTarget.value || invokeLoading.value) return;
   invokeLoading.value = true;
-  try {
-    await workflowApi.invokeTrigger(selectedId.value, invokeTarget.value.id, {});
-    ElMessage.success("手动触发已提交，正在刷新运行记录。");
-    invokeDialogVisible.value = false;
-    invokeTarget.value = null;
-    await loadDetails(selectedId.value);
-  } catch (e: any) { ElMessage.error(e?.response?.status === 403 ? "当前账号没有执行该触发器的权限。" : "手动触发失败，请检查工作流发布状态后重试。"); }
+  try { await workflowApi.invokeTrigger(selectedId.value, invokeTarget.value.id, {}); ElMessage.success("手动触发已提交，正在刷新运行记录。"); invokeDialogVisible.value = false; invokeTarget.value = null; await loadDetails(selectedId.value); }
+  catch (e: any) { ElMessage.error(e?.response?.status === 403 ? "当前账号没有执行该触发器的权限。" : e?.response?.status === 409 || e?.response?.status === 422 ? "当前触发器状态不允许执行，请刷新后重试。" : "手动触发失败，请检查工作流发布状态后重试。"); }
   finally { invokeLoading.value = false; }
 }
-function requestExecutionAction(execution: WorkflowExecution, action: ExecutionAction) {
-  if (executionActionLoading.value) return;
-  executionTarget.value = execution;
-  executionAction.value = action;
-  executionDialogVisible.value = true;
-}
-function cancelExecutionAction() {
-  if (executionActionLoading.value) return;
-  executionDialogVisible.value = false;
-  executionTarget.value = null;
-  executionAction.value = null;
-}
+function requestExecutionAction(execution: WorkflowExecution, action: ExecutionAction) { if (executionActionLoading.value) return; executionTarget.value = execution; executionAction.value = action; executionDialogVisible.value = true; }
+function cancelExecutionAction() { if (executionActionLoading.value) return; executionDialogVisible.value = false; executionTarget.value = null; executionAction.value = null; }
 async function confirmExecutionAction() {
   if (!executionTarget.value || !executionAction.value || executionActionLoading.value) return;
-  const target = executionTarget.value;
-  const action = executionAction.value;
-  executionActionLoading.value = true;
+  const target = executionTarget.value; const action = executionAction.value; executionActionLoading.value = true;
   try {
-    if (action === "run") await workflowApi.runExecution(target.id);
-    else if (action === "cancel") await workflowApi.cancelExecution(target.id);
-    else if (action === "retry") await workflowApi.retryExecution(target.id);
-    else await workflowApi.resumeExecution(target.id);
-    ElMessage.success(`Execution ${actionText[action]}操作已提交，正在刷新运行状态。`);
-    executionDialogVisible.value = false;
-    executionTarget.value = null;
-    executionAction.value = null;
-    await loadDetails(selectedId.value);
+    if (action === "run") await workflowApi.runExecution(target.id); else if (action === "cancel") await workflowApi.cancelExecution(target.id); else if (action === "retry") await workflowApi.retryExecution(target.id); else await workflowApi.resumeExecution(target.id);
+    ElMessage.success(`Execution ${actionText[action]}操作已提交，正在刷新运行状态。`); executionDialogVisible.value = false; executionTarget.value = null; executionAction.value = null; await loadDetails(selectedId.value);
+  } catch (e: any) { if (e?.response?.status === 403) ElMessage.error("当前账号没有操作该 Execution 的权限。"); else if (e?.response?.status === 409 || e?.response?.status === 422) ElMessage.error("该 Execution 当前状态不允许执行此操作，请刷新后重试。"); else ElMessage.error(`Execution ${actionText[action]}失败，请稍后重试。`); }
+  finally { executionActionLoading.value = false; }
+}
+function openTriggerEditor(trigger: WorkflowTrigger) {
+  if (selected.value?.status === "archived") return;
+  const config = (trigger.config || {}) as Record<string, unknown>;
+  if (trigger.trigger_type === "scheduled") {
+    triggerEditor.value = { trigger, name: trigger.name, timezone: String(config.timezone || "UTC"), interval_seconds: Number(config.interval_seconds || 300), misfire_policy: (config.misfire_policy as ScheduledMisfirePolicy) || "skip", catch_up_limit: Number(config.catch_up_limit || 10), event_id_field: "event_id", secret: "" };
+  } else if (trigger.trigger_type === "webhook") {
+    triggerEditor.value = { trigger, name: trigger.name, timezone: "UTC", interval_seconds: 300, misfire_policy: "skip", catch_up_limit: 10, event_id_field: String(config.event_id_field || "event_id"), secret: "" };
+  } else return;
+  triggerEditorVisible.value = true;
+}
+function cancelTriggerEditor() { if (triggerEditorLoading.value) return; triggerEditorVisible.value = false; triggerEditor.value.trigger = null; triggerEditor.value.secret = ""; }
+async function saveTriggerEditor() {
+  const editor = triggerEditor.value; const trigger = editor.trigger;
+  if (!selectedId.value || !trigger || triggerEditorLoading.value) return;
+  triggerEditorLoading.value = true;
+  try {
+    const config = trigger.trigger_type === "scheduled"
+      ? { timezone: editor.timezone, interval_seconds: editor.interval_seconds, misfire_policy: editor.misfire_policy, catch_up_limit: editor.catch_up_limit }
+      : { auth_mode: "secret" as const, event_id_field: editor.event_id_field, ...(editor.secret.trim() ? { secret: editor.secret.trim() } : {}) };
+    await workflowApi.updateTrigger(selectedId.value, trigger.id, { name: editor.name, config });
+    ElMessage.success("Trigger 配置已更新，正在刷新生命周期状态。");
+    triggerEditorVisible.value = false; editor.trigger = null; editor.secret = ""; await loadDetails(selectedId.value);
   } catch (e: any) {
-    if (e?.response?.status === 403) ElMessage.error("当前账号没有操作该 Execution 的权限。");
-    else if (e?.response?.status === 409 || e?.response?.status === 422) ElMessage.error("该 Execution 当前状态不允许执行此操作，请刷新后重试。");
-    else ElMessage.error(`Execution ${actionText[action]}失败，请稍后重试。`);
-  } finally { executionActionLoading.value = false; }
+    if (e?.response?.status === 403) ElMessage.error("当前账号没有修改该 Trigger 的权限。");
+    else if (e?.response?.status === 409) ElMessage.error("Trigger 当前状态不允许修改，请刷新后重试。");
+    else if (e?.response?.status === 422) ElMessage.error("Trigger 配置不符合后端 Contract，请检查输入后重试。");
+    else ElMessage.error("Trigger 配置更新失败，请稍后重试。");
+  } finally { triggerEditorLoading.value = false; }
+}
+function requestDeleteTrigger(trigger: WorkflowTrigger) { if (selected.value?.status === "archived" || deleteTriggerLoading.value) return; deleteTriggerTarget.value = trigger; deleteTriggerDialogVisible.value = true; }
+function cancelDeleteTrigger() { if (deleteTriggerLoading.value) return; deleteTriggerDialogVisible.value = false; deleteTriggerTarget.value = null; }
+async function confirmDeleteTrigger() {
+  const trigger = deleteTriggerTarget.value;
+  if (!selectedId.value || !trigger || deleteTriggerLoading.value) return;
+  deleteTriggerLoading.value = true;
+  try {
+    await workflowApi.deleteTrigger(selectedId.value, trigger.id);
+    ElMessage.success(`Trigger “${trigger.name}”已删除，正在刷新生命周期状态。`);
+    deleteTriggerDialogVisible.value = false; deleteTriggerTarget.value = null; await loadDetails(selectedId.value);
+  } catch (e: any) {
+    if (e?.response?.status === 403) ElMessage.error("当前账号没有删除该 Trigger 的权限。");
+    else if (e?.response?.status === 409) ElMessage.error("该 Trigger 当前存在运行时依赖，暂时无法删除，请刷新后重试。");
+    else ElMessage.error("Trigger 删除失败，请稍后重试。");
+  } finally { deleteTriggerLoading.value = false; }
 }
 const executionDialogTitle = computed(() => `确认${executionAction.value ? actionText[executionAction.value] : ""} Execution`);
-const executionDialogDescription = computed(() => {
-  if (!executionTarget.value || !executionAction.value) return "请确认当前 Execution 操作。";
-  return `将对 Execution “${executionTarget.value.id}”执行${actionText[executionAction.value]}操作。最终状态由后端执行状态机决定，是否继续？`;
-});
+const executionDialogDescription = computed(() => !executionTarget.value || !executionAction.value ? "请确认当前 Execution 操作。" : `将对 Execution “${executionTarget.value.id}”执行${actionText[executionAction.value]}操作。最终状态由后端执行状态机决定，是否继续？`);
+const triggerEditorTitle = computed(() => triggerEditor.value.trigger?.trigger_type === "scheduled" ? "编辑定时 Trigger" : "编辑 Webhook Trigger");
+const triggerEditorDescription = computed(() => triggerEditor.value.trigger?.trigger_type === "scheduled" ? "保存时调用真实 Trigger PATCH Contract；Scheduler 状态仍由后端只读查询返回。" : "保存时调用真实 Trigger PATCH Contract。Webhook Secret 只提交新 Secret，不读取或回显旧 Secret。");
 onMounted(load);
 </script>
 
@@ -217,15 +207,34 @@ onMounted(load);
         </div>
         <SurfaceCard v-if="focusedExecution" class="execution-focus-card" title="当前 Execution 定位" description="所有诊断入口均以该 Execution ID 为关联根，不在前端推导 Trace / Audit 关系"><div class="focus-summary"><div><span>Execution ID</span><strong>{{ focusedExecution.id }}</strong></div><div><span>状态</span><el-tag>{{ displayStatus(focusedExecution.status) }}</el-tag></div><div><span>Workflow Version</span><strong>{{ focusedExecution.workflow_version_id }}</strong></div><div v-if="focusedExecution.retry_of_execution_id"><span>Retry 来源</span><strong>{{ focusedExecution.retry_of_execution_id }}</strong></div><div v-if="focusedExecution.resume_of_execution_id"><span>Resume 来源</span><strong>{{ focusedExecution.resume_of_execution_id }}</strong></div></div><div v-if="focusedExecution.error_message" class="error-message">{{ focusedExecution.error_message }}</div><div class="execution-actions"><el-button type="primary" @click="openRuntimeExecution(focusedExecution)">Runtime 诊断</el-button><el-button @click="openRuntimeCorrelations(focusedExecution)">Trace / Audit 关联</el-button></div></SurfaceCard>
         <SurfaceCard v-if="diagnosticFocus && focusedExecution" class="diagnostic-context-card" title="反向诊断上下文" description="该上下文由 Runtime correlation 返回的真实 ID 传入；继续诊断不会重新推导关联关系"><div class="diagnostic-context"><div><span>Execution ID</span><strong>{{ focusedExecution.id }}</strong></div><div><span>{{ diagnosticFocusLabel }}</span><strong>{{ diagnosticFocusId }}</strong></div><div><span>Workflow ID</span><strong>{{ focusedExecution.workflow_id }}</strong></div><div><span>Workflow Version</span><strong>{{ focusedExecution.workflow_version_id }}</strong></div></div><div class="execution-actions"><el-button type="primary" @click="continueDiagnostic">继续 {{ diagnosticFocus === 'trace' ? 'Trace' : 'Audit' }} 诊断</el-button><el-button plain @click="clearDiagnosticContext">清除诊断上下文</el-button></div></SurfaceCard>
-        <SurfaceCard class="trigger-card" title="触发与调度" description="以真实后端 Trigger / Scheduler 状态为准"><el-table v-if="triggers.length" :data="triggers" border><el-table-column prop="name" label="触发器" min-width="180" /><el-table-column label="类型" width="110"><template #default="{ row }">{{ displayTriggerType(row.trigger_type) }}</template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ displayStatus(row.status) }}</el-tag></template></el-table-column><el-table-column label="下次运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.next_run_at) : '-' }}</template></el-table-column><el-table-column label="最近运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.last_run_at) : '-' }}</template></el-table-column><el-table-column label="最近 Execution" min-width="220"><template #default="{ row }"><el-button v-if="schedules[row.id]?.last_execution_id" link type="primary" @click="openScheduledExecution(schedules[row.id]?.last_execution_id)">{{ schedules[row.id]?.last_execution_id }}</el-button><span v-else>-</span></template></el-table-column><el-table-column label="操作" width="120" fixed="right"><template #default="{ row }"><el-button v-if="row.trigger_type === 'manual'" size="small" type="primary" link :disabled="selected.status !== 'published' || row.status !== 'enabled'" @click="requestInvoke(asTrigger(row))">立即运行</el-button><span v-else class="muted">-</span></template></el-table-column></el-table><el-empty v-else description="暂无触发器，发布工作流后可配置手动、定时或 Webhook 入口。" /></SurfaceCard>
+        <SurfaceCard class="trigger-card" title="触发与调度" description="Trigger 配置写入使用真实后端 PATCH Contract；Scheduler 目前仍保持只读"><el-table v-if="triggers.length" :data="triggers" border><el-table-column prop="name" label="触发器" min-width="180" /><el-table-column label="类型" width="110"><template #default="{ row }">{{ displayTriggerType(row.trigger_type) }}</template></el-table-column><el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'enabled' ? 'success' : 'info'">{{ displayStatus(row.status) }}</el-tag></template></el-table-column><el-table-column label="下次运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.next_run_at) : '-' }}</template></el-table-column><el-table-column label="最近运行" min-width="180"><template #default="{ row }">{{ row.trigger_type === 'scheduled' ? formatTime(schedules[row.id]?.last_run_at) : '-' }}</template></el-table-column><el-table-column label="最近 Execution" min-width="220"><template #default="{ row }"><el-button v-if="schedules[row.id]?.last_execution_id" link type="primary" @click="openScheduledExecution(schedules[row.id]?.last_execution_id)">{{ schedules[row.id]?.last_execution_id }}</el-button><span v-else>-</span></template></el-table-column><el-table-column label="操作" min-width="220" fixed="right"><template #default="{ row }"><el-button v-if="row.trigger_type === 'manual'" size="small" type="primary" link :disabled="selected.status !== 'published' || row.status !== 'enabled'" @click="requestInvoke(asTrigger(row))">立即运行</el-button><template v-else><el-button size="small" type="primary" link :disabled="selected.status === 'archived'" @click="openTriggerEditor(asTrigger(row))">编辑配置</el-button></template><el-button size="small" type="danger" link :disabled="selected.status === 'archived'" @click="requestDeleteTrigger(asTrigger(row))">删除</el-button></template></el-table-column></el-table><el-empty v-else description="暂无触发器，发布工作流后可配置手动、定时或 Webhook 入口。" /></SurfaceCard>
         <el-alert v-if="selected.status === 'archived'" title="该工作流已归档，生命周期数据保持可观测但不再允许继续变更。" type="warning" :closable="false" show-icon />
       </template>
     </template>
     <ConfirmDialog v-model="invokeDialogVisible" title="立即运行工作流" :description="`将通过手动触发器“${invokeTarget?.name ?? ''}”提交一次 Execution。本次使用空输入数据，是否继续？`" confirm-text="立即运行" :loading="invokeLoading" @confirm="confirmInvoke" @cancel="cancelInvoke" />
     <ConfirmDialog v-model="executionDialogVisible" :title="executionDialogTitle" :description="executionDialogDescription" :confirm-text="executionAction ? actionText[executionAction] : '确认'" :danger="executionAction === 'cancel'" :loading="executionActionLoading" @confirm="confirmExecutionAction" @cancel="cancelExecutionAction" />
+    <ConfirmDialog v-model="deleteTriggerDialogVisible" title="删除 Trigger" :description="`将永久删除 Trigger “${deleteTriggerTarget?.name ?? ''}”。该操作不会删除既有 Execution / Trace / Audit 事实，但会移除后续 Trigger 入口，是否继续？`" confirm-text="删除" :danger="true" :loading="deleteTriggerLoading" @confirm="confirmDeleteTrigger" @cancel="cancelDeleteTrigger" />
+    <el-dialog v-model="triggerEditorVisible" :title="triggerEditorTitle" width="560px" :close-on-click-modal="!triggerEditorLoading" :close-on-press-escape="!triggerEditorLoading">
+      <p class="dialog-description">{{ triggerEditorDescription }}</p>
+      <el-form label-position="top">
+        <el-form-item label="名称"><el-input v-model="triggerEditor.name" maxlength="100" /></el-form-item>
+        <template v-if="triggerEditor.trigger?.trigger_type === 'scheduled'">
+          <el-form-item label="Timezone"><el-input v-model="triggerEditor.timezone" placeholder="例如 Asia/Seoul" /></el-form-item>
+          <el-form-item label="间隔（秒）"><el-input-number v-model="triggerEditor.interval_seconds" :min="60" :max="86400" /></el-form-item>
+          <el-form-item label="Misfire 策略"><el-select v-model="triggerEditor.misfire_policy"><el-option label="skip" value="skip" /><el-option label="fire_once" value="fire_once" /><el-option label="catch_up" value="catch_up" /></el-select></el-form-item>
+          <el-form-item label="Catch-up 上限"><el-input-number v-model="triggerEditor.catch_up_limit" :min="1" :max="100" :disabled="triggerEditor.misfire_policy !== 'catch_up'" /></el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item label="Event ID 字段"><el-input v-model="triggerEditor.event_id_field" maxlength="100" /></el-form-item>
+          <el-form-item label="新 Secret"><el-input v-model="triggerEditor.secret" type="password" show-password placeholder="留空表示保持现有 Secret" /></el-form-item>
+          <el-alert title="后端只持久化 Secret 摘要；页面不会读取或回显现有 Secret。" type="info" :closable="false" show-icon />
+        </template>
+      </el-form>
+      <template #footer><el-button :disabled="triggerEditorLoading" @click="cancelTriggerEditor">取消</el-button><el-button type="primary" :loading="triggerEditorLoading" @click="saveTriggerEditor">保存</el-button></template>
+    </el-dialog>
   </main>
 </template>
 
 <style scoped>
-.lifecycle-page{padding:24px 32px;min-height:100%}.workflow-selector{margin-bottom:16px}.workflow-selector__row{display:flex;align-items:center;gap:16px}.workflow-identity{display:flex;flex-direction:column;gap:3px;min-width:220px;flex:1}.workflow-identity strong{font-size:14px;color:var(--ui-text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workflow-identity span,.muted{font-size:12px;color:var(--ui-text-tertiary)}.workflow-selector .el-select{width:320px}.lifecycle-card{display:flex;align-items:center;gap:4px;padding:18px;margin-bottom:16px;background:var(--ui-bg-surface);border:1px solid var(--ui-border-default);border-radius:var(--ui-radius-lg)}.step{display:flex;align-items:center;gap:7px;flex:1;color:var(--ui-text-tertiary);font-size:12px}.step strong{color:var(--ui-text-secondary)}.step.done strong,.step.active strong{color:var(--ui-text-primary)}.step-index{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--ui-border-default);font-size:11px}.step.done .step-index{color:var(--ui-color-success-500)}.step.active .step-index{color:var(--ui-color-primary-500)}.step i{margin-left:auto;font-style:normal}.detail-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}.execution-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:12px}.error-code{font-size:12px;color:var(--ui-color-danger-500)}.error-message{margin-top:8px;font-size:12px;color:var(--ui-text-secondary);line-height:1.5}.focus-tag{margin-left:8px}.execution-focus-card,.diagnostic-context-card{margin-top:16px}.focus-summary,.diagnostic-context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.focus-summary>div,.diagnostic-context>div{display:flex;flex-direction:column;gap:5px;padding:10px 12px;border:1px solid var(--ui-border-default);border-radius:8px;background:var(--ui-bg-subtle)}.focus-summary span,.diagnostic-context span{font-size:10px;color:var(--ui-text-tertiary)}.focus-summary strong,.diagnostic-context strong{font-size:12px;word-break:break-all;color:var(--ui-text-primary)}.trigger-card{margin-top:16px}.lifecycle-page>.el-alert{margin-top:16px}@media(max-width:900px){.lifecycle-page{padding:16px}.workflow-selector__row{flex-wrap:wrap}.workflow-identity{width:100%;min-width:0}.workflow-selector .el-select{width:100%}.lifecycle-card{display:grid;grid-template-columns:1fr 1fr}.step i{display:none}.focus-summary,.diagnostic-context{grid-template-columns:1fr 1fr}.execution-actions{justify-content:flex-start}}@media(max-width:600px){.focus-summary,.diagnostic-context{grid-template-columns:1fr}}
+.lifecycle-page{padding:24px 32px;min-height:100%}.workflow-selector{margin-bottom:16px}.workflow-selector__row{display:flex;align-items:center;gap:16px}.workflow-identity{display:flex;flex-direction:column;gap:3px;min-width:220px;flex:1}.workflow-identity strong{font-size:14px;color:var(--ui-text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.workflow-identity span,.muted{font-size:12px;color:var(--ui-text-tertiary)}.workflow-selector .el-select{width:320px}.lifecycle-card{display:flex;align-items:center;gap:4px;padding:18px;margin-bottom:16px;background:var(--ui-bg-surface);border:1px solid var(--ui-border-default);border-radius:var(--ui-radius-lg)}.step{display:flex;align-items:center;gap:7px;flex:1;color:var(--ui-text-tertiary);font-size:12px}.step strong{color:var(--ui-text-secondary)}.step.done strong,.step.active strong{color:var(--ui-text-primary)}.step-index{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--ui-border-default);font-size:11px}.step.done .step-index{color:var(--ui-color-success-500)}.step.active .step-index{color:var(--ui-color-primary-500)}.step i{margin-left:auto;font-style:normal}.detail-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:16px}.execution-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:12px}.error-code{font-size:12px;color:var(--ui-color-danger-500)}.error-message{margin-top:8px;font-size:12px;color:var(--ui-text-secondary);line-height:1.5}.focus-tag{margin-left:8px}.execution-focus-card,.diagnostic-context-card,.trigger-card{margin-top:16px}.focus-summary,.diagnostic-context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.focus-summary>div,.diagnostic-context>div{display:flex;flex-direction:column;gap:5px;padding:10px 12px;border:1px solid var(--ui-border-default);border-radius:8px;background:var(--ui-bg-subtle)}.focus-summary span,.diagnostic-context span{font-size:10px;color:var(--ui-text-tertiary)}.focus-summary strong,.diagnostic-context strong{font-size:12px;word-break:break-all;color:var(--ui-text-primary)}.dialog-description{margin:0 0 16px;color:var(--ui-text-secondary);font-size:13px;line-height:1.5}.lifecycle-page>.el-alert{margin-top:16px}@media(max-width:900px){.lifecycle-page{padding:16px}.workflow-selector__row{flex-wrap:wrap}.workflow-identity{width:100%;min-width:0}.workflow-selector .el-select{width:100%}.lifecycle-card{display:grid;grid-template-columns:1fr 1fr}.step i{display:none}.focus-summary,.diagnostic-context{grid-template-columns:1fr 1fr}.execution-actions{justify-content:flex-start}}@media(max-width:600px){.focus-summary,.diagnostic-context{grid-template-columns:1fr}}
 </style>
