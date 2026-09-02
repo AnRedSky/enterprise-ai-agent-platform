@@ -46,7 +46,7 @@ class WorkflowSchedulerRepository:
 
         Scheduler Runtime 只能消费已经存在的持久化 Schedule；缺失 Schedule 不在 tick
         中隐式初始化，避免一次 tick 将全库所有历史 Scheduled Trigger 人为变成当前到期任务。
-        同时只接受已发布版本的 ``nodes`` 为 JSON 数组的 Workflow，防止历史脏 Definition
+        同时只接受已发布版本的 ``nodes`` 为非空 JSON 数组的 Workflow，防止历史脏 Definition
         在发现阶段进入 lease/Execution 链路。更深层的 DAG 语义校验仍由 WorkflowRuntime 负责。
         """
         db_now = self._db_datetime(now)
@@ -65,7 +65,10 @@ class WorkflowSchedulerRepository:
                 Workflow.status == "published",
                 Workflow.published_version_id.is_not(None),
                 WorkflowVersion.status == "published",
-                func.json_typeof(WorkflowVersion.definition["nodes"]) == "array",
+                # 使用 JSONPath 直接要求 nodes 存在至少一个数组元素。
+                # 相比仅判断 json_typeof == array，这会排除 nodes=[]，从而避免
+                # 空 Definition 进入 Runtime 后再由 WorkflowRuntime 抛出 422。
+                func.jsonb_path_exists(WorkflowVersion.definition, "$.nodes[0]"),
                 WorkflowSchedule.enabled.is_(True),
                 WorkflowSchedule.status == "enabled",
                 WorkflowSchedule.next_run_at <= db_now,
