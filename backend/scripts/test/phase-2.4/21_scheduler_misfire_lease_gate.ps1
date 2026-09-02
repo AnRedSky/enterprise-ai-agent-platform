@@ -30,7 +30,8 @@ asyncio.run(main())
 $previousIntegration = $env:RUN_DATABASE_INTEGRATION
 try {
     Remove-Item Env:RUN_DATABASE_INTEGRATION -ErrorAction SilentlyContinue
-    uv run python -c $readiness
+    # 通过标准输入把完整 Python 程序交给解释器，避免 PowerShell -c 对嵌套引号进行重解析。
+    $readiness | uv run python -
     if ($LASTEXITCODE -ne 0) {
         Write-Host '[NOT EXECUTED] PostgreSQL is not ready; no service lifecycle action was attempted.'
         exit 2
