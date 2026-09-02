@@ -12,7 +12,7 @@ const workflows = ref<Workflow[]>([]);
 const triggers = ref<WorkflowTrigger[]>([]);
 const selectedWorkflowId = ref("");
 const pageState = ref<"loading" | "empty" | "error" | "permission" | "success">("loading");
-const triggerState = ref<"loading" | "empty" | "error" | "success">("empty");
+const triggerState = ref<"loading" | "empty" | "error" | "permission" | "success">("empty");
 const schedulerState = ref<"idle" | "loading" | "error" | "success">("idle");
 const loading = ref(false);
 const schedulerLoading = ref(false);
@@ -81,11 +81,11 @@ async function loadTriggers() {
     }
   } catch (error: any) {
     triggers.value = [];
-    triggerState.value = "error";
+    triggerState.value = error?.response?.status === 403 ? "permission" : "error";
     schedulerStatus.value = undefined;
     selectedSchedulerTriggerId.value = "";
     schedulerState.value = "idle";
-    ElMessage.error(error?.response?.status === 403 ? "当前账号没有访问 Trigger 的权限" : "Trigger 查询失败，请稍后重试");
+    if (error?.response?.status !== 403) ElMessage.error("Trigger 查询失败，请稍后重试");
   }
 }
 
@@ -195,6 +195,7 @@ onMounted(loadWorkflows);
       <template v-else>
         <SurfaceCard title="Trigger 配置" description="Webhook Secret 只在创建/替换时提交，页面不读取旧 Secret 明文。"><el-alert title="启用 Trigger 前必须先发布 Workflow。Scheduler 状态通过后端持久化状态接口读取，不由前端推断。" type="info" :closable="false" /><el-form label-position="top" inline @submit.prevent="saveTrigger"><el-form-item label="Trigger 名称"><el-input v-model="form.name" placeholder="例如：订单事件入口" /></el-form-item><el-form-item label="类型"><el-select data-testid="workflow-trigger-type-select" :model-value="form.triggerType" :disabled="!!editingTriggerId" @update:model-value="selectTriggerType"><el-option label="manual" value="manual" /><el-option label="scheduled" value="scheduled" /><el-option label="webhook" value="webhook" /></el-select></el-form-item><el-form-item v-if="form.triggerType === 'webhook'" label="Webhook Secret"><div class="secret-editor"><el-input v-model="webhookSecret" type="password" show-password placeholder="编辑时留空表示保持现有 Secret" /><el-button size="small" :disabled="saving" @click="generateSecret">生成 Secret</el-button></div></el-form-item><el-form-item label="Config JSON"><el-input v-model="form.configText" type="textarea" :rows="3" style="width: 320px" /></el-form-item><el-form-item label=" "><el-button type="primary" :loading="saving" native-type="submit">{{ editingTriggerId ? "保存修改" : "创建 Trigger" }}</el-button><el-button v-if="editingTriggerId" :disabled="saving" @click="resetForm">取消编辑</el-button></el-form-item></el-form></SurfaceCard>
         <StatePanel v-if="triggerState === 'loading'" state="loading" title="正在加载 Trigger" description="正在同步后端 Trigger 事实。" />
+        <StatePanel v-else-if="triggerState === 'permission'" state="permission" title="无权访问 Trigger" description="当前账号没有访问该 Workflow Trigger 的权限。" />
         <StatePanel v-else-if="triggerState === 'error'" state="error" title="Trigger 查询失败" description="Trigger 数据已清空，避免继续展示 stale facts。" action-label="重试" @action="loadTriggers" />
         <StatePanel v-else-if="triggerState === 'empty'" state="empty" title="暂无 Trigger" description="当前 Workflow 尚未配置 Trigger。" />
         <SurfaceCard v-else title="Trigger 列表" description="所有状态和操作均以后端 durable ID 为准"><el-table :data="triggers" empty-text="暂无 Trigger"><el-table-column prop="name" label="名称" min-width="180" /><el-table-column prop="trigger_type" label="类型" width="110" /><el-table-column label="Schedule / Webhook" min-width="300"><template #default="scope"><span v-if="isScheduled(scope.row as WorkflowTrigger)">{{ scheduleConfig(scope.row as WorkflowTrigger).timezone }} / 每 {{ scheduleConfig(scope.row as WorkflowTrigger).interval_seconds }} 秒</span><span v-else-if="isWebhook(scope.row as WorkflowTrigger)">POST {{ webhookEndpoint(scope.row as WorkflowTrigger) }} / event_id: {{ webhookConfig(scope.row as WorkflowTrigger).event_id_field }}</span><span v-else>-</span></template></el-table-column><el-table-column label="状态" width="110"><template #default="scope"><el-tag :type="scope.row.status === 'enabled' ? 'success' : 'info'">{{ scope.row.status }}</el-tag></template></el-table-column><el-table-column label="Secret" width="120"><template #default="scope"><el-tag v-if="isWebhook(scope.row as WorkflowTrigger)" type="success">{{ webhookConfig(scope.row as WorkflowTrigger).secret_configured ? '已配置' : '未配置' }}</el-tag><span v-else>-</span></template></el-table-column><el-table-column prop="updated_at" label="更新时间" min-width="180" /><el-table-column label="操作" width="560"><template #default="scope"><el-button size="small" :disabled="Boolean(actionKey)" @click="editTrigger(scope.row as WorkflowTrigger)">编辑</el-button><el-button v-if="scope.row.trigger_type === 'scheduled'" size="small" :loading="schedulerLoading && selectedSchedulerTriggerId === scope.row.id" @click="loadSchedule(scope.row as WorkflowTrigger)">调度状态</el-button><el-button v-if="scope.row.trigger_type === 'scheduled' && selectedSchedulerTriggerId === scope.row.id && schedulerStatus?.last_execution_id" size="small" @click="openLastSchedulerExecution">最近 Execution</el-button><el-button v-if="scope.row.trigger_type === 'webhook'" size="small" :disabled="Boolean(actionKey)" @click="openWebhookRuntime(scope.row as WorkflowTrigger)">查看 Webhook 运行</el-button><el-button v-if="scope.row.trigger_type === 'manual'" size="small" :disabled="scope.row.status === 'disabled' || Boolean(actionKey)" :loading="actionKey === `invoke:${scope.row.id}`" @click="invokeTrigger(scope.row as WorkflowTrigger)">Invoke</el-button><el-button size="small" :disabled="Boolean(actionKey)" :loading="actionKey === `toggle:${scope.row.id}`" @click="toggleTrigger(scope.row as WorkflowTrigger)">{{ scope.row.status === 'enabled' ? '禁用' : '启用' }}</el-button><el-button size="small" type="danger" :disabled="Boolean(actionKey)" :loading="actionKey === `delete:${scope.row.id}`" @click="deleteTrigger(scope.row as WorkflowTrigger)">删除</el-button></template></el-table-column></el-table></SurfaceCard>

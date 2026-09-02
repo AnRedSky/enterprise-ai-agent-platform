@@ -32,6 +32,7 @@
 | P1 | Operations Console | 第一轮建立统一 PageHeader Shell | 子工作台待统一 | 现有真实操作待收敛 | 开发中 |
 | P1 | Audit | 第一轮建立统一 PageHeader Shell | 已有五态 | 读操作为主 | 开发中 |
 | P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 开发中 |
+| P1 | Workflow Triggers | 已迁移共享状态与 SurfaceCard | 已补齐页面/Trigger/Scheduler 五态子集 | 已补齐按实体 ID 的 action loading、确认与 Backend refresh | 本轮收口 |
 
 ## 3. 已完成的代码主线
 
@@ -146,6 +147,30 @@ Dashboard 已建立公共 UI 模式，本轮补齐最近执行的 durable deep l
 
 Targeted：`frontend/tests/views/DashboardConsistency.test.ts`，**未执行**。
 
+### Full-site consistency closeout：Workflow Trigger 发现并修复
+
+全站静态审计发现 `src/views/workflow-triggers/index.vue` 仍是旧式页面，存在：
+
+- 原生 `el-card` / `v-loading` / `el-empty`，未遵循统一 SurfaceCard / StatePanel；
+- `workflows.value[0]` 自动选择 Workflow，违反 durable ID 原则；
+- 单一 `actionLoading` 覆盖所有行操作，无法提供实体级 duplicate-submit 防护；
+- 查询失败后保留 stale `triggers` / `schedulerStatus`；
+- mutation 后需要以 Backend refresh 为最终真值；
+- Runtime 跳转必须使用真实 `execution.id` 或 Scheduler 返回的 `last_execution_id`。
+
+已直接修复：
+
+- 迁移 `PageHeader` / `SurfaceCard` / `StatePanel`；
+- 页面、Trigger、Scheduler 分层管理 Loading / Empty / Error / Permission 状态；
+- 移除数组首项自动选择，要求显式 Workflow ID；
+- `actionKey` 按 `trigger.id` 区分 toggle/delete/invoke，阻止重复提交；
+- delete / enable / disable 使用 ConfirmDialog 等价确认闭环；
+- mutation 成功后重新读取 Trigger Backend facts，不本地伪造状态；
+- 查询失败清空 stale 数据；
+- Runtime deep link 保留真实 `execution.id` / `last_execution_id`。
+
+Targeted：`frontend/tests/views/FullSiteConsistencyStaticAudit.test.ts`、`frontend/tests/views/FullSiteConsistencyGapAudit.test.ts`，**未执行**。
+
 ## 4. Contract 与安全原则
 
 - 前端只能调用已经存在并确认的 Backend API。
@@ -193,7 +218,7 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 1. P1-06-A Operations Console 内部 UI-03/UI-04/UI-05 与 Runtime correlation 收敛。
 2. P1-07-A Audit 内部公共模式与 Runtime focused durable facts regression。
 3. P1-08-A Dashboard consistency 收尾。
-4. 全站一致性 Gap Audit：原始 `el-card` / 自定义状态 / action loading / optimistic mutation / deep link / durable ID / stale-data 清理。
+4. 全站一致性 Gap Audit：原始 `el-card` / 自定义状态 / action loading / optimistic mutation / deep link / durable ID / stale-data 清理；当前已关闭 Workflow Trigger 旧式实现，并建立静态防回归审计。
 5. 全部任务完成后统一执行测试与构建验证。
 
 ## 8. 原子任务记录规范
@@ -214,3 +239,18 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 - Commit：
 - 下一任务：
 ```
+
+## 9. Full-site Static Audit Baseline
+
+本轮建立 `frontend/tests/views/FullSiteConsistencyStaticAudit.test.ts`，作为全站一致性防回归门槛脚本，当前仅创建、**未执行**。
+
+审计规则覆盖：
+
+- 所有 `src/views/**/*.vue` 禁止重新引入 raw `el-card`；
+- 禁止 `v-loading` 取代统一 StatePanel 状态模型；
+- 禁止 raw `el-empty` / `el-result` 绕过共享状态模式；
+- 禁止通过数组首项建立实体关系；
+- 禁止通过 `sort/reverse` 建立“最新/关联”关系；
+- Workflow Trigger mutation 必须使用实体级 `actionKey`、Backend refresh 和真实 Execution ID。
+
+该脚本与 `FullSiteConsistencyGapAudit.test.ts` 共同作为最终全站一致性回归入口；按照当前开发策略，两个测试均保持 **未执行**。
