@@ -148,18 +148,31 @@ async function selectWorkflow(id: string) { selectedId.value = id; focusedExecut
 function handleStateAction() { if (pageState.value === "error" || pageState.value === "permission") void load(); }
 function retryDetails() { if (selectedId.value) void loadDetails(selectedId.value); }
 function requestInvoke(trigger: WorkflowTrigger) { invokeTarget.value = trigger; invokeDialogVisible.value = true; }
+function cancelInvoke() { if (invokeLoading.value) return; invokeDialogVisible.value = false; invokeTarget.value = null; }
 async function confirmInvoke() {
-  if (!selectedId.value || !invokeTarget.value) return;
+  if (!selectedId.value || !invokeTarget.value || invokeLoading.value) return;
   invokeLoading.value = true;
   try {
     await workflowApi.invokeTrigger(selectedId.value, invokeTarget.value.id, {});
     ElMessage.success("手动触发已提交，正在刷新运行记录。");
     invokeDialogVisible.value = false;
+    invokeTarget.value = null;
     await loadDetails(selectedId.value);
   } catch (e: any) { ElMessage.error(e?.response?.status === 403 ? "当前账号没有执行该触发器的权限。" : "手动触发失败，请检查工作流发布状态后重试。"); }
   finally { invokeLoading.value = false; }
 }
-function requestExecutionAction(execution: WorkflowExecution, action: ExecutionAction) { executionTarget.value = execution; executionAction.value = action; executionDialogVisible.value = true; }
+function requestExecutionAction(execution: WorkflowExecution, action: ExecutionAction) {
+  if (executionActionLoading.value) return;
+  executionTarget.value = execution;
+  executionAction.value = action;
+  executionDialogVisible.value = true;
+}
+function cancelExecutionAction() {
+  if (executionActionLoading.value) return;
+  executionDialogVisible.value = false;
+  executionTarget.value = null;
+  executionAction.value = null;
+}
 async function confirmExecutionAction() {
   if (!executionTarget.value || !executionAction.value || executionActionLoading.value) return;
   const target = executionTarget.value;
@@ -172,6 +185,8 @@ async function confirmExecutionAction() {
     else await workflowApi.resumeExecution(target.id);
     ElMessage.success(`Execution ${actionText[action]}操作已提交，正在刷新运行状态。`);
     executionDialogVisible.value = false;
+    executionTarget.value = null;
+    executionAction.value = null;
     await loadDetails(selectedId.value);
   } catch (e: any) {
     if (e?.response?.status === 403) ElMessage.error("当前账号没有操作该 Execution 的权限。");
@@ -179,6 +194,11 @@ async function confirmExecutionAction() {
     else ElMessage.error(`Execution ${actionText[action]}失败，请稍后重试。`);
   } finally { executionActionLoading.value = false; }
 }
+const executionDialogTitle = computed(() => `确认${executionAction.value ? actionText[executionAction.value] : ""} Execution`);
+const executionDialogDescription = computed(() => {
+  if (!executionTarget.value || !executionAction.value) return "请确认当前 Execution 操作。";
+  return `将对 Execution “${executionTarget.value.id}”执行${actionText[executionAction.value]}操作。最终状态由后端执行状态机决定，是否继续？`;
+});
 onMounted(load);
 </script>
 
@@ -201,8 +221,8 @@ onMounted(load);
         <el-alert v-if="selected.status === 'archived'" title="该工作流已归档，生命周期数据保持可观测但不再允许继续变更。" type="warning" :closable="false" show-icon />
       </template>
     </template>
-    <ConfirmDialog v-model="invokeDialogVisible" title="立即运行工作流" :description="`将通过手动触发器“${invokeTarget?.name ?? ''}”提交一次 Execution。本次使用空输入数据，是否继续？`" confirm-text="立即运行" :loading="invokeLoading" @confirm="confirmInvoke" @cancel="invokeDialogVisible = false" />
-    <ConfirmDialog v-model="executionDialogVisible" :title="`确认${executionAction ? actionText[executionAction] : ''} Execution`" :description="`将对 Execution “${executionTarget?.id ?? ''}”执行${executionAction ? actionText[executionAction] : ''}操作。最终状态由后端执行状态机决定，是否继续？`" :confirm-text="executionAction ? actionText[executionAction] : '确认'" :danger="executionAction === 'cancel'" :loading="executionActionLoading" @confirm="confirmExecutionAction" @cancel="executionDialogVisible = false" />
+    <ConfirmDialog v-model="invokeDialogVisible" title="立即运行工作流" :description="`将通过手动触发器“${invokeTarget?.name ?? ''}”提交一次 Execution。本次使用空输入数据，是否继续？`" confirm-text="立即运行" :loading="invokeLoading" @confirm="confirmInvoke" @cancel="cancelInvoke" />
+    <ConfirmDialog v-model="executionDialogVisible" :title="executionDialogTitle" :description="executionDialogDescription" :confirm-text="executionAction ? actionText[executionAction] : '确认'" :danger="executionAction === 'cancel'" :loading="executionActionLoading" @confirm="confirmExecutionAction" @cancel="cancelExecutionAction" />
   </main>
 </template>
 
