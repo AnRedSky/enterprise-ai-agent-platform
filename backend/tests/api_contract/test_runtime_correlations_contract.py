@@ -46,6 +46,11 @@ def test_runtime_correlation_exposes_concrete_trace_and_audit_item_schemas():
     assert trace_page["properties"]["items"]["items"]["$ref"].endswith("/WorkflowTraceItem")
     assert audit_page["properties"]["items"]["items"]["$ref"].endswith("/AuditLogItem")
 
+    audit_item = schemas["AuditLogItem"]["properties"]
+    assert audit_item["resource_type"]["type"] == "string"
+    assert audit_item["resource_id"]["type"] == "string"
+    assert audit_item["trace_id"]["type"] == "string"
+
 
 def test_runtime_trace_identifier_exposes_max_length_contract():
     parameters = app.openapi()["paths"]["/api/v1/runtime/correlations/traces/{trace_id}"]["get"]["parameters"]
