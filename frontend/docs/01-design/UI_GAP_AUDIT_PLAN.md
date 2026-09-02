@@ -29,7 +29,7 @@
 | P1 | Organizations | 已补齐 | 已补齐 | 已补齐 | 待验证 |
 | P1 | Model Providers | 已补齐 | 已补齐 | 已补齐 | 待验证 |
 | P1 | Integrations | 已补齐 | 已补齐 | 已有真实创建闭环 | 待验证 |
-| P1 | Operations Console | 待统一 | 待审计 | 待审计 | 待处理 |
+| P1 | Operations Console | 第一轮建立统一 PageHeader Shell | 子工作台待统一 | 现有真实操作待收敛 | 开发中 |
 | P1 | Audit | 基础模式已建立 | 待收敛 | 读操作为主 | 待处理 |
 | P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 收尾 |
 
@@ -109,6 +109,22 @@ Targeted：`frontend/tests/views/ModelProvidersUI03UI05.test.ts`。
 Targeted：`frontend/tests/views/IntegrationsUI03UI05.test.ts`。  
 状态：**未执行**。
 
+### P1-06-A Operations Console
+
+实际路由为 `/runtime/operations`，页面主体为 `integrations/OperationsConsole.vue`；Backend Contract 已确认覆盖 Runtime Overview、Global Posture、Alert、Provider、Metrics、Runtime Audit、Dead Letter replay 等既有子工作台。
+
+本轮先建立公共 UI 壳层：
+
+- 新增 `OperationsConsoleWorkbench.vue`，使用统一 `PageHeader`；
+- 路由 `/runtime/operations` 切换到共享页面壳层，但保留现有 Operations Console 子工作台和真实 API 操作；
+- 保留现有窗口范围、刷新和子工作台操作，不改变 Backend Contract；
+- 不引入任何推测 API，不改变 Provider/Alert/Delivery 的 durable ID；
+- 目标测试：`frontend/tests/views/OperationsConsoleUI03.test.ts`；
+- 当前仍需继续完成 Operations Console 内部 `PageToolbar` / `SurfaceCard` / `MetricCard` / `StatePanel` 五态统一、操作错误态收敛、后端刷新真值及 Runtime correlation 审计。
+
+Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`。  
+状态：**未执行**。
+
 ## 4. Contract 与安全原则
 
 - 前端只能调用已经存在并确认的 Backend API。
@@ -153,7 +169,7 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 
 ## 7. 当前队列
 
-1. P1-06-A Operations Console Contract / Governance 对齐 + targeted test。
+1. P1-06-A Operations Console 内部 UI-03/UI-04/UI-05 与 Runtime correlation 收敛。
 2. P1-07-A Audit Gap Audit + Runtime correlation regression。
 3. P1-08-A Dashboard 与全站一致性回归脚本。
 4. 全部任务完成后统一执行测试与构建验证。
