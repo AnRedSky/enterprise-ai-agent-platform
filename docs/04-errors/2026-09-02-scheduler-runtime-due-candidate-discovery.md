@@ -52,8 +52,6 @@ Due Candidate
 
 这里在 Discovery 层执行 **最小结构可调度性检查**：要求 `nodes` 存在且至少包含一个数组元素，因此同时排除 `definition={}`、`nodes=[]` 等无法通过 Workflow Definition 最小契约的历史脏版本。完整 DAG 语义仍由 `WorkflowRuntime.validate_definition()` 保持唯一校验入口，避免 Repository 复制 Runtime 算法。
 
-因此非法已发布 Definition 会在进入 lease 之前被隔离，不产生 Execution、Audit、Trace 或失败事件。
-
 ## 第三层根因：Acceptance 错误地把全局 Runtime Counter 当成测试租户唯一事实
 
 第二层修复后，共享 PostgreSQL 中存在其他租户的合法到期 Scheduled Schedule。当前 Runtime 的设计是多租户全库轮询，因此 `eligible`、`dispatched`、`recovered` 属于 **本次 tick 的全局运行计数**，不能被单个验收租户解释为唯一值。
@@ -123,31 +121,39 @@ json_typeof(definition['nodes']) = 'array'
 
 只能排除缺失字段、对象等结构错误，却仍然允许 `nodes=[]`。共享 PostgreSQL 中的历史脏 Workflow 正好属于这个边界，因此它们仍然获得 lease 并进入 Trigger Service。
 
-这不是应该通过放宽 `failed` 断言解决的问题；也不是 Worker 并发造成的测试波动，而是 Scheduler Discovery 的最小可调度性契约不完整。
-
 ## 第七层修复
 
-`WorkflowSchedulerRepository.list_due_scheduled_candidates()` 改为使用 PostgreSQL JSONPath：
+原先尝试使用 PostgreSQL `jsonb_path_exists(definition, '$.nodes[0]')` 来表达非空数组，但真实模型定义显示 `workflow_versions.definition` 是 SQLAlchemy `JSON`，数据库列也是 JSON 类型，而不是 JSONB。真实 PostgreSQL 验收因此报：
 
-```sql
-jsonb_path_exists(workflow_versions.definition, '$.nodes[0]')
+```text
+UndefinedFunctionError: function jsonb_path_exists(json, character varying) does not exist
 ```
 
-该条件要求 `nodes` 至少存在第一个数组元素，因此安全排除：
+这暴露出第二个独立的类型边界错误：**Discovery SQL 使用了 JSONB-only 函数，却没有尊重实际 Schema 的 JSON 类型。**
 
-- `definition={}`；
-- `definition={"nodes": []}`；
-- `nodes` 非数组；
-- `nodes` 为空数组。
+当前修复改为 PostgreSQL JSON 原生函数：
 
-同时仍由 `WorkflowRuntime.validate_definition()` 负责完整 DAG 语义校验，Repository 不复制业务校验算法。
+```sql
+CASE
+  WHEN json_typeof(definition->'nodes') = 'array'
+  THEN json_array_length(definition->'nodes')
+  ELSE 0
+END > 0
+```
 
-边界测试也将 disabled / future / missing-schedule 三类脏 Workflow 明确构造为 `{"nodes": []}`，确保这一回归边界由测试本身持续锁定。
+这样：
+
+- 不需要把 JSON 列强制转换成 JSONB；
+- 不依赖 JSONPath 类型转换；
+- `definition={}`、`nodes=[]`、`nodes={}` 均被排除；
+- 非数组值不会调用 `json_array_length`，避免类型异常；
+- 完整 DAG 语义仍由 `WorkflowRuntime.validate_definition()` 负责。
 
 ## 当前修复提交
 
-- `38adbb07e6fdf539b485a2150e2c7ecdbf5e6df7` — `fix(scheduler): reject empty workflow definitions during discovery`
+- `ab5f3a0dc42b454541361e2b525bd5fa09faef6c` — `fix(scheduler): use json-compatible definition boundary`
 - `d7d0938e652d8003492bf91c2ef1fa959841d4e5` — `test(scheduler): cover empty nodes discovery boundary`
+- `d084bf60030de244c17254f8dcfb1afe1aa1f5f4` — `docs(scheduler): record json definition type mismatch`
 
 以上修复均直接提交到 `main`，没有修改服务生命周期策略，没有关闭 warning，也没有放宽 Runtime 失败语义。
 
