@@ -169,74 +169,36 @@ class OperatorActionGovernanceService:
         await self.db.flush()
         return record
 
-    async def _audit(
-        self,
-        *,
-        actor_id: UUID,
-        tenant_id: UUID,
-        resource_type: str,
-        resource_id: UUID,
-        action: str,
-        status: str,
-        workflow_id: UUID | None = None,
-        workflow_version_id: UUID | None = None,
-        workflow_execution_id: UUID | None = None,
-        idempotency_key: str | None = None,
-        error_code: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
+    async def _audit(self, *, actor_id: UUID, tenant_id: UUID, resource_type: str, resource_id: UUID,
+                     action: str, status: str, workflow_id: UUID | None = None,
+                     workflow_version_id: UUID | None = None, workflow_execution_id: UUID | None = None,
+                     idempotency_key: str | None = None, error_code: str | None = None,
+                     metadata: dict[str, Any] | None = None) -> None:
         """写入与 Operator Action 强关联的审计事实；调用方负责事务提交。"""
         result_resource_type = "workflow_execution" if workflow_execution_id is not None else resource_type
         result_resource_id = workflow_execution_id or resource_id
         operator_status = "succeeded" if status == "success" else status
         operator_action = await self._ensure_operator_action(
-            actor_id=actor_id,
-            tenant_id=tenant_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            action=action,
-            result_resource_type=result_resource_type,
-            result_resource_id=result_resource_id,
-            idempotency_key=idempotency_key,
-            status=operator_status,
-            error_code=error_code,
+            actor_id=actor_id, tenant_id=tenant_id, resource_type=resource_type, resource_id=resource_id,
+            action=action, result_resource_type=result_resource_type, result_resource_id=result_resource_id,
+            idempotency_key=idempotency_key, status=operator_status, error_code=error_code,
         )
         self.db.add(AuditLog(
-            actor_id=actor_id,
-            tenant_id=tenant_id,
-            workflow_id=workflow_id,
-            workflow_version_id=workflow_version_id,
-            workflow_execution_id=workflow_execution_id,
-            operator_action_id=operator_action.id,
-            action=f"operator.{resource_type}.{action}",
-            resource_type=resource_type,
-            resource_id=str(resource_id),
-            trace_id=str(workflow_execution_id or resource_id),
-            status=status,
-            error_code=error_code,
-            metadata_json=metadata,
+            actor_id=actor_id, tenant_id=tenant_id, workflow_id=workflow_id,
+            workflow_version_id=workflow_version_id, workflow_execution_id=workflow_execution_id,
+            operator_action_id=operator_action.id, action=f"operator.{resource_type}.{action}",
+            resource_type=resource_type, resource_id=str(resource_id),
+            trace_id=str(workflow_execution_id or resource_id), status=status,
+            error_code=error_code, metadata_json=metadata,
         ))
         await self.db.flush()
 
-    async def _claim_idempotency(
-        self,
-        *,
-        tenant_id: UUID,
-        actor_id: UUID,
-        resource_type: str,
-        resource_id: UUID,
-        action: str,
-        idempotency_key: str,
-    ) -> OperatorActionIdempotency | None:
+    async def _claim_idempotency(self, *, tenant_id: UUID, actor_id: UUID, resource_type: str,
+                                 resource_id: UUID, action: str, idempotency_key: str) -> OperatorActionIdempotency | None:
         """原子登记 Operator Action 幂等键，并返回已有结果记录。"""
         statement = pg_insert(OperatorActionIdempotency).values(
-            tenant_id=tenant_id,
-            actor_id=actor_id,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            action=action,
-            idempotency_key=idempotency_key,
-            status="started",
+            tenant_id=tenant_id, actor_id=actor_id, resource_type=resource_type,
+            resource_id=resource_id, action=action, idempotency_key=idempotency_key, status="started",
         ).on_conflict_do_nothing(index_elements=["tenant_id", "idempotency_key"])
         inserted = (await self.db.execute(statement)).rowcount
         if inserted:
@@ -267,16 +229,9 @@ class OperatorActionGovernanceService:
             raise HTTPException(status_code=409, detail="Operator Action 幂等结果已失效")
         return result
 
-    async def _finish_idempotency(
-        self,
-        record_key: str | None,
-        tenant_id: UUID,
-        result_id: UUID | None,
-        *,
-        result_resource_type: str | None = None,
-        status: str = "succeeded",
-        error_code: str | None = None,
-    ) -> None:
+    async def _finish_idempotency(self, record_key: str | None, tenant_id: UUID, result_id: UUID | None,
+                                  *, result_resource_type: str | None = None, status: str = "succeeded",
+                                  error_code: str | None = None) -> None:
         """持久化幂等请求的最终结果；失败请求不得伪造结果资源。"""
         if record_key is None:
             return
@@ -297,8 +252,7 @@ class OperatorActionGovernanceService:
     async def _trigger(self, trigger_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool) -> tuple[Workflow, WorkflowTrigger]:
         """通过正式 Workflow Registry / Trigger Service 获取租户内 Trigger。"""
         trigger = (await self.db.execute(select(WorkflowTrigger).where(
-            WorkflowTrigger.id == trigger_id,
-            WorkflowTrigger.tenant_id == tenant_id,
+            WorkflowTrigger.id == trigger_id, WorkflowTrigger.tenant_id == tenant_id,
         ))).scalar_one_or_none()
         if trigger is None:
             raise HTTPException(status_code=404, detail="Workflow Trigger 不存在")
@@ -314,45 +268,27 @@ class OperatorActionGovernanceService:
             execution_service = WorkflowExecutionService(self.db)
             checkpoint = await execution_service.checkpoint.latest(execution.id)
             assessment = execution_service.checkpoint_recovery.assess(
-                execution_id=execution.id,
-                workflow_version_id=execution.workflow_version_id,
-                execution_status=execution.status,
-                worker_owner=execution.worker_owner,
-                checkpoint=checkpoint,
+                execution_id=execution.id, workflow_version_id=execution.workflow_version_id,
+                execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint=checkpoint,
             )
             resume["allowed"] = assessment.eligible
             resume["reason_code"] = "AVAILABLE" if assessment.eligible else assessment.reason_code.upper()
-        return {
-            "resource_type": "workflow_execution",
-            "resource_id": execution.id,
-            "status": execution.status,
-            "actions": actions,
-        }
+        return {"resource_type": "workflow_execution", "resource_id": execution.id,
+                "status": execution.status, "actions": actions}
 
     async def trigger_availability(self, trigger_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool) -> dict[str, Any]:
         """返回 Workflow Trigger 的全部 Operator Action 可用性。"""
         _, trigger = await self._trigger(trigger_id, tenant_id, actor_id, is_admin)
         return {
-            "resource_type": "workflow_trigger",
-            "resource_id": trigger.id,
-            "status": trigger.status,
+            "resource_type": "workflow_trigger", "resource_id": trigger.id, "status": trigger.status,
             "trigger_type": trigger.trigger_type,
             "actions": [self.availability("workflow_trigger", action, trigger.status, trigger_type=trigger.trigger_type)
                         for action in ("enable", "disable", "delete", "invoke")],
         }
 
-    async def execute_execution(
-        self,
-        execution_id: UUID,
-        tenant_id: UUID,
-        actor_id: UUID,
-        is_admin: bool,
-        action: str,
-        *,
-        confirm: bool = False,
-        reason: str | None = None,
-        idempotency_key: str | None = None,
-    ) -> WorkflowExecution:
+    async def execute_execution(self, execution_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool,
+                                action: str, *, confirm: bool = False, reason: str | None = None,
+                                idempotency_key: str | None = None) -> WorkflowExecution:
         """执行 Workflow Execution 运维动作，并委托给现有 Execution 领域服务。"""
         definition = self.validate_request("workflow_execution", action, confirm=confirm, idempotency_key=idempotency_key)
         execution = await self._execution(execution_id, tenant_id, actor_id, is_admin)
@@ -361,11 +297,8 @@ class OperatorActionGovernanceService:
             execution_service = WorkflowExecutionService(self.db)
             checkpoint = await execution_service.checkpoint.latest(execution.id)
             assessment = execution_service.checkpoint_recovery.assess(
-                execution_id=execution.id,
-                workflow_version_id=execution.workflow_version_id,
-                execution_status=execution.status,
-                worker_owner=execution.worker_owner,
-                checkpoint=checkpoint,
+                execution_id=execution.id, workflow_version_id=execution.workflow_version_id,
+                execution_status=execution.status, worker_owner=execution.worker_owner, checkpoint=checkpoint,
             )
             available["allowed"] = assessment.eligible
         if not available["allowed"]:
@@ -391,9 +324,9 @@ class OperatorActionGovernanceService:
             elif action == "cancel":
                 result = await service.cancel(execution, actor_id, reason)
             elif action == "retry":
-                result = await service.retry(execution, actor_id)
+                result = await service.retry(execution, actor_id, commit=False)
             else:
-                result = await service.resume_from_latest_checkpoint(execution, actor_id)
+                result = await service.resume_from_latest_checkpoint(execution, actor_id, commit=False)
         except HTTPException as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
                 await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
@@ -417,18 +350,9 @@ class OperatorActionGovernanceService:
         await self.db.refresh(result)
         return result
 
-    async def execute_trigger(
-        self,
-        trigger_id: UUID,
-        tenant_id: UUID,
-        actor_id: UUID,
-        is_admin: bool,
-        action: str,
-        *,
-        confirm: bool = False,
-        input_data: dict[str, Any] | None = None,
-        idempotency_key: str | None = None,
-    ) -> WorkflowTrigger | WorkflowExecution:
+    async def execute_trigger(self, trigger_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool,
+                              action: str, *, confirm: bool = False, input_data: dict[str, Any] | None = None,
+                              idempotency_key: str | None = None) -> WorkflowTrigger | WorkflowExecution:
         """执行 Trigger 运维动作，并委托给现有 Trigger 领域服务。"""
         definition = self.validate_request("workflow_trigger", action, confirm=confirm, idempotency_key=idempotency_key)
         workflow, trigger = await self._trigger(trigger_id, tenant_id, actor_id, is_admin)

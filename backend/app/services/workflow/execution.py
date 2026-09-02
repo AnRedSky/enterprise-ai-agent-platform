@@ -269,7 +269,20 @@ class WorkflowExecutionService:
         return await self.transition(execution, "cancelled", error_code="EXECUTION_CANCELLED",
                                      error_message=message, actor_id=actor_id)
 
-    async def retry(self, execution: WorkflowExecution, actor_id: UUID) -> WorkflowExecution:
+    async def retry(self, execution: WorkflowExecution, actor_id: UUID, *, commit: bool = True) -> WorkflowExecution:
+        """为 failed Execution 创建 Retry Execution，并由调用方控制事务提交边界。
+
+        Args:
+            execution: 已失败且需要重试的原始 Execution。
+            actor_id: 发起 Retry 的操作者。
+            commit: 是否在本方法内提交 Retry 事务；治理 Operator Action 必须传入 False，使 Retry、幂等事实、Audit 与 Result Resource 共用一个事务。
+
+        Returns:
+            新创建或当前事务中的 Retry Execution。
+
+        设计意图：默认 `commit=True` 保持现有直接调用方兼容；Operator Action 场景通过 `commit=False`
+        把 Retry 持久化延迟到 Result Resource、Operator Action 和 Audit 全部成功之后，避免审计失败留下半提交事实。
+        """
         execution = await self._lock_execution(execution)
         if execution.status != "failed":
             raise HTTPException(409, "只有 failed Execution 可以 Retry")
@@ -290,8 +303,9 @@ class WorkflowExecutionService:
         await self.governance.trace(retry_execution, actor_id, "execution.created", "pending", data={
             "retry_of_execution_id": str(execution.id), "input_keys": sorted((execution.input_data or {}).keys()),
         })
-        await self.db.commit()
-        await self.db.refresh(retry_execution)
+        if commit:
+            await self.db.commit()
+            await self.db.refresh(retry_execution)
         return retry_execution
 
     async def resume_from_latest_checkpoint(self, execution: WorkflowExecution, actor_id: UUID,

@@ -4,8 +4,10 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
 
-from app.infrastructure.db import engine
+from app.core.config import settings
 
 
 @pytest.mark.integration
@@ -17,138 +19,142 @@ async def test_operator_action_audit_result_lineage_is_tenant_scoped() -> None:
     action_a, action_b = uuid4(), uuid4()
     audit_a, audit_b = uuid4(), uuid4()
     result_a, result_b = uuid4(), uuid4()
+    test_engine = create_async_engine(settings.database_url, poolclass=NullPool, pool_pre_ping=True)
 
-    async with engine.connect() as connection:
-        transaction = await connection.begin()
-        try:
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO tenants (id, name, status, created_at)
-                    VALUES (:id, :name, 'active', CURRENT_TIMESTAMP),
-                           (:id_b, :name_b, 'active', CURRENT_TIMESTAMP)
-                    """
-                ),
-                {
-                    "id": tenant_a,
-                    "name": f"phase-210-lineage-a-{tenant_a.hex[:12]}",
-                    "id_b": tenant_b,
-                    "name_b": f"phase-210-lineage-b-{tenant_b.hex[:12]}",
-                },
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO users (id, username, password_hash, tenant_id, status, created_at)
-                    VALUES (:id, :username, 'fixture', :tenant_id, 'active', CURRENT_TIMESTAMP),
-                           (:id_b, :username_b, 'fixture', :tenant_id_b, 'active', CURRENT_TIMESTAMP)
-                    """
-                ),
-                {
-                    "id": user_a,
-                    "username": f"phase-210-lineage-a-{user_a.hex[:12]}",
-                    "tenant_id": tenant_a,
-                    "id_b": user_b,
-                    "username_b": f"phase-210-lineage-b-{user_b.hex[:12]}",
-                    "tenant_id_b": tenant_b,
-                },
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO operator_action_idempotencies
-                    (id, tenant_id, actor_id, resource_type, resource_id, action,
-                     idempotency_key, status, result_resource_type, result_resource_id,
-                     created_at, updated_at)
-                    VALUES
-                    (:id, :tenant_id, :actor_id, 'workflow_execution', :resource_id, 'retry',
-                     :idempotency_key, 'succeeded', 'workflow_execution', :result_resource_id,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
-                    (:id_b, :tenant_id_b, :actor_id_b, 'workflow_execution', :resource_id_b, 'retry',
-                     :idempotency_key_b, 'succeeded', 'workflow_execution', :result_resource_id_b,
-                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    """
-                ),
-                {
-                    "id": action_a,
-                    "tenant_id": tenant_a,
-                    "actor_id": user_a,
-                    "resource_id": result_a,
-                    "idempotency_key": f"phase-210-lineage-a-{action_a.hex}",
-                    "result_resource_id": result_a,
-                    "id_b": action_b,
-                    "tenant_id_b": tenant_b,
-                    "actor_id_b": user_b,
-                    "resource_id_b": result_b,
-                    "idempotency_key_b": f"phase-210-lineage-b-{action_b.hex}",
-                    "result_resource_id_b": result_b,
-                },
-            )
-            await connection.execute(
-                text(
-                    """
-                    INSERT INTO audit_logs
-                    (id, actor_id, tenant_id, workflow_execution_id, operator_action_id,
-                     action, resource_type, resource_id, trace_id, status, metadata, created_at)
-                    VALUES
-                    (:id, :actor_id, :tenant_id, NULL, :operator_action_id,
-                     'operator.workflow_execution.retry', 'workflow_execution', :resource_id,
-                     :trace_id, 'success', :metadata, CURRENT_TIMESTAMP),
-                    (:id_b, :actor_id_b, :tenant_id_b, NULL, :operator_action_id_b,
-                     'operator.workflow_execution.retry', 'workflow_execution', :resource_id_b,
-                     :trace_id_b, 'success', :metadata_b, CURRENT_TIMESTAMP)
-                    """
-                ),
-                {
-                    "id": audit_a,
-                    "actor_id": user_a,
-                    "tenant_id": tenant_a,
-                    "operator_action_id": action_a,
-                    "resource_id": str(result_a),
-                    "trace_id": str(result_a),
-                    "metadata": '{"fixture": "lineage-a"}',
-                    "id_b": audit_b,
-                    "actor_id_b": user_b,
-                    "tenant_id_b": tenant_b,
-                    "operator_action_id_b": action_b,
-                    "resource_id_b": str(result_b),
-                    "trace_id_b": str(result_b),
-                    "metadata_b": '{"fixture": "lineage-b"}',
-                },
-            )
-
-            rows = (
+    try:
+        async with test_engine.connect() as connection:
+            transaction = await connection.begin()
+            try:
                 await connection.execute(
                     text(
                         """
-                        SELECT a.operator_action_id, o.result_resource_type, o.result_resource_id
-                        FROM audit_logs a
-                        JOIN operator_action_idempotencies o
-                          ON o.id = a.operator_action_id
-                         AND o.tenant_id = a.tenant_id
-                        WHERE a.tenant_id = :tenant_id
-                          AND a.id = :audit_id
+                        INSERT INTO tenants (id, name, status, created_at)
+                        VALUES (:id, :name, 'active', CURRENT_TIMESTAMP),
+                               (:id_b, :name_b, 'active', CURRENT_TIMESTAMP)
                         """
                     ),
-                    {"tenant_id": tenant_a, "audit_id": audit_a},
+                    {
+                        "id": tenant_a,
+                        "name": f"phase-210-lineage-a-{tenant_a.hex[:12]}",
+                        "id_b": tenant_b,
+                        "name_b": f"phase-210-lineage-b-{tenant_b.hex[:12]}",
+                    },
                 )
-            ).all()
-            assert rows == [(action_a, "workflow_execution", result_a)]
-
-            cross_tenant = (
                 await connection.execute(
                     text(
                         """
-                        SELECT count(*)
-                        FROM audit_logs a
-                        JOIN operator_action_idempotencies o ON o.id = a.operator_action_id
-                        WHERE a.tenant_id = :tenant_id
-                          AND o.tenant_id <> :tenant_id
+                        INSERT INTO users (id, username, password_hash, tenant_id, status, created_at)
+                        VALUES (:id, :username, 'fixture', :tenant_id, 'active', CURRENT_TIMESTAMP),
+                               (:id_b, :username_b, 'fixture', :tenant_id_b, 'active', CURRENT_TIMESTAMP)
                         """
                     ),
-                    {"tenant_id": tenant_a},
+                    {
+                        "id": user_a,
+                        "username": f"phase-210-lineage-a-{user_a.hex[:12]}",
+                        "tenant_id": tenant_a,
+                        "id_b": user_b,
+                        "username_b": f"phase-210-lineage-b-{user_b.hex[:12]}",
+                        "tenant_id_b": tenant_b,
+                    },
                 )
-            ).scalar_one()
-            assert cross_tenant == 0
-        finally:
-            await transaction.rollback()
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO operator_action_idempotencies
+                        (id, tenant_id, actor_id, resource_type, resource_id, action,
+                         idempotency_key, status, result_resource_type, result_resource_id,
+                         created_at, updated_at)
+                        VALUES
+                        (:id, :tenant_id, :actor_id, 'workflow_execution', :resource_id, 'retry',
+                         :idempotency_key, 'succeeded', 'workflow_execution', :result_resource_id,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                        (:id_b, :tenant_id_b, :actor_id_b, 'workflow_execution', :resource_id_b, 'retry',
+                         :idempotency_key_b, 'succeeded', 'workflow_execution', :result_resource_id_b,
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """
+                    ),
+                    {
+                        "id": action_a,
+                        "tenant_id": tenant_a,
+                        "actor_id": user_a,
+                        "resource_id": result_a,
+                        "idempotency_key": f"phase-210-lineage-a-{action_a.hex}",
+                        "result_resource_id": result_a,
+                        "id_b": action_b,
+                        "tenant_id_b": tenant_b,
+                        "actor_id_b": user_b,
+                        "resource_id_b": result_b,
+                        "idempotency_key_b": f"phase-210-lineage-b-{action_b.hex}",
+                        "result_resource_id_b": result_b,
+                    },
+                )
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO audit_logs
+                        (id, actor_id, tenant_id, workflow_execution_id, operator_action_id,
+                         action, resource_type, resource_id, trace_id, status, metadata, created_at)
+                        VALUES
+                        (:id, :actor_id, :tenant_id, NULL, :operator_action_id,
+                         'operator.workflow_execution.retry', 'workflow_execution', :resource_id,
+                         :trace_id, 'success', :metadata, CURRENT_TIMESTAMP),
+                        (:id_b, :actor_id_b, :tenant_id_b, NULL, :operator_action_id_b,
+                         'operator.workflow_execution.retry', 'workflow_execution', :resource_id_b,
+                         :trace_id_b, 'success', :metadata_b, CURRENT_TIMESTAMP)
+                        """
+                    ),
+                    {
+                        "id": audit_a,
+                        "actor_id": user_a,
+                        "tenant_id": tenant_a,
+                        "operator_action_id": action_a,
+                        "resource_id": str(result_a),
+                        "trace_id": str(result_a),
+                        "metadata": '{"fixture": "lineage-a"}',
+                        "id_b": audit_b,
+                        "actor_id_b": user_b,
+                        "tenant_id_b": tenant_b,
+                        "operator_action_id_b": action_b,
+                        "resource_id_b": str(result_b),
+                        "trace_id_b": str(result_b),
+                        "metadata_b": '{"fixture": "lineage-b"}',
+                    },
+                )
+
+                rows = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT a.operator_action_id, o.result_resource_type, o.result_resource_id
+                            FROM audit_logs a
+                            JOIN operator_action_idempotencies o
+                              ON o.id = a.operator_action_id
+                             AND o.tenant_id = a.tenant_id
+                            WHERE a.tenant_id = :tenant_id
+                              AND a.id = :audit_id
+                            """
+                        ),
+                        {"tenant_id": tenant_a, "audit_id": audit_a},
+                    )
+                ).all()
+                assert rows == [(action_a, "workflow_execution", result_a)]
+
+                cross_tenant = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT count(*)
+                            FROM audit_logs a
+                            JOIN operator_action_idempotencies o ON o.id = a.operator_action_id
+                            WHERE a.tenant_id = :tenant_id
+                              AND o.tenant_id <> :tenant_id
+                            """
+                        ),
+                        {"tenant_id": tenant_a},
+                    )
+                ).scalar_one()
+                assert cross_tenant == 0
+            finally:
+                await transaction.rollback()
+    finally:
+        await test_engine.dispose()
