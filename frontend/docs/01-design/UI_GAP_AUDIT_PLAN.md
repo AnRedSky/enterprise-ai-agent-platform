@@ -28,7 +28,7 @@
 | P1 | Tools | 已建立 | 已有 | 第一轮完成 | 待验证 |
 | P1 | Organizations | 已补齐 | 已补齐 | 已补齐 | 待验证 |
 | P1 | Model Providers | 已补齐 | 已补齐 | 已补齐 | 待验证 |
-| P1 | Integrations | 待统一 | 待审计 | 待审计 | 待处理 |
+| P1 | Integrations | 已补齐 | 已补齐 | 已有真实创建闭环 | 待验证 |
 | P1 | Operations Console | 待统一 | 待审计 | 待审计 | 待处理 |
 | P1 | Audit | 基础模式已建立 | 待收敛 | 读操作为主 | 待处理 |
 | P1 | Dashboard | 已建立 | 已建立 | 以导航为主 | 收尾 |
@@ -83,14 +83,30 @@ Targeted：`frontend/tests/views/OrganizationsUI03UI05.test.ts`、`frontend/test
 
 - 使用 `PageHeader`、`SurfaceCard`、`StatePanel`、`ConfirmDialog`；
 - 页面级 Loading / Empty / Error / Permission / Success 完整；
-- 每个 provider 的 profile 列表独立维护 Loading / Empty / Error / Permission，避免 stale data；
-- 创建/编辑 provider 与 profile 有独立 saving 状态，阻止重复提交；
+- provider 的 profile 列表独立维护 Loading / Empty / Error / Permission，避免 stale data；
+- provider/profile 创建与编辑有独立 saving 状态，阻止重复提交；
 - 删除 provider/profile 使用确认闭环，成功后以 Backend refresh 为准；
 - provider → profile 关系只使用 `provider.id` / `profile.provider_id`，更新/删除只使用实体自身 `id`；
-- 不展示或重新提交 secret 正文，只保留 `credential_ref` 引用；
-- 未引入 Scheduler 或未经确认的写接口。
+- 不展示或重新提交 secret 正文，只保留 `credential_ref` 引用。
 
 Targeted：`frontend/tests/views/ModelProvidersUI03UI05.test.ts`。  
+状态：**未执行**。
+
+### P1-05-A Integrations
+
+`integrations/index.vue` 已完成第一轮 Gap Audit 与公共模式迁移：
+
+- 使用 `PageHeader`、`MetricCard`、`StatePanel`、`SurfaceCard`；
+- 页面级 Loading / Empty / Error / Permission / Success 完整；
+- 投递目标与事件订阅空状态使用 `StatePanel`；
+- 修复原页面通过 `destinations[0]` 自动选择订阅目标的关系推断，创建订阅必须显式选择 `destination_id`；
+- 创建投递目标/事件订阅增加独立 saving 状态和重复提交保护；
+- 创建成功后重新读取 Backend facts，失败不关闭对话框；
+- 继续使用已确认的 `/webhooks/destinations`、`/webhooks/subscriptions`、`/webhooks/deliveries`、`/runtime/integration-events` Contract；
+- secret 只展示 `secret_ref`/配置状态，不读取或展示 secret 明文；
+- Delivery replay 等现有子工作台继续使用后端 durable delivery ID，不由本页新增推测写接口。
+
+Targeted：`frontend/tests/views/IntegrationsUI03UI05.test.ts`。  
 状态：**未执行**。
 
 ## 4. Contract 与安全原则
@@ -119,9 +135,9 @@ Targeted：`frontend/tests/views/ModelProvidersUI03UI05.test.ts`。
 
 ## 6. 分阶段测试策略
 
-当前用户要求：**继续推进主线任务开发，并分阶段完成测试脚本，但不执行测试，直到全部任务完成后再进行测试。**
+当前策略：**继续推进主线任务开发，并分阶段完成测试脚本，但不执行测试，直到全部任务完成后再进行测试。**
 
-因此当前所有测试记录必须使用：
+当前所有测试记录必须使用：
 
 - Targeted result：**未执行**
 - Full unit：**未执行**
@@ -129,7 +145,7 @@ Targeted：`frontend/tests/views/ModelProvidersUI03UI05.test.ts`。
 - Gate：**未执行**
 - Real API / E2E：**未执行**
 
-全部页面 Gap Audit、代码实现、targeted 测试脚本、文档和原子提交完成后，才统一执行：
+全部页面 Gap Audit、代码实现、targeted 测试脚本、文档和原子提交完成后，统一执行：
 
 ```text
 targeted tests → npm run test:unit → npm run build → gate / E2E
@@ -137,11 +153,10 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 
 ## 7. 当前队列
 
-1. P1-05-A Integrations Gap Audit + targeted test。
-2. P1-06-A Operations Console Contract / Governance 对齐 + targeted test。
-3. P1-07-A Audit Gap Audit + Runtime correlation regression。
-4. P1-08-A Dashboard 与全站一致性回归脚本。
-5. 全部任务完成后统一执行测试与构建验证。
+1. P1-06-A Operations Console Contract / Governance 对齐 + targeted test。
+2. P1-07-A Audit Gap Audit + Runtime correlation regression。
+3. P1-08-A Dashboard 与全站一致性回归脚本。
+4. 全部任务完成后统一执行测试与构建验证。
 
 ## 8. 原子任务记录规范
 
