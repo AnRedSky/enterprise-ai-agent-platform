@@ -46,6 +46,7 @@
 
 开发者已反馈最新 main 基线结果：
 
+- Scheduler Misfire / Lease Gate：`5 passed`，并通过 PostgreSQL readiness、misfire `skip / fire_once / catch_up`、lease reclaim 与 stale-owner fencing 验证；
 - Scheduler Repository concurrency integration：`3 passed in 0.77s`；
 - Scheduler Lease Concurrency Gate：`3 passed in 0.82s`，并确认未执行任何服务生命周期操作；
 - Backend default regression：`1044 passed, 4 skipped, 80 deselected in 36.86s`；
@@ -54,7 +55,7 @@
 
 以上结果均来自开发者实际本地执行，不使用 GitHub Actions 作为验收依据。
 
-本轮新增 Scheduler Misfire / Lease Gate 尚未获得开发者本地实际输出，因此暂不标记为通过。
+Scheduler Runtime PostgreSQL Acceptance 首次本地执行发现测试夹具 FK 插入顺序错误，已修复；修复后的 Runtime Gate 尚未获得新的开发者本地实际输出，因此暂不标记为通过。
 
 ## 4. 当前 Backend 修复 / 开发
 
@@ -65,18 +66,19 @@
 - `skip` 丢弃历史积压并回到未来 interval；`fire_once` 单轮只补一次；`catch_up` 按 `catch_up_limit` 有界补跑，剩余积压继续沿调度轴处理；
 - 新增 `tests/unit/services/workflow_scheduler/test_misfire.py`，锁定上述时间边界与参数校验；
 - 新增 `tests/integration/test_workflow_scheduler_lease_expiry.py`，锁定真实 PostgreSQL lease reclaim / stale-owner fencing；
-- 新增 `scripts/test/phase-2.4/21_scheduler_misfire_lease_gate.ps1`，只检查 PostgreSQL readiness 并运行 targeted tests，禁止自动启动或停止 API / Scheduler / Worker / PostgreSQL / Redis。
+- 新增 `scripts/test/phase-2.4/21_scheduler_misfire_lease_gate.ps1`，只检查 PostgreSQL readiness 并运行 targeted tests，禁止自动启动或停止 API / Scheduler / Worker / PostgreSQL / Redis；
+- 新增 `tests/integration/test_workflow_scheduler_runtime.py` 与 `scripts/test/phase-2.4/22_scheduler_runtime_gate.ps1`，验证 Scheduler Runtime 的 Schedule → Slot → Execution → Frontier → Audit/Trace 持久化闭环；
+- 修复 Runtime Acceptance Fixture：显式 flush `WorkflowTrigger` 后再创建 `WorkflowSchedule`，消除无 ORM relationship 时 SQLAlchemy INSERT 顺序不确定导致的 PostgreSQL FK violation。
 
 ## 5. 下一执行顺序
 
 ```text
-① 执行 Scheduler Misfire / Lease Gate，确认新增边界测试在开发者本地 PostgreSQL 通过
-② 若通过，进入 Scheduler Runtime Real PostgreSQL Acceptance
-③ 验证 skip / fire_once / catch_up → WorkflowSchedule → ScheduleSlot → WorkflowExecution
-④ 验证 Scheduler Audit / Trace 与 tenant/workflow/execution 关联
-⑤ 验证 lease 失败恢复、slot 幂等与 Execution 幂等不重复
-⑥ 更新 Phase 2.4 Acceptance 汇总并评估是否达到 Passed
-⑦ Backend-first 继续推进 Operator Governance / Runtime 剩余真实业务缺口
+① 重新执行 Scheduler Runtime Real PostgreSQL Acceptance，确认 FK fixture 修复后进入真实 Runtime tick
+② 验证 skip / fire_once / catch_up → WorkflowSchedule → ScheduleSlot → WorkflowExecution
+③ 验证 Scheduler Audit / Trace 与 tenant/workflow/execution 关联
+④ 验证 lease 失败恢复、slot 幂等与 Execution 幂等不重复
+⑤ 更新 Phase 2.4 Acceptance 汇总并评估是否达到 Passed
+⑥ Backend-first 继续推进 Operator Governance / Runtime 剩余真实业务缺口
 ```
 
 ## 6. Backend 验收规则
