@@ -46,6 +46,7 @@
 | ERR-0038 | 2026-09-02 | Operator Action 反查 Audit 范围混入 Execution 生命周期审计 |
 | ERR-0039 | 2026-09-02 | PostgreSQL Real Acceptance 跨事件循环复用 AsyncEngine 连接 |
 | ERR-0040 | 2026-09-02 | Operator Action Result Lineage 两阶段提交边界 |
+| ERR-0041 | 2026-09-02 | Tenant Safe Real API Bootstrap 重复创建 Membership |
 
 ## 迁移规则
 
