@@ -52,6 +52,14 @@ claim existing Operator Action
 
 因此不会再次创建 Operator Audit。
 
+## 本次本地反馈的测试根因
+
+首次新增 Real PostgreSQL Acceptance 时，测试夹具错误地把 `checkpoint_reason="node_failed"`、`execution_status="failed"`、`node_status="failed"` 作为 Resume Checkpoint。
+
+这与生产恢复评估契约冲突：Durable Resume 只接受 `node.completed` 或 `frontier_completed` Checkpoint；Checkpoint 产生时的 `execution_status` 必须是 `running`，其中 `node.completed` 还必须绑定 completed Node。原始 Execution 在恢复前仍然可以是 `failed`，两者不是同一状态语义。
+
+因此本次 `409 当前 Workflow Execution 状态不允许执行该 Operator Action` 是 **Acceptance fixture 错误，不是 Operator Governance 生产逻辑错误**。测试已修正为真实可恢复边界：`execution.status=failed` + `checkpoint.execution_status=running` + `checkpoint_reason=node.completed` + `node_status=completed`。
+
 ## 验证要求
 
 必须在本地执行：
@@ -67,4 +75,4 @@ Real PostgreSQL 测试会自动生成并清理 Tenant、User、Workflow、Execut
 
 ## 状态
 
-代码与 Acceptance 已提交，等待开发者本地实际执行结果；在获得本地输出前不得记录为“通过”。
+代码与 Acceptance 已修正，等待开发者本地实际执行结果；在获得本地输出前不得记录为“通过”。

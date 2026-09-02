@@ -83,14 +83,15 @@ async def test_resume_operator_action_replay_reuses_result_and_audit() -> None:
                 sequence=1,
                 node_id="input",
                 node_attempt=1,
-                execution_status="failed",
-                node_status="failed",
+                # Resume 只接受 Runtime 已完成的 Checkpoint 边界；Execution 当前失败是恢复前事实。
+                execution_status="running",
+                node_status="completed",
                 state_data={"resume": "state", "sequence": 1},
                 input_data={"phase": "2.10-II"},
-                output_data=None,
-                checkpoint_reason="node_failed",
+                output_data={"node": "completed"},
+                checkpoint_reason="node.completed",
                 worker_owner=None,
-                error_code="NODE_TIMEOUT",
+                error_code=None,
             ))
             await db.commit()
 
