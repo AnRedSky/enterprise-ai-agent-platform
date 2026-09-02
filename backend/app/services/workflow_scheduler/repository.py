@@ -18,7 +18,9 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.workflow import Workflow
 from app.models.workflow_scheduler import WorkflowSchedule, WorkflowScheduleSlot
+from app.models.workflow_trigger import WorkflowTrigger
 
 
 class WorkflowSchedulerRepository:
@@ -33,6 +35,44 @@ class WorkflowSchedulerRepository:
         if value.tzinfo is None:
             return value
         return value.astimezone(UTC).replace(tzinfo=None)
+
+    async def list_due_scheduled_candidates(
+        self,
+        *,
+        now: datetime,
+        limit: int | None = None,
+    ) -> list[tuple[WorkflowTrigger, Workflow, WorkflowSchedule]]:
+        """原子发现真正到期的 Scheduled Trigger，隔离 disabled/future 与全库无关脏数据。
+
+        Scheduler Runtime 只能消费已经存在的持久化 Schedule；缺失 Schedule 不在 tick
+        中隐式初始化，避免一次 tick 将全库所有历史 Scheduled Trigger 人为变成当前到期任务。
+        """
+        db_now = self._db_datetime(now)
+        statement = (
+            select(WorkflowTrigger, Workflow, WorkflowSchedule)
+            .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
+            .join(
+                WorkflowSchedule,
+                (WorkflowSchedule.tenant_id == WorkflowTrigger.tenant_id)
+                & (WorkflowSchedule.trigger_id == WorkflowTrigger.id),
+            )
+            .where(
+                WorkflowTrigger.trigger_type == "scheduled",
+                WorkflowTrigger.status == "enabled",
+                Workflow.status == "published",
+                Workflow.published_version_id.is_not(None),
+                WorkflowSchedule.enabled.is_(True),
+                WorkflowSchedule.status == "enabled",
+                WorkflowSchedule.next_run_at <= db_now,
+            )
+            .order_by(WorkflowSchedule.next_run_at.asc(), WorkflowTrigger.created_at.asc(), WorkflowTrigger.id.asc())
+        )
+        if limit is not None:
+            if isinstance(limit, bool) or limit < 1:
+                raise ValueError("limit 必须大于等于 1")
+            statement = statement.limit(limit)
+        result = await self.db.execute(statement)
+        return list(result.all())
 
     async def get_schedule_for_trigger(self, *, tenant_id: UUID, trigger_id: UUID) -> WorkflowSchedule | None:
         """按 tenant + trigger 获取唯一 Scheduler 状态，tenant 是强制查询边界。"""

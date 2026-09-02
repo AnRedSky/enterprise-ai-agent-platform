@@ -1,6 +1,6 @@
 """Workflow Scheduler Runtime：负责已启用 Scheduled Trigger 的持久化调度与幂等分发。
 
-职责：从 PostgreSQL 持久化状态恢复到期任务，使用 lease + slot 完成多实例 ownership、租户隔离与 misfire 补偿。
+职责：从 PostgreSQL 持久化调度状态恢复到期任务，使用 lease + slot 完成多实例 ownership、租户隔离与 misfire 补偿。
 边界：不创建第二套数据库 Session、不复制 Workflow 执行逻辑；实际执行继续复用 WorkflowTriggerService。
 关键依赖：`app.infrastructure.db.SessionLocal`、WorkflowSchedulerRepository、Trigger 领域服务与 Scheduler Contract。
 """
@@ -13,12 +13,9 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
 
 from app.infrastructure.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外键元数据
-from app.models.workflow import Workflow
-from app.models.workflow_trigger import WorkflowTrigger
 from app.services.integration.publisher import RuntimeIntegrationEventPublisher
 from app.services.workflow_scheduler.misfire import build_due_slots, choose_misfire_slots, next_run_after_misfire
 from app.services.workflow_scheduler.models import MisfirePolicy
@@ -130,7 +127,7 @@ class ScheduledTriggerScheduler:
         return candidate
 
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
-        """从持久化 Scheduler 状态抢占并执行到期槽位。"""
+        """从 Repository 原子发现真正到期的持久化 Schedule 并执行到期槽位。"""
         now = now or datetime.now(UTC)
         counters = {
             "eligible": 0,
@@ -141,74 +138,23 @@ class ScheduledTriggerScheduler:
             "contention": 0,
         }
 
+        # Discovery 只返回 enabled + published + enabled Schedule + next_run_at <= now 的候选。
+        # 不在 Runtime 中遍历全库 Trigger，也不在 tick 中为缺失 Schedule 隐式初始化，
+        # 从根源隔离 disabled/future schedule 以及历史脏 Workflow Definition。
         async with SessionLocal() as discovery_db:
-            result = await discovery_db.execute(
-                select(WorkflowTrigger.id)
-                .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
-                .where(
-                    WorkflowTrigger.trigger_type == "scheduled",
-                    WorkflowTrigger.status.in_(["enabled", "disabled"]),
-                    Workflow.status == "published",
-                    Workflow.published_version_id.is_not(None),
-                )
-                .order_by(WorkflowTrigger.created_at.asc(), WorkflowTrigger.id.asc())
-            )
-            trigger_ids = list(result.scalars().all())
+            repository = WorkflowSchedulerRepository(discovery_db)
+            candidates = await repository.list_due_scheduled_candidates(now=now)
 
-        for trigger_id in trigger_ids:
+        for trigger, workflow, schedule in candidates:
+            trigger_id = trigger.id
+            trigger_id_text = str(trigger_id)
+            workflow_id_text = str(workflow.id)
             async with SessionLocal() as db:
-                trigger_id_text = str(trigger_id)
-                workflow_id_text = "unknown"
                 repository = WorkflowSchedulerRepository(db)
                 integration = RuntimeIntegrationEventPublisher(db)
-                schedule = None
                 try:
-                    candidate = (
-                        await db.execute(
-                            select(WorkflowTrigger, Workflow)
-                            .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
-                            .where(
-                                WorkflowTrigger.id == trigger_id,
-                                WorkflowTrigger.trigger_type == "scheduled",
-                                WorkflowTrigger.status.in_(["enabled", "disabled"]),
-                                Workflow.status == "published",
-                                Workflow.published_version_id.is_not(None),
-                            )
-                        )
-                    ).one_or_none()
-                    if candidate is None:
-                        continue
-                    trigger, workflow = candidate
-                    workflow_id_text = str(workflow.id)
-                    counters["eligible"] += 1
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
-                    schedule = await repository.ensure_schedule(
-                        tenant_id=trigger.tenant_id,
-                        trigger_id=trigger.id,
-                        workflow_id=workflow.id,
-                        timezone=config["timezone"],
-                        interval_seconds=config["interval_seconds"],
-                        enabled=trigger.status == "enabled",
-                        now=now,
-                        misfire_policy=config["misfire_policy"],
-                        catch_up_limit=config["catch_up_limit"],
-                    )
-                    await repository.sync_schedule_config(
-                        schedule_id=schedule.id,
-                        tenant_id=trigger.tenant_id,
-                        timezone=config["timezone"],
-                        interval_seconds=config["interval_seconds"],
-                        enabled=trigger.status == "enabled",
-                        now=now,
-                        misfire_policy=config["misfire_policy"],
-                        catch_up_limit=config["catch_up_limit"],
-                    )
-                    await db.commit()
-
-                    if trigger.status != "enabled":
-                        counters["skipped"] += 1
-                        continue
-
+                    # Candidate 已由 Repository 原子查询锁定为当前到期状态；这里只做配置与执行边界校验。
                     claimed = await repository.claim_due_lease(
                         schedule_id=schedule.id,
                         tenant_id=trigger.tenant_id,
@@ -220,6 +166,7 @@ class ScheduledTriggerScheduler:
                         counters["contention"] += 1
                         await db.rollback()
                         continue
+                    counters["eligible"] += 1
 
                     await integration.publish_scheduler(
                         tenant_id=trigger.tenant_id,
@@ -369,24 +316,23 @@ class ScheduledTriggerScheduler:
                         counters["recovered"] += 1
                 except Exception as exc:
                     await db.rollback()
-                    if schedule is not None:
-                        try:
-                            await repository.release_lease(
-                                schedule_id=schedule.id,
-                                tenant_id=schedule.tenant_id,
-                                owner=self.owner,
-                                now=now,
-                            )
-                            await integration.publish_scheduler(
-                                tenant_id=schedule.tenant_id,
-                                trigger_id=trigger_id,
-                                schedule_id=schedule.id,
-                                status="failed",
-                                payload={"error_code": type(exc).__name__},
-                            )
-                            await db.commit()
-                        except Exception:
-                            await db.rollback()
+                    try:
+                        await repository.release_lease(
+                            schedule_id=schedule.id,
+                            tenant_id=schedule.tenant_id,
+                            owner=self.owner,
+                            now=now,
+                        )
+                        await integration.publish_scheduler(
+                            tenant_id=schedule.tenant_id,
+                            trigger_id=trigger_id,
+                            schedule_id=schedule.id,
+                            status="failed",
+                            payload={"error_code": type(exc).__name__},
+                        )
+                        await db.commit()
+                    except Exception:
+                        await db.rollback()
                     counters["failed"] += 1
                     logger.exception(
                         "Scheduled Trigger dispatch failed",
