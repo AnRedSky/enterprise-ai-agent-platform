@@ -127,8 +127,6 @@ class ScheduledTriggerScheduler:
 
     async def tick_once(self, now: datetime | None = None) -> dict[str, int]:
         """从 Repository 原子发现真正到期的持久化 Schedule 并执行到期槽位。"""
-        # 延迟导入 Trigger Service，避免 Trigger Service -> Scheduler Repository -> Scheduler Runtime
-        # 与 Scheduler Runtime -> Trigger Service 在包初始化阶段形成循环依赖。
         from app.services.trigger import WorkflowTriggerService
 
         now = now or datetime.now(UTC)
@@ -141,9 +139,6 @@ class ScheduledTriggerScheduler:
             "contention": 0,
         }
 
-        # Discovery 只返回 enabled + published + enabled Schedule + next_run_at <= now 的候选。
-        # 不在 Runtime 中遍历全库 Trigger，也不在 tick 中为缺失 Schedule 隐式初始化，
-        # 从根源隔离 disabled/future schedule 以及历史脏 Workflow Definition。
         async with SessionLocal() as discovery_db:
             repository = WorkflowSchedulerRepository(discovery_db)
             candidates = await repository.list_due_scheduled_candidates(now=now)
@@ -157,7 +152,6 @@ class ScheduledTriggerScheduler:
                 integration = RuntimeIntegrationEventPublisher(db)
                 try:
                     config = WorkflowTriggerService.validate_config(trigger.trigger_type, trigger.config or {})
-                    # Candidate 已由 Repository 原子查询锁定为当前到期状态；这里只做配置与执行边界校验。
                     claimed = await repository.claim_due_lease(
                         schedule_id=schedule.id,
                         tenant_id=trigger.tenant_id,
@@ -338,3 +332,17 @@ class ScheduledTriggerScheduler:
                         "Scheduled Trigger dispatch failed",
                         extra={"trigger_id": trigger_id_text, "workflow_id": workflow_id_text},
                     )
+        return counters
+
+    async def run_forever(self) -> None:
+        """持续轮询持久化 Schedule；服务生命周期由 entrypoint Supervisor 管理。"""
+        while not self._stop_event.is_set():
+            await self.tick_once()
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_interval_seconds)
+            except asyncio.TimeoutError:
+                continue
+
+    def stop(self) -> None:
+        """请求结束 Scheduler 轮询，不创建或销毁任何外部服务进程。"""
+        self._stop_event.set()
