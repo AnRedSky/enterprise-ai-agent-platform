@@ -48,7 +48,7 @@ Due Candidate
 
 - `WorkflowVersion.id = Workflow.published_version_id`
 - `WorkflowVersion.status = published`
-- PostgreSQL JSONPath `$.nodes[0]` 存在
+- 最小 Definition Contract 中 `nodes` 必须为非空数组
 
 这里在 Discovery 层执行 **最小结构可调度性检查**：要求 `nodes` 存在且至少包含一个数组元素，因此同时排除 `definition={}`、`nodes=[]` 等无法通过 Workflow Definition 最小契约的历史脏版本。完整 DAG 语义仍由 `WorkflowRuntime.validate_definition()` 保持唯一校验入口，避免 Repository 复制 Runtime 算法。
 
@@ -149,11 +149,53 @@ END > 0
 - 非数组值不会调用 `json_array_length`，避免类型异常；
 - 完整 DAG 语义仍由 `WorkflowRuntime.validate_definition()` 负责。
 
+## 第八层根因：Due Candidate 边界测试误把 misfire skip 场景当成正常 due dispatch 场景
+
+在修复 JSON 边界后，真实 Gate 进入 Due Candidate 测试，Repository 候选断言已经正确通过，但 Runtime 返回：
+
+```text
+{'contention': 0, 'dispatched': 0, 'eligible': 1, 'failed': 0, ...}
+```
+
+随后测试错误地断言 `dispatched >= 1`。
+
+根因不是 Runtime 丢失分发，而是测试数据本身同时设置了：
+
+- `target_schedule.next_run_at = now - interval`
+- `misfire_policy = skip`
+
+`build_due_slots()` 会从 `next_run_at` 开始生成槽位。由于起点已经早于当前时间，通常会得到至少两个到期槽位；Runtime 因此进入 misfire 分支，而 `choose_misfire_slots(..., MisfirePolicy.SKIP)` 的正式契约就是返回空集合。结果是：
+
+```text
+eligible = 1
+selected_slots = ()
+dispatched = 0
+failed = 0
+```
+
+这正是 `skip` 语义，不是调度失败。
+
+## 第八层修复
+
+Due Candidate dirty-data boundary 测试的职责是验证：
+
+> disabled / future / missing Schedule / dirty Definition 不得进入当前真正可调度候选；target candidate 被发现后可以正常进入一次 Execution dispatch。
+
+该测试不应同时承担 misfire policy 验收。因此 target Schedule 改为：
+
+```python
+next_run_at = now
+misfire_policy = "skip"
+```
+
+这样 `build_due_slots()` 只生成当前槽位一个 slot，不进入 misfire compensation，`invoke_scheduled()` 可以创建正常的 Execution + Durable Frontier；misfire `skip / fire_once / catch_up` 继续由专门的 misfire 单元/Acceptance 测试覆盖。
+
 ## 当前修复提交
 
 - `ab5f3a0dc42b454541361e2b525bd5fa09faef6c` — `fix(scheduler): use json-compatible definition boundary`
 - `d7d0938e652d8003492bf91c2ef1fa959841d4e5` — `test(scheduler): cover empty nodes discovery boundary`
 - `d084bf60030de244c17254f8dcfb1afe1aa1f5f4` — `docs(scheduler): record json definition type mismatch`
+- `8ecd38f78762716d48182996b293407bd87f9723` — `test(scheduler): isolate due boundary from misfire semantics`
 
 以上修复均直接提交到 `main`，没有修改服务生命周期策略，没有关闭 warning，也没有放宽 Runtime 失败语义。
 
