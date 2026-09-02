@@ -195,7 +195,10 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
             ).mappings().all()
             assert len(executions) == 2, executions
             assert {row["id"] for row in executions} == {row["workflow_execution_id"] for row in slots}
-            assert all(row["status"] == "pending" for row in executions)
+            # Scheduler 只保证把 Execution 可靠交给 Durable Frontier；本地可能存在已运行的 Worker，
+            # 因此不能要求 tick 返回后 Execution 永远停留在 pending。允许 Worker 已经推进到 running/completed，
+            # 但 failed 属于执行链异常，不应被本验收测试吞掉。
+            assert all(row["status"] in {"pending", "running", "completed"} for row in executions), executions
             assert all(row["idempotency_key"].startswith(f"scheduled:{trigger_id}:") for row in executions)
             assert any(row["input_data"]["recovery"] is True for row in executions)
             assert any(row["input_data"]["recovery"] is False for row in executions)
@@ -211,7 +214,7 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
             ).mappings().all()
             assert len(frontiers) == 2, frontiers
             assert {row["execution_id"] for row in frontiers} == {row["id"] for row in executions}
-            assert all(row["status"] == "pending" for row in frontiers)
+            assert all(row["status"] in {"pending", "retry_wait", "claimed", "running", "completed"} for row in frontiers), frontiers
 
             audits = (
                 await verify_session.execute(
