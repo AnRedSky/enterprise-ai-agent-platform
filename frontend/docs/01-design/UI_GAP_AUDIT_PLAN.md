@@ -1,6 +1,6 @@
 # Frontend UI 完整性 Gap Audit 与 P0/P1 补齐计划
 
-> 状态：执行中  
+> 状态：主线开发收口，Gap Audit 已无已知代码级阻塞项  
 > 基线：`frontend` 已同步最新 `main`  目标：以 Backend Contract 为事实源，逐页补齐 UI-03/UI-04/UI-05，并在全部开发完成后统一执行验证。
 
 ## 1. 审计维度
@@ -20,19 +20,20 @@
 
 | 优先级 | 页面 | UI-03 | UI-04 | UI-05 | 状态 |
 |---|---|---|---|---|---|
-| P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | 待验证 |
-| P0 | Workflow Lifecycle | 已建立 | 已建立 | canonical reference | 待验证 |
-| P0 | Workflows | 已建立 | 已补齐 | 已补齐 | 待验证 |
-| P0 | Agents | 已建立 | Debug 已收敛 | 已补关键防护 | 待验证 |
-| P1 | Knowledge | 已建立 | 已有 | 第一轮完成 | 待验证 |
-| P1 | Tools | 已建立 | 已有 | 第一轮完成 | 待验证 |
-| P1 | Organizations | 已补齐 | 已补齐 | 已补齐 | 待验证 |
-| P1 | Model Providers | 已补齐 | 已补齐 | 已补齐 | 待验证 |
-| P1 | Integrations | 已补齐 | 已补齐 | 已有真实创建闭环 | 待验证 |
+| P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | 待正式验证 |
+| P0 | Workflow Lifecycle | 已建立 | 已建立 | canonical reference | 待正式验证 |
+| P0 | Workflows | 已建立 | 已补齐 | 已补齐 | 待正式验证 |
+| P0 | Agents | 已建立 | Debug 已收敛 | 已补关键防护 | 待正式验证 |
+| P1 | Knowledge | 已建立 | 已有 | 第一轮完成 | 待正式验证 |
+| P1 | Tools | 已建立 | 已有 | 第一轮完成 | 待正式验证 |
+| P1 | Organizations | 已补齐 | 已补齐 | 已补齐 | 待正式验证 |
+| P1 | Model Providers | 已补齐 | 已补齐 | 已补齐 | 待正式验证 |
+| P1 | Integrations | 已补齐 | 已补齐 | 已有真实创建闭环 | 待正式验证 |
 | P1 | Operations Console | 已建立 | 已收敛 | 已收敛 | 本轮收口完成 |
 | P1 | Audit | 已建立 | 已收敛 | 只读查询闭环 | 本轮收口完成 |
 | P1 | Dashboard | 已建立 | 已收敛 | 以导航为主 | 本轮收口完成 |
 | P1 | Workflow Triggers | 已迁移共享状态与 SurfaceCard | 已补齐页面/Trigger/Scheduler 五态子集 | 已补齐按实体 ID 的 action loading、确认与 Backend refresh | 本轮收口 |
+| P2 | Runtime Correlations | 已迁移 SurfaceCard | 已统一 Loading / Empty / Error | 只读关联与 durable deep-link 已保留 | 本轮收口 |
 
 ## 3. 已完成的代码主线
 
@@ -121,7 +122,7 @@ Targeted：`frontend/tests/views/IntegrationsUI03UI05.test.ts`。
 - reload 失败清空受影响的旧数据，避免 stale-data；
 - Provider / Alert / Dead Letter 等 mutation 使用实体 durable ID、action loading、duplicate-submit protection；
 - mutation 成功后重新读取 Backend facts，不使用本地 optimistic rollback 作为最终状态；
-- Provider / Alert Rule 开关不再通过 `v-model` 直接写入后端事实对象，改为以 `:model-value` 展示当前 Backend fact、通过 change event 发送请求，成功/失败后统一 Backend refresh；
+- Provider / Alert Rule 开关使用 `:model-value` + change event，不通过 `v-model` 直接写入后端事实对象；
 - 高影响操作使用确认闭环；
 - Operations → Runtime / Audit → Runtime 保留真实 `execution_id` / `workflow_execution_id` / `audit_id` / `delivery.id`；
 - Runtime correlation 仅依据 Backend 返回的 durable correlation facts，不按列表位置推断。
@@ -159,6 +160,20 @@ Dashboard 已完成一致性收口：
 Targeted：`frontend/tests/views/DashboardConsistency.test.ts`、`frontend/tests/views/AuditDashboardConsistency.test.ts`。  
 状态：**未执行**。
 
+### P2 Runtime Correlations
+
+`runtime/components/RuntimeCorrelations.vue` 本轮完成最后一个已发现的旧 UI primitive 遗留收口：
+
+- `el-card` 全部迁移为 `SurfaceCard`，保留原有 header slot、表格、分页和 durable fact 展示；
+- 页面 Loading / Error / 初始 Empty 使用 `StatePanel`；
+- Execution 缺失、Trace/Audit 无记录、Operator Action 无记录均使用 `StatePanel`，不再使用 raw `el-empty`；
+- 查询失败清空 `result`，避免继续展示旧关联事实；
+- Execution、Trace、Audit、Workflow navigation 继续使用后端返回的 `execution.id`、`trace_id`、`audit.id`、`workflow_execution_id`；
+- 未新增任何推测 API 或数组位置关系。
+
+Targeted：`frontend/tests/views/RuntimeCorrelationsUI03UI04.test.ts`。  
+状态：**未执行**。
+
 ### Full-site consistency closeout
 
 已建立全站静态一致性审计脚本：
@@ -183,6 +198,8 @@ Targeted：`frontend/tests/views/DashboardConsistency.test.ts`、`frontend/tests
 用于核心页面 inventory、durable ID、Runtime correlation 回归检查。
 
 Targeted：以上脚本均**未执行**。
+
+**当前代码级 Gap Audit 结论：0 个已知阻塞项。** 这表示主线开发项已完成收口，不等同于测试已通过；所有测试仍保持未执行。
 
 ## 4. Contract 与安全原则
 
@@ -210,7 +227,7 @@ Targeted：以上脚本均**未执行**。
 
 ## 6. 分阶段测试策略
 
-当前策略：**继续推进主线任务开发，并分阶段完成测试脚本，但不执行测试，直到全部任务完成后再进行测试。**
+当前策略：**主线开发与 Gap Audit 已完成，下一阶段切换正式测试；在测试执行前不得将任何 targeted/full-unit/build/gate 标记为通过。**
 
 当前所有测试记录必须使用：
 
@@ -218,17 +235,3 @@ Targeted：以上脚本均**未执行**。
 - Full unit：**未执行**
 - Build：**未执行**
 - Gate：**未执行**
-- Real API / E2E：**未执行**
-
-全部页面 Gap Audit、代码实现、targeted 测试脚本、文档和原子提交完成后，统一执行：
-
-```text
-targeted tests → npm run test:unit → npm run build → gate / E2E
-```
-
-## 7. 当前队列
-
-1. **全站最终 Gap Audit**：继续扫描所有 `frontend/src/views` 与相关共享组件，重点检查 UI-03/UI-04/UI-05、optimistic mutation、stale-data、permission、durable ID、deep-link、raw backend error。
-2. 当前已发现的 Operations Console Provider / Alert Rule optimistic toggle 已修复，并由全站静态测试锁定。
-3. 修复最终审计发现并补 targeted tests（仍不执行）。
-4. 完成最终文档收口后，才统一进入测试执行阶段。

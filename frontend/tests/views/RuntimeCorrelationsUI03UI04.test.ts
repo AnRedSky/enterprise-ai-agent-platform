@@ -7,8 +7,8 @@ const source = readFileSync(resolve(root, "src/views/runtime/components/RuntimeC
 
 describe("RuntimeCorrelations UI consistency", () => {
   it("uses shared surface/state primitives instead of raw card and empty primitives", () => {
-    expect(source).toContain('import StatePanel from "@/components/common/StatePanel.vue"');
-    expect(source).toContain('import SurfaceCard from "@/components/common/SurfaceCard.vue"');
+    expect(source).toContain('import StatePanel from "@/components/ui/StatePanel.vue"');
+    expect(source).toContain('import SurfaceCard from "@/components/ui/SurfaceCard.vue"');
     expect(source).not.toContain("<el-card");
     expect(source).not.toContain("<el-empty");
     expect(source).toContain('state="loading"');
