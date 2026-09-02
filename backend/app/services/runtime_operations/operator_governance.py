@@ -126,23 +126,7 @@ class OperatorActionGovernanceService:
         status: str,
         error_code: str | None = None,
     ) -> OperatorActionIdempotency:
-        """确保每个已执行 Operator Action 都拥有可追踪的持久事实。
-
-        Args:
-            actor_id: 发起运维操作的用户。
-            tenant_id: 当前租户边界。
-            resource_type: 操作目标资源类型。
-            resource_id: 操作目标资源标识。
-            action: 操作名称。
-            result_resource_type: 最终结果资源类型。
-            result_resource_id: 最终结果资源标识。
-            idempotency_key: 客户端幂等键；非幂等入口使用内部唯一键。
-            status: Operator Action 最终状态。
-            error_code: 失败时的结构化错误码。
-
-        Returns:
-            已存在或新建的 Operator Action 持久事实。
-        """
+        """确保每个已执行 Operator Action 都拥有可追踪的持久事实。"""
         if idempotency_key:
             record = (await self.db.execute(select(OperatorActionIdempotency).where(
                 OperatorActionIdempotency.tenant_id == tenant_id,
@@ -382,11 +366,11 @@ class OperatorActionGovernanceService:
         service = WorkflowTriggerService(self.db)
         try:
             if action == "enable":
-                result = await service.update(trigger, None, "enabled", None)
+                result = await service.update(trigger, None, "enabled", None, commit=False)
             elif action == "disable":
-                result = await service.update(trigger, None, "disabled", None)
+                result = await service.update(trigger, None, "disabled", None, commit=False)
             elif action == "delete":
-                await service.delete(trigger)
+                await service.delete(trigger, commit=False)
                 result = trigger
             else:
                 result = await service.invoke(
