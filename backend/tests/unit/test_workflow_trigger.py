@@ -14,6 +14,7 @@ def _service():
     db = SimpleNamespace()
     db.execute = AsyncMock()
     db.add = lambda *_args, **_kwargs: None
+    db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.rollback = AsyncMock()
     db.refresh = AsyncMock()
@@ -43,6 +44,7 @@ async def test_create_trigger_defaults_to_enabled_manual():
     assert trigger.status == "enabled"
     assert trigger.trigger_type == "manual"
     assert trigger.name == "api"
+    db.flush.assert_awaited_once()
     db.commit.assert_awaited_once()
 
 
