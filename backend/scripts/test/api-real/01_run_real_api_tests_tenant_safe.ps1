@@ -5,53 +5,40 @@ Write-Host 'Enterprise AI Agent Platform - Real API Test Gate (Tenant Safe)'
 Write-Host '============================================================'
 
 # 本 Gate 只执行测试，不负责启动或停止任何 API / Worker / Scheduler 服务。
-# API、Worker 与 Scheduler 必须由开发者提前手动启动；Gate 不抢占或污染开发者已有进程。
-# Worker / Scheduler 数量不构成失败条件：只要至少有一个实例，测试即可运行并覆盖并发 claim/lease/slot 语义。
+# 依赖服务缺失时返回专用退出码 2，表示“未执行”，而不是把环境缺失伪装成测试失败。
 if (-not $env:API_BASE_URL) {
     $env:API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
 }
 
 $backendRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $contextFile = Join-Path $PSScriptRoot '.real_api_context.json'
+$script:PrerequisiteMissing = $false
 
-function Assert-ApiAvailable {
+function Report-PrerequisiteMissing([string]$message) {
+    $script:PrerequisiteMissing = $true
+    Write-Host "[NOT RUN] $message"
+}
+
+function Test-ApiAvailable {
     $healthUrl = ($env:API_BASE_URL -replace '/api/v1$', '') + '/health'
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri $healthUrl -TimeoutSec 3
-        if ($response.StatusCode -ne 200) {
-            throw "API health check returned HTTP $($response.StatusCode)."
-        }
+        return $response.StatusCode -eq 200
     } catch {
-        throw "Required API Service is not available at $env:API_BASE_URL. Start it manually before running this gate: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000"
+        return $false
     }
 }
 
-function Assert-WorkerAvailable {
-    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+function Get-WorkerProcesses {
+    @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
         $_.CommandLine -and $_.CommandLine -match 'run_worker\.py'
     })
-    if ($processes.Count -eq 0) {
-        throw 'Required Worker Service is not running. Start it manually before running this gate: uv run python run_worker.py'
-    }
-    Write-Host "[PASS] Worker Service is available: $($processes.Count) Worker process(es) detected."
-    $processes | ForEach-Object {
-        Write-Host "[INFO] Worker PID=$($_.ProcessId) CommandLine=$($_.CommandLine)"
-    }
-    Write-Host '[PASS] Multiple Worker processes are allowed; real API tests must remain valid under concurrent Worker execution.'
 }
 
-function Assert-SchedulerAvailable {
-    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+function Get-SchedulerProcesses {
+    @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
         $_.CommandLine -and $_.CommandLine -match 'run_scheduler\.py'
     })
-    if ($processes.Count -eq 0) {
-        throw 'Required Scheduler Service is not running. Start it manually before running this gate: uv run python run_scheduler.py'
-    }
-    Write-Host "[PASS] Scheduler Service is available: $($processes.Count) Scheduler process(es) detected."
-    $processes | ForEach-Object {
-        Write-Host "[INFO] Scheduler PID=$($_.ProcessId) CommandLine=$($_.CommandLine)"
-    }
-    Write-Host '[PASS] Multiple Scheduler processes are allowed; scheduled slot claim/idempotency tests exercise concurrent Scheduler execution.'
 }
 
 Push-Location $backendRoot
@@ -63,23 +50,41 @@ try {
     }
 
     Write-Host '[1/4] Verify required external services (no service is started by this gate)'
-    Assert-ApiAvailable
-    Assert-WorkerAvailable
-    Assert-SchedulerAvailable
+    if (-not (Test-ApiAvailable)) {
+        Report-PrerequisiteMissing "Required API Service is not available at $env:API_BASE_URL. Standard startup command: uv run uvicorn app.main:app --host 127.0.0.1 --port 8000"
+    }
+
+    $workers = Get-WorkerProcesses
+    if ($workers.Count -eq 0) {
+        Report-PrerequisiteMissing 'Required Worker Service is not running. Standard startup command: uv run python run_worker.py'
+    } else {
+        Write-Host "[PASS] Worker Service is available: $($workers.Count) Worker process(es) detected."
+        $workers | ForEach-Object { Write-Host "[INFO] Worker PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
+        Write-Host '[PASS] Multiple Worker processes are allowed; real API tests remain valid under concurrent Worker execution.'
+    }
+
+    $schedulers = Get-SchedulerProcesses
+    if ($schedulers.Count -eq 0) {
+        Report-PrerequisiteMissing 'Required Scheduler Service is not running. Standard startup command: uv run python run_scheduler.py'
+    } else {
+        Write-Host "[PASS] Scheduler Service is available: $($schedulers.Count) Scheduler process(es) detected."
+        $schedulers | ForEach-Object { Write-Host "[INFO] Scheduler PID=$($_.ProcessId) CommandLine=$($_.CommandLine)" }
+        Write-Host '[PASS] Multiple Scheduler processes are allowed; scheduled slot claim/idempotency tests exercise concurrent Scheduler execution.'
+    }
+
+    if ($script:PrerequisiteMissing) {
+        Write-Host '[NOT RUN] Tenant-safe Real API tests were not executed because one or more protected service prerequisites are unavailable.'
+        Write-Host '[INFO] No service was created, started, restarted, or stopped by this gate.'
+        exit 2
+    }
 
     Write-Host '[2/4] Prepare tenant-safe real API test context'
     & uv run python (Join-Path $backendRoot 'scripts/test/api-real/00_bootstrap_real_api_tenant_safe.py')
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Real API bootstrap failed.'
-    }
-    if (-not (Test-Path $contextFile)) {
-        throw "Real API context file was not created: $contextFile"
-    }
+    if ($LASTEXITCODE -ne 0) { throw 'Real API bootstrap failed.' }
+    if (-not (Test-Path $contextFile)) { throw "Real API context file was not created: $contextFile" }
 
     & uv run python (Join-Path $backendRoot 'scripts/test/api-real/00_grant_admin_fixture.py')
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Real API admin fixture preparation failed.'
-    }
+    if ($LASTEXITCODE -ne 0) { throw 'Real API admin fixture preparation failed.' }
 
     $context = Get-Content $contextFile -Raw | ConvertFrom-Json
     $env:ACCESS_TOKEN = [string]$context.ACCESS_TOKEN
@@ -104,17 +109,13 @@ try {
 
     Write-Host '[3/4] Execute tenant-safe real HTTP API tests'
     & uv run pytest -q tests/api_real -m real_api --ignore=tests/api_real/test_scheduler_restart_api.py
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Real API test suite failed.'
-    }
+    if ($LASTEXITCODE -ne 0) { throw 'Real API test suite failed.' }
 
     Write-Host '[PASS] Tenant-safe Real API gate completed.'
     Write-Host '[INFO] This gate never starts or stops API, Worker, or Scheduler processes.'
 } finally {
     Pop-Location
-    if (Test-Path $contextFile) {
-        Remove-Item $contextFile -Force -ErrorAction SilentlyContinue
-    }
+    if (Test-Path $contextFile) { Remove-Item $contextFile -Force -ErrorAction SilentlyContinue }
     Remove-Item Env:ACCESS_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:ADMIN_ACCESS_TOKEN -ErrorAction SilentlyContinue
     Remove-Item Env:WORKFLOW_ID -ErrorAction SilentlyContinue
