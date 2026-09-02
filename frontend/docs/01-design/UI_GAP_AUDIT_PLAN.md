@@ -121,11 +121,12 @@ Targeted：`frontend/tests/views/IntegrationsUI03UI05.test.ts`。
 - reload 失败清空受影响的旧数据，避免 stale-data；
 - Provider / Alert / Dead Letter 等 mutation 使用实体 durable ID、action loading、duplicate-submit protection；
 - mutation 成功后重新读取 Backend facts，不使用本地 optimistic rollback 作为最终状态；
+- Provider / Alert Rule 开关不再通过 `v-model` 直接写入后端事实对象，改为以 `:model-value` 展示当前 Backend fact、通过 change event 发送请求，成功/失败后统一 Backend refresh；
 - 高影响操作使用确认闭环；
 - Operations → Runtime / Audit → Runtime 保留真实 `execution_id` / `workflow_execution_id` / `audit_id` / `delivery.id`；
 - Runtime correlation 仅依据 Backend 返回的 durable correlation facts，不按列表位置推断。
 
-Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`、`frontend/tests/views/OperationsRuntimeCorrelation.test.ts`。  
+Targeted：`frontend/tests/views/OperationsConsoleUI03.test.ts`、`frontend/tests/views/OperationsRuntimeCorrelation.test.ts`、`frontend/tests/views/FullSiteConsistencyStaticAudit.test.ts`。  
 状态：**未执行**。
 
 ### P1-07-A Audit
@@ -169,6 +170,8 @@ Targeted：`frontend/tests/views/DashboardConsistency.test.ts`、`frontend/tests
 - raw `el-card` / `v-loading` / `el-empty` / `el-result`；
 - `[0]` 数组位置实体推断；
 - `sort/reverse` 列表顺序关系推断；
+- optimistic boolean/status mutation；
+- Operations Console Provider / Alert Rule switch 必须使用 `:model-value` + change event，禁止 `v-model="row.enabled"` 与本地 `Object.assign(row, ...)`；
 - Workflow Trigger action guard / Backend refresh；
 - 核心 P0/P1 页面共享 UI primitive；
 - Operations / Audit / Dashboard / Trigger durable deep-link。
@@ -226,5 +229,6 @@ targeted tests → npm run test:unit → npm run build → gate / E2E
 ## 7. 当前队列
 
 1. **全站最终 Gap Audit**：继续扫描所有 `frontend/src/views` 与相关共享组件，重点检查 UI-03/UI-04/UI-05、optimistic mutation、stale-data、permission、durable ID、deep-link、raw backend error。
-2. 修复最终审计发现并补 targeted tests（仍不执行）。
-3. 完成最终文档收口后，才统一进入测试执行阶段。
+2. 当前已发现的 Operations Console Provider / Alert Rule optimistic toggle 已修复，并由全站静态测试锁定。
+3. 修复最终审计发现并补 targeted tests（仍不执行）。
+4. 完成最终文档收口后，才统一进入测试执行阶段。
