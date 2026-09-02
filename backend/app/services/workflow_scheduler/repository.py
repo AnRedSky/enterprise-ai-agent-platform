@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,14 @@ class WorkflowSchedulerRepository:
         在发现阶段进入 lease/Execution 链路。更深层的 DAG 语义校验仍由 WorkflowRuntime 负责。
         """
         db_now = self._db_datetime(now)
+        nodes = WorkflowVersion.definition["nodes"]
+        # WorkflowVersion.definition 的模型类型是 PostgreSQL JSON，不是 JSONB。
+        # 先判断节点类型，再在 CASE 分支中计算数组长度，既兼容 JSON 原生函数签名，
+        # 又安全排除缺失 nodes、非数组 nodes 和空数组，避免使用 JSONB-only 函数。
+        non_empty_nodes = case(
+            (func.json_typeof(nodes) == "array", func.json_array_length(nodes)),
+            else_=0,
+        )
         statement = (
             select(WorkflowTrigger, Workflow, WorkflowSchedule)
             .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
@@ -65,10 +73,7 @@ class WorkflowSchedulerRepository:
                 Workflow.status == "published",
                 Workflow.published_version_id.is_not(None),
                 WorkflowVersion.status == "published",
-                # 使用 JSONPath 直接要求 nodes 存在至少一个数组元素。
-                # 相比仅判断 json_typeof == array，这会排除 nodes=[]，从而避免
-                # 空 Definition 进入 Runtime 后再由 WorkflowRuntime 抛出 422。
-                func.jsonb_path_exists(WorkflowVersion.definition, "$.nodes[0]"),
+                non_empty_nodes > 0,
                 WorkflowSchedule.enabled.is_(True),
                 WorkflowSchedule.status == "enabled",
                 WorkflowSchedule.next_run_at <= db_now,
