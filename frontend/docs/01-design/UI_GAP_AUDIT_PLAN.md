@@ -1,7 +1,7 @@
 # Frontend UI 完整性 Gap Audit 与 P0/P1 补齐计划
 
 > 状态：执行中  
-> 基线：`frontend` 当前已同步最新 `main`  目标：建立可持续更新的全站 UI 完整性基线，并作为当前前端任务执行台账。  
+> 基线：`frontend` 当前已同步最新 `main` 目标：建立可持续更新的全站 UI 完整性基线，并作为当前前端任务执行台账。  
 > 原则：真实 Backend Contract、公共 UI 模式、逐页补齐、targeted test、文档同步、原子提交。
 
 ## 1. 目标
@@ -36,9 +36,9 @@
 | P0 | Runtime | 已建立 | 核心已建立 | 持续补齐 | P0-02-A 已审计并补回归 | 待验证 |
 | P0 | Workflow Lifecycle | 已建立 | 已建立 | 核心闭环已建立 | 已建立 | 基本完成 |
 | P0 | Workflows | 已建立 | P0-01-B 已补齐 | P0-01-B 已补齐 | durable ID 保持 | 待验证 |
-| P0 | Agents | 基础模式已建立 | Debug 已收敛 | **P0-03-A 已补齐关键防护** | Runtime 链路待强化 | 待验证 |
-| P1 | Knowledge | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
-| P1 | Tools | 基础模式已建立 | 已有 | 待完整审计 | 待审计 | 进行中 |
+| P0 | Agents | 基础模式已建立 | Debug 已收敛 | P0-03-A 已补齐关键防护 | Runtime 链路待强化 | 待验证 |
+| P1 | Knowledge | 已建立 | 已有 | 第一轮审计完成 | durable ID 层级保持 | 待验证 |
+| P1 | Tools | 已建立 | 已有 | 第一轮审计完成 | durable ID 保持 | 待验证 |
 | P1 | Organizations | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
 | P1 | Model Providers | 待统一 | 待审计 | 待完整审计 | 待审计 | 待处理 |
 | P1 | Integrations | 待统一 | 待审计 | 待完整审计 | Runtime 关联待审计 | 待处理 |
@@ -71,7 +71,7 @@
 - Responsive / spacing / typography / status semantics。
 - Permission / unknown status / error message。
 - Deep-link / refresh / browser back-forward。
-- Targeted tests → unit suite → build → gate。
+- 所有阶段测试脚本准备完成后，再统一执行 targeted tests → unit suite → build → gate。
 
 ## 5. 业务操作 Contract 原则
 
@@ -96,6 +96,8 @@
 - [ ] 文档同步
 - [ ] 原子提交
 
+**测试策略：** 在全部页面开发、targeted 测试脚本和文档阶段完成之前，禁止执行测试；测试脚本可以先分阶段补齐并保持“未执行”状态。全部任务完成后再按 targeted → unit → build → gate 顺序统一验证。
+
 ## 7. 当前实施进度
 
 ### P0-01-A Workflows UI-03
@@ -112,47 +114,71 @@ Targeted test：`frontend/tests/views/WorkflowsUI03.test.ts`。
 
 Targeted regression：`frontend/tests/views/WorkflowsUI04UI05.test.ts`。
 
-当前测试状态：**未执行**。当前 GitHub 开发环境未提供项目 Node/Vitest 运行时，本轮没有伪造测试结果。
+当前测试状态：**未执行**。
 
 ### P0-02-A Runtime Execution / Correlation 深链状态恢复
 
 代码审计确认 `RuntimeExecutions.vue` 使用真实 `execution_id` 恢复深链；当目标 Execution 不在当前分页列表中时直接 `openById(execution_id)`，不通过列表位置推断。关系导航使用后端 `workflow_id` 与目标 Execution ID，并固定携带 `source=runtime-relation`。
 
-Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，覆盖分页列表缺少目标 Execution 时的精确恢复及关系导航 durable ID。
+Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`。
 
 当前测试状态：**未执行**。
 
 ### P0-03-A Agent Workbench UI-05
 
-本轮完成关键操作安全修复：
+已移除通过 `listVersions(agent.id)[0]` 推断“最新版本”的入口；发布必须基于明确 `version.id`。Archive、Create、Create Version、Publish 增加操作期间保护，成功后从 Backend refresh。
 
-- 移除 `发布最新版本` 入口；原实现通过 `listVersions(agent.id)[0]` 依赖数组顺序选择版本，不符合 durable fact 规则；现在必须在版本列表中基于明确 `version.id` 发布。
-- Archive 增加 `archivingAgentId` loading 与重复操作保护。
-- Create / Create Version / Publish 增加并发保护，并在请求期间保持取消按钮不可重复提交。
-- Archive 继续要求明确确认，取消确认不会调用后端。
-- 成功操作继续 `load()`，以 Backend 返回事实刷新页面状态。
-
-新增 targeted regression：`frontend/tests/views/AgentWorkbenchUI05.test.ts`，覆盖显式 version ID 发布、无“发布最新版本”推断入口、Archive confirmation、取消归档与成功刷新。
+Targeted regression：`frontend/tests/views/AgentWorkbenchUI05.test.ts`。
 
 当前测试状态：**未执行**。
 
 ### P0-04 Agent Debug
 
-第一批已开始实施。`AgentDebugExperience` 已从自定义错误 Alert / Card 状态迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。新增 `AgentDebugExperienceUI04.test.ts` 覆盖 Loading、Empty、Error 三类状态，同时保留 Runtime 深链使用真实 `agent_id`。
+`AgentDebugExperience` 已迁移到 `SurfaceCard` + `StatePanel`，统一 Loading / Empty / Error 状态，并继续使用真实 Agent / Published Version API。`AgentDebugExperienceUI04.test.ts` 已建立，覆盖 Loading、Empty、Error。
+
+### P1-01-A Knowledge
+
+代码审计确认 Knowledge Workbench 已使用 `PageHeader`、`PageToolbar`、`SurfaceCard`、`StatePanel`，知识库 → 文档 → 版本 → 分块关系全部通过真实 ID 驱动；检索调用使用已确认 `/knowledge/retrieve` Contract，并保留 Backend 返回的 `document_id`、`document_version_id`、`chunk_id`、citation、retrieval source 等 durable facts。
+
+本阶段新增 targeted regression：`frontend/tests/views/KnowledgeWorkbenchUI03UI05.test.ts`，覆盖：
+
+- 公共页面 Header / Toolbar / SurfaceCard；
+- Knowledge Base 403 Permission；
+- Knowledge Base → Document → Version → Chunk 的真实 ID 调用；
+- Hybrid retrieval Contract 与 Backend result facts。
+
+当前测试状态：**未执行**。
+
+### P1-02-A Tools
+
+代码审计确认 Tools Workbench 已使用 `PageHeader`、`PageToolbar`、`SurfaceCard`、`StatePanel`、`ConfirmDialog`；工具启停、绑定/解绑、执行均使用明确 tool/agent ID 和已确认 API。危险状态变更有确认闭环，成功后刷新列表。
+
+本阶段新增 targeted regression：`frontend/tests/views/ToolWorkbenchUI03UI05.test.ts`，覆盖：
+
+- Loading / Error shared state；
+- tool ID + agent ID 驱动执行；
+- Enable/Disable confirmation；
+- 成功后 Backend refresh。
+
+当前测试状态：**未执行**。
+
+### P1-03-A Organizations
+
+已完成第一轮代码审计。当前组织列表仍使用自定义 Header / Alert / Empty；组织详情仍使用 `el-card`。下一原子任务为迁移列表与详情到公共 `PageHeader` / `SurfaceCard` / `StatePanel`，并补充成员权限、组织状态、所有权转移的 UI-05 targeted test。Backend Contract 已存在于 `frontend/src/api/organizations.ts`，不新增推测 API。
 
 ## 8. 下一批原子任务
 
-1. `P0-01-A`: 执行 `WorkflowsUI03.test.ts`，修复实际失败项。
-2. `P0-01-B`: 执行 `WorkflowsUI04UI05.test.ts`，修复实际失败项。
-3. `P0-02-A`: 执行 `RuntimeDeepLinkRecovery.test.ts`，修复实际失败项。
-4. `P0-03-A`: 执行 `AgentWorkbenchUI05.test.ts`，修复实际失败项。
-5. `P0-03-B`: Agent Debug → Runtime durable ID 回归。
-6. `P1-01-A`: Knowledge UI-03/UI-04/UI-05 Gap Audit。
-7. `P1-02-A`: Tools UI-03/UI-04/UI-05 Gap Audit。
+1. P0-03-B：Agent Debug → Runtime durable ID 回归测试脚本。
+2. P1-03-A：Organizations 列表 UI-03/UI-04/UI-05 迁移。
+3. P1-03-B：Organizations detail UI-03/UI-04/UI-05 与成员权限闭环。
+4. P1-04-A：Model Providers Gap Audit + targeted test 脚本。
+5. P1-05-A：Integrations Gap Audit + targeted test 脚本。
+6. P1-06-A：Operations Console Contract / Governance 对齐 + targeted test 脚本。
+7. P1-07-A：Audit Gap Audit + Runtime correlation regression。
+8. P1-08-A：Dashboard 与全站一致性回归脚本。
+9. 全部开发完成后统一执行所有 targeted tests、unit、build、gate。
 
 ## 9. 任务执行跟踪规范
-
-本文件同时作为当前 UI Gap 主线的任务台账。每个任务必须记录“当前状态 + 下一原子任务 + 可验证事实”，不得仅记录计划。
 
 ### 9.1 状态定义
 
@@ -170,8 +196,6 @@ Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，�
 
 ### 9.2 原子任务记录格式
 
-每项任务遵循：
-
 ```text
 ### <Task ID> <日期>
 - 页面/模块：
@@ -179,17 +203,15 @@ Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，�
 - Contract：
 - 实现范围：
 - Targeted test：
-- Targeted result：
-- Full unit：
-- Build：
-- Gate：
-- Real API / E2E：
+- Targeted result：未执行
+- Full unit：未执行
+- Build：未执行
+- Gate：未执行
+- Real API / E2E：未执行
 - 已知限制/阻塞：
 - Commit：
 - 下一任务：
 ```
-
-未实际执行的测试必须写“未执行”，不得写“通过”。
 
 ### 9.3 执行顺序
 
@@ -202,37 +224,42 @@ Targeted regression：`frontend/tests/views/RuntimeDeepLinkRecovery.test.ts`，�
   ↓
 最小代码修改
   ↓
-targeted test
+准备 targeted test（不执行）
   ↓
 文档同步
   ↓
 原子提交
   ↓
 下一原子任务
+  ↓
+全部任务完成
+  ↓
+统一测试 targeted → unit → build → gate
 ```
 
 ### 9.4 当前执行队列
 
 | 顺序 | Task ID | 交付目标 | 状态 |
 |---|---|---|---|
-| 1 | P0-01-A | Workflows 页面公共 Header / SurfaceCard / 列表状态 | **待验证** |
-| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | **待验证** |
-| 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | **待验证** |
-| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | **待验证** |
+| 1 | P0-01-A | Workflows 页面公共 Header / SurfaceCard / 列表状态 | 待验证 |
+| 2 | P0-01-B | Workflows UI-04 / UI-05 targeted regression | 待验证 |
+| 3 | P0-02-A | Runtime Execution / Correlation 深链状态恢复审计 | 待验证 |
+| 4 | P0-03-A | Agent Workbench UI-05 操作闭环 | 待验证 |
 | 5 | P0-03-B | Agent Debug → Runtime durable ID 回归 | 待处理 |
-| 6 | P1-01-A | Knowledge 页面 Gap Audit | 待处理 |
-| 7 | P1-02-A | Tools 页面 Gap Audit | 待处理 |
-| 8 | P1-03-A | Organizations 页面 Gap Audit | 待处理 |
-| 9 | P1-04-A | Model Providers 页面 Gap Audit | 待处理 |
-| 10 | P1-05-A | Integrations 页面 Gap Audit | 待处理 |
-| 11 | P1-06-A | Operations Console Contract / Governance 对齐 | 待处理 |
-| 12 | P1-07-A | Audit 页面 Gap Audit | 待处理 |
-| 13 | P1-08-A | Dashboard 与全站一致性回归 | 收尾 |
+| 6 | P1-01-A | Knowledge 页面 Gap Audit + targeted test | 待验证 |
+| 7 | P1-02-A | Tools 页面 Gap Audit + targeted test | 待验证 |
+| 8 | P1-03-A | Organizations 页面 UI-03/UI-04/UI-05 | 待处理 |
+| 9 | P1-03-B | Organizations detail 成员权限闭环 | 待处理 |
+| 10 | P1-04-A | Model Providers 页面 Gap Audit | 待处理 |
+| 11 | P1-05-A | Integrations 页面 Gap Audit | 待处理 |
+| 12 | P1-06-A | Operations Console Contract / Governance 对齐 | 待处理 |
+| 13 | P1-07-A | Audit 页面 Gap Audit | 待处理 |
+| 14 | P1-08-A | Dashboard 与全站一致性回归 | 收尾 |
 
 ### 9.5 当前任务选择原则
 
 继续遵循：
 
-> **一个核心页面 → 公共模式迁移 → targeted test → 文档同步 → 原子提交 → 下一页面**
+> **一个核心页面 → 公共模式迁移 → targeted test（先写不跑）→ 文档同步 → 原子提交 → 下一页面**
 
 若当前任务发现 Backend Contract 不完整，应标记“阻塞”，先回到 Contract/Backend 验证，不得用 Mock 或猜测继续固化前端行为。
