@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.core import AuditLog, Tenant, User
+from app.models.integration_event import IntegrationEventRecord
 from app.models.operator_action import OperatorActionIdempotency
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
@@ -168,6 +169,7 @@ async def test_retry_operator_action_persists_full_result_lineage():
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
             await db.execute(delete(OperatorActionIdempotency).where(OperatorActionIdempotency.tenant_id == tenant_id))
             await db.execute(delete(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id == tenant_id))
+            await db.execute(delete(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id == tenant_id))
             await db.execute(delete(WorkflowExecution).where(WorkflowExecution.tenant_id == tenant_id))
             await db.execute(delete(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow_id))
             await db.execute(delete(Workflow).where(Workflow.id == workflow_id))

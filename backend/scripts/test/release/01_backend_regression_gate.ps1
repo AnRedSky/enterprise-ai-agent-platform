@@ -6,12 +6,14 @@ Write-Host "============================================================"
 Write-Host "Enterprise AI Agent Platform - Backend Regression Gate"
 Write-Host "Scope: backend regression -> migration -> tenant-safe real API"
 Write-Host "Frontend tests/build are intentionally NOT executed here."
+Write-Host "Warning policy: Python warnings are treated as test errors."
+Write-Host "Service policy: this gate never creates, starts, restarts, or stops protected services."
 Write-Host "============================================================"
 
 Push-Location $backendRoot
 try {
     Write-Host "[1/3] Backend regression"
-    uv run pytest -q
+    uv run pytest -q -W error
     if($LASTEXITCODE -ne 0){throw "Backend regression failed. Backend gate is blocked."}
 
     Write-Host "[2/3] Database migration/head verification"
