@@ -27,7 +27,7 @@
 
 ## 第二层根因：全库存在已发布但结构非法的 Workflow Definition
 
-首次 Due Candidate 修复后，Runtime 已经只发现真正到期的 Schedule，但共享 PostgreSQL 中仍可能存在历史已发布 Workflow，其 `published_version_id` 指向 `definition={}` 等不满足最小 Workflow Definition Contract 的版本。
+首次 Due Candidate 修复后，共享 PostgreSQL 中仍可能存在历史已发布 Workflow，其 `published_version_id` 指向 `definition={}` 等不满足最小 Workflow Definition Contract 的版本。
 
 这类数据如果仍进入 Due Candidate，会在获得 lease 后才由 `WorkflowRuntime.validate_definition()` 拒绝，形成：
 
@@ -116,6 +116,29 @@ executions = (
 - 不再产生未 await coroutine 警告；
 - `-W error` 下测试行为稳定；
 - 不改变 Scheduler Runtime 生产行为或多租户计数语义。
+
+## 第五层根因：边界测试创建 Workflow 时违反互相引用的外键约束
+
+用户本地 Gate 在修复异步 Result 消费后继续执行，新的真实 PostgreSQL 失败为：
+
+```text
+sqlalchemy.exc.IntegrityError: ForeignKeyViolationError
+Key (published_version_id)=(...) is not present in table "workflow_versions".
+```
+
+根因位于 `test_workflow_scheduler_runtime_boundaries.py` 的 `_add_published_workflow()` 测试夹具。`workflows.published_version_id` 外键指向 `workflow_versions.id`，同时 `workflow_versions.workflow_id` 又要求对应 Workflow 已存在。原夹具在同一个 flush 中直接提交带 `published_version_id=version_id` 的 Workflow 和尚不存在的 WorkflowVersion，PostgreSQL 按当前约束立即拒绝。
+
+这属于测试数据构造顺序错误，不是生产 Scheduler Runtime 或数据库 Schema 错误。测试不得通过关闭外键、绕过约束或手工填写持久化数据规避问题。
+
+## 第五层修复
+
+将 `_add_published_workflow()` 调整为明确的三步事务内构造：
+
+1. 先创建 `published_version_id = NULL` 的 Workflow 并 `flush()`，满足 `workflow_versions.workflow_id` 的父记录约束。
+2. 再创建并 `flush()` 对应的 WorkflowVersion。
+3. 最后使用参数化 SQL 回填 `workflows.published_version_id`，建立合法的发布版本引用。
+
+该顺序保持事务原子性，同时真实执行数据库外键约束，避免测试夹具依赖 ORM flush 偶然顺序。
 
 ## 边界测试
 
