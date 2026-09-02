@@ -156,6 +156,10 @@ class WorkflowTriggerService:
 
         Scheduler 只负责把确定性 slot 投递为 Durable Work Item；Worker 负责 claim Frontier 并复用唯一 Workflow Runtime。
         Execution 与 Frontier 在本次调用方事务中一起持久化，Scheduler 不在此处执行 Runtime。
+
+        Scheduled Trigger 必须使用与 Workflow 发布阶段完全一致的 Definition Contract。
+        已发布 Workflow 不允许通过 Scheduler 兼容路径绕过非空 nodes 校验，否则会产生
+        无法由 Worker Runtime 执行的 pending Execution。
         """
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
@@ -165,7 +169,7 @@ class WorkflowTriggerService:
         if not idempotency_key:
             raise HTTPException(422, "Scheduled Trigger 必须提供调度 Idempotency-Key")
         version = await self._get_published_version(workflow)
-        nodes = WorkflowRuntime.validate_definition(version.definition, allow_legacy_empty_nodes=True)
+        nodes = WorkflowRuntime.validate_definition(version.definition)
         execution_id = uuid.uuid4()
         execution = WorkflowExecution(id=execution_id, tenant_id=workflow.tenant_id, workflow_id=workflow.id,
                                        workflow_version_id=version.id, created_by=actor_id, idempotency_key=idempotency_key,

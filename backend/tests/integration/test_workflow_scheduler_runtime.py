@@ -17,7 +17,7 @@ from sqlalchemy import text
 
 from app.infrastructure.db import SessionLocal
 from app.infrastructure.db.session import engine
-from app.models.core import Tenant, User, utcnow_naive
+from app.models.core import Tenant, User
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_scheduler import WorkflowSchedule
 from app.models.workflow_trigger import WorkflowTrigger
@@ -101,7 +101,7 @@ async def test_scheduler_runtime_persists_misfire_execution_and_governance_chain
                     id=workflow_version_id,
                     workflow_id=workflow_id,
                     version="1",
-                    definition={"nodes": []},
+                    definition={"nodes": [{"id": "scheduled-input", "type": "input", "config": {}}]},
                     status="published",
                     created_by=user_id,
                 )
