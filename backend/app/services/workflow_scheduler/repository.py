@@ -14,11 +14,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.workflow import Workflow
+from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_scheduler import WorkflowSchedule, WorkflowScheduleSlot
 from app.models.workflow_trigger import WorkflowTrigger
 
@@ -42,10 +42,12 @@ class WorkflowSchedulerRepository:
         now: datetime,
         limit: int | None = None,
     ) -> list[tuple[WorkflowTrigger, Workflow, WorkflowSchedule]]:
-        """原子发现真正到期的 Scheduled Trigger，隔离 disabled/future 与全库无关脏数据。
+        """原子发现真正到期且具备最小执行契约的 Scheduled Trigger。
 
         Scheduler Runtime 只能消费已经存在的持久化 Schedule；缺失 Schedule 不在 tick
         中隐式初始化，避免一次 tick 将全库所有历史 Scheduled Trigger 人为变成当前到期任务。
+        同时只接受已发布版本的 ``nodes`` 为 JSON 数组的 Workflow，防止历史脏 Definition
+        在发现阶段进入 lease/Execution 链路。更深层的 DAG 语义校验仍由 WorkflowRuntime 负责。
         """
         db_now = self._db_datetime(now)
         statement = (
@@ -56,11 +58,14 @@ class WorkflowSchedulerRepository:
                 (WorkflowSchedule.tenant_id == WorkflowTrigger.tenant_id)
                 & (WorkflowSchedule.trigger_id == WorkflowTrigger.id),
             )
+            .join(WorkflowVersion, WorkflowVersion.id == Workflow.published_version_id)
             .where(
                 WorkflowTrigger.trigger_type == "scheduled",
                 WorkflowTrigger.status == "enabled",
                 Workflow.status == "published",
                 Workflow.published_version_id.is_not(None),
+                WorkflowVersion.status == "published",
+                func.json_typeof(WorkflowVersion.definition["nodes"]) == "array",
                 WorkflowSchedule.enabled.is_(True),
                 WorkflowSchedule.status == "enabled",
                 WorkflowSchedule.next_run_at <= db_now,
