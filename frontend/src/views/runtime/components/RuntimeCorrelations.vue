@@ -22,11 +22,11 @@ const selectedAuditId = ref("");
 const focusLabel = computed(() => ({ execution: "Execution", trace: "Trace", audit: "Audit", "operator-action": "Operator Action" }[focusType.value]));
 const focusedTrace = computed<RuntimeCorrelationTrace | null>(() => {
   const id = selectedTraceId.value || (focusType.value === "trace" ? focusId.value : "");
-  return result.value?.traces.items.find((item) => item.trace_id === id) ?? null;
+  return result.value?.focused_traces?.find((item) => item.trace_id === id) ?? result.value?.traces.items.find((item) => item.trace_id === id) ?? null;
 });
 const focusedAudit = computed<RuntimeCorrelationAudit | null>(() => {
   const id = selectedAuditId.value || (focusType.value === "audit" ? focusId.value : result.value?.focus_audit_id || "");
-  return result.value?.audits.items.find((item) => item.id === id) ?? null;
+  return result.value?.focused_audit?.id === id ? result.value.focused_audit : result.value?.audits.items.find((item) => item.id === id) ?? null;
 });
 function focusRoute() {
   return focusType.value === "execution" ? runtimeCorrelationsApi.execution : focusType.value === "trace" ? runtimeCorrelationsApi.trace : focusType.value === "audit" ? runtimeCorrelationsApi.audit : runtimeCorrelationsApi.operatorAction;
@@ -64,14 +64,14 @@ function openWorkflowLifecycle(fact?: RuntimeCorrelationTrace | RuntimeCorrelati
 function openTrace(traceId: string) {
   if (!traceId) return;
   selectedTraceId.value = traceId;
-  const trace = result.value?.traces.items.find((item) => item.trace_id === traceId);
+  const trace = result.value?.focused_traces?.find((item) => item.trace_id === traceId) ?? result.value?.traces.items.find((item) => item.trace_id === traceId);
   const execution = result.value?.execution;
   void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "trace", focus_id: traceId, execution_id: trace?.execution_id || execution?.id || "", workflow_id: trace?.workflow_id || execution?.workflow_id || "", workflow_version_id: trace?.workflow_version_id || execution?.workflow_version_id || "" } });
 }
 function openAudit(auditId: string) {
   if (!auditId) return;
   selectedAuditId.value = auditId;
-  const audit = result.value?.audits.items.find((item) => item.id === auditId);
+  const audit = result.value?.focused_audit?.id === auditId ? result.value.focused_audit : result.value?.audits.items.find((item) => item.id === auditId);
   const execution = result.value?.execution;
   void router.push({ path: "/runtime", query: { tab: "correlations", source: "runtime-correlation", focus_type: "audit", focus_id: auditId, execution_id: audit?.workflow_execution_id || execution?.id || "", workflow_id: audit?.workflow_id || execution?.workflow_id || "", workflow_version_id: audit?.workflow_version_id || execution?.workflow_version_id || "" } });
 }
