@@ -52,7 +52,7 @@ async def test_retry_operator_action_rolls_back_execution_and_idempotency_when_o
                 owner_id=user_id,
                 name=f"phase-210-tx-workflow-{suffix}",
                 status="published",
-                published_version_id=version_id,
+                published_version_id=None,
             )
             version = WorkflowVersion(
                 id=version_id,
@@ -75,7 +75,12 @@ async def test_retry_operator_action_rolls_back_execution_and_idempotency_when_o
                 input_data={"phase": "2.10-II"},
                 error_code="NODE_TIMEOUT",
             )
-            db.add_all([tenant, user, workflow, version, execution])
+            db.add_all([tenant, user, workflow])
+            await db.flush()
+            db.add(version)
+            await db.flush()
+            workflow.published_version_id = version_id
+            db.add(execution)
             await db.commit()
 
         async with SessionLocal() as db:
