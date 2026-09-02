@@ -52,11 +52,14 @@ function openExecution() {
 function openWorkflowLifecycle(fact?: RuntimeCorrelationTrace | RuntimeCorrelationAudit) {
   if (!result.value?.execution) return;
   const execution = result.value.execution;
-  const executionId = fact && "execution_id" in fact ? fact.execution_id : fact && "workflow_execution_id" in fact ? fact.workflow_execution_id || execution.id : execution.id;
-  const workflowId = fact?.workflow_id || execution.workflow_id;
+  const resolvedFact = fact ?? focusedTrace.value ?? focusedAudit.value ?? null;
+  const isTrace = Boolean(resolvedFact && "execution_id" in resolvedFact);
+  const isAudit = Boolean(resolvedFact && "workflow_execution_id" in resolvedFact);
+  const executionId = isTrace ? (resolvedFact as RuntimeCorrelationTrace).execution_id : isAudit ? (resolvedFact as RuntimeCorrelationAudit).workflow_execution_id || execution.id : execution.id;
+  const workflowId = resolvedFact?.workflow_id || execution.workflow_id;
   const query: Record<string, string> = { workflow_id: workflowId, execution_id: executionId, source: "runtime-correlation" };
-  if (fact && "execution_id" in fact && fact.trace_id) query.trace_id = fact.trace_id;
-  else if (fact && "workflow_execution_id" in fact && fact.id) query.audit_id = fact.id;
+  if (isTrace && (resolvedFact as RuntimeCorrelationTrace).trace_id) query.trace_id = (resolvedFact as RuntimeCorrelationTrace).trace_id;
+  else if (isAudit && resolvedFact?.id) query.audit_id = resolvedFact.id;
   else if (focusType.value === "trace" && focusId.value) query.trace_id = focusId.value;
   else if (focusType.value === "audit" && focusId.value) query.audit_id = focusId.value;
   void router.push({ path: "/workflows/lifecycle", query });
@@ -98,5 +101,5 @@ function selectAudit(audit: RuntimeCorrelationAudit) { selectedAuditId.value = a
 </template>
 
 <style scoped>
-.correlation-workspace{padding:4px 0}.section-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.eyebrow{font-size:10px;font-weight:700;letter-spacing:.08em;color:#667085}.section-heading h2{margin:4px 0;font-size:18px;color:#101828}.section-heading p{margin:0;font-size:12px;color:#667085}.relation-card,.fact-card{margin-top:14px}.card-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.card-actions{display:flex;align-items:center;gap:8px}.el-pagination{margin-top:12px;justify-content:flex-end}.fact-json{margin:0;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-word;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}@media(max-width:700px){.section-heading{flex-direction:column}.el-form{display:flex;flex-direction:column;align-items:stretch}.el-input,.el-select,.el-button{width:100%!important}}
+.correlation-workspace{padding:4px 0}.section-heading{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:18px}.eyebrow{font-size:12px;letter-spacing:.08em;color:var(--el-text-color-secondary)}.section-heading h2{margin:4px 0 6px}.section-heading p{margin:0;color:var(--el-text-color-secondary)}.relation-card,.fact-card{margin-top:16px}.card-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.card-actions{display:flex;align-items:center;gap:8px}.fact-json{margin:0;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto}.el-pagination{margin-top:12px;justify-content:flex-end}@media (max-width: 900px){.section-heading{flex-direction:column}.section-heading .el-tag{align-self:flex-start}.el-form{display:flex;flex-wrap:wrap}.el-form .el-input{width:min(100%,360px)!important}.card-actions{flex-wrap:wrap}.relation-card :deep(.el-descriptions){overflow-x:auto}}
 </style>
