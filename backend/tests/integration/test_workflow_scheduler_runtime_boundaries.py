@@ -65,7 +65,7 @@ async def _cleanup(tenant_id, workflow_ids: list, version_ids: list, trigger_ids
             for workflow_id in workflow_ids:
                 await db.execute(text("DELETE FROM workflows WHERE id = :id"), {"id": workflow_id})
             await db.execute(text("DELETE FROM users WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"tenant_id": tenant_id})
+            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"id": tenant_id})
 
 
 async def _add_published_workflow(db, *, tenant_id, user_id, workflow_id, version_id, definition: dict) -> None:
@@ -155,7 +155,7 @@ async def test_scheduler_runtime_isolates_disabled_future_and_dirty_published_wo
                 user_id=user_id,
                 workflow_id=disabled_workflow_id,
                 version_id=disabled_version_id,
-                definition={},
+                definition={"nodes": []},
             )
             await _add_published_workflow(
                 db,
@@ -163,7 +163,7 @@ async def test_scheduler_runtime_isolates_disabled_future_and_dirty_published_wo
                 user_id=user_id,
                 workflow_id=future_workflow_id,
                 version_id=future_version_id,
-                definition={},
+                definition={"nodes": []},
             )
             await _add_published_workflow(
                 db,
@@ -171,7 +171,7 @@ async def test_scheduler_runtime_isolates_disabled_future_and_dirty_published_wo
                 user_id=user_id,
                 workflow_id=missing_schedule_workflow_id,
                 version_id=missing_schedule_version_id,
-                definition={},
+                definition={"nodes": []},
             )
 
             for trigger_id, workflow_id, status in (
