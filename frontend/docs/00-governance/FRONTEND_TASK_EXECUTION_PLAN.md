@@ -22,7 +22,7 @@
 
 ## UI-05 Form / Dialog / Drawer / Confirm
 
-状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 第二个核心页面已开始公共模式迁移。**
+状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 第二个核心页面已开始公共模式迁移；RuntimeCorrelations 已完成 Durable Fact focused-record 定位；WorkflowLifecycle Execution / Manual Trigger 确认交互已完成第一轮闭环。**
 
 原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。
 
@@ -39,7 +39,21 @@
 - 使用公共 `PageHeader`、`SurfaceCard`、`StatePanel`，统一页面标题、内容容器和 Loading / Empty / Error / Permission 状态。
 - 保留真实 Workflow / Version / Trigger / Scheduler / Execution 关联和 Runtime 深链。
 - 增加针对公共模式和页面状态契约的 targeted regression tests。
+- Execution 状态矩阵已形成真实操作入口：`pending → Run / Cancel`、`running → Cancel`、`failed → Retry / Resume`，终态不暴露生命周期变更。
+- Manual Trigger 与 Execution 操作统一使用 `ConfirmDialog`，提交期间防重复确认，取消后清理 target/action，成功后刷新后端真实状态。
+- 403 / 409 / 422 / 通用异常分别提供可理解的操作反馈，失败时不伪造本地 Execution 状态。
+- Runtime / Trace / Audit 入口继续只传递后端真实 Durable ID。
 - 设计记录：`docs/01-design/UI_05_WORKFLOW_LIFECYCLE_MIGRATION.md`。
+
+### RuntimeCorrelations Durable Fact 定位
+
+- Runtime correlation Response 新增 `focused_traces` / `focused_audit` 后，前端 API 类型已对齐该 Contract。
+- Trace focus 优先消费后端 `focused_traces`，即使目标 Trace 不在当前分页 `traces.items` 中也能展示具体 Durable Fact。
+- Audit focus 优先消费后端 `focused_audit`，即使目标 Audit 不在当前分页 `audits.items` 中也能展示具体 Durable Fact。
+- Trace / Audit 进入 Runtime correlation 或返回 WorkflowLifecycle 时均优先使用 focused Durable Fact 自身携带的真实 Execution / Workflow / Version ID。
+- 列表分页保持原有 page/page_size 语义，不扩大分页、不复制后端关系查询、不通过时间、排序、索引或字符串推导关系。
+- Regression 覆盖“目标不在当前分页但存在 focused fact”的 Trace / Audit 深链定位场景。
+- 设计记录：`docs/01-design/UI_05_WORKFLOW_LIFECYCLE_EXECUTION_OPERATIONS.md`。
 
 ## 固定执行流程
 
@@ -64,19 +78,18 @@ npm run test:unit -- --run tests/views/Tools.test.ts
 npm run test:unit -- --run tests/components/ConfirmDialog.test.ts tests/views/Tools.test.ts
 ```
 
-WorkflowLifecycle：
+WorkflowLifecycle / RuntimeCorrelations：
 
 ```powershell
 cd frontend
-npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts
-npm test
+npm run test:unit -- --run tests/views/WorkflowLifecycle.test.ts tests/views/RuntimeCorrelations.test.ts
 npm run build
+npm run test:unit
 npm run test:gate
-npm run test:final
 ```
 
 远端执行环境不运行 Node/Vitest/build，因此未实际执行的门禁不得标记为通过。
 
 ## 下一任务
 
-用户本地验证 WorkflowLifecycle targeted test 通过后，继续同一页面的 UI-05 交互收敛，再选择下一个核心页面；不进行跨页面大规模重构，不新增平行 API client、状态机或 Dialog。
+继续 UI-05 主线：先执行 WorkflowLifecycle / RuntimeCorrelations targeted regression + build 验证；稳定后审查 Trigger / Scheduler 是否已有真实启停/配置 API Contract，再决定是否继续在 WorkflowLifecycle 增加操作入口。若后端无对应 Contract，则不在前端虚构操作。随后再选择下一个核心页面。不进行跨页面大规模重构，不新增平行 API client、状态机或 Dialog。
