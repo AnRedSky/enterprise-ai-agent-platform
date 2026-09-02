@@ -62,6 +62,17 @@ describe("full-site static consistency audit", () => {
     }
   });
 
+  it("keeps Operations Console toggles backend-truth based", () => {
+    const source = readFileSync(resolve(root, "src/views/integrations/OperationsConsole.vue"), "utf8");
+    expect(source).toContain(":model-value=\"row.enabled\"");
+    expect(source).toContain("@change=\"toggleProvider(row as RuntimeProvider, $event)\"");
+    expect(source).toContain("@change=\"toggleRule(row as RuntimeAlertRule, $event)\"");
+    expect(source).not.toContain("v-model=\"row.enabled\"");
+    expect(source).not.toContain("Object.assign(row,r.data)");
+    expect(source).toContain("await loadProviders()");
+    expect(source).toContain("await loadAlerts()");
+  });
+
   it("keeps Workflow Trigger mutations explicitly guarded and backend-truth based", () => {
     const source = readFileSync(resolve(root, "src/views/workflow-triggers/index.vue"), "utf8");
     expect(source).toContain("const actionKey = ref(\"\")");
