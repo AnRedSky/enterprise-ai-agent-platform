@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Any
 from uuid import UUID
+from typing import Any
+from uuid import UUID
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -164,10 +166,6 @@ class IntegrationEventDeliveryItem(BaseModel):
     updated_at: datetime
 
 
-class IntegrationEventDeliveryListResponse(PageMeta):
-    items: list[IntegrationEventDeliveryItem]
-
-
 class WebhookDeliveryAuditItem(BaseModel):
     """Webhook Delivery replay/attempt 的不可变运维审计事实。"""
 
@@ -317,5 +315,7 @@ class RuntimeCorrelationResponse(BaseModel):
     traces: RuntimeCorrelationTracePage
     audits: RuntimeCorrelationAuditPage
     operator_actions: list[RuntimeOperatorActionItem]
+    focused_traces: list[WorkflowTraceItem] = Field(default_factory=list)
+    focused_audit: AuditLogItem | None = None
     focus_audit_id: UUID | None = None
     focus_operator_action_id: UUID | None = None
