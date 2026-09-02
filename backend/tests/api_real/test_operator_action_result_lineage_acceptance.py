@@ -48,8 +48,8 @@ async def test_retry_operator_action_persists_full_result_lineage():
                 tenant_id=tenant_id,
                 owner_id=user_id,
                 name=f"phase-210-retry-workflow-{suffix}",
-                status="published",
-                published_version_id=version_id,
+                status="draft",
+                published_version_id=None,
             )
             version = WorkflowVersion(
                 id=version_id,
@@ -62,6 +62,10 @@ async def test_retry_operator_action_persists_full_result_lineage():
                 },
                 status="published",
             )
+            db.add_all([tenant, user, workflow, version])
+            await db.flush()
+            workflow.status = "published"
+            workflow.published_version_id = version_id
             execution = WorkflowExecution(
                 id=execution_id,
                 tenant_id=tenant_id,
@@ -72,7 +76,7 @@ async def test_retry_operator_action_persists_full_result_lineage():
                 input_data={"phase": "2.10-II"},
                 error_code="NODE_TIMEOUT",
             )
-            db.add_all([tenant, user, workflow, version, execution])
+            db.add(execution)
             await db.commit()
 
         async with SessionLocal() as db:
@@ -88,6 +92,19 @@ async def test_retry_operator_action_persists_full_result_lineage():
             retry_execution_id = result.id
             assert result.status == "pending"
             assert result.retry_of_execution_id == execution_id
+
+        async with SessionLocal() as db:
+            replay = await OperatorActionGovernanceService(db).execute_execution(
+                execution_id=execution_id,
+                tenant_id=tenant_id,
+                actor_id=user_id,
+                is_admin=True,
+                action="retry",
+                confirm=True,
+                idempotency_key=idempotency_key,
+            )
+            assert replay.id == retry_execution_id
+            assert replay.retry_of_execution_id == execution_id
 
         async with SessionLocal() as db:
             action = (
