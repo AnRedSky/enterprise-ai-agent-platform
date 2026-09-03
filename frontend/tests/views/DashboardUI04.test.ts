@@ -28,7 +28,7 @@ function mountView() {
         StatePanel: StatePanelStub,
         PageHeader: true,
         MetricCard: true,
-        SurfaceCard: true,
+        SurfaceCard: { template: "<section><slot name=\"header\"/><slot/></section>" },
         "el-button": { template: "<button @click=\"$emit('click')\"><slot /></button>" },
         "el-empty": true,
         "el-alert": true,
@@ -61,13 +61,15 @@ describe("Dashboard UI-04 states", () => {
     expect(wrapper.find(".state-panel").classes()).toContain("state-panel--loading");
   });
 
-  it("renders empty when all aggregate datasets are empty", async () => {
+  it("keeps the dashboard workspace usable when aggregate datasets are empty", async () => {
     mocks.listAgents.mockResolvedValue([]);
     mocks.listTools.mockResolvedValue([]);
     mocks.executions.mockResolvedValue(ok());
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.find(".state-panel").classes()).toContain("state-panel--empty");
+    expect(wrapper.text()).toContain("暂无运行记录");
+    expect(wrapper.findAll(".quick-action")).toHaveLength(6);
   });
 
   it("renders permission for an aggregate 403", async () => {
