@@ -4,8 +4,8 @@
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
-- 当前任务：**Durable Scheduler 多实例租约失效恢复与 misfire 边界收敛**。
-- 最近完成：**#84 Durable Resume Operator Action 幂等审计收敛**、Scheduler Repository 多实例 lease 并发与 slot 幂等覆盖。
+- 当前任务：**Operator Action 事务边界与结果事实一致性收敛**。
+- 最近完成：**Scheduler Runtime Real API 最终验收**、Scheduled Trigger 多实例/恢复验收、#84 Durable Resume Operator Action 幂等审计收敛。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -40,22 +40,36 @@
 - #84 已将 Durable Resume 的底层确定性 Resume Execution 幂等键收敛到 Operator Action Governance，重放直接复用同一 Result Resource，不重复生成 Operator Audit；
 - Phase 2.4 Scheduler Repository 已补齐真实 PostgreSQL 多实例 lease 并发唯一 owner、tenant isolation 与 schedule slot 幂等验证；
 - Scheduler misfire 规则已补齐 `skip / fire_once / catch_up` 的确定性单元覆盖；
-- Scheduler lease 失效恢复已新增真实 PostgreSQL 验收：过期 lease 可由新 owner 抢占，旧 owner 不能释放新 owner 的 lease。
+- Scheduler lease 失效恢复已新增真实 PostgreSQL 验收：过期 lease 可由新 owner 抢占，旧 owner 不能释放新 owner 的 lease；
+- Scheduler Runtime Real PostgreSQL Acceptance 已通过：Schedule → Slot → Execution → Frontier → Audit/Trace 持久化闭环、due candidate dirty-data 边界及 targeted regression 均通过；
+- Scheduled Trigger Real API Gate 已通过：3 个真实 HTTP 场景覆盖 Trigger 生命周期、双 Scheduler 收敛、历史 recovery slot 与 Execution 元数据，最终 `3 passed in 8.79s`。
 
 ## 3. 最新本地反馈
 
-开发者已反馈最新 main 基线结果：
+开发者最新反馈的 Scheduled Trigger Real API Gate：
 
-- Scheduler Misfire / Lease Gate：`5 passed`，并通过 PostgreSQL readiness、misfire `skip / fire_once / catch_up`、lease reclaim 与 stale-owner fencing 验证；
-- Scheduler Repository concurrency integration：`3 passed in 0.77s`；
-- Scheduler Lease Concurrency Gate：`3 passed in 0.82s`，并确认未执行任何服务生命周期操作；
-- Backend default regression：`1044 passed, 4 skipped, 80 deselected in 36.86s`；
-- Operator Action Result Lineage Gate：Runtime Correlation Contract、Retry Lineage、Rollback、Resume Lineage 与服务边界均通过；
-- Resume Operator Action Acceptance：`1 passed in 1.53s`。
+```text
+[1/5] Verify Real API source baseline
+[PASS] HEAD == origin/main: d3a4156ffab59a2c3657e86dd7ffb28806dc9253
+[PASS] Critical Real API / Checkpoint test sources are clean.
+[PASS] Runtime Model Governance tests use unified claim-race helper.
+[PASS] Checkpoint Resume Candidate tests do not use datetime.utcnow().
+[PASS] Real API source baseline verification completed.
+[2/5] Verify manually managed API / Worker / Scheduler services
+[PASS] Current-project Worker processes available.
+[PASS] Current-project Scheduler processes available.
+[3/5] Prepare tenant-safe Real API context
+Real API context prepared: .real_api_context_9bc031a78830
+[4/5] Execute Scheduled Trigger real_api tests
+3 passed in 8.79s
+[5/5] Verify generated Trigger context was consumed
+[PASS] TRIGGER_WORKFLOW_ID=82674a2b-1a6e-4641-a7ef-5878d2cb990d
+[PASS] Scheduled Trigger real_api gate completed.
+```
 
-以上结果均来自开发者实际本地执行，不使用 GitHub Actions 作为验收依据。
+该 Gate 未执行任何 API / Worker / Scheduler 服务生命周期操作；测试上下文由 Gate 自动生成并清理。
 
-Scheduler Runtime PostgreSQL Acceptance 仍未通过。首次本地执行暴露了 fixture FK 顺序、Workflow Definition fixture 以及 cleanup 漏删 Integration Event 问题；随后进一步检查发现生产代码 `WorkflowTriggerService.invoke_scheduled()` 使用 `allow_legacy_empty_nodes=True` 绕过了 Workflow Registry 的严格发布 Definition Contract。这是当前仍需修复的真实 Backend 问题，修复后的 Runtime Gate 尚未获得新的开发者本地实际输出，因此暂不标记为通过。
+此前 Scheduled Trigger Real API 曾出现约 76 分钟的 asyncpg socket / event-loop 生命周期异常；后续 main 已完成 Real API async runner 去重、事件循环隔离与 bounded polling 修复，当前开发者反馈已恢复为 8.79 秒并全部通过。该异常已记录在 `docs/04-errors/2026-09-03-scheduled-trigger-real-api-event-loop.md`。
 
 ## 4. 当前 Backend 修复 / 开发
 
@@ -63,25 +77,23 @@ Scheduler Runtime PostgreSQL Acceptance 仍未通过。首次本地执行暴露�
 - 过期 lease 可被新 Scheduler owner 重新抢占；重新抢占后旧 owner 的 release 会因 owner 条件失败，不会清理新 owner 的 lease；
 - `schedule_slot_key` 使用 PostgreSQL 唯一约束收敛重复槽位 claim；
 - misfire 规划保持在 `workflow_scheduler/misfire.py` 单一正式入口，不在 Runtime 复制算法；
-- 新增 `tests/unit/services/workflow_scheduler/test_misfire.py`，锁定时间边界与参数校验；
-- 新增 `tests/integration/test_workflow_scheduler_lease_expiry.py`，锁定真实 PostgreSQL lease reclaim / stale-owner fencing；
-- 新增 `scripts/test/phase-2.4/21_scheduler_misfire_lease_gate.ps1`，只检查 PostgreSQL readiness 并运行 targeted tests，禁止自动启动或停止 API / Scheduler / Worker / PostgreSQL / Redis；
-- 新增 `tests/integration/test_workflow_scheduler_runtime.py` 与 `scripts/test/phase-2.4/22_scheduler_runtime_gate.ps1`，验证 Scheduler Runtime 的 Schedule → Slot → Execution → Frontier → Audit/Trace 持久化闭环；
-- 修复 Runtime Acceptance Fixture：显式 flush `WorkflowTrigger` 后再创建 `WorkflowSchedule`，消除无 ORM relationship 时 SQLAlchemy INSERT 顺序不确定导致的 PostgreSQL FK violation；
-- 修复 Runtime Acceptance Cleanup：删除测试租户前清理 `integration_events`，避免 Runtime Integration Event 的 tenant 外键阻止测试数据回收；
-- 修复 Scheduler Scheduled Trigger Definition Contract：禁止 `invoke_scheduled()` 通过 `allow_legacy_empty_nodes=True` 绕过 Workflow Registry 发布校验；Scheduler 只能向 Worker 投递正式可执行的 published Workflow Definition；
-- Runtime Acceptance fixture 使用包含最小合法 `input` node 的 Definition，真实覆盖 `WorkflowVersion → ScheduleSlot → WorkflowExecution → Frontier` 链路。
+- Scheduled Trigger 只允许调用正式 published Workflow Definition，禁止通过 legacy empty-node 兼容参数绕过发布契约；
+- Trigger Service 的 Manual Invoke 现在提供显式 `commit` 事务边界，Operator Governance 可以把 Execution、Trigger Audit、Operator Action Idempotency 与最终治理 Audit 放入同一提交边界；
+- Operator Action API Contract 已补充 Manual Trigger deferred-commit 边界测试；
+- Retry / Resume 已保持 `commit=False` → Result Resource / Operator Action / Audit / Trace → 单次提交的治理路径；
+- 当前继续检查 Operator Action 的 `run / cancel / retry / resume / trigger invoke` 在异常路径下是否留下 partial commit，并补齐真实 PostgreSQL 回滚验收；
+- Worker / Scheduler 多实例语义保持不变，不通过降低锁粒度或移除 fencing 来“修复”测试。
 
 ## 5. 下一执行顺序
 
 ```text
-① 执行 Scheduler Runtime targeted Unit / Real PostgreSQL Acceptance，确认严格 Definition Contract 修复
-② 检查数据库中历史非法 published Workflow 数据，区分正式业务数据与旧测试残留，不通过 Scheduler 兼容逻辑掩盖脏数据
-③ 验证 skip / fire_once / catch_up → WorkflowSchedule → ScheduleSlot → WorkflowExecution
-④ 验证 Scheduler Audit / Trace / Integration Event 与 tenant/workflow/execution 关联
-⑤ 验证 lease 失败恢复、slot 幂等与 Execution 幂等不重复
-⑥ 更新 Phase 2.4 Acceptance 汇总并评估是否达到 Passed
-⑦ Backend-first 继续推进 Operator Governance / Runtime 剩余真实业务缺口
+① Operator Action run / cancel / retry / resume / trigger invoke 异常路径事务一致性
+② Result Resource / OperatorActionIdempotency / AuditLog / Trace 的 partial-commit 回滚验收
+③ Idempotency-Key 并发 claim 与失败重试语义收敛
+④ Operator Governance Real PostgreSQL Acceptance
+⑤ Backend Regression + Alembic head verification
+⑥ 评估 Phase 2.10-II Backend Release Gate
+⑦ 继续处理剩余 Worker / Delegation 多实例真实 Provider 缺口
 ```
 
 ## 6. Backend 验收规则
