@@ -3,8 +3,8 @@ $ErrorActionPreference = 'Stop'
 Write-Host '============================================================'
 Write-Host 'Enterprise AI Agent Platform - Scheduled Trigger Real Test Gate'
 Write-Host '============================================================'
-Write-Host '[INFO] 本 Gate 不启动、停止或重启任何 API / Worker / Scheduler 服务。'
-Write-Host '[INFO] 本 Gate 自动准备 tenant-safe Real API context，避免直接 pytest 缺少测试上下文。'
+Write-Host '[INFO] This gate does not start, stop, or restart API / Worker / Scheduler services.'
+Write-Host '[INFO] This gate prepares a tenant-safe Real API context for the test suite.'
 
 if (-not $env:API_BASE_URL) {
     $env:API_BASE_URL = 'http://127.0.0.1:8000/api/v1'
@@ -48,7 +48,7 @@ function Assert-CurrentMainServices {
     }
     Write-Host "[PASS] Current-project Worker processes available: $($workers.Count)"
     Write-Host "[PASS] Current-project Scheduler processes available: $($schedulers.Count)"
-    Write-Host '[INFO] Multiple Worker/Scheduler processes are intentionally supported; durable claim/slot idempotency is part of this acceptance.'
+    Write-Host '[INFO] Multiple Worker/Scheduler processes are intentionally supported.'
 }
 
 function Invoke-RequiredCommand {
