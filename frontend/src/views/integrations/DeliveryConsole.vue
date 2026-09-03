@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { Refresh, View, RefreshRight, CircleCheck, Warning, Clock, CircleClose } from "@element-plus/icons-vue";
+import { Refresh, View, RefreshRight, CircleCheck, Clock, CircleClose } from "@element-plus/icons-vue";
 import { integrationApi, type WebhookDelivery, type WebhookDeliveryAudit } from "@/api/integrations";
 import StatePanel from "@/components/ui/StatePanel.vue";
 
@@ -41,7 +41,9 @@ onMounted(loadDeliveries);
     </div>
     <div class="delivery-toolbar"><div><strong>投递管理</strong><span>查看投递状态、失败原因和审计记录，并对可以恢复的失败记录重新投递。</span></div><div class="toolbar-actions"><el-select v-model="status" clearable placeholder="全部状态" style="width: 150px" @change="loadDeliveries"><el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select><el-button :icon="Refresh" :loading="loading" @click="loadDeliveries">刷新</el-button></div></div>
     <el-alert title="运维提示" description="投递记录用于记录事件发送过程中的真实结果。重新投递只会重新进入后端可靠投递流程，不会由浏览器直接请求目标地址。" type="info" :closable="false" show-icon class="delivery-note" />
-    <el-table v-loading="loading" :data="deliveries" empty-text="暂无投递记录" class="delivery-table">
+    <StatePanel v-if="loading" state="loading" title="正在加载投递记录" description="正在同步后端投递事实。" />
+    <StatePanel v-else-if="!deliveries.length" state="empty" title="暂无投递记录" description="当前状态筛选条件没有可展示的投递记录。" />
+    <el-table v-else :data="deliveries" :row-key="(row: WebhookDelivery) => row.id" class="delivery-table">
       <el-table-column label="状态" width="130"><template #default="scope"><span class="delivery-status"><component :is="statusIcon(scope.row.status)" /><el-tag :type="statusType(scope.row.status)" effect="light">{{ statusLabel(scope.row.status) }}</el-tag></span></template></el-table-column>
       <el-table-column label="投递编号 / 事件编号" min-width="270"><template #default="scope"><div class="id-cell"><strong>{{ scope.row.id }}</strong><span>{{ scope.row.integration_event_id }}</span></div></template></el-table-column>
       <el-table-column prop="attempt_count" label="尝试次数" width="100" />
@@ -52,7 +54,9 @@ onMounted(loadDeliveries);
     </el-table>
     <el-dialog v-model="auditDialog" title="投递审计记录" width="760px">
       <div v-if="selectedDelivery" class="audit-header"><div><span>投递编号</span><strong>{{ selectedDelivery.id }}</strong></div><div><span>状态</span><el-tag :type="statusType(selectedDelivery.status)">{{ statusLabel(selectedDelivery.status) }}</el-tag></div><div><span>尝试次数</span><strong>{{ selectedDelivery.attempt_count }}</strong></div></div>
-      <el-timeline v-loading="auditLoading" class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ actionLabel(item.action) }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ errorLabel(item.error_code, item.error_message) }}</p></div></el-timeline-item><StatePanel v-if="!auditLoading && !auditItems.length" state="empty" title="暂无审计记录" description="当前投递记录没有审计事实。" /></el-timeline>
+      <StatePanel v-if="auditLoading" state="loading" title="正在加载审计记录" description="正在同步该投递记录的审计事实。" />
+      <StatePanel v-else-if="!auditItems.length" state="empty" title="暂无审计记录" description="当前投递记录没有审计事实。" />
+      <el-timeline v-else class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ actionLabel(item.action) }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ errorLabel(item.error_code, item.error_message) }}</p></div></el-timeline-item></el-timeline>
     </el-dialog>
   </section>
 </template>
