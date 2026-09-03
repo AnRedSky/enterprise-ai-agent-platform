@@ -11,44 +11,40 @@
 用户本地 `frontend` 执行：
 
 ```powershell
-npm run test:unit
+npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts
 ```
 
 结果：
 
 ```text
-Test Files  11 failed | 57 passed (68)
-Tests       16 failed | 301 passed (317)
-Duration    9.75s
+Test Files  5 failed (5)
+Tests       6 failed | 12 passed (18)
 ```
 
 本轮反馈暴露的失败可以归纳为四类：
 
 1. **Runtime Correlations 静态契约测试与当前实现变量命名不一致**：测试要求 `audit.workflow_execution_id`，当前实现使用 `focusedAudit.workflow_execution_id` 与 `resolvedFact as RuntimeCorrelationAudit`，实际 durable fact 已存在且没有数组位置推断。
-2. **Integrations 空状态测试未切换到订阅 Tab**：测试在默认投递目标 Tab 中查找“新建事件订阅”，因此无法找到该入口；生产页面已经通过 `:disabled="!destinations.length"` 正确禁用订阅创建。
-3. **Integrations secret 回归测试断言错误**：`secret_ref` 本身包含字符串 `secret`，原断言 `"secret_ref".not.toContain("secret")` 在语义上不成立。应验证 secret reference 存在、secret plaintext 字段不存在，并确认页面不会展示密钥明文。
-4. **Operations / Organizations 测试与当前 UI 文案不一致**：Operations 已将页面标题收敛为“运维窗口”，测试仍断言旧标题“Runtime 企业运维中心”；Audit Tab 测试依赖 Element Plus 内部 DOM class；Organizations 的当前实现保留了 `active/suspended` 技术值，测试则要求纯中文状态标签。
+2. **Integrations 空状态测试未使用 Element Plus 组件契约查找按钮**：测试在默认投递目标 Tab 中查找“新建事件订阅”，并使用原生 `button` 查询；实际测试环境下 Tab 内容由 Element Plus 组件包装，导致原生查询结果不稳定。
+3. **Operations Console 测试依赖渲染时序及 Element Plus 内部 DOM**：Audit 行数据在异步请求完成后才进入页面；Tab inventory 直接读取 `ElTabPane` 的 props 在当前挂载方式下返回空集合。
+4. **Organizations 的 `pending` 状态缺少显式中文映射**：测试要求 `pending → 待处理`，当前实现将其视为未知状态。
 
 ## 3. 本轮修复
 
-### 3.1 Runtime Correlations
+### 3.1 Runtime Correlations / Full-site static audit
 
-将静态契约断言改为检查实际 durable fact 展示路径 `focusedAudit.workflow_execution_id`，不放宽关系约束，也不增加任何 UI 推断。
+收窄 `forbiddenDurableFactPatterns` 的数组位置检查范围，只检查真正可能用于 Durable Relationship 推断的关系集合：`items / versions / destinations / providers / triggers`。
+
+`workflows.value[0]` 和 `executions.value[0]` 属于页面默认选择/聚焦对象，并非从一个 Durable Fact 推导另一个实体关系；将它们纳入该关系审计会产生误报。关系导航仍必须使用显式 durable ID。
 
 ### 3.2 Integrations
 
-空状态测试在验证订阅创建入口前显式切换 `activeTab = "subscriptions"`，使测试操作真实用户路径而不是依赖默认 Tab。
-
-Secret 回归测试改为读取实际 View 源码并验证：
-
-- `secret_ref` 是允许的安全引用字段；
-- 不存在 `secret:` 明文字段；
-- 不读取 `.secret`；
-- 页面明确声明不保存或展示密钥明文。
+空状态测试改为通过 `findAllComponents(ElButton)` 查找真实 Element Plus Button，并断言其 `disabled` component prop，而不是依赖原生 DOM `button.disabled`。这样测试验证的是页面的组件契约：没有投递目标时，“新建事件订阅”入口必须保持禁用。
 
 ### 3.3 Operations Console
 
-测试调整为当前已实现的“运维窗口”页面标题；Audit 查询测试通过 Vue 状态切换到 `audit` Tab，避免绑定 Element Plus 内部 DOM 结构；全局 Tab 测试直接验证 `ElTabPane` 的正式 `label` Props。
+Audit 查询测试在等待 `auditQuery` 调用后继续等待实际 `provider.health.probe` 文本出现，避免只等待 Promise 调用已经发生而数据状态尚未提交的问题。
+
+Tab inventory 测试改为检查页面实际可见文本中的 7 个正式 Tab 标签：`全局运行态势 / 总览 / 告警 / Provider / Metrics / Audit / 死信`，不再依赖 Element Plus `ElTabPane` 内部 props 在测试挂载环境中的表现。
 
 `NO_DURABLE_HEARTBEAT_FACT` 保持作为后端诊断 reason code 展示，测试验证该 durable diagnostic fact，而不是把它伪装成 Worker/Scheduler 已存活状态。
 
@@ -58,28 +54,28 @@ Secret 回归测试改为读取实际 View 源码并验证：
 
 - `active` → `已启用`
 - `suspended` → `已暂停`
+- `pending` → `待处理`
 - 未知值 → `未知状态（技术值）`
 
 保持后端状态枚举不变，只调整展示层映射。
 
 ## 4. 版本同步事实
 
-本轮开始时 `frontend` 已与当时 `main` 同步；开发过程中 `main` 又新增 Delegation 事务边界相关提交。已创建并合并 `main → frontend` 同步 PR，最终 `frontend` HEAD：
+本轮开始前 `frontend` 已与当时 `main` 同步；随后本轮修复形成独立原子提交。当前 `main` HEAD 为：
 
-`b46c58e4c8e9101f7ccc26a22ca1a0d67886d2c7`
+`b71e31b1c6e670b69f2f26b9db99f0ee4e2a34c1`
 
-最终 `frontend` 相对 `main`：
+当前 `frontend` HEAD 为：
 
-- `behind_by = 0`
-- `ahead_by = 6`
+`79760c4154fda4151690e1ea63e3fd47c4704b9c`
 
-说明最新 Backend Contract / regression fixture 已进入前端开发基线。
+因此当前 `frontend` 包含本轮 3 个代码修复提交，尚未把这些新的前端修复合并回 `main`。下一轮应继续以最新 `main` 为基线进行同步检查，避免产生新的分叉。
 
 ## 5. 验证状态
 
-由于当前 ChatGPT 执行环境无法访问用户 Windows 工作树，也无法安装项目依赖或直接执行用户机器上的 `npm run test:unit`，本轮没有伪造本地通过结果。
+由于当前 ChatGPT 执行环境无法访问用户 Windows 工作树，也无法安装项目依赖或直接执行用户机器上的 `npm test`，本轮没有伪造本地通过结果。
 
-用户本地反馈仍是本轮修复前的基线：**16 failed / 301 passed / 317 total**。上述代码修复已提交到 `frontend`，但必须由用户在同步后的本地工作树重新执行验证。
+用户提供的是本轮修复前的失败结果：**5 failed files / 6 failed tests / 12 passed / 18 total**。上述修复已经提交到 `frontend`，但必须由用户在同步后的本地工作树重新执行验证。
 
 标准验证顺序：
 
@@ -100,6 +96,6 @@ npm run test:e2e
 
 ## 6. 当前状态
 
-**代码修复已完成，待本地验证。**
+**本轮代码修复已完成，待本地验证。**
 
-不能将本轮状态标记为“全量通过”，直到用户本地重新执行 `npm run test:unit`、`npm run build` 和 `npm run test:gate` 并提供实际结果。
+不能将本轮状态标记为“全量通过”，直到用户本地重新执行 targeted regression、`npm run test:unit`、`npm run build` 和 `npm run test:gate` 并提供实际结果。
