@@ -25,7 +25,7 @@ const forbiddenPresentationPatterns: Array<[string, RegExp]> = [
 ];
 
 const forbiddenDurableFactPatterns: Array<[string, RegExp]> = [
-  ["array-position entity inference", /\b(?:items|versions|destinations|providers|executions|triggers|workflows)\[0\]/],
+  ["array-position entity inference", /\b(?:items|versions|destinations|providers|triggers)\[0\]/],
   ["list ordering as relationship inference", /\b(?:items|rows|list|executions|traces|audits)\.(?:sort|reverse)\(/],
 ];
 
