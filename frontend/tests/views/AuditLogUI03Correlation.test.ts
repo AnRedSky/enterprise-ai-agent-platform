@@ -14,7 +14,7 @@ describe("Audit Log UI-03 / Runtime correlation", () => {
 
   it("preserves the backend execution_id in the Runtime deep link", () => {
     const panel = read("src/views/audit-log/components/AuditLogPanel.vue");
-    expect(panel).toContain('query:{execution_id:executionId,source:"audit"}');
+    expect(panel).toMatch(/query:\s*\{\s*execution_id:\s*executionId\s*,\s*source:\s*[\"']audit[\"']\s*\}/);
     expect(panel).not.toContain("items[0]");
     expect(panel).not.toContain("items[page");
   });
