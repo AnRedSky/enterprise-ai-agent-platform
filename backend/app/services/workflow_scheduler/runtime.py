@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.infrastructure.db import SessionLocal
 from app.models.execution import Execution  # noqa: F401 - 注册 AuditLog 外键元数据
@@ -56,6 +57,7 @@ class ScheduledTriggerScheduler:
         poll_interval_seconds: float = 5.0,
         recovery_slots: int = DEFAULT_RECOVERY_SLOTS,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds 必须大于 0")
@@ -68,6 +70,9 @@ class ScheduledTriggerScheduler:
         self.lease_seconds = lease_seconds
         self.owner = f"scheduler:{uuid4()}"
         self._stop_event = asyncio.Event()
+        # 生产 Runtime 使用应用唯一 SessionLocal；测试或嵌入式调用可以注入独立 Session 工厂，
+        # 避免同一个 AsyncEngine 的连接池跨事件循环复用。生产服务不会因此创建第二套数据库基础设施。
+        self.session_factory = session_factory or SessionLocal
 
     @staticmethod
     def interval_slot(now: datetime, interval_seconds: int) -> int:
@@ -139,7 +144,7 @@ class ScheduledTriggerScheduler:
             "contention": 0,
         }
 
-        async with SessionLocal() as discovery_db:
+        async with self.session_factory() as discovery_db:
             repository = WorkflowSchedulerRepository(discovery_db)
             candidates = await repository.list_due_scheduled_candidates(now=now)
 
@@ -147,7 +152,7 @@ class ScheduledTriggerScheduler:
             trigger_id = trigger.id
             trigger_id_text = str(trigger_id)
             workflow_id_text = str(workflow.id)
-            async with SessionLocal() as db:
+            async with self.session_factory() as db:
                 repository = WorkflowSchedulerRepository(db)
                 integration = RuntimeIntegrationEventPublisher(db)
                 try:
