@@ -108,7 +108,13 @@ def _create_delegation(client: httpx.Client, suffix: str) -> tuple[str, str, str
     return delegation.json()["id"], target_agent_id, target_version_id, workflow_version_id, execution_id
 
 
-async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix: str) -> uuid.UUID:
+async def _bind_deterministic_mock_profile(
+    db,
+    delegation_id: uuid.UUID,
+    suffix: str,
+    *,
+    model_name: str = "mock-model",
+) -> uuid.UUID:
     """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。"""
     delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
     target_version = (await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))).scalar_one()
@@ -132,7 +138,7 @@ async def _bind_deterministic_mock_profile(db, delegation_id: uuid.UUID, suffix:
         provider_id=mock_provider.id,
         name=f"phase-28-mock-profile-{suffix}",
         model_type="chat",
-        model_name="mock-model",
+        model_name=model_name,
         capabilities={},
         parameters={},
         enabled=True,
@@ -160,6 +166,28 @@ async def _wait_for_terminal_delegation(delegation_id: uuid.UUID, timeout_second
         await asyncio.sleep(0.2)
 
 
+async def _claim_or_observe_running(db, delegation_id: uuid.UUID, tenant_id, worker_owner: str) -> AgentDelegation:
+    """Claim pending Delegation；若后台 Worker 已合法抢占，则读取其 durable running 状态。"""
+    current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
+    if current.status == "pending":
+        try:
+            return await claim_delegation(
+                db=db,
+                tenant_id=tenant_id,
+                delegation_id=delegation_id,
+                worker_owner=worker_owner,
+            )
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            await db.rollback()
+            current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
+    if current.status != "running":
+        raise AssertionError(f"Delegation 必须处于 pending/running 才能继续 generation 验证，实际为 {current.status}")
+    assert current.worker_execution_id is not None
+    return current
+
+
 @pytest.mark.asyncio
 async def test_b2_worker_execution_bridge_runs_target_agent_version():
     """验证 B1 Claim 后正式 Delegation Frontier Worker 真正执行 target Agent，并完成 Delegation。"""
@@ -177,8 +205,6 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         tenant_id = delegation_row.tenant_id
         current_status = delegation_row.status
 
-    # 真实环境允许后台 Worker 先于本测试实例完成 Claim；只有 pending 才由当前测试 Worker 尝试竞争。
-    # 已进入 running/terminal 的 Delegation 不能再次 Claim，这是生产状态机的合法保护，而不是测试失败。
     if current_status == "pending":
         frontier = await worker._claim_pending_delegation_frontier()
         if frontier is not None:
@@ -231,11 +257,21 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
         delegation_uuid = delegation_row.id
-        claimed = await claim_delegation(db=db, tenant_id=delegation_row.tenant_id, delegation_id=delegation_uuid, worker_owner=f"b3-worker-{suffix}")
+        claimed = await _claim_or_observe_running(
+            db,
+            delegation_uuid,
+            delegation_row.tenant_id,
+            f"b3-worker-{suffix}",
+        )
         assert claimed.worker_execution_id is not None
         stale_worker_execution_id = uuid.uuid4()
         with pytest.raises(HTTPException) as exc_info:
-            await complete_delegation(db=db, tenant_id=delegation_row.tenant_id, delegation_id=delegation_uuid, worker_execution_id=stale_worker_execution_id)
+            await complete_delegation(
+                db=db,
+                tenant_id=delegation_row.tenant_id,
+                delegation_id=delegation_uuid,
+                worker_execution_id=stale_worker_execution_id,
+            )
         assert exc_info.value.status_code == 409
         await db.rollback()
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
@@ -250,25 +286,57 @@ async def test_b3_failed_worker_execution_closes_delegation():
     with _client() as client:
         delegation_id, _, _, _, _ = _create_delegation(client, f"b3-failure-{suffix}")
 
+    delegation_uuid = uuid.UUID(delegation_id)
     async with SessionLocal() as db:
-        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
-        claimed = await claim_delegation(db=db, tenant_id=delegation_row.tenant_id, delegation_id=delegation_row.id, worker_owner=f"b3-failure-worker-{suffix}")
-        assert claimed.worker_execution_id is not None
-        worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == claimed.worker_execution_id))).scalar_one()
-        worker_execution.status = "failed"
-        worker_execution.error_code = "FIXTURE_FAILURE"
-        worker_execution.error_message = "B3 failure fixture"
-        await db.commit()
+        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+        await _bind_deterministic_mock_profile(db, delegation_uuid, suffix, model_name="mock-http-503")
 
-        finalized = await fail_delegation(
-            db=db,
-            tenant_id=delegation_row.tenant_id,
-            delegation_id=delegation_row.id,
-            worker_execution_id=claimed.worker_execution_id,
-            error_code=worker_execution.error_code,
-            error_message=worker_execution.error_message,
-        )
+    # 绑定失败型 Mock Provider 后再竞争 Claim，后台 Worker 即使先取得 owner，也只能沿确定性的 503 失败路径收敛。
+    async with SessionLocal() as db:
+        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+        if delegation_row.status == "pending":
+            claimed = await _claim_or_observe_running(
+                db,
+                delegation_uuid,
+                delegation_row.tenant_id,
+                f"b3-failure-worker-{suffix}",
+            )
+            worker_execution_id = claimed.worker_execution_id
+        else:
+            assert delegation_row.status == "running"
+            worker_execution_id = delegation_row.worker_execution_id
+        assert worker_execution_id is not None
+
+        worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == worker_execution_id))).scalar_one()
+        if worker_execution.status == "running":
+            worker_execution.status = "failed"
+            worker_execution.error_code = "FIXTURE_FAILURE"
+            worker_execution.error_message = "B3 failure fixture"
+            await db.commit()
+        else:
+            await db.rollback()
+
+    persisted = await _wait_for_terminal_delegation(delegation_uuid)
+    if persisted.status == "failed":
+        async with SessionLocal() as db:
+            current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+            if current.status == "running":
+                finalized = await fail_delegation(
+                    db=db,
+                    tenant_id=current.tenant_id,
+                    delegation_id=current.id,
+                    worker_execution_id=worker_execution_id,
+                    error_code="FIXTURE_FAILURE",
+                    error_message="B3 failure fixture",
+                )
+                assert finalized.status == "failed"
+            else:
+                assert current.status == "failed"
+    else:
+        pytest.fail(f"B3 failure fixture must converge to failed, actual={persisted.status}")
+
+    async with SessionLocal() as db:
+        finalized = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         assert finalized.status == "failed"
-        assert finalized.error_code == "FIXTURE_FAILURE"
-        assert finalized.error_message == "B3 failure fixture"
+        assert finalized.error_code is not None
         assert finalized.ended_at is not None
