@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
@@ -68,6 +68,12 @@ def _client() -> httpx.Client:
 def _test_engine():
     """创建不跨事件循环复用连接的测试数据库引擎。"""
     return create_async_engine(settings.database_url, poolclass=NullPool, pool_pre_ping=True)
+
+
+def _test_session_factory():
+    """创建只供当前 Real API Scheduler 测试使用的独立 Session 工厂。"""
+    engine = _test_engine()
+    return engine, async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def _execution_rows(idempotency_key: str) -> list[dict]:
@@ -280,6 +286,7 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
     name = f"api-real-scheduled-workers-{uuid.uuid4().hex[:8]}"
     config = {"timezone": "UTC", "interval_seconds": 60}
     trigger_id = None
+    engine, session_factory = _test_session_factory()
 
     with _client() as client:
         created = client.post(
@@ -293,8 +300,8 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
 
         async def dispatch_from_two_workers():
             """使用两个独立 Scheduler 实例竞争同一个持久化 slot。"""
-            first = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
-            second = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1)
+            first = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1, session_factory=session_factory)
+            second = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1, session_factory=session_factory)
             return await asyncio.gather(first.tick_once(now), second.tick_once(now))
 
         try:
@@ -314,6 +321,7 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
             assert deleted.status_code == 204, deleted.text
+            _run_async(scheduler_event_loop, engine.dispose())
 
 
 def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(scheduler_event_loop):
@@ -329,6 +337,7 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         "catch_up_limit": 2,
     }
     trigger_id = None
+    engine, session_factory = _test_session_factory()
 
     with _client() as client:
         created = client.post(
@@ -339,7 +348,11 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         trigger_id = created.json()["id"]
 
         now = datetime(2020, 1, 1, 0, 0, 37, tzinfo=UTC)
-        scheduler = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
+        scheduler = ScheduledTriggerScheduler(
+            poll_interval_seconds=5,
+            recovery_slots=2,
+            session_factory=session_factory,
+        )
         current_slot = scheduler.interval_slot(now, config["interval_seconds"])
         recovery_slot = current_slot - 1
         recovery_key = scheduler.slot_idempotency_key(trigger_id, recovery_slot)
@@ -370,7 +383,11 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
             assert "planned_at" in recovery_rows[0]["input_data"]
             assert "planned_at" in current_rows[0]["input_data"]
 
-            restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2)
+            restarted = ScheduledTriggerScheduler(
+                poll_interval_seconds=5,
+                recovery_slots=2,
+                session_factory=session_factory,
+            )
             second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))
             assert second_counters["dispatched"] == 0, second_counters
             assert len(_run_async(scheduler_event_loop, _execution_rows(recovery_key))) == 1
@@ -378,3 +395,4 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         finally:
             deleted = client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
             assert deleted.status_code == 204, deleted.text
+            _run_async(scheduler_event_loop, engine.dispose())
