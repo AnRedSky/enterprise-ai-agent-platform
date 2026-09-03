@@ -26,7 +26,7 @@ async def test_b5_cancel_persists_audit_and_trace_lineage() -> None:
     """验证取消 Delegation 同时形成审计与 Trace，并保持父子身份链路一致。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, _, _, _, parent_execution_id = _create_delegation(client, f"b5-cancel-{suffix}")
+        delegation_id, _, _, _, parent_execution_id = await _create_delegation(client, f"b5-cancel-{suffix}")
         response = client.post(f"/workflows/{parent_execution_id}/delegations/{delegation_id}/cancel")
         assert response.status_code == 200, response.text
         payload = response.json()
@@ -73,7 +73,7 @@ async def test_b5_delegation_lifecycle_trace_events_share_parent_trace_identity(
     """验证创建与取消事件均挂在同一父 Execution/Delegation trace_id 上。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, _, _, _, parent_execution_id = _create_delegation(client, f"b5-lineage-{suffix}")
+        delegation_id, _, _, _, parent_execution_id = await _create_delegation(client, f"b5-lineage-{suffix}")
         response = client.post(f"/workflows/{parent_execution_id}/delegations/{delegation_id}/cancel")
         assert response.status_code == 200, response.text
         trace_id = response.json()["trace_id"]

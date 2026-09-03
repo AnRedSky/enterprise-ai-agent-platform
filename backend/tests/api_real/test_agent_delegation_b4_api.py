@@ -28,7 +28,7 @@ async def test_b4_cancel_ends_delegation_without_changing_parent_execution() -> 
     """验证取消只结束 Delegation，自身不把父 Workflow Execution 推入终态。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, _, _, _, parent_execution_id = _create_delegation(client, f"b4-cancel-{suffix}")
+        delegation_id, _, _, _, parent_execution_id = await _create_delegation(client, f"b4-cancel-{suffix}")
         response = client.post(f"/workflows/{parent_execution_id}/delegations/{delegation_id}/cancel")
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "cancelled"
@@ -55,7 +55,7 @@ async def test_b4_timeout_closes_child_without_terminalizing_parent() -> None:
     """
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, _, _, _, parent_execution_id = _create_delegation(client, f"b4-timeout-{suffix}")
+        delegation_id, _, _, _, parent_execution_id = await _create_delegation(client, f"b4-timeout-{suffix}")
 
     async with SessionLocal() as db:
         delegation_uuid = uuid.UUID(delegation_id)
