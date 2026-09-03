@@ -20,7 +20,7 @@ describe("RuntimeCorrelations UI consistency", () => {
     expect(source).toContain("execution.id");
     expect(source).toContain("trace.trace_id");
     expect(source).toContain("audit.id");
-    expect(source).toContain("audit.workflow_execution_id");
+    expect(source).toContain("focusedAudit.workflow_execution_id");
     expect(source).not.toMatch(/\b(?:executions|traces|audits|operator_actions)\s*\[\s*0\s*\]/);
   });
 
