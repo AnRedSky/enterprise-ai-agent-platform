@@ -28,24 +28,40 @@ Tenant-safe Real API bootstrap 在 `POST /auth/register` 成功后，调用 `GET
 
 `AsyncSession.rollback()` 会使已加载 ORM 实体的属性进入 expired 状态。随后在普通属性访问中触发数据库惰性加载，而该访问不处于 SQLAlchemy async greenlet 上下文，因此产生 `MissingGreenlet`。这属于测试事务生命周期错误，不是 Worker、Delegation Runtime 或 PostgreSQL 运行态故障。
 
-## 4. 修复
+## 4. B2/B3 并发 Worker 暴露的第三个根因
 
-`backend/tests/api_real/test_agent_delegation_bridge_api.py` 做两类调整：
+修复 `MissingGreenlet` 后，真实环境保持 3 个 Worker 并发执行时又暴露两类测试竞态：
 
-1. B2 在 rollback 前保存 `frontier.status` 到普通 Python 值 `frontier_status`，rollback 后只读取该值；
-2. B3 在可能触发 rollback 的调用前保存 `delegation.id` 与 `delegation.tenant_id`，rollback 后使用这些普通值重新查询数据库。
+### B2 Frontier 可能已经被后台 Worker 消费
 
-修复遵循 AsyncSession 事务边界：rollback 后不得继续依赖可能 expired 的 ORM 属性；需要重新读取持久事实时，应重新执行显式查询。
+B2 原先先读取 `WorkflowFrontier.status == pending`，rollback 后再调用测试 Worker 的 `_claim_pending_delegation_frontier()`，并断言必须返回 Frontier。真实 Worker 可以在这两个操作之间合法 Claim 并执行该 Delegation，因此测试 Worker 返回 `None` 并不表示生产故障，而是“该 work item 已经被另一个合法 Worker 消费”。
 
-本次没有修改生产 Delegation、Worker、SQLAlchemy Session 或 Runtime 代码，也没有通过关闭 expire 行为或捕获 `MissingGreenlet` 来掩盖测试缺陷。
+### B3 Claim 可能与后台 Worker 同时竞争
 
-## 5. 服务生命周期边界
+B3 原先假定读取到 `pending` 后本地 Claim 一定成功。多个 Worker 同时竞争同一个 Delegation 时，本地 Claim 可能在 flush 阶段遇到 `uq_workflow_execution_tenant_idempotency` 唯一约束冲突；此时应回滚当前测试事务并重新读取 durable Delegation 状态，而不是把正常的并发竞争误报为业务故障。
+
+因此这些 Real API 测试必须把“多个合法 Worker 并发存在”作为正式运行条件，而不能依赖某个测试 Worker 必然拥有任务。
+
+## 5. 修复
+
+`backend/tests/api_real/test_agent_delegation_bridge_api.py` 做以下调整：
+
+1. B2 在 rollback 前保存 ORM 状态为普通 Python 值，rollback 后不再访问 expired 属性；
+2. B2 如果测试 Worker 没有再次 Claim 到 Frontier，则直接等待 durable Delegation 终态，允许后台 Worker 完成同一合法 generation；
+3. B3 在可能触发 rollback 的调用前保存 `delegation.id` 与 `delegation.tenant_id`；
+4. B3 Claim 遇到 `HTTPException(409)` 或 PostgreSQL `IntegrityError` 时回滚并重新读取 durable 状态；
+5. B3 failure fixture 只在测试 Worker 真正拥有当前 generation 时修改 Worker Execution 为 failed 并调用正式 `fail_delegation()`；如果后台 Worker 已取得 ownership，则等待其真实失败闭环；
+6. 所有等待均使用有界的相对时间窗口，不依赖固定历史时间或自然时间无限流逝。
+
+这些调整没有放宽生产 Claim、Worker ownership、generation fencing 或 Delegation lifecycle Contract，也没有关闭 SQLAlchemy warning、吞掉数据库异常或修改服务生命周期。
+
+## 6. 服务生命周期边界
 
 根据 `docs/01-governance/DEVELOPMENT.md`，Real API Gate 不负责自动创建、启动、重启或停止 API、Worker、Scheduler、PostgreSQL、Redis。服务由开发者按标准命令手动运行，Gate 只负责探测与测试。
 
 因此本次不修改服务启动逻辑，也不在测试脚本中加入进程管理。
 
-## 6. 本地验证流程
+## 7. 本地验证流程
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
@@ -63,7 +79,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
 ```
 
-## 7. 验收要求
+如需只验证本次 B2/B3：
+
+```powershell
+uv run pytest -q tests/api_real/test_agent_delegation_bridge_api.py -W error
+```
+
+## 8. 验收要求
 
 最终验收必须继续走真实 HTTP：
 
@@ -71,4 +93,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_ba
 
 数据库读取只能用于失败时区分“生产注册未持久化”与“HTTP Contract/运行态问题”，不能替代 Real API 验收。
 
-B2/B3 Real API 必须在 `-W error` 策略下执行，不能通过忽略 `MissingGreenlet`、ResourceWarning 或其他运行时警告来获得假通过。
+B2/B3 Real API 必须在 `-W error` 策略下执行，不能通过忽略 `MissingGreenlet`、ResourceWarning、IntegrityError 或其他运行时警告来获得假通过。
