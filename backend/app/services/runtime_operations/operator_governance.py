@@ -326,24 +326,38 @@ class OperatorActionGovernanceService:
                 result = await service.resume_from_latest_checkpoint(execution, actor_id, commit=False)
         except HTTPException as exc:
             if idempotency_record is None and effective_idempotency_key is not None:
-                await self._finish_idempotency(effective_idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
-                await self.db.commit()
+                try:
+                    await self._finish_idempotency(effective_idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
+                    await self.db.commit()
+                except Exception:
+                    await self.db.rollback()
+                    raise
             raise
         except Exception as exc:
             if idempotency_record is None and effective_idempotency_key is not None:
-                await self._finish_idempotency(effective_idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
-                await self.db.commit()
+                try:
+                    await self._finish_idempotency(effective_idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
+                    await self.db.commit()
+                except Exception:
+                    await self.db.rollback()
+                    raise
             raise HTTPException(status_code=500, detail="Operator Action 执行失败") from exc
-        if effective_idempotency_key is not None:
-            await self._finish_idempotency(effective_idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
-        await self._audit(
-            actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_execution", resource_id=execution_id,
-            action=action, status="success", workflow_id=execution.workflow_id,
-            workflow_version_id=execution.workflow_version_id, workflow_execution_id=result.id,
-            idempotency_key=effective_idempotency_key,
-            metadata={"idempotency_key_present": idempotency_key is not None, "confirmed": confirm},
-        )
-        await self.db.commit()
+        try:
+            if effective_idempotency_key is not None:
+                await self._finish_idempotency(effective_idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
+            await self._audit(
+                actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_execution", resource_id=execution_id,
+                action=action, status="success", workflow_id=execution.workflow_id,
+                workflow_version_id=execution.workflow_version_id, workflow_execution_id=result.id,
+                idempotency_key=effective_idempotency_key,
+                metadata={"idempotency_key_present": idempotency_key is not None, "confirmed": confirm},
+            )
+            await self.db.commit()
+        except Exception:
+            # Result Resource、Operator Action 与 Audit 必须原子提交；任一最终化步骤失败都不得
+            # 留下当前事务中的 Execution/Idempotency/Audit 脏状态供连接复用。
+            await self.db.rollback()
+            raise
         await self.db.refresh(result)
         return result
 
@@ -380,26 +394,39 @@ class OperatorActionGovernanceService:
                 )
         except HTTPException as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
-                await self.db.commit()
+                try:
+                    await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code=f"HTTP_{exc.status_code}")
+                    await self.db.commit()
+                except Exception:
+                    await self.db.rollback()
+                    raise
             raise
         except Exception as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
-                await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
-                await self.db.commit()
+                try:
+                    await self._finish_idempotency(idempotency_key, tenant_id, None, status="failed", error_code="OPERATOR_ACTION_FAILED")
+                    await self.db.commit()
+                except Exception:
+                    await self.db.rollback()
+                    raise
             raise HTTPException(status_code=500, detail="Operator Action 执行失败") from exc
-        if definition.requires_idempotency_key:
-            if not isinstance(result, WorkflowExecution):
-                raise HTTPException(status_code=500, detail="Operator Action 结果不是 Workflow Execution")
-            await self._finish_idempotency(idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
-        await self._audit(
-            actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_trigger", resource_id=trigger_id,
-            action=action, status="success", workflow_id=workflow.id,
-            workflow_execution_id=result.id if isinstance(result, WorkflowExecution) else None,
-            idempotency_key=idempotency_key,
-            metadata={"confirmed": confirm, "idempotency_key_present": idempotency_key is not None},
-        )
-        await self.db.commit()
+        try:
+            if definition.requires_idempotency_key:
+                if not isinstance(result, WorkflowExecution):
+                    raise HTTPException(status_code=500, detail="Operator Action 结果不是 Workflow Execution")
+                await self._finish_idempotency(idempotency_key, tenant_id, result.id, result_resource_type="workflow_execution")
+            await self._audit(
+                actor_id=actor_id, tenant_id=tenant_id, resource_type="workflow_trigger", resource_id=trigger_id,
+                action=action, status="success", workflow_id=workflow.id,
+                workflow_execution_id=result.id if isinstance(result, WorkflowExecution) else None,
+                idempotency_key=idempotency_key,
+                metadata={"confirmed": confirm, "idempotency_key_present": idempotency_key is not None},
+            )
+            await self.db.commit()
+        except Exception:
+            # Trigger 状态、Invoke Execution、Operator Action 与 Audit 必须共享同一提交边界。
+            await self.db.rollback()
+            raise
         if isinstance(result, WorkflowExecution):
             await self.db.refresh(result)
         return result
