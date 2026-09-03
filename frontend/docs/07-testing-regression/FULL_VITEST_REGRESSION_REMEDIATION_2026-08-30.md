@@ -2,7 +2,7 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-03 本轮检查远端 `main` 与 `frontend`。当前 `main` 已包含在 `frontend` 的 merge-base 中，当前 merge-base 为 `e2fade475c39f8f6a319b25b168114dfd903634e`；本轮未发现 `frontend` 落后于 `main` 的提交。
+2026-09-03 本轮检查远端 `main` 与 `frontend`。`main` 当前为 `4180b55339106b2f922e3d6032399598dc4b14d8`，此前 `frontend` 为 `87092b9643ac6a56f6fb07becbd55cf0b0d3c4dd`；比较结果为 `frontend` 落后 `main` 4 个提交、无 frontend 独有提交。由于 `main` 是从此前 frontend 提交继续演进的后代，本轮将 `frontend` fast-forward 至当前 `main`，确保最新后端测试与文档变更进入前端开发基线。
 
 本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
@@ -11,87 +11,78 @@
 用户在 Windows `frontend` 工作树执行 `npm test`，反馈结果：
 
 ```text
-Test Files  8 failed | 62 passed (70)
-Tests       9 failed | 314 passed (323)
+Test Files  3 failed | 67 passed (70)
+Tests       3 failed | 323 passed (326)
 ```
 
-失败项分为四类：
+失败项分为两类：
 
-1. `ToolWorkbenchUI03UI05.test.ts` 在测试 fixture 中存在未转义的 Vue template 双引号，导致 Vite/esbuild 在加载测试文件阶段直接报 `Syntax error "b"`。
-2. `Agents.test.ts` 对用户可见错误文案要求句末 `。`，而当前实现使用无句号的既有文案；属于测试契约漂移，不涉及后端错误正文泄漏。
-3. Audit Log 的 Runtime durable-ID 测试使用过于严格的字符串空格格式，同时 Full-site gap audit 错把 `AuditLogWorkbench.vue` 外层壳视为必须直接持有 `StatePanel`；实际状态 primitive 已由其子组件 `AuditLogPanel.vue` 持有。
-4. Dashboard / Knowledge UI-04 的状态测试仍假设“全部数据为空”时必须由页面外层 StatePanel 终止 workspace，但当前设计已经把空状态下沉到最近执行区域 / shared primitive；测试应验证用户可见状态与工作区行为，而不是要求旧的 DOM 结构。
+1. `DashboardUI03.test.ts`：测试使用 `shallowMount` 时未显式 stub `StatePanel`，导致共享状态组件被浅渲染为空壳，测试无法从 `wrapper.text()` 观察 `暂无运行记录`。
+2. `DashboardUI04.test.ts`：测试仍要求“所有聚合数据为空”时页面必须进入顶层 empty；当前设计明确保留 Dashboard 工作区、常用入口和最近执行区域的 empty 状态，因此该断言已经与 UI-03/UI-04 的统一设计冲突。
+3. `ToolWorkbenchUI03UI05.test.ts`：测试在 mount 后立即检查 loading DOM，没有等待 Vue 的下一次渲染 tick；`load()` 虽已同步把 `loading` 置为 `true`，DOM 断言时机仍早于更新。
 
 ## 3. 根因分析
 
-### 3.1 ToolWorkbench 测试编译失败
+### 3.1 Dashboard UI-03 shallow stub 边界
 
-测试 fixture 使用普通双引号包裹 Vue template，同时 template 内部存在 `@click="$emit(...)"`，转义层级错误使 esbuild 无法解析测试文件。该问题发生在测试加载阶段，尚未进入业务断言。
+Dashboard 的空运行记录状态由 `StatePanel` 负责。`shallowMount` 会自动浅替换未显式 stub 的子组件，因此测试如果直接断言 `wrapper.text()`，并不能可靠观察 `StatePanel` 的用户可见文案。测试应显式提供最小 `StatePanel` stub，并同时验证 shared state class。
 
-### 3.2 Agents 错误文案断言漂移
+### 3.2 Dashboard UI-04 状态模型漂移
 
-`AgentWorkbench.vue` 已通过统一 `userError()` 屏蔽原始 HTTP / provider 错误正文。测试只需验证稳定的用户可见 fallback 与不泄漏原始错误即可，不应因中文句末标点差异造成回归失败。
+Dashboard 当前状态模型是：
 
-### 3.3 Audit durable-ID / shared-state 断言过度耦合
+- 聚合 API Loading / Permission / Error：页面级 StatePanel；
+- 聚合 API 成功但没有运行记录：继续渲染 Dashboard workspace；
+- 最近执行为空：在“最近执行” SurfaceCard 内显示 `StatePanel state="empty"`；
+- 常用入口始终保持可用。
 
-`AuditLogPanel.vue` 已直接使用 `row.execution_id` 进入 Runtime；Audit 页面壳 `AuditLogWorkbench.vue` 只负责 PageHeader 与子组件组合。因此测试应验证 durable ID 传递关系与状态归属，而不是依赖单一字符串格式或要求父壳重复声明 `StatePanel`。
+因此“全部数据为空 = 页面级 empty”已经不是当前产品 Contract。测试应验证用户可见的 empty 运行记录和快速导航，而不是要求旧版顶层 DOM 结构。
 
-### 3.4 Dashboard / Knowledge 状态测试与当前 UI 结构漂移
+### 3.3 ToolWorkbench loading 断言时序
 
-Dashboard 当前允许“指标全为 0”时继续展示工作区，并在“最近执行”卡片内使用 `StatePanel state="empty"`。Knowledge Workbench 则在知识库成功加载后进入完整 `.grid` 工作区。测试应围绕成功工作区、错误恢复和空状态语义断言，而不是假设旧版顶层 DOM 结构。
+`ToolWorkbench.vue` 在 `onMounted(load)` 中同步设置 `loading=true`，但 Vue DOM 更新发生在下一次 tick。原测试 mount 后立即读取 `.state-panel`，会偶发/稳定地观察到后续初始空状态。该问题属于测试同步边界，不需要修改生产加载状态实现。
 
 ## 4. 本轮最小修复
 
-### 4.1 ToolWorkbench 测试 fixture
+### 4.1 Dashboard UI-03 测试
 
-修复 `ToolWorkbenchUI03UI05.test.ts` 的 ConfirmDialog stub 字符串边界，使 Vite/esbuild 可以正常解析测试文件。未修改 ToolWorkbench API、权限、确认交互或 durable ID 行为。
-
-原子提交：
-
-`fix: repair tool workbench test fixture syntax`
-
-### 4.2 Agent 错误文案测试契约
-
-将测试断言对齐当前稳定用户可见 fallback：`智能体列表加载失败，请刷新后重试`，继续验证不会把 `500 Internal Server Error` 或 `provider unavailable` 暴露给用户。
+显式增加最小 `StatePanel` stub，并验证 `state-panel--empty`，保持对 `暂无运行记录`、智能体管理、工具管理、运行记录等用户可见契约的验证。
 
 原子提交：
 
-`test: align agent error assertion with user-facing contract`
+`test: assert dashboard empty state through shared state panel`
 
-### 4.3 Audit Log
+### 4.2 Dashboard UI-04 测试
 
-- Runtime 深链测试改为语义正则，验证 `execution_id` 来自 `executionId` 且 source 为 `audit`，不再绑定无意义空格格式；
-- Full-site gap audit 将 shared-state 检查落到真正承载状态的 `AuditLogPanel.vue`；
-- Audit Log 成功加载后明确展示 `审计日志已更新`，保持 UI-04 成功反馈契约；
-- 保留 `row.execution_id` → Runtime 的 durable ID 关系，不根据列表顺序推断 Execution。
+将“顶层 empty”断言改为当前正式状态契约：验证最近执行 empty panel、`暂无运行记录` 和 6 个常用入口同时存在；保留 Loading / Permission / Error / Retry / Success / Unknown status 测试。
 
-原子提交：
-
-`test: make audit execution link assertion semantic`
-
-`test: audit delegated state ownership correctly`
-
-`fix: expose audit refresh success state`
-
-### 4.4 Dashboard
-
-取消“聚合数据全为空即进入顶层 empty 状态”的分支，使 Dashboard 在数据为空时仍展示指标与常用入口，并由“最近执行”区域的 `StatePanel state="empty"` 呈现 `暂无运行记录`。
-
-这保持了 UI-03 快速入口可用性，也满足 UI-04 的 Empty 状态治理，不引入第二套状态管理。
+同时将 `SurfaceCard` 替换为可渲染 slot 的最小 stub，使测试直接验证 workspace 内容，而不是依赖组件自动 stub 的内部行为。
 
 原子提交：
 
-`fix: keep dashboard empty execution state visible`
+`test: align dashboard UI states with usable empty workspace`
 
-### 4.5 Knowledge UI-04 测试
+### 4.3 ToolWorkbench UI-03/UI-05 测试
 
-将成功场景从“没有任何 `.state-panel`”调整为“存在 `.grid` 工作区且不存在 loading/error panel”；恢复成功场景同样验证 `.grid` 与 error panel 消失。这样测试验证用户实际可见的成功工作区，而不依赖 shared primitive 的内部 DOM 结构。
+在 loading mount 后增加 `nextTick()`，等待 Vue 完成状态 DOM 更新，再断言 shared `StatePanel` 的 loading 状态。未改变 ToolWorkbench 的 API、权限、确认交互或 durable ID 行为。
 
 原子提交：
 
-`test: assert knowledge success state by workspace semantics`
+`test: await tool loading state render`
 
-## 5. Full-site Governance Contract
+## 5. 已完成的前序回归修复
+
+以下修复仍属于当前回归基线：
+
+- ToolWorkbench 测试 fixture 字符串边界修复；
+- Agent 用户可见错误 fallback 断言对齐，并继续禁止 HTTP/provider 原始错误泄漏；
+- Audit Log durable `execution_id` 关联改为语义断言；
+- Audit Log shared-state ownership 测试定位到 `AuditLogPanel.vue`；
+- Audit Log 成功刷新反馈 `审计日志已更新`；
+- Dashboard 保留空运行记录状态和快速入口；
+- Knowledge UI-04 成功态按 `.grid` 工作区语义断言。
+
+## 6. Full-site Governance Contract
 
 `FullSiteConsistencyStaticAudit.test.ts` 当前约束：
 
@@ -103,9 +94,9 @@ Dashboard 当前允许“指标全为 0”时继续展示工作区，并在“�
 
 这些规则是前端架构治理门禁：页面状态通过共享 primitive 表达，实体关系通过后端 durable ID / Contract 支撑。
 
-## 6. 当前验证状态
+## 7. 当前验证状态
 
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此**不记录未经实际执行的“通过”**。当前已经根据用户反馈完成失败分类、根因定位、最小代码/测试修复和文档同步。
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此**不记录未经实际执行的“通过”**。当前已经根据用户反馈完成 main 同步、失败分类、根因定位、最小测试修复和文档同步。
 
 用户本地同步最新 `frontend`：
 
@@ -118,7 +109,13 @@ git pull --ff-only origin frontend
 git rev-parse HEAD
 ```
 
-本轮完成后，先执行原始全量回归：
+同步后预期 HEAD：
+
+```text
+4180b55339106b2f922e3d6032399598dc4b14d8
+```
+
+然后按标准顺序执行：
 
 ```powershell
 npm test
@@ -134,16 +131,18 @@ npm run test:e2e
 
 没有实际执行的测试不得记录为通过；测试数据必须由 Fixture / Script 自动生成，不得要求手工填写业务信息，也不得自动启动 API、Scheduler、Worker、PostgreSQL、Redis。
 
-## 7. 本地手动验证流程
+## 8. 本地手动验证流程
 
-1. 打开 Dashboard，使用空数据 fixture 验证指标、常用入口和“暂无运行记录”同时可见。
-2. 打开 Knowledge Workbench，分别验证 Loading、Success、Empty、Error/Retry、Permission 状态。
-3. 打开 Audit Log，确认首次加载 Loading、成功刷新反馈、Empty、Error、Permission 状态均使用 shared `StatePanel`。
-4. 在 Audit Log 中点击真实 `execution_id`，确认 Runtime URL 使用该 durable ID，不通过列表位置推断。
-5. 打开 Agent Workbench，触发列表错误，确认只展示用户可读 fallback，不显示 HTTP/provider 原始错误。
-6. 打开 Tool Workbench，确认加载、错误、空状态均正常，并验证启用/停用确认后按 durable `tool.id` 调用后端。
-7. 小屏宽度下确认上述页面操作区、表格、状态面板和卡片保持可读，不产生明显布局溢出。
+1. Dashboard 空数据：确认指标、常用入口和“暂无运行记录”同时可见。
+2. Dashboard Loading：确认聚合请求未完成时显示 loading StatePanel。
+3. Dashboard Permission/Error：确认 403 显示权限状态，普通失败显示错误与重试动作。
+4. Knowledge Workbench：分别验证 Loading、Success、Empty、Error/Retry、Permission 状态。
+5. Audit Log：确认首次 Loading、成功刷新反馈、Empty、Error、Permission 均使用 shared `StatePanel`。
+6. Audit Log 深链：点击真实 `execution_id`，确认 Runtime URL 使用该 durable ID，不通过列表位置推断。
+7. Agent Workbench：触发列表错误，确认只展示用户可读 fallback，不显示 HTTP/provider 原始错误。
+8. Tool Workbench：确认 Loading、Error、Empty 状态均稳定，并验证启用/停用确认后按 durable `tool.id` 调用后端。
+9. 小屏宽度：确认上述页面操作区、表格、状态面板和卡片保持可读，不产生明显布局溢出。
 
-## 8. 下一步
+## 9. 下一步
 
-当前状态仍为 **进行中**：本轮修复尚未由用户 Windows 工作树重新执行 `npm test` 验证。下一步以用户最新全量 Vitest 结果为准：若仍失败，继续按照“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”推进，不进行无关的大规模重构。
+当前状态仍为 **进行中**：本轮测试修复尚未由用户 Windows 工作树重新执行 `npm test` 验证。下一步以用户最新全量 Vitest 结果为准；若 70 个测试文件全部通过，再进入 build、test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
