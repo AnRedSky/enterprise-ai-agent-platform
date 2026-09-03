@@ -53,14 +53,17 @@ onMounted(load);
       <SurfaceCard class="members" title="成员" description="成员角色、状态和所有权操作均基于真实 membership ID。">
         <template #header><span class="member-count">共 {{ totalMembers }} 人</span></template>
         <StatePanel v-if="memberError" state="error" title="成员列表加载失败" :description="memberError" action-label="重试" @action="reloadMembers" />
+        <template v-else-if="membersLoading">
+          <StatePanel state="loading" title="正在加载成员" description="正在同步当前组织的成员和权限信息。" />
+        </template>
         <template v-else>
-          <el-table v-loading="membersLoading" :data="members" border>
+          <el-table :data="members" border>
             <el-table-column prop="user_id" label="用户 ID（User ID）" min-width="280" />
             <el-table-column label="角色" width="170"><template #default="{ row }"><el-tag>{{ roleLabel(row.role) }}</el-tag></template></el-table-column>
             <el-table-column label="状态" width="170"><template #default="{ row }"><el-tag :type="row.status === 'active' ? 'success' : 'warning'">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
             <el-table-column v-if="canManage" label="操作" min-width="430"><template #default="{ row }"><div class="member-actions"><el-button v-if="row.role !== 'owner'" link type="primary" :disabled="saving" @click="openEdit(row as Membership)">编辑</el-button><el-button v-if="row.role !== 'owner'" link type="warning" :disabled="saving" @click="toggleMember(row as Membership)">{{ row.status === "active" ? "暂停" : "恢复" }}</el-button><el-button v-if="canTransferOwner && row.role !== 'owner'" link type="success" :disabled="saving" @click="transfer(row as Membership)">转移所有权</el-button><el-button v-if="row.role !== 'owner'" link type="danger" :disabled="saving" @click="remove(row as Membership)">移除</el-button></div></template></el-table-column>
           </el-table>
-          <StatePanel v-if="!membersLoading && !members.length" state="empty" title="暂无成员" description="当前组织还没有可管理的成员。" action-label="添加成员" @action="memberDialog = true" />
+          <StatePanel v-if="!members.length" state="empty" title="暂无成员" description="当前组织还没有可管理的成员。" action-label="添加成员" @action="memberDialog = true" />
           <div v-if="totalMembers > pageSize" class="pagination-wrap"><el-pagination :current-page="currentPage" :page-size="pageSize" :total="totalMembers" layout="prev, pager, next" background @current-change="changePage" /></div>
         </template>
       </SurfaceCard>
