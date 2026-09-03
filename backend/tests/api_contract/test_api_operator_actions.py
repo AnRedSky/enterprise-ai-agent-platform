@@ -5,6 +5,7 @@
 关键依赖：FastAPI ASGITransport、JWT 鉴权依赖与 OperatorActionGovernanceService。
 """
 
+from inspect import signature
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -13,9 +14,10 @@ from fastapi import HTTPException
 from httpx import ASGITransport, AsyncClient
 
 from app.api.v1.runtime import operator_actions
+from app.core.security import create_token
 from app.dependencies.db import get_db
 from app.main import app
-from app.core.security import create_token
+from app.services.trigger import WorkflowTriggerService
 
 
 class FakeDB:
@@ -63,13 +65,36 @@ def test_operator_action_request_has_explicit_confirmation_and_payload_defaults(
 
 def test_manual_trigger_invoke_exposes_deferred_commit_boundary():
     """验证 Operator Governance 可以让 Manual Trigger 延迟提交到统一治理事务。"""
-    import inspect
-
-    from app.services.trigger import WorkflowTriggerService
-
-    parameter = inspect.signature(WorkflowTriggerService.invoke).parameters["commit"]
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    parameter = signature(WorkflowTriggerService.invoke).parameters["commit"]
+    assert parameter.kind is parameter.KEYWORD_ONLY
     assert parameter.default is True
+
+
+@pytest.mark.asyncio
+async def test_operator_action_routes_require_bearer_authentication():
+    execution_id = uuid4()
+    trigger_id = uuid4()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        execution_availability = await client.get(
+            f"/api/v1/runtime/operator-actions/workflow-executions/{execution_id}"
+        )
+        execution_action = await client.post(
+            f"/api/v1/runtime/operator-actions/workflow-executions/{execution_id}/retry",
+            json={"confirm": True},
+        )
+        trigger_availability = await client.get(
+            f"/api/v1/runtime/operator-actions/workflow-triggers/{trigger_id}"
+        )
+        trigger_action = await client.post(
+            f"/api/v1/runtime/operator-actions/workflow-triggers/{trigger_id}/invoke",
+            headers={"Idempotency-Key": "contract-auth-check"},
+            json={},
+        )
+
+    assert execution_availability.status_code == 401
+    assert execution_action.status_code == 401
+    assert trigger_availability.status_code == 401
+    assert trigger_action.status_code == 401
 
 
 @pytest.mark.asyncio
