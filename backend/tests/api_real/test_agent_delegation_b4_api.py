@@ -49,9 +49,9 @@ async def test_b4_cancel_ends_delegation_without_changing_parent_execution() -> 
 async def test_b4_timeout_closes_child_without_terminalizing_parent() -> None:
     """验证已到期 Delegation 在 Worker Runtime 中进入 timed_out，父 Execution 保持非终态。
 
-    本场景只验证 Claim 后的 timeout 分支。测试先取得 Delegation 行锁，再执行 Claim，
-    防止本地已有后台 Worker 在 Fixture 的 pending → running 窗口内抢先认领；Claim 提交后
-    再设置过期 timeout，保持当前 generation 与 timeout 事实完全确定。
+    本场景只验证 Claim 后的 timeout 分支。Claim 使用 `commit=False`，使 pending → running、Worker
+    Execution、Frontier 与 timeout_at 写入保持在同一事务；提交前后台 Worker 无法观察到 running Claim，
+    从而消除真实多 Worker 环境中的 pending → running 竞争窗口。
     """
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
@@ -71,6 +71,7 @@ async def test_b4_timeout_closes_child_without_terminalizing_parent() -> None:
             tenant_id=delegation.tenant_id,
             delegation_id=delegation.id,
             worker_owner=f"b4-timeout-worker-{suffix}",
+            commit=False,
         )
         assert claimed.worker_execution_id is not None
         delegation.timeout_at = utcnow_naive()

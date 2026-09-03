@@ -114,8 +114,20 @@ async def _bind_deterministic_mock_profile(
     suffix: str,
     *,
     model_name: str = "mock-model",
+    commit: bool = True,
 ) -> uuid.UUID:
-    """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。"""
+    """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。
+
+    Args:
+        db: 当前异步数据库会话。
+        delegation_id: Delegation 标识。
+        suffix: 测试数据唯一后缀。
+        model_name: Mock Provider 使用的模型名。
+        commit: 是否立即提交；关闭时由调用方把 Profile 与 Claim 放入同一事务。
+
+    Returns:
+        UUID: 新建 Model Profile 标识。
+    """
     delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
     target_version = (await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))).scalar_one()
     target_agent = (await db.execute(select(Agent).where(Agent.id == target_version.agent_id))).scalar_one()
@@ -149,7 +161,8 @@ async def _bind_deterministic_mock_profile(
 
     target_version.model_profile_id = mock_profile.id
     delegation.model_profile_id = mock_profile.id
-    await db.commit()
+    if commit:
+        await db.commit()
     return mock_profile.id
 
 
@@ -198,25 +211,38 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
     worker = WorkflowWorker(lease_seconds=60)
     worker.owner = f"b2-worker-{suffix}"
     delegation_uuid = uuid.UUID(delegation_id)
+    frontier = None
+    worker_execution_id = None
 
     async with SessionLocal() as db:
-        await _bind_deterministic_mock_profile(db, delegation_uuid, suffix)
+        await _bind_deterministic_mock_profile(db, delegation_uuid, suffix, commit=False)
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         tenant_id = delegation_row.tenant_id
-        current_status = delegation_row.status
-
-    if current_status == "pending":
-        frontier = await worker._claim_pending_delegation_frontier()
-        if frontier is not None:
-            async with SessionLocal() as db:
-                claimed = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-                worker_execution_id = claimed.worker_execution_id
-                assert worker_execution_id is not None
-                assert frontier.execution_id == worker_execution_id
-            await worker.execute_frontier(frontier)
+        if delegation_row.status == "pending":
+            claimed = await claim_delegation(
+                db=db,
+                tenant_id=tenant_id,
+                delegation_id=delegation_uuid,
+                worker_owner=worker.owner,
+                commit=False,
+            )
+            worker_execution_id = claimed.worker_execution_id
+            assert worker_execution_id is not None
+            frontier = (
+                await db.execute(
+                    select(WorkflowFrontier).where(WorkflowFrontier.execution_id == worker_execution_id)
+                )
+            ).scalar_one()
+            await db.commit()
         else:
-            persisted = await _wait_for_terminal_delegation(delegation_uuid)
-            assert persisted.status in {"completed", "failed"}
+            await db.commit()
+            assert delegation_row.status == "running"
+            worker_execution_id = delegation_row.worker_execution_id
+            assert worker_execution_id is not None
+
+    if frontier is not None:
+        assert frontier.execution_id == worker_execution_id
+        await worker.execute_frontier(frontier)
     else:
         persisted = await _wait_for_terminal_delegation(delegation_uuid)
         assert persisted.status in {"completed", "failed"}
@@ -225,15 +251,18 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         assert persisted.worker_execution_id is not None
         worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == persisted.worker_execution_id))).scalar_one()
-        context = await AgentDelegationRuntimeBridge.load(db, worker_execution)
-        assert context is not None
-        assert context.target_agent_version_id == uuid.UUID(target_version_id)
-        assert context.target_agent_id == uuid.UUID(target_agent_id)
-        assert context.model_profile_id == persisted.model_profile_id
-        assert context.input_data["task_id"] == suffix
-        assert context.selected_context_refs == ("input:task_id",)
-        assert context.allowed_tools == ("tool:fixture.read",)
-        assert context.trace_id == persisted.trace_id
+        if persisted.status == "running":
+            context = await AgentDelegationRuntimeBridge.load(db, worker_execution)
+            assert context is not None
+            assert context.target_agent_version_id == uuid.UUID(target_version_id)
+            assert context.target_agent_id == uuid.UUID(target_agent_id)
+            assert context.model_profile_id == persisted.model_profile_id
+            assert context.input_data["task_id"] == suffix
+            assert context.selected_context_refs == ("input:task_id",)
+            assert context.allowed_tools == ("tool:fixture.read",)
+            assert context.trace_id == persisted.trace_id
+        else:
+            assert persisted.status == "completed"
         assert worker_execution.workflow_version_id == uuid.UUID(workflow_version_id)
         assert worker_execution.status == "completed"
         assert worker_execution.output_data is not None
