@@ -10,13 +10,20 @@ if (-not $repoRoot) {
     throw '当前目录不在 Git 工作树中，无法验证 Real API 源码基线。'
 }
 
+# origin/main 是本地远端跟踪引用，可能因长时间未 fetch 而落后于 GitHub。
+# 基线 Gate 必须先刷新远端 main，再比较 HEAD，避免“HEAD == 旧 origin/main”被误判为最新。
+git fetch --quiet origin main
+if ($LASTEXITCODE -ne 0) {
+    throw '无法刷新 origin/main；请检查 Git 远端连接后重试。'
+}
+
 $head = (git rev-parse HEAD 2>$null).Trim()
 $originMain = (git rev-parse origin/main 2>$null).Trim()
 if (-not $head -or -not $originMain) {
     throw '无法解析 HEAD 或 origin/main；请先执行 git fetch origin。'
 }
 if ($head -ne $originMain) {
-    throw "Real API Gate 要求 HEAD 与 origin/main 完全一致。HEAD=$head, origin/main=$originMain。请先 git pull --ff-only origin main。"
+    throw "Real API Gate 要求 HEAD 与最新 origin/main 完全一致。HEAD=$head, origin/main=$originMain。请先 git pull --ff-only origin main。"
 }
 
 # 当前仓库可能以 backend 目录作为 Git root，也可能以仓库根目录作为 Git root。
@@ -78,7 +85,7 @@ try {
     Pop-Location
 }
 
-Write-Host "[PASS] HEAD == origin/main: $head"
+Write-Host "[PASS] HEAD == latest origin/main: $head"
 Write-Host '[PASS] Critical Real API / Checkpoint test sources are clean.'
 Write-Host '[PASS] Runtime Model Governance tests use unified claim-race helper.'
 Write-Host '[PASS] Checkpoint Resume Candidate tests do not use datetime.utcnow().' 
