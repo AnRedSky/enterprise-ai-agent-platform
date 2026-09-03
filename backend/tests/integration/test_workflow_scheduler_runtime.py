@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -14,6 +15,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from app.infrastructure.db import SessionLocal
 from app.infrastructure.db.session import engine
@@ -44,23 +46,36 @@ async def reset_database_engine_pool() -> None:
 
 
 async def _cleanup(tenant_id, workflow_id, workflow_version_id, trigger_id, schedule_id) -> None:
-    """删除本测试创建的 Scheduler/Workflow 持久化事实，保证重复执行不污染共享数据库。"""
-    async with SessionLocal() as db:
-        async with db.begin():
-            await db.execute(text("DELETE FROM audit_logs WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM workflow_trace_events WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM integration_events WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM workflow_node_executions WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM workflow_frontiers WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM workflow_schedule_slots WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM workflow_executions WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM workflow_schedules WHERE id = :schedule_id"), {"schedule_id": schedule_id})
-            await db.execute(text("DELETE FROM workflow_triggers WHERE id = :trigger_id"), {"trigger_id": trigger_id})
-            await db.execute(text("UPDATE workflows SET published_version_id = NULL WHERE id = :workflow_id"), {"workflow_id": workflow_id})
-            await db.execute(text("DELETE FROM workflow_versions WHERE id = :workflow_version_id"), {"workflow_version_id": workflow_version_id})
-            await db.execute(text("DELETE FROM workflows WHERE id = :workflow_id"), {"workflow_id": workflow_id})
-            await db.execute(text("DELETE FROM users WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
-            await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"tenant_id": tenant_id})
+    """删除本测试创建的持久化事实，并对与后台 Runtime 并发产生的 PostgreSQL 死锁做有限重试。
+
+    Scheduler/Worker 可以在验收断言完成后仍持有本测试 Execution/Frontier 的短事务锁。
+    直接按外键删除顺序清理时，后台事务与清理事务可能形成锁环；这里仅重试 PostgreSQL
+    明确报告的 deadlock detected，等待对方事务完成后重新开启完整清理事务，避免吞掉真实数据错误。
+    """
+    max_attempts = 10
+    for attempt in range(max_attempts):
+        try:
+            async with SessionLocal() as db:
+                async with db.begin():
+                    await db.execute(text("DELETE FROM audit_logs WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM workflow_trace_events WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM integration_events WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM workflow_node_executions WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM workflow_frontiers WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM workflow_schedule_slots WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM workflow_executions WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM workflow_schedules WHERE id = :schedule_id"), {"schedule_id": schedule_id})
+                    await db.execute(text("DELETE FROM workflow_triggers WHERE id = :trigger_id"), {"trigger_id": trigger_id})
+                    await db.execute(text("UPDATE workflows SET published_version_id = NULL WHERE id = :workflow_id"), {"workflow_id": workflow_id})
+                    await db.execute(text("DELETE FROM workflow_versions WHERE id = :workflow_version_id"), {"workflow_version_id": workflow_version_id})
+                    await db.execute(text("DELETE FROM workflows WHERE id = :workflow_id"), {"workflow_id": workflow_id})
+                    await db.execute(text("DELETE FROM users WHERE tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+                    await db.execute(text("DELETE FROM tenants WHERE id = :tenant_id"), {"tenant_id": tenant_id})
+            return
+        except DBAPIError as exc:
+            if getattr(exc.orig, "sqlstate", None) != "40P01" or attempt == max_attempts - 1:
+                raise
+            await asyncio.sleep(0.1 * (attempt + 1))
 
 
 @pytest.mark.asyncio
