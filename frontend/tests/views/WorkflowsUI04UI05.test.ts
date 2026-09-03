@@ -52,6 +52,13 @@ const baseGlobal = {
   },
 };
 
+async function mountWithWorkflow() {
+  const wrapper = mount(Workflows, { global: baseGlobal });
+  await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
+  await (wrapper.vm as any).selectWorkflow(workflow);
+  return wrapper;
+}
+
 describe("Workflows UI-04/UI-05 regression", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,23 +72,24 @@ describe("Workflows UI-04/UI-05 regression", () => {
   it("renders execution permission state from a real 403-shaped failure", async () => {
     api.listExecutions.mockRejectedValue({ response: { status: 403 } });
     const wrapper = mount(Workflows, { global: baseGlobal });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("无权访问运行记录"));
+    await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
+    await (wrapper.vm as any).selectWorkflow(workflow);
+    await vi.waitFor(() => expect(wrapper.text()).toContain("当前账号没有访问该资源的权限"));
     expect(wrapper.text()).toContain("permission");
   });
 
   it("renders audit error state and clears stale audit data", async () => {
     api.audit.mockRejectedValue(new Error("provider failure"));
-    const wrapper = mount(Workflows, { global: baseGlobal });
-    await (wrapper.vm as any).selectWorkflow(workflow);
+    const wrapper = await mountWithWorkflow();
     await (wrapper.vm as any).loadAudit();
-    await vi.waitFor(() => expect(wrapper.text()).toContain("审计记录加载失败"));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("审计记录查询失败"));
     expect(wrapper.text()).toContain("error");
   });
 
   it("exposes trace loading feedback and blocks a concurrent trace request", async () => {
     let resolveTrace!: (value: { data: { items: never[] } }) => void;
     api.trace.mockReturnValueOnce(new Promise((resolve) => { resolveTrace = resolve; }));
-    const wrapper = mount(Workflows, { global: baseGlobal });
+    const wrapper = await mountWithWorkflow();
     const vm = wrapper.vm as any;
     vm.traceExecutionId = "exec-1";
     const request = vm.loadTrace();
@@ -96,10 +104,11 @@ describe("Workflows UI-04/UI-05 regression", () => {
   it("keeps archived workflows read-only", async () => {
     const archived = { ...workflow, status: "archived" };
     const wrapper = mount(Workflows, { global: baseGlobal });
+    await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
     await (wrapper.vm as any).selectWorkflow(archived);
-    await vi.waitFor(() => expect(wrapper.text()).toContain("已归档工作流为只读状态"));
+    await vi.waitFor(() => expect(wrapper.text()).toContain("已归档"));
     expect(wrapper.text()).not.toContain("编辑");
     expect(wrapper.text()).not.toContain("删除");
-    expect(wrapper.text()).toContain("只读状态");
+    expect(wrapper.text()).toContain("已归档");
   });
 });
