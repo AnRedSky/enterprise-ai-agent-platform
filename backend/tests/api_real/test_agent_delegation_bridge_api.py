@@ -123,7 +123,7 @@ async def _prepare_target_model_profile(
         return mock_profile.id
 
 
-def _create_delegation(
+async def _create_delegation(
     client: httpx.Client,
     suffix: str,
     *,
@@ -161,14 +161,11 @@ def _create_delegation(
     )
     assert execution.status_code == 201, execution.text
     execution_id = execution.json()["id"]
-
-    profile_id = asyncio.run(
-        _prepare_target_model_profile(
-            uuid.UUID(target_version_id),
-            uuid.UUID(execution.json()["tenant_id"]),
-            suffix,
-            model_name=model_name,
-        )
+    profile_id = await _prepare_target_model_profile(
+        uuid.UUID(target_version_id),
+        uuid.UUID(execution.json()["tenant_id"]),
+        suffix,
+        model_name=model_name,
     )
 
     delegation = client.post(
@@ -195,28 +192,15 @@ async def _bind_deterministic_mock_profile(
     model_name: str = "mock-model",
     commit: bool = True,
 ) -> uuid.UUID:
-    """为真实验收建立与 Target Agent version 一致的独立 Mock Profile。
-
-    Args:
-        db: 当前异步数据库会话。
-        delegation_id: Delegation 标识。
-        suffix: 测试数据唯一后缀。
-        model_name: Mock Provider 使用的模型名。
-        commit: 是否立即提交；关闭时由调用方把 Profile 与 Claim 放入同一事务。
-
-    Returns:
-        UUID: 新建 Model Profile 标识。
-    """
+    """为已有 Delegation 建立独立 Mock Profile，供非竞态失败 Fixture 使用。"""
     delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
     target_version = (await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))).scalar_one()
-    target_agent = (await db.execute(select(Agent).where(Agent.id == target_version.agent_id))).scalar_one()
     organization = (await db.execute(select(Organization).where(Organization.tenant_id == delegation.tenant_id))).scalar_one_or_none()
     assert organization is not None
-    assert target_agent.owner_id is not None
 
     mock_provider = ModelProvider(
         organization_id=organization.id,
-        name=f"phase-28-mock-provider-{suffix}",
+        name=f"phase-28-mock-provider-{suffix}-late",
         provider_type="mock",
         provider_name="phase-28-real-gate",
         enabled=True,
@@ -224,10 +208,9 @@ async def _bind_deterministic_mock_profile(
     )
     db.add(mock_provider)
     await db.flush()
-
     mock_profile = ModelProfile(
         provider_id=mock_provider.id,
-        name=f"phase-28-mock-profile-{suffix}",
+        name=f"phase-28-mock-profile-{suffix}-late",
         model_type="chat",
         model_name=model_name,
         capabilities={},
@@ -237,7 +220,6 @@ async def _bind_deterministic_mock_profile(
     )
     db.add(mock_profile)
     await db.flush()
-
     target_version.model_profile_id = mock_profile.id
     delegation.model_profile_id = mock_profile.id
     if commit:
@@ -285,7 +267,7 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
     """验证 B1 Claim 后正式 Delegation Frontier Worker 真正执行 target Agent，并完成 Delegation。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, target_agent_id, target_version_id, workflow_version_id, _ = _create_delegation(client, suffix)
+        delegation_id, target_agent_id, target_version_id, workflow_version_id, _ = await _create_delegation(client, suffix)
 
     worker = WorkflowWorker(lease_seconds=60)
     worker.owner = f"b2-worker-{suffix}"
@@ -322,12 +304,11 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         ).scalar_one()
 
     if frontier.status == "pending":
-        # B2 直接验证 Runtime 时使用正式 Worker Claim 入口激活 Frontier，避免把 pending work item
-        # 直接交给 heartbeat；execute_frontier 的契约是消费已经进入 running/owned 状态的 Frontier。
         claimed_frontier = await worker._claim_pending_delegation_frontier()
         if claimed_frontier is None:
             persisted = await _wait_for_terminal_delegation(delegation_uuid)
             assert persisted.status == "completed"
+            frontier = None
         else:
             assert claimed_frontier.execution_id == worker_execution_id
             frontier = claimed_frontier
@@ -363,7 +344,7 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
     """验证旧 Worker generation 不能提前收敛当前 Delegation。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, _, _, _, _ = _create_delegation(client, f"b3-{suffix}")
+        delegation_id, _, _, _, _ = await _create_delegation(client, f"b3-{suffix}")
 
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
@@ -395,7 +376,7 @@ async def test_b3_failed_worker_execution_closes_delegation():
     """验证 Worker Execution 已持久化失败后，当前 generation 能收敛 Delegation failed。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
-        delegation_id, _, _, _, _ = _create_delegation(
+        delegation_id, _, _, _, _ = await _create_delegation(
             client,
             f"b3-failure-{suffix}",
             model_name="mock-http-503",
