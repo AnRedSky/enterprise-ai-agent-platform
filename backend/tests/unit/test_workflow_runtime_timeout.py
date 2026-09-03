@@ -31,7 +31,8 @@ def _service():
 @pytest.mark.asyncio
 async def test_run_marks_workflow_timeout_as_failed(monkeypatch):
     service = _service(); service.governance.audit = AsyncMock(); execution = _mock_execution()
-    version = SimpleNamespace(definition={"config": {"timeout_ms": 10}, "nodes": [{"id": "slow", "type": "input", "config": {"timeout_ms": 1}}]})
+    # 这里验证 Node 自身超时，Workflow deadline 必须明显更长，避免测试执行开销把剩余 Workflow 时间压缩到 Node timeout 以下。
+    version = SimpleNamespace(definition={"config": {"timeout_ms": 1000}, "nodes": [{"id": "slow", "type": "input", "config": {"timeout_ms": 10}}]})
     async def slow_execute(*_args, **_kwargs): await asyncio.sleep(0.05); return {"ok": True}
     monkeypatch.setattr(WorkflowRuntime, "execute_node", slow_execute)
     async def transition(execution, target_status, **kwargs): execution.status = target_status; return execution
