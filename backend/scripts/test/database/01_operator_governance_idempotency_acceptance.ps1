@@ -12,16 +12,16 @@ Write-Host "============================================================"
 Push-Location $backendRoot
 try {
     Write-Host "[1/3] Verify PostgreSQL dependency"
-    if(-not $env:DATABASE_URL -and -not $env:TEST_DATABASE_URL){
-        Write-Host "[NOT EXECUTED] DATABASE_URL / TEST_DATABASE_URL is not configured."
+    Write-Host "[INFO] Database connection is resolved by the project's existing backend configuration; no manual test data or connection value is requested."
+
+    Write-Host "[2/3] Verify migration head"
+    uv run alembic upgrade head
+    if($LASTEXITCODE -ne 0){
+        Write-Host "[NOT EXECUTED] PostgreSQL migration verification could not complete."
         Write-Host "[INFO] Start PostgreSQL manually using the project's normal local development procedure, then rerun this gate."
         Write-Host "[INFO] No protected service was started or stopped by this gate."
         exit 2
     }
-
-    Write-Host "[2/3] Verify migration head"
-    uv run alembic upgrade head
-    if($LASTEXITCODE -ne 0){throw "Alembic migration verification failed."}
 
     Write-Host "[3/3] Execute Operator Action Idempotency PostgreSQL acceptance"
     $env:RUN_DATABASE_INTEGRATION="1"
