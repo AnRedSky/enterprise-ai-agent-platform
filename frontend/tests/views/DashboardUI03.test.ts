@@ -13,6 +13,7 @@ vi.mock("element-plus", () => ({ ElMessage: { error: vi.fn() } }));
 const sharedStubs = {
   PageHeader: { props: ["title", "eyebrow", "description"], template: "<header><h1>{{ title }}</h1><slot name=\"actions\"/></header>" },
   SurfaceCard: { props: ["title", "description"], template: "<section><h2>{{ title }}</h2><slot/></section>" },
+  StatePanel: { props: ["state", "title", "description"], template: "<div class=\"state-panel\" :class=\"`state-panel--${state}`\">{{ title }} {{ description }}</div>" },
   "el-button": true, "el-alert": true, "el-table": true, "el-table-column": true, "el-tag": true,
 };
 
@@ -28,16 +29,12 @@ describe("Dashboard UI-03 migration", () => {
   });
 
   it("keeps dashboard empty state and quick navigation visible", async () => {
-    const wrapper = shallowMount(Dashboard, {
-      global: { stubs: {
-        ...sharedStubs,
-        "el-empty": { template: "<div>{{ description }}</div>", props: ["description"] },
-      } },
-    });
+    const wrapper = shallowMount(Dashboard, { global: { stubs: sharedStubs } });
     await vi.waitFor(() => expect((wrapper.vm as any).loading).toBe(false));
     expect(wrapper.text()).toContain("暂无运行记录");
     expect(wrapper.text()).toContain("智能体管理");
     expect(wrapper.text()).toContain("工具管理");
     expect(wrapper.text()).toContain("运行记录");
+    expect(wrapper.find(".state-panel--empty").exists()).toBe(true);
   });
 });
