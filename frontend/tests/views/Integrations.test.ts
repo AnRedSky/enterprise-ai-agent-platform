@@ -30,6 +30,8 @@ describe("Integrations", () => {
     vi.mocked(integrationApi.deliveries).mockResolvedValue({ data: [] } as never);
     const wrapper = mountIntegrations();
     await vi.waitFor(() => expect(wrapper.text()).toContain("暂无投递目标"));
+    (wrapper.vm as any).activeTab = "subscriptions";
+    await wrapper.vm.$nextTick();
     const button = wrapper.findAll("button").find((item) => item.text().includes("新建事件订阅"));
     expect(button).toBeDefined();
     expect((button!.element as HTMLButtonElement).disabled).toBe(true);
