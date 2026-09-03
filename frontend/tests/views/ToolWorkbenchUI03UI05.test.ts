@@ -13,10 +13,16 @@ import ToolWorkbench from "@/views/tools/components/ToolWorkbench.vue";
 const tool = { id: "tool-1", name: "订单查询", description: "查询订单", endpoint: null, enabled: true, input_schema: {}, created_at: "2026-09-02" };
 const agent = { id: "agent-1", name: "企业助手", model_id: "model-1", status: "published", version: "v1" };
 const global = { stubs: {
-  PageHeader: { template: "<header><slot name=\"actions\" /></header>" }, PageToolbar: { template: "<div><slot /></div>" }, SurfaceCard: { template: "<section><slot name=\"header\" /><slot /></section>" },
-  StatePanel: { props: ["state", "title"], template: "<div class=\"state-panel\">{{ state }} {{ title }}</div>" }, ConfirmDialog: { props: ["modelValue", "loading"], template: "<div v-if=\"modelValue\"><button @click=\"$emit('confirm')">确认</button><button @click=\"$emit('cancel')">取消</button></div>" },
-  "el-button": { props: ["loading", "disabled"], template: "<button :disabled=\"disabled\" @click=\"$emit('click')\"><slot /></button>" }, "el-table": { template: "<div><slot /></div>" }, "el-table-column": { template: "<div />" }, "el-dialog": { props: ["modelValue"], template: "<div v-if=\"modelValue\"><slot /><slot name=\"footer\" /></div>" },
-  "el-form": { template: "<form><slot /></form>" }, "el-form-item": { template: "<div><slot /></div>" }, "el-input": { template: "<input />" }, "el-select": { template: "<select><slot /></select>" }, "el-option": { template: "<option><slot /></option>" }, "el-alert": { template: "<div><slot /></div>" }, "el-tag": { template: "<span><slot /></span>" },
+  PageHeader: { template: "<header><slot name=\"actions\" /></header>" },
+  PageToolbar: { template: "<div><slot /></div>" },
+  SurfaceCard: { template: "<section><slot name=\"header\" /><slot /></section>" },
+  StatePanel: { props: ["state", "title"], template: "<div class=\"state-panel\">{{ state }} {{ title }}</div>" },
+  ConfirmDialog: { props: ["modelValue", "loading"], template: `<div v-if="modelValue"><button @click="$emit('confirm')">确认</button><button @click="$emit('cancel')">取消</button></div>` },
+  "el-button": { props: ["loading", "disabled"], template: "<button :disabled=\"disabled\" @click=\"$emit('click')\"><slot /></button>" },
+  "el-table": { template: "<div><slot /></div>" }, "el-table-column": { template: "<div />" },
+  "el-dialog": { props: ["modelValue"], template: "<div v-if=\"modelValue\"><slot /><slot name=\"footer\" /></div>" },
+  "el-form": { template: "<form><slot /></form>" }, "el-form-item": { template: "<div><slot /></div>" }, "el-input": { template: "<input />" },
+  "el-select": { template: "<select><slot /></select>" }, "el-option": { template: "<option><slot /></option>" }, "el-alert": { template: "<div><slot /></div>" }, "el-tag": { template: "<span><slot /></span>" },
 } };
 
 describe("ToolWorkbench UI-03/UI-05", () => {

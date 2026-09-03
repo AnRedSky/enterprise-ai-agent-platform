@@ -35,7 +35,7 @@ const metricCards = computed(() => [
   { key: "executions", label: "运行记录", value: metrics.executions, caption: "累计执行", description: "系统运行记录总量" },
   { key: "failed", label: "失败运行", value: metrics.failedExecutions, caption: metrics.failedExecutions ? "需要关注" : "运行正常", description: "失败运行需要排查" },
 ]);
-const pageState = computed(() => permissionDenied.value ? "permission" : error.value ? "error" : loading.value ? "loading" : metrics.agents + metrics.tools + metrics.executions === 0 ? "empty" : "success");
+const pageState = computed(() => permissionDenied.value ? "permission" : error.value ? "error" : loading.value ? "loading" : "success");
 const recentFailedCount = computed(() => recentExecutions.value.filter((execution) => execution.status === "failed").length);
 const recentRunningCount = computed(() => recentExecutions.value.filter((execution) => execution.status === "running" || execution.status === "pending").length);
 const quickActions = [

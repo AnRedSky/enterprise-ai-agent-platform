@@ -12,6 +12,7 @@
         <el-button :loading="loading" @click="load">应用筛选</el-button>
       </div>
     </SurfaceCard>
+    <div v-if="successMessage" class="success-message" role="status">{{ successMessage }}</div>
 
     <StatePanel v-if="loading && !items.length" state="loading" title="正在加载审计日志" description="正在同步审计记录，请稍候。" />
     <StatePanel v-else-if="permissionDenied" state="permission" title="无权查看审计日志" description="当前账号没有审计日志查询权限，请联系管理员。" />
@@ -54,6 +55,7 @@ const status = ref("");
 const loading = ref(true);
 const error = ref(false);
 const permissionDenied = ref(false);
+const successMessage = ref("");
 const statusOptions = [
   { value: "success", label: "成功" }, { value: "failed", label: "失败" }, { value: "running", label: "运行中" },
   { value: "pending", label: "等待中" }, { value: "cancelled", label: "已取消" }, { value: "completed", label: "已完成" },
@@ -70,10 +72,12 @@ async function load() {
   loading.value = true;
   error.value = false;
   permissionDenied.value = false;
+  successMessage.value = "";
   try {
     const response = await runtimeApi.auditLogs({ page: page.value, page_size: pageSize.value, ...(status.value ? { status: status.value } : {}) });
     items.value = response.data.items ?? [];
     total.value = response.data.total ?? 0;
+    successMessage.value = "审计日志已更新";
   } catch (e: any) {
     items.value = [];
     total.value = 0;
@@ -88,6 +92,7 @@ onMounted(() => void load());
 .audit-panel { display:grid; gap:var(--ui-space-4); }
 .filter-form { display:flex; gap:10px; align-items:center; padding:16px 20px; }
 .status-select { width:180px; }
+.success-message { padding:10px 14px; border:1px solid var(--ui-border-default); border-radius:var(--ui-radius-md); color:var(--ui-text-secondary); background:var(--ui-bg-subtle); font-size:12px; }
 .table-wrap { overflow-x:auto; }
 .pagination-wrap { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-top:16px; }
 .result-summary,.muted { font-size:12px; color:var(--ui-text-tertiary); }
