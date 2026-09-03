@@ -16,6 +16,7 @@ const currentMembership = computed(() => members.value.find((member) => member.u
 const canManage = computed(() => currentMembership.value?.status === "active" && (currentMembership.value.role === "owner" || currentMembership.value.role === "admin"));
 const canTransferOwner = computed(() => currentMembership.value?.status === "active" && currentMembership.value.role === "owner");
 const pageState = computed(() => error.value ? "error" : loading.value ? "loading" : organization.value ? "success" : "empty");
+const organizationData = computed(() => organization.value as Organization);
 function statusLabel(status: Organization["status"] | Membership["status"]) { return status === "active" ? "已启用（active）" : status === "suspended" ? "已暂停（suspended）" : `未知状态（${status}）`; }
 function roleLabel(role: Membership["role"]) { return role === "owner" ? "所有者（owner）" : role === "admin" ? "管理员（admin）" : role === "member" ? "成员（member）" : `未知角色（${role}）`; }
 function organizationLoadError(errorValue: unknown) { const status = (errorValue as { response?: { status?: number } } | null)?.response?.status; if (status === 403) return "组织详情加载失败：当前用户无权访问该组织。"; if (status === 404) return "组织详情加载失败：组织不存在或已不可访问。"; return "组织详情加载失败，请稍后重试"; }
@@ -48,7 +49,7 @@ onMounted(load);
 
     <template v-else>
       <SurfaceCard title="组织信息" description="组织 ID 是当前详情上下文的 durable identifier。">
-        <div class="identity"><strong>{{ organization.name }}</strong><span>{{ organization.id }}</span><el-tag :type="organization.status === 'active' ? 'success' : 'warning'">{{ statusLabel(organization.status) }}</el-tag></div>
+        <div class="identity"><strong>{{ organizationData.name }}</strong><span>{{ organizationData.id }}</span><el-tag :type="organizationData.status === 'active' ? 'success' : 'warning'">{{ statusLabel(organizationData.status) }}</el-tag></div>
       </SurfaceCard>
       <SurfaceCard class="members" title="成员" description="成员角色、状态和所有权操作均基于真实 membership ID。">
         <template #header><span class="member-count">共 {{ totalMembers }} 人</span></template>
