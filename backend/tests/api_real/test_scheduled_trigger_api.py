@@ -24,7 +24,6 @@ _AUTO_TENANT_ID: str | None = None
 _AUTO_USER_ID: str | None = None
 _AUTO_WORKFLOW_ID: str | None = None
 _AUTO_VERSION_ID: str | None = None
-_AUTO_TRIGGER_ID: str | None = None
 
 pytestmark = pytest.mark.real_api
 
@@ -41,20 +40,12 @@ def scheduler_event_loop():
 
 
 def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
-    """在测试专用事件循环执行异步操作。
-
-    参数：
-        loop: 测试专用事件循环。
-        coroutine: 待执行协程。
-
-    返回值：
-        协程返回值。
-    """
+    """在测试专用事件循环执行异步操作。"""
     return loop.run_until_complete(coroutine)
 
 
 def _client() -> httpx.Client:
-    """创建当前 Real API 的认证客户端；测试上下文缺失时由模块夹具自动准备。"""
+    """创建当前 Real API 的认证客户端。"""
     if not TOKEN:
         pytest.fail("Real API test context bootstrap failed: ACCESS_TOKEN is unavailable")
     return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20.0)
@@ -72,32 +63,48 @@ def _test_session_factory():
 
 
 def _request(client: httpx.Client, method: str, path: str, **kwargs) -> httpx.Response:
-    """执行 Real API 请求并在失败时提供完整响应。
-
-    参数：
-        client: 已认证 HTTP 客户端。
-        method: HTTP 方法。
-        path: API 相对路径。
-        kwargs: HTTP 请求参数。
-
-    返回值：
-        HTTP 响应。
-    """
+    """执行 Real API 请求并在失败时提供完整响应。"""
     response = client.request(method, path, **kwargs)
     if response.status_code >= 400:
         raise AssertionError(f"{method} {path} -> {response.status_code}: {response.text}")
     return response
 
 
-@pytest.fixture(scope="module", autouse=True)
-def scheduled_trigger_real_api_context():
-    """自动生成 Scheduled Trigger 所需 Tenant/User/Workflow/Version，并在结束后清理。
+async def _cleanup_auto_context(tenant_id: str, workflow_id: str) -> None:
+    """按外键依赖顺序清理自动生成 Tenant 的全部运行时事实。"""
+    engine = _test_engine()
+    try:
+        async with engine.begin() as connection:
+            statements = [
+                "DELETE FROM audit_logs WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_trace_events WHERE tenant_id = :tenant_id",
+                "DELETE FROM integration_events WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_node_executions WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_frontiers WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_schedule_slots WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_executions WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_schedules WHERE tenant_id = :tenant_id",
+                "DELETE FROM workflow_triggers WHERE tenant_id = :tenant_id",
+                "UPDATE workflows SET published_version_id = NULL WHERE id = :workflow_id",
+                "DELETE FROM workflow_versions WHERE workflow_id = :workflow_id",
+                "DELETE FROM workflows WHERE tenant_id = :tenant_id",
+                "DELETE FROM organization_memberships WHERE user_id IN (SELECT id FROM users WHERE tenant_id = :tenant_id)",
+                "DELETE FROM organizations WHERE tenant_id = :tenant_id",
+                "DELETE FROM users WHERE tenant_id = :tenant_id",
+                "DELETE FROM tenants WHERE id = :tenant_id",
+            ]
+            params = {"tenant_id": uuid.UUID(tenant_id), "workflow_id": uuid.UUID(workflow_id)}
+            for statement in statements:
+                await connection.execute(text(statement), params)
+    finally:
+        await engine.dispose()
 
-    Gate 已提供 context 时直接复用；直接运行 pytest 时自动注册随机用户并创建合法 published Workflow，
-    不再要求开发者手工填写 TRIGGER_WORKFLOW_ID 或 ACCESS_TOKEN。生产服务生命周期仍完全由 Gate 之外管理。
-    """
+
+@pytest.fixture(scope="module", autouse=True)
+def scheduled_trigger_real_api_context(scheduler_event_loop):
+    """自动生成隔离 Tenant/User/Workflow/Version；Gate 已提供 context 时直接复用。"""
     global TOKEN, TRIGGER_WORKFLOW_ID
-    global _AUTO_TENANT_ID, _AUTO_USER_ID, _AUTO_WORKFLOW_ID, _AUTO_VERSION_ID, _AUTO_TRIGGER_ID
+    global _AUTO_TENANT_ID, _AUTO_USER_ID, _AUTO_WORKFLOW_ID, _AUTO_VERSION_ID
 
     if TOKEN and TRIGGER_WORKFLOW_ID:
         yield
@@ -112,7 +119,6 @@ def scheduled_trigger_real_api_context():
         _AUTO_TENANT_ID = str(login["tenant_id"])
         _AUTO_USER_ID = str(login["user_id"])
         client.headers["Authorization"] = f"Bearer {TOKEN}"
-
         workflow = _request(
             client,
             "POST",
@@ -121,7 +127,6 @@ def scheduled_trigger_real_api_context():
         ).json()
         _AUTO_WORKFLOW_ID = str(workflow["id"])
         TRIGGER_WORKFLOW_ID = _AUTO_WORKFLOW_ID
-
         version = _request(
             client,
             "POST",
@@ -141,53 +146,10 @@ def scheduled_trigger_real_api_context():
 
     yield
 
-    if _AUTO_TENANT_ID:
-        _run_async(scheduler_event_loop_for_cleanup(), _cleanup_auto_context(_AUTO_TENANT_ID))
+    if _AUTO_TENANT_ID and _AUTO_WORKFLOW_ID:
+        _run_async(scheduler_event_loop, _cleanup_auto_context(_AUTO_TENANT_ID, _AUTO_WORKFLOW_ID))
     TOKEN = None
     TRIGGER_WORKFLOW_ID = None
-
-
-@pytest.fixture(scope="module")
-def scheduler_event_loop_for_cleanup():
-    """为模块夹具 teardown 提供独立数据库事件循环。"""
-    loop = asyncio.new_event_loop()
-    try:
-        yield loop
-    finally:
-        if not loop.is_closed():
-            loop.close()
-
-
-async def _cleanup_auto_context(tenant_id: str) -> None:
-    """按外键依赖顺序清理自动生成 Tenant 的全部运行时事实。"""
-    engine = _test_engine()
-    try:
-        async with engine.begin() as connection:
-            statements = [
-                "DELETE FROM audit_logs WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_trace_events WHERE tenant_id = :tenant_id",
-                "DELETE FROM integration_events WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_node_executions WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_frontiers WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_schedule_slots WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_executions WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_schedules WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_triggers WHERE tenant_id = :tenant_id",
-                "DELETE FROM workflow_versions WHERE workflow_id = :workflow_id",
-                "UPDATE workflows SET published_version_id = NULL WHERE id = :workflow_id",
-                "DELETE FROM workflows WHERE tenant_id = :tenant_id",
-                "DELETE FROM organization_memberships WHERE user_id IN (SELECT id FROM users WHERE tenant_id = :tenant_id)",
-                "DELETE FROM organizations WHERE tenant_id = :tenant_id",
-                "DELETE FROM users WHERE tenant_id = :tenant_id",
-                "DELETE FROM tenants WHERE id = :tenant_id",
-            ]
-            for statement in statements:
-                params = {"tenant_id": uuid.UUID(tenant_id)}
-                if ":workflow_id" in statement:
-                    params["workflow_id"] = uuid.UUID(_AUTO_WORKFLOW_ID) if _AUTO_WORKFLOW_ID else uuid.uuid4()
-                await connection.execute(text(statement), params)
-    finally:
-        await engine.dispose()
 
 
 async def _execution_rows(idempotency_key: str) -> list[dict]:
