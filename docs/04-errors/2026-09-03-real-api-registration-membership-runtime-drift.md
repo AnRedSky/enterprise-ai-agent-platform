@@ -19,25 +19,33 @@ Tenant-safe Real API bootstrap 在 `POST /auth/register` 成功后，调用 `GET
 
 项目此前的 Real API Organization Governance 测试已经通过 `_list_all_members()` 分页读取完整成员集合来避免同类误判。本次修复将同一规则补齐到 Tenant-safe bootstrap。
 
-## 3. 修复
+## 3. 后续真实 API 测试暴露的第二个根因
 
-`backend/scripts/test/api-real/00_bootstrap_real_api_tenant_safe.py` 新增 `_find_membership()`：
+分页修复后，B2/B3 Real API 测试出现 `sqlalchemy.exc.MissingGreenlet`。失败位置都发生在 `await db.rollback()` 之后继续读取已经加载的 ORM 实体属性：
 
-1. 以 `offset=0, limit=50` 请求成员列表；
-2. 在当前页搜索注册用户；
-3. 未找到且尚有后续成员时继续下一页；
-4. 找到后返回真实 membership ID；
-5. 遍历完全部分页仍未找到时，才执行数据库持久事实诊断。
+- B2 在 rollback 后读取 `frontier.status`；
+- B3 在 rollback 后继续读取 `delegation.id` / `delegation.tenant_id`。
 
-这样既保持真实 HTTP 验收，又不会通过直接写数据库或重复 POST `/members` 掩盖 Contract 问题。
+`AsyncSession.rollback()` 会使已加载 ORM 实体的属性进入 expired 状态。随后在普通属性访问中触发数据库惰性加载，而该访问不处于 SQLAlchemy async greenlet 上下文，因此产生 `MissingGreenlet`。这属于测试事务生命周期错误，不是 Worker、Delegation Runtime 或 PostgreSQL 运行态故障。
 
-## 4. 服务生命周期边界
+## 4. 修复
+
+`backend/tests/api_real/test_agent_delegation_bridge_api.py` 做两类调整：
+
+1. B2 在 rollback 前保存 `frontier.status` 到普通 Python 值 `frontier_status`，rollback 后只读取该值；
+2. B3 在可能触发 rollback 的调用前保存 `delegation.id` 与 `delegation.tenant_id`，rollback 后使用这些普通值重新查询数据库。
+
+修复遵循 AsyncSession 事务边界：rollback 后不得继续依赖可能 expired 的 ORM 属性；需要重新读取持久事实时，应重新执行显式查询。
+
+本次没有修改生产 Delegation、Worker、SQLAlchemy Session 或 Runtime 代码，也没有通过关闭 expire 行为或捕获 `MissingGreenlet` 来掩盖测试缺陷。
+
+## 5. 服务生命周期边界
 
 根据 `docs/01-governance/DEVELOPMENT.md`，Real API Gate 不负责自动创建、启动、重启或停止 API、Worker、Scheduler、PostgreSQL、Redis。服务由开发者按标准命令手动运行，Gate 只负责探测与测试。
 
 因此本次不修改服务启动逻辑，也不在测试脚本中加入进程管理。
 
-## 5. 本地验证流程
+## 6. 本地验证流程
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
@@ -55,10 +63,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_r
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_backend_regression_gate.ps1
 ```
 
-## 6. 验收要求
+## 7. 验收要求
 
 最终验收必须继续走真实 HTTP：
 
 `/auth/register` → `/organizations/{id}/members` 分页查询 → membership role update → 后续 Real API 测试。
 
 数据库读取只能用于失败时区分“生产注册未持久化”与“HTTP Contract/运行态问题”，不能替代 Real API 验收。
+
+B2/B3 Real API 必须在 `-W error` 策略下执行，不能通过忽略 `MissingGreenlet`、ResourceWarning 或其他运行时警告来获得假通过。

@@ -200,8 +200,9 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
             persisted = await _wait_for_terminal_delegation(delegation_uuid)
         elif execution.worker_owner == worker.owner:
             frontier = (await db.execute(select(WorkflowFrontier).where(WorkflowFrontier.execution_id == execution.id))).scalar_one()
+            frontier_status = frontier.status
             await db.rollback()
-            if frontier.status == "pending":
+            if frontier_status == "pending":
                 frontier = await worker._claim_pending_delegation_frontier()
                 assert frontier is not None
             await worker.execute_frontier(frontier)
@@ -239,12 +240,14 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
         delegation_id, _, _, _, _ = await _create_delegation(client, f"b3-{suffix}")
     async with SessionLocal() as db:
         delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == uuid.UUID(delegation_id)))).scalar_one()
-        claimed = await _claim_or_observe_running(db, delegation.id, delegation.tenant_id, f"b3-worker-{suffix}")
+        delegation_id_value = delegation.id
+        tenant_id_value = delegation.tenant_id
+        claimed = await _claim_or_observe_running(db, delegation_id_value, tenant_id_value, f"b3-worker-{suffix}")
         with pytest.raises(HTTPException) as exc_info:
-            await complete_delegation(db=db, tenant_id=delegation.tenant_id, delegation_id=delegation.id, worker_execution_id=uuid.uuid4())
+            await complete_delegation(db=db, tenant_id=tenant_id_value, delegation_id=delegation_id_value, worker_execution_id=uuid.uuid4())
         assert exc_info.value.status_code == 409
         await db.rollback()
-        persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation.id))).scalar_one()
+        persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id_value))).scalar_one()
         assert persisted.status == "running"
         assert persisted.worker_execution_id == claimed.worker_execution_id
 
