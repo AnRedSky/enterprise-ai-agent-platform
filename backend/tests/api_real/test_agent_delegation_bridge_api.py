@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
-from app.models.core import Agent, AgentVersion
+from app.models.core import Agent, AgentVersion, User
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
@@ -62,7 +62,6 @@ def _publish_agent(client: httpx.Client, name: str) -> tuple[str, str]:
 
 async def _prepare_target_model_profile(
     target_version_id: uuid.UUID,
-    tenant_id: uuid.UUID,
     suffix: str,
     *,
     model_name: str = "mock-model",
@@ -71,7 +70,6 @@ async def _prepare_target_model_profile(
 
     Args:
         target_version_id: 已发布 Target Agent Version 标识。
-        tenant_id: 测试租户标识。
         suffix: 测试数据唯一后缀。
         model_name: Mock Provider 使用的模型名。
 
@@ -79,8 +77,9 @@ async def _prepare_target_model_profile(
         UUID: 新建 Model Profile 标识。
 
     设计意图：真实环境允许后台 Worker 持续扫描 pending Delegation，因此不能先创建 Delegation
-    再异步补齐 Runtime Provider 配置，否则后台 Worker 可能合法 Claim 一个尚未具备完整 Runtime
-    依赖的 Delegation。Provider/Profile 必须在 Delegation 对 Worker 可见之前完成提交。
+    再异步补齐 Target Agent Runtime Provider 配置。Profile 先提交，Delegation 创建事务再从
+    Target Agent Version 读取同一个 model_profile_id，从而使 Worker 第一次 Claim 时 Runtime
+    所需的 Agent Version → Model Profile → Model Provider 链路已经完整。
     """
     async with SessionLocal() as db:
         target_version = (
@@ -89,8 +88,11 @@ async def _prepare_target_model_profile(
         target_agent = (
             await db.execute(select(Agent).where(Agent.id == target_version.agent_id))
         ).scalar_one()
+        owner = (
+            await db.execute(select(User).where(User.id == target_agent.owner_id)))
+        ).scalar_one()
         organization = (
-            await db.execute(select(Organization).where(Organization.tenant_id == tenant_id))
+            await db.execute(select(Organization).where(Organization.tenant_id == owner.tenant_id))
         ).scalar_one_or_none()
         assert organization is not None
         assert target_agent.owner_id is not None
@@ -163,7 +165,6 @@ async def _create_delegation(
     execution_id = execution.json()["id"]
     profile_id = await _prepare_target_model_profile(
         uuid.UUID(target_version_id),
-        uuid.UUID(execution.json()["tenant_id"]),
         suffix,
         model_name=model_name,
     )
@@ -172,7 +173,6 @@ async def _create_delegation(
         f"/workflows/{execution_id}/delegations",
         json={
             "target_agent_version_id": target_version_id,
-            "model_profile_id": profile_id,
             "delegation_key": f"b2-{suffix}",
             "input_data": {"prompt": "B2 target execution", "task_id": suffix},
             "selected_context_refs": ["input:task_id"],
@@ -181,50 +181,9 @@ async def _create_delegation(
         },
     )
     assert delegation.status_code == 201, delegation.text
-    return delegation.json()["id"], target_agent_id, target_version_id, workflow_version_id, execution_id
-
-
-async def _bind_deterministic_mock_profile(
-    db,
-    delegation_id: uuid.UUID,
-    suffix: str,
-    *,
-    model_name: str = "mock-model",
-    commit: bool = True,
-) -> uuid.UUID:
-    """为已有 Delegation 建立独立 Mock Profile，供非竞态失败 Fixture 使用。"""
-    delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
-    target_version = (await db.execute(select(AgentVersion).where(AgentVersion.id == delegation.target_agent_version_id))).scalar_one()
-    organization = (await db.execute(select(Organization).where(Organization.tenant_id == delegation.tenant_id))).scalar_one_or_none()
-    assert organization is not None
-
-    mock_provider = ModelProvider(
-        organization_id=organization.id,
-        name=f"phase-28-mock-provider-{suffix}-late",
-        provider_type="mock",
-        provider_name="phase-28-real-gate",
-        enabled=True,
-        metadata_json={"purpose": "phase-2.8-real-gate"},
-    )
-    db.add(mock_provider)
-    await db.flush()
-    mock_profile = ModelProfile(
-        provider_id=mock_provider.id,
-        name=f"phase-28-mock-profile-{suffix}-late",
-        model_type="chat",
-        model_name=model_name,
-        capabilities={},
-        parameters={},
-        enabled=True,
-        is_default=False,
-    )
-    db.add(mock_profile)
-    await db.flush()
-    target_version.model_profile_id = mock_profile.id
-    delegation.model_profile_id = mock_profile.id
-    if commit:
-        await db.commit()
-    return mock_profile.id
+    response = delegation.json()
+    assert response["model_profile_id"] == profile_id
+    return response["id"], target_agent_id, target_version_id, workflow_version_id, execution_id
 
 
 async def _wait_for_terminal_delegation(delegation_id: uuid.UUID, timeout_seconds: float = 30.0) -> AgentDelegation:
@@ -294,8 +253,6 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
             assert worker_execution_id is not None
 
     frontier = None
-    if delegation_row.status == "pending":
-        raise AssertionError("unreachable")
     async with SessionLocal() as db:
         frontier = (
             await db.execute(
