@@ -7,7 +7,18 @@ const ownerPassword = process.env.BROWSER_E2E_OWNER_PASSWORD || "BrowserE2EOwner
 async function loginInBrowser(page: import("@playwright/test").Page, username: string, password: string) { await page.goto("/login"); await page.getByLabel("用户名").fill(username); await page.getByLabel("密码").fill(password); await page.getByRole("button", { name: "登录" }).click(); await expect(page).toHaveURL(/\/dashboard$/); }
 async function loginOwner(api: APIRequestContext) { const response = await api.post(apiPath("/auth/login"), { data: { username: ownerUsername, password: ownerPassword } }); expect(response.ok()).toBeTruthy(); return response; }
 async function getOrganization(api: APIRequestContext, headers: Record<string, string>) { const response = await api.get(apiPath("/organizations"), { headers }); expect(response.ok()).toBeTruthy(); const body = await response.json(); expect(body.items?.length).toBeGreaterThan(0); return body.items[0]; }
-async function getMembership(api: APIRequestContext, organizationId: string, userId: string, headers: Record<string, string>) { const response = await api.get(apiPath(`/organizations/${organizationId}/members`), { headers }); expect(response.ok()).toBeTruthy(); const body = await response.json(); const membership = body.items.find((item: { user_id: string }) => item.user_id === userId); expect(membership).toBeTruthy(); return membership; }
+async function getMembership(api: APIRequestContext, organizationId: string, userId: string, headers: Record<string, string>) {
+  const limit = 100;
+  for (let offset = 0;; offset += limit) {
+    const response = await api.get(apiPath(`/organizations/${organizationId}/members?offset=${offset}&limit=${limit}`), { headers });
+    expect(response.ok()).toBeTruthy();
+    const body = await response.json();
+    const membership = body.items.find((item: { user_id: string }) => item.user_id === userId);
+    if (membership) return membership;
+    if (offset + body.items.length >= body.total) break;
+  }
+  throw new Error(`Organization membership not found for user ${userId}`);
+}
 async function confirmMessageBox(page: import("@playwright/test").Page) { const dialog = page.locator(".el-message-box:visible"); await expect(dialog).toBeVisible(); await dialog.locator(".el-message-box__btns .el-button--primary").click(); }
 
 test("Organization management completes the real owner browser contract", async ({ page, playwright }) => {
