@@ -31,7 +31,9 @@ describe("Integrations", () => {
     const wrapper = mountIntegrations();
     await vi.waitFor(() => expect(wrapper.text()).toContain("暂无投递目标"));
     (wrapper.vm as any).activeTab = "subscriptions";
-    await wrapper.vm.$nextTick();
+    await vi.waitFor(() => {
+      expect(wrapper.findAllComponents(ElButton).some((item) => item.text().includes("新建事件订阅"))).toBe(true);
+    });
     const button = wrapper.findAllComponents(ElButton).find((item) => item.text().includes("新建事件订阅"));
     expect(button).toBeDefined();
     expect(button!.props("disabled")).toBe(true);
