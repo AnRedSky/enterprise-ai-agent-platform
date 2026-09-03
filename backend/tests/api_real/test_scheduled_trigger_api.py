@@ -28,27 +28,16 @@ _AUTO_VERSION_ID: str | None = None
 pytestmark = pytest.mark.real_api
 
 
-@pytest.fixture(scope="module")
-def scheduler_event_loop():
-    """创建本模块独立事件循环，避免数据库连接跨测试循环复用。"""
-    loop = asyncio.new_event_loop()
-    try:
-        yield loop
-    finally:
-        if not loop.is_closed():
-            loop.close()
-
-
-def _run_async(loop: asyncio.AbstractEventLoop, coroutine):
-    """在测试专用事件循环执行异步操作。"""
-    return loop.run_until_complete(coroutine)
+async def _run_async(coroutine):
+    """在单次调用内创建并销毁独立事件循环，避免跨测试循环复用异步资源。"""
+    return await asyncio.to_thread(asyncio.run, coroutine)
 
 
 def _client() -> httpx.Client:
     """创建当前 Real API 的认证客户端。"""
     if not TOKEN:
         pytest.fail("Real API test context bootstrap failed: ACCESS_TOKEN is unavailable")
-    return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=20.0)
+    return httpx.Client(base_url=BASE_URL, headers={"Authorization": f"Bearer {TOKEN}"}, timeout=5.0)
 
 
 def _test_engine():
@@ -101,7 +90,7 @@ async def _cleanup_auto_context(tenant_id: str, workflow_id: str) -> None:
 
 
 @pytest.fixture(scope="module", autouse=True)
-def scheduled_trigger_real_api_context(scheduler_event_loop):
+def scheduled_trigger_real_api_context():
     """自动生成隔离 Tenant/User/Workflow/Version；Gate 已提供 context 时直接复用。"""
     global TOKEN, TRIGGER_WORKFLOW_ID
     global _AUTO_TENANT_ID, _AUTO_USER_ID, _AUTO_WORKFLOW_ID, _AUTO_VERSION_ID
@@ -112,7 +101,7 @@ def scheduled_trigger_real_api_context(scheduler_event_loop):
 
     username = f"api_real_scheduler_{uuid.uuid4().hex[:12]}"
     password = f"ApiRealTest!{uuid.uuid4().hex[:20]}"
-    with httpx.Client(base_url=BASE_URL, timeout=20.0) as client:
+    with httpx.Client(base_url=BASE_URL, timeout=5.0) as client:
         registered = _request(client, "POST", "/auth/register", json={"username": username, "password": password}).json()
         login = _request(client, "POST", "/auth/login", json={"username": username, "password": password}).json()
         TOKEN = str(login["access_token"])
@@ -147,7 +136,7 @@ def scheduled_trigger_real_api_context(scheduler_event_loop):
     yield
 
     if _AUTO_TENANT_ID and _AUTO_WORKFLOW_ID:
-        _run_async(scheduler_event_loop, _cleanup_auto_context(_AUTO_TENANT_ID, _AUTO_WORKFLOW_ID))
+        asyncio.run(_cleanup_auto_context(_AUTO_TENANT_ID, _AUTO_WORKFLOW_ID))
     TOKEN = None
     TRIGGER_WORKFLOW_ID = None
 
@@ -211,28 +200,33 @@ async def _seed_scheduler_backlog(trigger_id: str, next_run_at: datetime, interv
         await engine.dispose()
 
 
-def _wait_for_trigger_execution(loop: asyncio.AbstractEventLoop, trigger_id: str, timeout_seconds: float = 20.0) -> list[dict]:
-    """轮询指定 Trigger 的真实 Execution，直到进入终态或超时。"""
+def _run_async(coroutine):
+    """执行一次异步数据库操作并立即销毁对应事件循环。"""
+    return asyncio.run(coroutine)
+
+
+def _wait_for_trigger_execution(trigger_id: str, timeout_seconds: float = 8.0) -> list[dict]:
+    """轮询指定 Trigger 的真实 Execution；超时立即返回并保留现场用于断言。"""
     deadline = time.monotonic() + timeout_seconds
     terminal = {"completed", "failed", "cancelled"}
     while time.monotonic() < deadline:
-        rows = _run_async(loop, _scheduled_execution_rows(trigger_id))
+        rows = _run_async(_scheduled_execution_rows(trigger_id))
         if rows and all(row["status"] in terminal for row in rows):
             return rows
-        time.sleep(1.0)
-    return _run_async(loop, _scheduled_execution_rows(trigger_id))
+        time.sleep(0.5)
+    return _run_async(_scheduled_execution_rows(trigger_id))
 
 
-def _wait_for_execution(loop: asyncio.AbstractEventLoop, key: str, timeout_seconds: float = 20.0) -> list[dict]:
-    """轮询指定幂等键的 Execution，直到进入终态或超时。"""
+def _wait_for_execution(key: str, timeout_seconds: float = 8.0) -> list[dict]:
+    """轮询指定幂等键的 Execution；超时立即返回并保留现场用于断言。"""
     deadline = time.monotonic() + timeout_seconds
     terminal = {"completed", "failed", "cancelled"}
     while time.monotonic() < deadline:
-        rows = _run_async(loop, _execution_rows(key))
+        rows = _run_async(_execution_rows(key))
         if rows and all(row["status"] in terminal for row in rows):
             return rows
-        time.sleep(1.0)
-    return _run_async(loop, _execution_rows(key))
+        time.sleep(0.5)
+    return _run_async(_execution_rows(key))
 
 
 def _create_scheduled_trigger(client: httpx.Client, name: str, config: dict) -> dict:
@@ -240,7 +234,7 @@ def _create_scheduled_trigger(client: httpx.Client, name: str, config: dict) -> 
     return _request(client, "POST", f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers", json={"name": name, "trigger_type": "scheduled", "config": config}).json()
 
 
-def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(scheduler_event_loop):
+def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http():
     """验证 Scheduled Trigger 配置、禁止手工 invoke、真实 Execution 与治理关联。"""
     name = f"api-real-scheduled-{uuid.uuid4().hex[:8]}"
     config = {"timezone": "Asia/Shanghai", "interval_seconds": 60}
@@ -261,8 +255,8 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         invoke = client.post(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}/invoke", json={"input_data": {"source": "scheduled-real-api"}})
         assert invoke.status_code == 409, invoke.text
         assert "不可直接调用" in invoke.text
-        _run_async(scheduler_event_loop, _seed_scheduler_backlog(trigger_id, datetime.now(UTC), 60))
-        rows = _wait_for_trigger_execution(scheduler_event_loop, trigger_id)
+        _run_async(_seed_scheduler_backlog(trigger_id, datetime.now(UTC), 60))
+        rows = _wait_for_trigger_execution(trigger_id)
         assert len(rows) == 1, rows
         assert rows[0]["status"] == "completed", rows
         runtime_key = rows[0]["idempotency_key"]
@@ -271,7 +265,7 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert rows[0]["input_data"]["scheduled_slot"] == runtime_slot
         assert rows[0]["input_data"]["recovery"] is False
         assert "planned_at" in rows[0]["input_data"]
-        audit_rows, trace_rows = _run_async(scheduler_event_loop, _governance_rows(str(rows[0]["id"])))
+        audit_rows, trace_rows = _run_async(_governance_rows(str(rows[0]["id"])))
         assert audit_rows and trace_rows
         assert all(row["tenant_id"] is not None for row in audit_rows + trace_rows)
         assert all(row["workflow_id"] == uuid.UUID(TRIGGER_WORKFLOW_ID) for row in audit_rows + trace_rows)
@@ -279,14 +273,13 @@ def test_scheduled_trigger_create_update_invoke_and_runtime_contract_real_http(s
         assert all(row["execution_id"] == rows[0]["id"] for row in trace_rows)
         assert any(row["action"] == "workflow.trigger.scheduled" for row in audit_rows)
         assert any(row["event_type"] == "trigger.scheduled" for row in trace_rows)
-        time.sleep(2)
-        assert len(_run_async(scheduler_event_loop, _execution_rows(runtime_key))) == 1
+        assert len(_run_async(_execution_rows(runtime_key))) == 1
         assert _request(client, "PATCH", f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}", json={"status": "disabled"}).status_code == 200
         assert client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}").status_code == 204
         assert client.get(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}").status_code == 404
 
 
-def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(scheduler_event_loop):
+def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http():
     """验证两个 Scheduler 实例对同一持久化 slot 只能产生一个 Execution。"""
     engine, session_factory = _test_session_factory()
     with _client() as client:
@@ -295,13 +288,15 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
         now = datetime.now(UTC).replace(microsecond=0)
         runtime_key = ScheduledTriggerScheduler.idempotency_key(trigger_id, now, 60)
         try:
-            _run_async(scheduler_event_loop, _seed_scheduler_backlog(trigger_id, now, 60))
+            _run_async(_seed_scheduler_backlog(trigger_id, now, 60))
+
             async def dispatch():
                 first = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1, session_factory=session_factory)
                 second = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=1, session_factory=session_factory)
                 return await asyncio.gather(first.tick_once(now), second.tick_once(now))
-            counters = _run_async(scheduler_event_loop, dispatch())
-            rows = _wait_for_execution(scheduler_event_loop, runtime_key)
+
+            counters = _run_async(dispatch())
+            rows = _wait_for_execution(runtime_key)
             assert len(rows) == 1, rows
             assert rows[0]["idempotency_key"] == runtime_key
             assert rows[0]["input_data"]["scheduled_slot"] == ScheduledTriggerScheduler.interval_slot(now, 60)
@@ -309,10 +304,10 @@ def test_scheduled_trigger_two_workers_converge_on_one_slot_execution_real_http(
             assert sum(item["dispatched"] for item in counters) == 1
         finally:
             client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
-            _run_async(scheduler_event_loop, engine.dispose())
+            _run_async(engine.dispose())
 
 
-def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(scheduler_event_loop):
+def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http():
     """验证历史 misfire slot 与当前 slot 的 Execution 元数据及幂等恢复。"""
     engine, session_factory = _test_session_factory()
     config = {"timezone": "UTC", "interval_seconds": 60, "misfire_policy": "catch_up", "catch_up_limit": 2}
@@ -327,10 +322,10 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
         current_key = scheduler.slot_idempotency_key(trigger_id, current_slot)
         try:
             recovery_time = datetime.fromtimestamp(recovery_slot * 60, UTC)
-            _run_async(scheduler_event_loop, _seed_scheduler_backlog(trigger_id, recovery_time, 60))
-            counters = _run_async(scheduler_event_loop, scheduler.tick_once(now))
-            recovery_rows = _wait_for_execution(scheduler_event_loop, recovery_key)
-            current_rows = _wait_for_execution(scheduler_event_loop, current_key)
+            _run_async(_seed_scheduler_backlog(trigger_id, recovery_time, 60))
+            counters = _run_async(scheduler.tick_once(now))
+            recovery_rows = _wait_for_execution(recovery_key)
+            current_rows = _wait_for_execution(current_key)
             assert counters["recovered"] >= 1, counters
             assert len(recovery_rows) == len(current_rows) == 1
             assert recovery_rows[0]["status"] == current_rows[0]["status"] == "completed"
@@ -340,10 +335,10 @@ def test_scheduled_trigger_recovery_slot_persists_execution_metadata_real_http(s
             assert current_rows[0]["input_data"]["recovery"] is False
             assert "planned_at" in recovery_rows[0]["input_data"] and "planned_at" in current_rows[0]["input_data"]
             restarted = ScheduledTriggerScheduler(poll_interval_seconds=5, recovery_slots=2, session_factory=session_factory)
-            second_counters = _run_async(scheduler_event_loop, restarted.tick_once(now))
+            second_counters = _run_async(restarted.tick_once(now))
             assert second_counters["dispatched"] == 0, second_counters
-            assert len(_run_async(scheduler_event_loop, _execution_rows(recovery_key))) == 1
-            assert len(_run_async(scheduler_event_loop, _execution_rows(current_key))) == 1
+            assert len(_run_async(_execution_rows(recovery_key))) == 1
+            assert len(_run_async(_execution_rows(current_key))) == 1
         finally:
             client.delete(f"/workflows/{TRIGGER_WORKFLOW_ID}/triggers/{trigger_id}")
-            _run_async(scheduler_event_loop, engine.dispose())
+            _run_async(engine.dispose())
