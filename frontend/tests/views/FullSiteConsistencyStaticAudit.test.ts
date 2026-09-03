@@ -93,7 +93,7 @@ describe("full-site static consistency audit", () => {
     expect(source).toContain("execution.id");
     expect(source).toContain("trace.trace_id");
     expect(source).toContain("audit.id");
-    expect(source).toContain("audit.workflow_execution_id");
+    expect(source).toContain("focusedAudit.workflow_execution_id");
   });
 
   it("keeps closed governance navigation anchored to durable IDs", () => {
