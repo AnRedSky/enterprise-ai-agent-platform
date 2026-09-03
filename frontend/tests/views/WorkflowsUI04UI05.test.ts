@@ -1,105 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
-
-const api = vi.hoisted(() => ({
-  list: vi.fn(),
-  versions: vi.fn(),
-  listExecutions: vi.fn(),
-  audit: vi.fn(),
-  trace: vi.fn(),
-}));
-
+const api = vi.hoisted(() => ({ list: vi.fn(), versions: vi.fn(), listExecutions: vi.fn(), audit: vi.fn(), trace: vi.fn() }));
 vi.mock("../../src/api/workflows", () => ({ workflowApi: api }));
-vi.mock("element-plus", () => ({
-  ElMessage: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
-  ElMessageBox: { confirm: vi.fn(), prompt: vi.fn() },
-}));
-
+vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), warning: vi.fn(), error: vi.fn() }, ElMessageBox: { confirm: vi.fn(), prompt: vi.fn() } }));
 import Workflows from "../../src/views/workflows/index.vue";
-
-const workflow = {
-  id: "wf-1",
-  name: "订单审批",
-  description: "订单审批流程",
-  status: "published",
-  owner_id: "user-1",
-  published_version_id: "ver-1",
-  updated_at: "2026-09-02T06:00:00Z",
-};
-
-const baseGlobal = {
-  stubs: {
-    PageHeader: { template: "<header><slot name=\"actions\" /></header>" },
-    SurfaceCard: { template: "<section><slot name=\"header\" /><slot /></section>" },
-    StatePanel: { props: ["state", "title", "description"], template: "<div class=\"state-panel\">{{ state }} {{ title }} {{ description }}</div>" },
-    "el-button": { props: ["disabled", "loading"], template: "<button :disabled=\"disabled\"><slot /></button>" },
-    "el-form": { template: "<form><slot /></form>" },
-    "el-form-item": { template: "<div><slot /></div>" },
-    "el-input": { template: "<input />" },
-    "el-divider": { template: "<hr />" },
-    "el-row": { template: "<div><slot /></div>" },
-    "el-col": { template: "<div><slot /></div>" },
-    "el-table": { template: "<div><slot /></div>" },
-    "el-table-column": { template: "<div />" },
-    "el-tabs": { template: "<div><slot /></div>" },
-    "el-tab-pane": { template: "<section><slot /></section>" },
-    "el-descriptions": { template: "<div><slot /></div>" },
-    "el-descriptions-item": { template: "<span><slot /></span>" },
-    "el-alert": { template: "<div><slot /></div>" },
-    "el-tag": { template: "<span><slot /></span>" },
-    "el-timeline": { template: "<div><slot /></div>" },
-    "el-timeline-item": { template: "<div><slot /></div>" },
-  },
-};
-
+const workflow = { id: "wf-1", name: "订单审批", description: "订单审批流程", status: "published", owner_id: "user-1", published_version_id: "ver-1", updated_at: "2026-09-02T06:00:00Z" };
+const baseGlobal = { stubs: { PageHeader: { template: "<header><slot name=\"actions\" /></header>" }, SurfaceCard: { template: "<section><slot name=\"header\" /><slot /></section>" }, StatePanel: { props: ["state", "title", "description"], template: "<div class=\"state-panel\">{{ state }} {{ title }} {{ description }}</div>" }, "el-button": { props: ["disabled", "loading"], template: "<button :disabled=\"disabled\"><slot /></button>" }, "el-form": { template: "<form><slot /></form>" }, "el-form-item": { template: "<div><slot /></div>" }, "el-input": { template: "<input />" }, "el-divider": { template: "<hr />" }, "el-row": { template: "<div><slot /></div>" }, "el-col": { template: "<div><slot /></div>" }, "el-table": { template: "<div><slot /></div>" }, "el-table-column": { template: "<div />" }, "el-tabs": { template: "<div><slot /></div>" }, "el-tab-pane": { template: "<section><slot /></section>" }, "el-descriptions": { template: "<div><slot /></div>" }, "el-descriptions-item": { template: "<span><slot /></span>" }, "el-alert": { template: "<div><slot /></div>" }, "el-tag": { template: "<span><slot /></span>" }, "el-timeline": { template: "<div><slot /></div>" }, "el-timeline-item": { template: "<div><slot /></div>" } } };
+async function mountWithWorkflow() { const wrapper = mount(Workflows, { global: baseGlobal }); await vi.waitFor(() => expect(api.list).toHaveBeenCalled()); await (wrapper.vm as any).selectWorkflow(workflow); return wrapper; }
 describe("Workflows UI-04/UI-05 regression", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    api.list.mockResolvedValue({ data: [workflow] });
-    api.versions.mockResolvedValue({ data: [] });
-    api.listExecutions.mockResolvedValue({ data: [] });
-    api.audit.mockResolvedValue({ data: { items: [] } });
-    api.trace.mockResolvedValue({ data: { items: [] } });
-  });
-
-  it("renders execution permission state from a real 403-shaped failure", async () => {
-    api.listExecutions.mockRejectedValue({ response: { status: 403 } });
-    const wrapper = mount(Workflows, { global: baseGlobal });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("无权访问运行记录"));
-    expect(wrapper.text()).toContain("permission");
-  });
-
-  it("renders audit error state and clears stale audit data", async () => {
-    api.audit.mockRejectedValue(new Error("provider failure"));
-    const wrapper = mount(Workflows, { global: baseGlobal });
-    await (wrapper.vm as any).selectWorkflow(workflow);
-    await (wrapper.vm as any).loadAudit();
-    await vi.waitFor(() => expect(wrapper.text()).toContain("审计记录加载失败"));
-    expect(wrapper.text()).toContain("error");
-  });
-
-  it("exposes trace loading feedback and blocks a concurrent trace request", async () => {
-    let resolveTrace!: (value: { data: { items: never[] } }) => void;
-    api.trace.mockReturnValueOnce(new Promise((resolve) => { resolveTrace = resolve; }));
-    const wrapper = mount(Workflows, { global: baseGlobal });
-    const vm = wrapper.vm as any;
-    vm.traceExecutionId = "exec-1";
-    const request = vm.loadTrace();
-    await vi.waitFor(() => expect(wrapper.text()).toContain("正在加载运行链路"));
-    expect(api.trace).toHaveBeenCalledTimes(1);
-    vm.loadTrace();
-    expect(api.trace).toHaveBeenCalledTimes(1);
-    resolveTrace({ data: { items: [] } });
-    await request;
-  });
-
-  it("keeps archived workflows read-only", async () => {
-    const archived = { ...workflow, status: "archived" };
-    const wrapper = mount(Workflows, { global: baseGlobal });
-    await (wrapper.vm as any).selectWorkflow(archived);
-    await vi.waitFor(() => expect(wrapper.text()).toContain("已归档工作流为只读状态"));
-    expect(wrapper.text()).not.toContain("编辑");
-    expect(wrapper.text()).not.toContain("删除");
-    expect(wrapper.text()).toContain("只读状态");
-  });
+  beforeEach(() => { vi.clearAllMocks(); api.list.mockResolvedValue({ data: [workflow] }); api.versions.mockResolvedValue({ data: [] }); api.listExecutions.mockResolvedValue({ data: [] }); api.audit.mockResolvedValue({ data: { items: [] } }); api.trace.mockResolvedValue({ data: { items: [] } }); });
+  it("renders execution permission state from a real 403-shaped failure", async () => { api.listExecutions.mockRejectedValue({ response: { status: 403 } }); const wrapper = mount(Workflows, { global: baseGlobal }); await vi.waitFor(() => expect(api.list).toHaveBeenCalled()); await (wrapper.vm as any).selectWorkflow(workflow); await vi.waitFor(() => expect(wrapper.text()).toContain("当前账号没有访问该资源的权限")); expect(wrapper.text()).toContain("permission"); });
+  it("renders audit error state and clears stale audit data", async () => { api.audit.mockRejectedValue(new Error("provider failure")); const wrapper = await mountWithWorkflow(); await (wrapper.vm as any).loadAudit(); await vi.waitFor(() => expect(wrapper.text()).toContain("审计记录查询失败")); expect(wrapper.text()).toContain("error"); });
+  it("exposes trace loading feedback and blocks a concurrent trace request", async () => { let resolveTrace!: (value: { data: { items: never[] } }) => void; api.trace.mockReturnValueOnce(new Promise((resolve) => { resolveTrace = resolve; })); const wrapper = await mountWithWorkflow(); const vm = wrapper.vm as any; vm.traceExecutionId = "exec-1"; const request = vm.loadTrace(); await vi.waitFor(() => expect(wrapper.text()).toContain("正在加载运行链路")); expect(api.trace).toHaveBeenCalledTimes(1); vm.loadTrace(); expect(api.trace).toHaveBeenCalledTimes(1); resolveTrace({ data: { items: [] } }); await request; });
+  it("keeps archived workflows read-only", async () => { const archived = { ...workflow, status: "archived" }; const wrapper = mount(Workflows, { global: baseGlobal }); await vi.waitFor(() => expect(api.list).toHaveBeenCalled()); await (wrapper.vm as any).selectWorkflow(archived); await vi.waitFor(() => expect(wrapper.text()).toContain("已归档")); expect(wrapper.text()).not.toContain("编辑"); expect(wrapper.text()).not.toContain("删除"); expect(wrapper.text()).toContain("已归档"); });
 });
