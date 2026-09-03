@@ -5,8 +5,8 @@
 2026-09-03 本轮检查远端 `main` 与 `frontend`，当前两者已基于同一基线提交，`frontend` 仅保留本轮前端修复提交。
 
 - `main`: `1c46ded7d153567b053c8acae39a608a0a90f342`
-- `frontend`: `d8da35d98e1b1e0f3e51272b9be28b42f006b7f1`
-- `frontend` 相对 `main`: `ahead_by=1`、`behind_by=0`
+- 本轮修复前 `frontend`: `4f2e6a60b4024cd8f908567a1b75bd834ba96998`
+- 本轮修复后 `frontend`: 待提交
 
 本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
@@ -15,59 +15,49 @@
 用户在 Windows `frontend` 工作树执行：
 
 ```powershell
-npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts
+npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts
 ```
 
 反馈结果：
 
 ```text
-Test Files  1 failed | 4 passed (5)
-Tests       1 failed | 22 passed (23)
+Test Files  1 failed | 5 passed (6)
+Tests       1 failed | 25 passed (26)
 ```
 
 唯一失败文件为 `FullSiteConsistencyStaticAudit.test.ts`，最新暴露的问题为：
 
-- `src/views/login/components/LoginForm.vue` 仍使用原始 `<el-card>`。
+- `src/views/organizations/detail.vue` 仍使用 `v-loading="membersLoading"`。
 
-其余四个 targeted test file 均通过。
+其余五个 targeted test file 均通过。
 
 ## 3. 根因分析
 
 `FullSiteConsistencyStaticAudit.test.ts` 将所有 `src/views/**/*.vue` 的原始 Element Plus Card、Empty、Result 以及 `v-loading` 视为禁止的页面层实现，要求统一通过共享 UI primitive 表达页面结构和状态。
 
-`LoginForm.vue` 是历史遗留的认证入口页面，仍直接使用 `el-card`，且没有采用项目统一的 SurfaceCard 容器和设计 Token。这属于公共 UI primitive 治理遗漏，不属于后端认证 Contract 问题。
+`organizations/detail.vue` 已经使用 `SurfaceCard` / `StatePanel` 处理页面级和成员错误/空状态，但成员表格仍保留历史 `v-loading` 指令。这是公共状态展示治理未完成，不属于组织 API Contract 或权限业务逻辑问题。
 
 ## 4. 本轮代码修复
 
-### 4.1 Knowledge Workbench
+### 4.1 Organization detail
 
-提交：
+本轮修复：
 
-- `3f8a13987fb6ef391885c51f52aad7a6d8fd4ee6` — `fix: migrate knowledge workbench to shared state primitives`
+- 移除成员表格上的 `v-loading`；
+- 成员请求期间使用 `StatePanel state="loading"` 提供稳定的页面状态反馈；
+- 成功后再渲染成员表格；
+- 保留成员分页、错误恢复、空状态和真实 membership ID 操作；
+- 保留组织/成员 API 调用、权限判断和后端状态刷新语义，不新增业务规则。
 
-调整：
+### 4.2 回归测试
 
-- 移除 Knowledge Workbench 页面中的 `v-loading`；
-- 文档、版本、分块空状态统一改为 `StatePanel state="empty"`；
-- 检索加载、无结果和初始等待状态统一使用 `StatePanel`；
-- 保留 `SurfaceCard` 作为业务区块容器；
-- 保留知识库、文档、版本、分块、检索的既有 API 调用和数据结构。
+新增 `OrganizationsDetail.test.ts`，验证：
 
-### 4.2 LoginForm
+- 成员 Loading 使用共享 `StatePanel`；
+- 页面不再包含 `v-loading` / `el-empty` / `el-result`；
+- 成员刷新仍通过既有 `loadMembers` / `reloadMembers` API 边界完成。
 
-提交：
-
-- `d8da35d98e1b1e0f3e51272b9be28b42f006b7f1` — `fix: migrate login form to shared surface primitive`
-
-调整：
-
-- 原始 `<el-card>` → `SurfaceCard`；
-- 登录 API、路由跳转、表单校验和用户可见错误文案保持不变；
-- 登录容器改用 `var(--ui-bg-app)` 等共享设计 Token；
-- 保持 `width: min(420px, 100%)` 与页面 padding，改善窄屏响应式表现；
-- 新增 `LoginForm.test.ts`，覆盖共享容器、认证 API 边界和响应式设计契约。
-
-该修复提交同时包含源码与回归测试，保持单一修复目的。
+代码与测试保持在同一个原子修复提交中。
 
 ## 5. Full-site Governance Contract
 
@@ -83,13 +73,7 @@ Tests       1 failed | 22 passed (23)
 
 ## 6. 当前验证状态
 
-当前环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。GitHub 源码与提交结构检查已确认：
-
-- `frontend` 相对 `main`：`ahead_by=1`、`behind_by=0`；
-- LoginForm 已不再包含 `<el-card>`；
-- LoginForm 已使用 `SurfaceCard`；
-- LoginForm 回归测试已随同修复提交加入；
-- Knowledge Workbench 的 `v-loading` / `el-empty` 已在此前修复中移除。
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。GitHub 源码检查已确认本轮修改目标为 `organizations/detail.vue` 的唯一静态审计失败项，并增加针对该页面的回归测试。
 
 用户本地先同步：
 
@@ -105,7 +89,7 @@ git rev-parse HEAD
 然后重新执行：
 
 ```powershell
-npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts
+npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts tests/views/OrganizationsDetail.test.ts
 ```
 
 若 targeted regression 全部通过，再执行：
@@ -121,16 +105,16 @@ npm run test:e2e
 
 ## 7. 本地手动验证流程
 
-1. 登录页：确认用户名/密码为空时给出中文校验提示。
-2. 登录页：输入有效凭据后确认调用正式 `login` API 并跳转 `/dashboard`。
-3. 登录页：认证失败时只显示用户可理解的中文错误，不直接暴露异常正文。
-4. 登录页：窄屏宽度下确认 SurfaceCard 不发生水平溢出。
-5. Full-site consistency：确认所有 View 不再出现被禁止的历史 presentation primitive。
-6. Runtime / Workflow 深链：确认关系仅来自显式 durable ID，不通过数组位置或页面顺序推断。
+1. 进入组织详情页，确认首次加载显示组织详情 Loading。
+2. 确认成员列表请求期间显示“正在加载成员”，不出现遮罩错位或水平溢出。
+3. 成员加载成功后确认表格正常展示，分页仍可用。
+4. 成员加载失败时确认错误状态提供“重试”，且不会暴露原始异常正文。
+5. 成员为空时确认显示空状态和“添加成员”动作。
+6. 添加、编辑、暂停/恢复、移除、转移所有权仍以真实 membership ID 调用后端并刷新结果。
 
 ## 8. 下一步
 
-当前状态保持 **进行中**：本轮 LoginForm 修复、回归测试和 main 同步已完成，但用户 Windows 工作树尚未重新执行包含最新提交的 targeted regression；全量 `npm test`、build、gate、E2E 也尚未由本轮环境实际执行。
+当前状态保持 **进行中**：本轮针对组织详情 `v-loading` 的代码与回归测试已完成，但用户 Windows 工作树尚未重新执行包含最新提交的 targeted regression；全量 `npm test`、build、gate、E2E 也尚未由本轮环境实际执行。
 
 下一轮继续遵循：
 
