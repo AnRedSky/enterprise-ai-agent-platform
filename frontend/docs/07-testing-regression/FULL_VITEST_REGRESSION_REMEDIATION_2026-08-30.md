@@ -2,94 +2,58 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-03 本轮检查远端 `main` 与 `frontend`，当前两者已基于同一基线提交，`frontend` 仅保留本轮前端修复提交。
+2026-09-03 本轮检查远端 `main` 与 `frontend`。在处理本轮本地 regression 之前，`main` 已继续推进到 `af306fdb694ec92cf81ec28891996d50fe071f3a`，`frontend` 当前为 `ba0997bf22bdd411f272ab12719b2793b83eee81`，包含此前组织详情修复及其合并基线。
 
-- `main`: `1c46ded7d153567b053c8acae39a608a0a90f342`
-- 本轮修复前 `frontend`: `4f2e6a60b4024cd8f908567a1b75bd834ba96998`
-- 本轮修复后 `frontend`: 待提交
+本轮先按开发准则将最新 `main` 纳入 `frontend`，再处理新的静态审计失败项。
 
 本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
 ## 2. 用户最新本地 targeted regression 反馈
 
-用户在 Windows `frontend` 工作树执行：
-
-```powershell
-npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts
-```
-
-反馈结果：
+用户在 Windows `frontend` 工作树执行包含组织详情回归测试的 targeted 命令，反馈结果：
 
 ```text
-Test Files  1 failed | 5 passed (6)
-Tests       1 failed | 25 passed (26)
+Test Files  1 failed | 6 passed (7)
+Tests       1 failed | 27 passed (28)
 ```
 
-唯一失败文件为 `FullSiteConsistencyStaticAudit.test.ts`，最新暴露的问题为：
+唯一失败文件仍为 `FullSiteConsistencyStaticAudit.test.ts`，但暴露出的下一项历史问题已经移动到：
 
-- `src/views/organizations/detail.vue` 仍使用 `v-loading="membersLoading"`。
+- `src/views/tools/components/ToolWorkbench.vue` 仍使用 `v-loading="loading"`。
 
-其余五个 targeted test file 均通过。
+这说明前一项 `organizations/detail.vue` 的 `v-loading` 已不再是当前静态审计报告中的失败项；当前门禁继续逐项收敛。
 
 ## 3. 根因分析
 
-`FullSiteConsistencyStaticAudit.test.ts` 将所有 `src/views/**/*.vue` 的原始 Element Plus Card、Empty、Result 以及 `v-loading` 视为禁止的页面层实现，要求统一通过共享 UI primitive 表达页面结构和状态。
+`FullSiteConsistencyStaticAudit.test.ts` 对全部 `src/views/**/*.vue` 执行共享 UI 治理检查，禁止页面层直接使用 `v-loading`。`ToolWorkbench.vue` 已经使用 `PageHeader`、`PageToolbar`、`SurfaceCard`、`StatePanel`，并已通过 `pageState` 表达 loading / empty / error / permission / success，但成功分支中的表格仍保留历史 `v-loading`。
 
-`organizations/detail.vue` 已经使用 `SurfaceCard` / `StatePanel` 处理页面级和成员错误/空状态，但成员表格仍保留历史 `v-loading` 指令。这是公共状态展示治理未完成，不属于组织 API Contract 或权限业务逻辑问题。
+因此问题属于页面状态呈现方式未完全迁移到共享 primitive，而不是工具 API Contract、权限模型或工具生命周期逻辑问题。
 
-## 4. 本轮代码修复
+## 4. 本轮处理策略
 
-### 4.1 Organization detail
+本轮继续遵循：
 
-本轮修复：
+> 本地实际失败 → 根因分析 → 单一修复 → targeted test → 文档 → 原子提交
 
-- 移除成员表格上的 `v-loading`；
-- 成员请求期间使用 `StatePanel state="loading"` 提供稳定的页面状态反馈；
-- 成功后再渲染成员表格；
-- 保留成员分页、错误恢复、空状态和真实 membership ID 操作；
-- 保留组织/成员 API 调用、权限判断和后端状态刷新语义，不新增业务规则。
+修复范围严格限定为 ToolWorkbench 的 loading presentation contract：
 
-### 4.2 回归测试
+- 成功分支不再通过 `v-loading` 对表格施加遮罩；
+- 保留现有 `pageState` 的 loading 状态和 `StatePanel` 表达；
+- 不修改工具创建、启停、绑定/解绑、执行 API；
+- 不修改管理员权限判断；
+- 不改变工具与智能体的真实 ID 关系；
+- 不新增业务状态机或本地 durable fact。
 
-新增 `OrganizationsDetail.test.ts`，验证：
+本轮还为该治理规则补充 ToolWorkbench targeted regression，确保以后不会重新引入 `v-loading`。
 
-- 成员 Loading 使用共享 `StatePanel`；
-- 页面不再包含 `v-loading` / `el-empty` / `el-result`；
-- 成员刷新仍通过既有 `loadMembers` / `reloadMembers` API 边界完成。
+## 5. 当前验证状态
 
-代码与测试保持在同一个原子修复提交中。
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。用户反馈已经确认当前 targeted suite 为 `1 failed / 6 passed / 28 tests`，唯一失败是 ToolWorkbench 的 `v-loading` 静态治理项。
 
-## 5. Full-site Governance Contract
-
-`FullSiteConsistencyStaticAudit.test.ts` 当前约束：
-
-- 禁止原始 `el-card / el-empty / el-result`；
-- 禁止 `v-loading` 页面指令；
-- 禁止 `items / versions / destinations / providers / triggers` 使用 `[0]` 推导 durable relationship；
-- 禁止通过 `sort()` / `reverse()` 建立实体关系；
-- 禁止 View 层 optimistic durable status mutation。
-
-这些规则是前端架构治理门禁：页面状态通过共享 primitive 表达，实体关系通过后端 durable ID / Contract 支撑。
-
-## 6. 当前验证状态
-
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。GitHub 源码检查已确认本轮修改目标为 `organizations/detail.vue` 的唯一静态审计失败项，并增加针对该页面的回归测试。
-
-用户本地先同步：
+代码修改后需要在本地重新执行：
 
 ```powershell
-cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
-
-git fetch origin
-git checkout frontend
-git pull --ff-only origin frontend
-git rev-parse HEAD
-```
-
-然后重新执行：
-
-```powershell
-npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts tests/views/OrganizationsDetail.test.ts
+npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts tests/views/OrganizationsDetail.test.ts tests/views/Tools.test.ts
 ```
 
 若 targeted regression 全部通过，再执行：
@@ -103,21 +67,18 @@ npm run test:e2e
 
 没有实际执行的测试不得记录为通过；测试数据必须由 Fixture / Script 自动生成，不得要求手工填写业务信息，也不得自动启动 API、Scheduler、Worker、PostgreSQL、Redis。
 
-## 7. 本地手动验证流程
+## 6. 本地手动验证流程
 
-1. 进入组织详情页，确认首次加载显示组织详情 Loading。
-2. 确认成员列表请求期间显示“正在加载成员”，不出现遮罩错位或水平溢出。
-3. 成员加载成功后确认表格正常展示，分页仍可用。
-4. 成员加载失败时确认错误状态提供“重试”，且不会暴露原始异常正文。
-5. 成员为空时确认显示空状态和“添加成员”动作。
-6. 添加、编辑、暂停/恢复、移除、转移所有权仍以真实 membership ID 调用后端并刷新结果。
+1. 打开工具管理页，确认首次加载由统一 `StatePanel` 呈现 Loading。
+2. 工具列表成功后确认表格正常展示，不再出现表格 `v-loading` 遮罩实现。
+3. 工具为空时确认 Empty 状态及“创建工具”动作正常。
+4. 工具数据加载失败时确认 Error 状态提供“重试”，且不暴露原始异常正文。
+5. 无权限时确认 Permission 状态阻止误导性操作。
+6. 管理员执行创建、启停、绑定、解绑和工具执行时，确认仍调用既有 API，并在需要时刷新后端真实状态。
+7. 小屏宽度下确认页面 padding、工具栏和表格容器不产生明显横向布局异常。
 
-## 8. 下一步
+## 7. 下一步
 
-当前状态保持 **进行中**：本轮针对组织详情 `v-loading` 的代码与回归测试已完成，但用户 Windows 工作树尚未重新执行包含最新提交的 targeted regression；全量 `npm test`、build、gate、E2E 也尚未由本轮环境实际执行。
+当前状态保持 **进行中**：ToolWorkbench 的静态治理修复需要用户本地重新执行 targeted regression 后才能确认通过。全量 `npm test`、build、gate、E2E 仍未由本轮环境实际执行。
 
-下一轮继续遵循：
-
-> **本地实际失败 → 根因分析 → 单一修复 → targeted test → 文档 → 原子提交**
-
-若新的静态审计暴露其他历史 View primitive，再逐个收敛，不进行无关的大规模重构。
+若下一轮静态审计继续暴露历史 View primitive，则仍逐项最小化修复，不进行无关的大规模重构。
