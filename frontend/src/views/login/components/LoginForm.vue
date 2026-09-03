@@ -1,7 +1,6 @@
 <template>
   <div class="login-page">
-    <el-card class="login-card">
-      <template #header><strong>Enterprise AI Agent Platform</strong></template>
+    <SurfaceCard class="login-card" title="Enterprise AI Agent Platform">
       <el-form :model="form" @submit.prevent="submit">
         <el-form-item label="用户名">
           <el-input v-model="form.username" autocomplete="username" />
@@ -18,7 +17,7 @@
         <el-alert v-if="error" :title="error" type="error" :closable="false" class="error" />
         <el-button type="primary" :loading="loading" native-type="submit" style="width: 100%">登录</el-button>
       </el-form>
-    </el-card>
+    </SurfaceCard>
   </div>
 </template>
 
@@ -26,6 +25,7 @@
 import { reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { login } from "../../../api/auth";
+import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 
 const router = useRouter();
 const form = reactive({ username: "", password: "" });
@@ -51,7 +51,7 @@ async function submit() {
 </script>
 
 <style scoped>
-.login-page { min-height: 100vh; display: grid; place-items: center; background: #f5f7fa; }
-.login-card { width: min(420px, calc(100vw - 32px)); }
+.login-page { min-height: 100vh; display: grid; place-items: center; background: var(--ui-bg-app); padding: 24px 16px; }
+.login-card { width: min(420px, 100%); }
 .error { margin-bottom: 16px; }
 </style>

@@ -2,13 +2,13 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-03 本轮首先检查远端分支，并在发现 `main` 于修复过程中继续前进后再次同步。最终基线：
+2026-09-03 本轮检查远端 `main` 与 `frontend`，当前两者已基于同一基线提交，`frontend` 仅保留本轮前端修复提交。
 
-- `main`: `04d3419bd33396ce7ae9af57266f62a28e1f56c4`
-- `frontend`: `1fb6d895d6213ac90f6b1e66ea2722a57b70aea3`
-- `frontend` 的 `1fb6d89` 为显式 merge commit，第二父提交为最新 `main` `04d3419`，因此最新 main 的测试治理变更已进入 frontend。
+- `main`: `1c46ded7d153567b053c8acae39a608a0a90f342`
+- `frontend`: `d8da35d98e1b1e0f3e51272b9be28b42f006b7f1`
+- `frontend` 相对 `main`: `ahead_by=1`、`behind_by=0`
 
-本轮未修改后端业务 Contract；frontend 仅消费已确认的正式 API 类型与 Durable Facts。
+本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
 ## 2. 用户最新本地 targeted regression 反馈
 
@@ -25,47 +25,49 @@ Test Files  1 failed | 4 passed (5)
 Tests       1 failed | 22 passed (23)
 ```
 
-唯一失败文件为 `FullSiteConsistencyStaticAudit.test.ts`，失败点为：
+唯一失败文件为 `FullSiteConsistencyStaticAudit.test.ts`，最新暴露的问题为：
 
-- `src/views/integrations/GlobalRuntimeOperations.vue` 仍使用原始 `<el-card>`。
+- `src/views/login/components/LoginForm.vue` 仍使用原始 `<el-card>`。
 
 其余四个 targeted test file 均通过。
 
 ## 3. 根因分析
 
-`FullSiteConsistencyStaticAudit.test.ts` 将所有 `src/views/**/*.vue` 的原始 Element Plus Card、Empty、Result 以及 `v-loading` 视为禁止的页面层实现，要求统一通过 `SurfaceCard` / `StatePanel` 表达页面结构和状态。
+`FullSiteConsistencyStaticAudit.test.ts` 将所有 `src/views/**/*.vue` 的原始 Element Plus Card、Empty、Result 以及 `v-loading` 视为禁止的页面层实现，要求统一通过共享 UI primitive 表达页面结构和状态。
 
-`GlobalRuntimeOperations.vue` 此前已经具备 Runtime Durable Facts API 和响应式布局，但视觉容器仍沿用历史 `el-card`。这是公共 UI primitive 治理未完成，而不是后端 Contract 或 Runtime 业务逻辑问题。
+`LoginForm.vue` 是历史遗留的认证入口页面，仍直接使用 `el-card`，且没有采用项目统一的 SurfaceCard 容器和设计 Token。这属于公共 UI primitive 治理遗漏，不属于后端认证 Contract 问题。
 
 ## 4. 本轮代码修复
 
-### 4.1 GlobalRuntimeOperations 统一 SurfaceCard / StatePanel
+### 4.1 Knowledge Workbench
 
 提交：
 
-- `3f6a74fa7874b111e896a98a738c9551fc23e920` — `fix: migrate global runtime cards to shared surface primitive`
+- `3f8a13987fb6ef391885c51f52aad7a6d8fd4ee6` — `fix: migrate knowledge workbench to shared state primitives`
 
 调整：
 
-- 所有 Runtime 指标、Worker/Scheduler 状态、诊断、Execution 状态和 Workflow/Trigger 汇总容器由 `el-card` 迁移为 `SurfaceCard`；
-- 首次加载使用 `StatePanel state="loading"`；
-- 首次请求失败使用 `StatePanel state="error"`；
-- 已有成功数据但刷新失败时保留最近成功数据，并使用轻量 `el-alert` 提示；
-- 保留原 Runtime API、数据字段、状态映射和响应式布局，不重复实现后端业务规则。
+- 移除 Knowledge Workbench 页面中的 `v-loading`；
+- 文档、版本、分块空状态统一改为 `StatePanel state="empty"`；
+- 检索加载、无结果和初始等待状态统一使用 `StatePanel`；
+- 保留 `SurfaceCard` 作为业务区块容器；
+- 保留知识库、文档、版本、分块、检索的既有 API 调用和数据结构。
 
-### 4.2 IntegrationEventConsole 同类历史实现提前收敛
+### 4.2 LoginForm
 
 提交：
 
-- `904940005b6ed0158ace7930a506a9c18f069a05` — `fix: unify integration event page states`
+- `d8da35d98e1b1e0f3e51272b9be28b42f006b7f1` — `fix: migrate login form to shared surface primitive`
 
 调整：
 
-- `<el-empty>` → `StatePanel state="empty"`；
-- `v-loading` → 页面级 `StatePanel state="loading"`；
-- 查询失败 → `StatePanel state="error"` 并提供“重新加载”；
-- 表格增加 `row-key="id"`，以事件 durable ID 作为行身份；
-- API 参数、分页、筛选、详情 Drawer 与复制事件编号行为保持不变。
+- 原始 `<el-card>` → `SurfaceCard`；
+- 登录 API、路由跳转、表单校验和用户可见错误文案保持不变；
+- 登录容器改用 `var(--ui-bg-app)` 等共享设计 Token；
+- 保持 `width: min(420px, 100%)` 与页面 padding，改善窄屏响应式表现；
+- 新增 `LoginForm.test.ts`，覆盖共享容器、认证 API 边界和响应式设计契约。
+
+该修复提交同时包含源码与回归测试，保持单一修复目的。
 
 ## 5. Full-site Governance Contract
 
@@ -81,12 +83,13 @@ Tests       1 failed | 22 passed (23)
 
 ## 6. 当前验证状态
 
-当前环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。GitHub 源码检查已确认：
+当前环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。GitHub 源码与提交结构检查已确认：
 
-- `GlobalRuntimeOperations.vue` 已无 `<el-card>`；
-- `GlobalRuntimeOperations.vue` 已引入 `SurfaceCard` 与 `StatePanel`；
-- `IntegrationEventConsole.vue` 已无 `<el-empty>` / `v-loading`；
-- `frontend` 已包含最新 `main` `04d3419`，当前 HEAD 为 `1fb6d895`。
+- `frontend` 相对 `main`：`ahead_by=1`、`behind_by=0`；
+- LoginForm 已不再包含 `<el-card>`；
+- LoginForm 已使用 `SurfaceCard`；
+- LoginForm 回归测试已随同修复提交加入；
+- Knowledge Workbench 的 `v-loading` / `el-empty` 已在此前修复中移除。
 
 用户本地先同步：
 
@@ -102,7 +105,7 @@ git rev-parse HEAD
 然后重新执行：
 
 ```powershell
-npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts
+npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts
 ```
 
 若 targeted regression 全部通过，再执行：
@@ -118,16 +121,16 @@ npm run test:e2e
 
 ## 7. 本地手动验证流程
 
-1. 全局 Runtime：确认首次加载 Loading、首次失败 Error、刷新失败保留最近成功数据。
-2. Runtime 指标、Worker/Scheduler、诊断、Execution、Workflow/Trigger：确认 SurfaceCard 统一且窄屏无明显溢出。
-3. 事件记录：确认 Loading / Empty / Error / Data 四态正确切换，分页与筛选保持有效。
-4. 集成中心：确认无投递目标时事件订阅入口保持禁用；存在目标后恢复。
-5. 运维窗口：确认七个正式 Tab 均可切换。
+1. 登录页：确认用户名/密码为空时给出中文校验提示。
+2. 登录页：输入有效凭据后确认调用正式 `login` API 并跳转 `/dashboard`。
+3. 登录页：认证失败时只显示用户可理解的中文错误，不直接暴露异常正文。
+4. 登录页：窄屏宽度下确认 SurfaceCard 不发生水平溢出。
+5. Full-site consistency：确认所有 View 不再出现被禁止的历史 presentation primitive。
 6. Runtime / Workflow 深链：确认关系仅来自显式 durable ID，不通过数组位置或页面顺序推断。
 
 ## 8. 下一步
 
-当前状态保持 **进行中**：本轮代码修复与 main 同步已经完成，但用户 Windows 工作树尚未重新执行包含最新提交的 targeted regression；全量 `npm test`、build、gate、E2E 也尚未由本轮环境实际执行。
+当前状态保持 **进行中**：本轮 LoginForm 修复、回归测试和 main 同步已完成，但用户 Windows 工作树尚未重新执行包含最新提交的 targeted regression；全量 `npm test`、build、gate、E2E 也尚未由本轮环境实际执行。
 
 下一轮继续遵循：
 
