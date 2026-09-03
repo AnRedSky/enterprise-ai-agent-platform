@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 const integrationsViewSource = readFileSync(
-  resolve(fileURLToPath(new URL("../../src/views/integrations/index.vue", import.meta.url))),
+  resolve(process.cwd(), "src/views/integrations/index.vue"),
   "utf8",
 );
 
