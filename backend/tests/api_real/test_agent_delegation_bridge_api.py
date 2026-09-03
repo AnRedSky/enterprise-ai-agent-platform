@@ -288,10 +288,8 @@ async def test_b3_failed_worker_execution_closes_delegation():
 
     delegation_uuid = uuid.UUID(delegation_id)
     async with SessionLocal() as db:
-        delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         await _bind_deterministic_mock_profile(db, delegation_uuid, suffix, model_name="mock-http-503")
 
-    # 绑定失败型 Mock Provider 后再竞争 Claim，后台 Worker 即使先取得 owner，也只能沿确定性的 503 失败路径收敛。
     async with SessionLocal() as db:
         delegation_row = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         if delegation_row.status == "pending":
@@ -301,42 +299,30 @@ async def test_b3_failed_worker_execution_closes_delegation():
                 delegation_row.tenant_id,
                 f"b3-failure-worker-{suffix}",
             )
-            worker_execution_id = claimed.worker_execution_id
         else:
             assert delegation_row.status == "running"
-            worker_execution_id = delegation_row.worker_execution_id
-        assert worker_execution_id is not None
-
+            claimed = delegation_row
+        assert claimed.worker_execution_id is not None
+        worker_execution_id = claimed.worker_execution_id
         worker_execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == worker_execution_id))).scalar_one()
-        if worker_execution.status == "running":
+        if worker_execution.status == "running" and worker_execution.worker_owner == f"b3-failure-worker-{suffix}":
             worker_execution.status = "failed"
             worker_execution.error_code = "FIXTURE_FAILURE"
             worker_execution.error_message = "B3 failure fixture"
             await db.commit()
+            finalized = await fail_delegation(
+                db=db,
+                tenant_id=delegation_row.tenant_id,
+                delegation_id=delegation_row.id,
+                worker_execution_id=worker_execution_id,
+                error_code="FIXTURE_FAILURE",
+                error_message="B3 failure fixture",
+            )
+            assert finalized.status == "failed"
         else:
             await db.rollback()
 
     persisted = await _wait_for_terminal_delegation(delegation_uuid)
-    if persisted.status == "failed":
-        async with SessionLocal() as db:
-            current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-            if current.status == "running":
-                finalized = await fail_delegation(
-                    db=db,
-                    tenant_id=current.tenant_id,
-                    delegation_id=current.id,
-                    worker_execution_id=worker_execution_id,
-                    error_code="FIXTURE_FAILURE",
-                    error_message="B3 failure fixture",
-                )
-                assert finalized.status == "failed"
-            else:
-                assert current.status == "failed"
-    else:
-        pytest.fail(f"B3 failure fixture must converge to failed, actual={persisted.status}")
-
-    async with SessionLocal() as db:
-        finalized = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-        assert finalized.status == "failed"
-        assert finalized.error_code is not None
-        assert finalized.ended_at is not None
+    assert persisted.status == "failed", f"B3 failure fixture actual status={persisted.status}"
+    assert persisted.error_code is not None
+    assert persisted.ended_at is not None
