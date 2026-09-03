@@ -39,7 +39,6 @@ const stubs = {
   "el-empty": { props: ["description"], template: "<div>{{ description }}</div>" },
   "el-divider": { template: "<hr />" },
   "el-table": { template: "<div><slot /></div>" },
-  // Element Plus 提供 row 给列的 scoped slot；测试桩保留该语义，确保治理断言覆盖真实列模板。
   "el-table-column": {
     props: ["prop"],
     setup(props: { prop?: string }) {
@@ -84,6 +83,17 @@ const schedulerStatus = {
 
 const global = { stubs, directives: { loading: () => undefined } };
 
+async function mountWithWorkflow() {
+  const wrapper = mount(WorkflowTriggers, { global });
+  await vi.waitFor(() => expect(api.list).toHaveBeenCalled());
+  await (wrapper.vm as any).loadTriggersAfterSelection?.(workflow.id);
+  if (!(wrapper.vm as any).selectedWorkflowId) {
+    (wrapper.vm as any).selectedWorkflowId = workflow.id;
+    await (wrapper.vm as any).loadTriggers();
+  }
+  return wrapper;
+}
+
 describe("Workflow Trigger Governance view", () => {
   beforeEach(() => {
     Object.values(api).forEach((mock) => mock.mockReset());
@@ -98,16 +108,15 @@ describe("Workflow Trigger Governance view", () => {
     messages.confirm.mockResolvedValue(undefined);
   });
 
-  it("loads workflow trigger inventory", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+  it("loads workflow trigger inventory after an explicit workflow selection", async () => {
+    const wrapper = await mountWithWorkflow();
+    expect(api.triggers).toHaveBeenCalledWith("w1");
     expect(wrapper.text()).toContain("Workflow Trigger Governance");
     expect(wrapper.text()).toContain("Asia/Seoul / 每 60 秒");
   });
 
   it("loads persisted scheduler status through the formal API contract", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     await (wrapper.vm as any).loadSchedule(scheduledTrigger);
     expect(api.schedule).toHaveBeenCalledWith("w1", "t2");
     expect((wrapper.vm as any).schedulerStatus).toEqual(schedulerStatus);
@@ -118,29 +127,23 @@ describe("Workflow Trigger Governance view", () => {
   });
 
   it("retries the scheduler status contract while runtime persistence is initializing", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     api.schedule.mockRejectedValueOnce(new Error("Scheduler 状态尚未初始化"));
     api.schedule.mockResolvedValueOnce({ data: schedulerStatus });
-
     await (wrapper.vm as any).loadSchedule(scheduledTrigger);
-
     expect(api.schedule).toHaveBeenCalledTimes(2);
     expect((wrapper.vm as any).schedulerStatus).toEqual(schedulerStatus);
     expect(messages.error).not.toHaveBeenCalled();
   });
 
   it("clears persisted scheduler status when the selected scheduled trigger is disabled or deleted", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     const vm = wrapper.vm as any;
     await vm.loadSchedule(scheduledTrigger);
     expect(vm.schedulerStatus).toEqual(schedulerStatus);
-
     api.updateTrigger.mockResolvedValue({ data: { ...scheduledTrigger, status: "disabled" } });
     await vm.toggleTrigger(scheduledTrigger);
     expect(vm.schedulerStatus).toBeUndefined();
-
     api.triggers.mockResolvedValue({ data: [manualTrigger] });
     await vm.loadSchedule(scheduledTrigger);
     expect(vm.schedulerStatus).toEqual(schedulerStatus);
@@ -151,8 +154,7 @@ describe("Workflow Trigger Governance view", () => {
   });
 
   it("renders schedule governance guidance without inventing scheduler state", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     const text = wrapper.text();
     expect(text).toContain("timezone + interval_seconds Contract");
     expect(text).toContain("Scheduled Order Trigger");
@@ -161,13 +163,12 @@ describe("Workflow Trigger Governance view", () => {
   });
 
   it("creates a scheduled trigger with the backend schedule contract", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     const vm = wrapper.vm as any;
     vm.form.name = "Hourly Order Trigger";
     vm.form.triggerType = "scheduled";
     vm.form.configText = JSON.stringify({ timezone: "UTC", interval_seconds: 3600 });
-    await vm.createTrigger();
+    await vm.saveTrigger();
     expect(api.createTrigger).toHaveBeenCalledWith("w1", {
       name: "Hourly Order Trigger",
       trigger_type: "scheduled",
@@ -176,23 +177,21 @@ describe("Workflow Trigger Governance view", () => {
   });
 
   it("rejects invalid scheduled configuration before issuing an HTTP request", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     const vm = wrapper.vm as any;
     vm.form.name = "Invalid Schedule";
     vm.form.triggerType = "scheduled";
     vm.form.configText = JSON.stringify({ timezone: "UTC", interval_seconds: 0 });
-    await vm.createTrigger();
+    await vm.saveTrigger();
     expect(api.createTrigger).not.toHaveBeenCalled();
     expect(messages.error).toHaveBeenCalledWith("Schedule interval_seconds 必须是大于 0 的整数");
   });
 
   it("creates, toggles and deletes a trigger through the frontend contract", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     const vm = wrapper.vm as any;
     vm.form.name = "Manual Trigger 2";
-    await vm.createTrigger();
+    await vm.saveTrigger();
     expect(api.createTrigger).toHaveBeenCalledWith("w1", { name: "Manual Trigger 2", trigger_type: "manual", config: {} });
     await vm.toggleTrigger(manualTrigger);
     expect(api.updateTrigger).toHaveBeenCalledWith("w1", "t1", { status: "disabled" });
@@ -201,19 +200,17 @@ describe("Workflow Trigger Governance view", () => {
   });
 
   it("rejects invalid Trigger Config before issuing an HTTP request", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     const vm = wrapper.vm as any;
     vm.form.name = "Invalid Config Trigger";
     vm.form.configText = "{invalid-json";
-    await vm.createTrigger();
+    await vm.saveTrigger();
     expect(api.createTrigger).not.toHaveBeenCalled();
     expect(messages.error).toHaveBeenCalledWith("Trigger Config 不是合法 JSON");
   });
 
   it("invokes an enabled manual trigger and exposes the resulting execution", async () => {
-    const wrapper = mount(WorkflowTriggers, { global });
-    await vi.waitFor(() => expect(api.triggers).toHaveBeenCalledWith("w1"));
+    const wrapper = await mountWithWorkflow();
     await (wrapper.vm as any).invokeTrigger(manualTrigger);
     expect(api.invokeTrigger).toHaveBeenCalledWith("w1", "t1", {}, expect.any(String));
     expect((wrapper.vm as any).execution.id).toBe("e1");
