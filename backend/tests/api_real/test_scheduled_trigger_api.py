@@ -28,11 +28,6 @@ _AUTO_VERSION_ID: str | None = None
 pytestmark = pytest.mark.real_api
 
 
-async def _run_async(coroutine):
-    """在单次调用内创建并销毁独立事件循环，避免跨测试循环复用异步资源。"""
-    return await asyncio.to_thread(asyncio.run, coroutine)
-
-
 def _client() -> httpx.Client:
     """创建当前 Real API 的认证客户端。"""
     if not TOKEN:
@@ -102,7 +97,7 @@ def scheduled_trigger_real_api_context():
     username = f"api_real_scheduler_{uuid.uuid4().hex[:12]}"
     password = f"ApiRealTest!{uuid.uuid4().hex[:20]}"
     with httpx.Client(base_url=BASE_URL, timeout=5.0) as client:
-        registered = _request(client, "POST", "/auth/register", json={"username": username, "password": password}).json()
+        _request(client, "POST", "/auth/register", json={"username": username, "password": password})
         login = _request(client, "POST", "/auth/login", json={"username": username, "password": password}).json()
         TOKEN = str(login["access_token"])
         _AUTO_TENANT_ID = str(login["tenant_id"])
