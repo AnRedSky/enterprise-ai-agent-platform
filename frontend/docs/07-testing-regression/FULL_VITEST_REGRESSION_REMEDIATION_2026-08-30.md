@@ -8,73 +8,60 @@
 
 本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
-## 2. 用户最新本地全量 Vitest 反馈
+## 2. 用户最新全量 Vitest 反馈
 
-用户在 Windows `frontend` 工作树执行 `npm test`，反馈结果：
+用户在 Windows `frontend` 工作树执行 `npm test`，本次反馈结果：
 
 ```text
-Test Files  3 failed | 67 passed (70)
-Tests       3 failed | 323 passed (326)
+Test Files  1 failed | 69 passed (70)
+Tests       1 failed | 325 passed (326)
 ```
 
-失败项分为两类：
+唯一失败项：
 
-1. `DashboardUI03.test.ts`：测试使用 `shallowMount` 时未显式 stub `StatePanel`，导致共享状态组件被浅渲染为空壳，测试无法从 `wrapper.text()` 观察 `暂无运行记录`。
-2. `DashboardUI04.test.ts`：测试仍要求“所有聚合数据为空”时页面必须进入顶层 empty；当前设计明确保留 Dashboard 工作区、常用入口和最近执行区域的 empty 状态，因此该断言已经与 UI-03/UI-04 的统一设计冲突。
-3. `ToolWorkbenchUI03UI05.test.ts`：测试在 mount 后立即检查 loading DOM，没有等待 Vue 的下一次渲染 tick；`load()` 虽已同步把 `loading` 置为 `true`，DOM 断言时机仍早于更新。
+- `tests/views/FullSiteConsistencyStaticAudit.test.ts > full-site static consistency audit > keeps Operations Console toggles backend-truth based`
+- 测试仍断言旧实现 `@change="toggleProvider(row as RuntimeProvider, $event)"` 与 `@change="toggleRule(row as RuntimeAlertRule, $event)"`。
+- 当前生产代码为解决 `vue-tsc` 的严格模板类型错误，已经明确使用 `$event === true` 将 Element Plus `change` 事件收窄为 boolean；测试因此发生 Contract 漂移。
 
 ## 3. 根因分析
 
-### 3.1 Dashboard UI-03 shallow stub 边界
+Element Plus `el-switch` 的模板 `change` 事件在当前类型环境中可能被推断为 `string | number | boolean`。生产处理函数要求严格 `boolean`，因此直接传递 `$event` 无法通过 `vue-tsc`。
 
-Dashboard 的空运行记录状态由 `StatePanel` 负责。`shallowMount` 会自动浅替换未显式 stub 的子组件，因此测试如果直接断言 `wrapper.text()`，并不能可靠观察 `StatePanel` 的用户可见文案。测试应显式提供最小 `StatePanel` stub，并同时验证 shared state class。
+本轮之前已经采用局部类型收窄：
 
-### 3.2 Dashboard UI-04 状态模型漂移
+```vue
+@change="toggleProvider(row as RuntimeProvider, $event === true)"
+@change="toggleRule(row as RuntimeAlertRule, $event === true)"
+```
 
-Dashboard 当前状态模型是：
+该实现没有改变后端 API Contract，也没有恢复 optimistic durable mutation；开关操作仍在后端请求成功后重新加载 Provider / Alert Rule，以后端事实作为页面最终状态。
 
-- 聚合 API Loading / Permission / Error：页面级 StatePanel；
-- 聚合 API 成功但没有运行记录：继续渲染 Dashboard workspace；
-- 最近执行为空：在“最近执行” SurfaceCard 内显示 `StatePanel state="empty"`；
-- 常用入口始终保持可用。
-
-因此“全部数据为空 = 页面级 empty”已经不是当前产品 Contract。测试应验证用户可见的 empty 运行记录和快速导航，而不是要求旧版顶层 DOM 结构。
-
-### 3.3 ToolWorkbench loading 断言时序
-
-`ToolWorkbench.vue` 在 `onMounted(load)` 中同步设置 `loading=true`，但 Vue DOM 更新发生在下一次 tick。原测试 mount 后立即读取 `.state-panel`，会偶发/稳定地观察到后续初始空状态。该问题属于测试同步边界，不需要修改生产加载状态实现。
+因此本次失败不是生产代码回归，而是静态治理测试仍保留旧事件表达式。
 
 ## 4. 本轮最小修复
 
-### 4.1 Dashboard UI-03 测试
+### 4.1 Operations Console 静态治理测试
 
-显式增加最小 `StatePanel` stub，并验证 `state-panel--empty`，保持对 `暂无运行记录`、智能体管理、工具管理、运行记录等用户可见契约的验证。
+更新 `FullSiteConsistencyStaticAudit.test.ts` 的两个精确断言，使测试契约与当前严格类型安全实现一致：
 
-原子提交：
+- Provider：断言 `toggleProvider(row as RuntimeProvider, $event === true)`；
+- Alert Rule：断言 `toggleRule(row as RuntimeAlertRule, $event === true)`。
 
-`test: assert dashboard empty state through shared state panel`
+同时继续保留：
 
-### 4.2 Dashboard UI-04 测试
-
-将“顶层 empty”断言改为当前正式状态契约：验证最近执行 empty panel、`暂无运行记录` 和 6 个常用入口同时存在；保留 Loading / Permission / Error / Retry / Success / Unknown status 测试。
-
-同时将 `SurfaceCard` 替换为可渲染 slot 的最小 stub，使测试直接验证 workspace 内容，而不是依赖组件自动 stub 的内部行为。
-
-原子提交：
-
-`test: align dashboard UI states with usable empty workspace`
-
-### 4.3 ToolWorkbench UI-03/UI-05 测试
-
-在 loading mount 后增加 `nextTick()`，等待 Vue 完成状态 DOM 更新，再断言 shared `StatePanel` 的 loading 状态。未改变 ToolWorkbench 的 API、权限、确认交互或 durable ID 行为。
+- `:model-value="row.enabled"`；
+- 禁止 `v-model="row.enabled"`；
+- 禁止 `Object.assign(row,r.data)`；
+- 要求 `await loadProviders()`；
+- 要求 `await loadAlerts()`。
 
 原子提交：
 
-`test: await tool loading state render`
+`test: align operations console static audit with strict events`
 
-## 5. 本轮 build 类型修复
+## 5. 前序 build 类型修复
 
-用户随后在 Windows 工作树执行 `npm run build`，发现 11 个 `vue-tsc` 模板类型错误，集中于三个页面：
+用户此前在 Windows 工作树执行 `npm run build`，发现 11 个 `vue-tsc` 模板类型错误，集中于三个页面：
 
 - `integrations/OperationsConsole.vue`：Element Plus `el-switch` 的 `change` 事件在模板中推断为 `string | number | boolean`，而运行时操作函数只接受 boolean；Audit table slot 的 `row` 同时被推断为 `DefaultRow`，不能直接传给 `executionIdOf(RuntimeAudit)`。
 - `organizations/detail.vue`：`organization` 在 `v-else` 成功分支中业务上已经非空，但 Vue 模板类型收窄不会跨 sibling `StatePanel` 分支传播，因此直接访问 `organization.name/id/status` 被判定为 nullable。
@@ -114,13 +101,22 @@ Dashboard 当前状态模型是：
 - 禁止 `v-loading` 页面指令；
 - 禁止 `items / versions / destinations / providers / triggers` 使用 `[0]` 推导 durable relationship；
 - 禁止通过 `sort()` / `reverse()` 建立实体关系；
-- 禁止 View 层 optimistic durable status mutation。
+- 禁止 View 层 optimistic durable status mutation；
+- Operations Console 的 Provider / Alert Rule 开关必须通过 `:model-value` 呈现后端事实，并将 switch 事件显式收窄为 boolean；状态变更后必须重新读取后端事实。
 
 这些规则是前端架构治理门禁：页面状态通过共享 primitive 表达，实体关系通过后端 durable ID / Contract 支撑。
 
 ## 8. 当前验证状态
 
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test` 或 `npm run build`，因此**不记录未经实际执行的“通过”**。当前已完成 main 同步、Vitest 失败分类、测试最小修复、build 类型错误根因定位、局部类型修复、最新 main 合并和文档同步。
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test` 或 `npm run build`，因此**不记录未经实际执行的“通过”**。
+
+用户最新本地结果已经将失败从此前的 3 个测试文件 / 3 个测试收敛至 **1 个测试文件 / 1 个测试**；本轮已针对该唯一失败完成最小测试契约修复。
+
+当前 `frontend` 最新提交为：
+
+```text
+6723dd6e1b91562ede8990e971c1d9fec0e7db1f
+```
 
 用户本地同步最新 `frontend`：
 
@@ -136,10 +132,16 @@ git rev-parse HEAD
 同步后预期 HEAD：
 
 ```text
-0a24c808b5cc0d0c09092bd4f591e963832df634
+6723dd6e1b91562ede8990e971c1d9fec0e7db1f
 ```
 
-然后按标准顺序执行：
+然后执行本轮 targeted regression：
+
+```powershell
+npx vitest run tests/views/FullSiteConsistencyStaticAudit.test.ts
+```
+
+随后执行标准全量验证：
 
 ```powershell
 npm test
@@ -172,4 +174,4 @@ npm run test:e2e
 
 ## 10. 下一步
 
-当前状态仍为 **进行中**：本轮 build 类型修复已经提交到 `frontend`，最新 main 已同步，但尚未由用户 Windows 工作树重新执行 `npm test` / `npm run build` 验证。下一步以用户最新验证结果为准；若两项均通过，再进入 test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
+当前状态仍为 **进行中**：本轮唯一 Vitest 失败已经完成测试契约修复，但尚未由用户 Windows 工作树重新执行 targeted Vitest、全量 `npm test` 和 `npm run build` 验证。下一步先执行 targeted regression，再执行全量 test/build；若两项均通过，再进入 test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
