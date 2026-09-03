@@ -32,9 +32,9 @@ describe("Integrations", () => {
     await vi.waitFor(() => expect(wrapper.text()).toContain("暂无投递目标"));
     (wrapper.vm as any).activeTab = "subscriptions";
     await wrapper.vm.$nextTick();
-    const button = wrapper.findAll("button").find((item) => item.text().includes("新建事件订阅"));
+    const button = wrapper.findAllComponents(ElButton).find((item) => item.text().includes("新建事件订阅"));
     expect(button).toBeDefined();
-    expect((button!.element as HTMLButtonElement).disabled).toBe(true);
+    expect(button!.props("disabled")).toBe(true);
     expect(wrapper.text()).toContain("请先创建至少一个投递目标");
   });
 });
