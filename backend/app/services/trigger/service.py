@@ -264,8 +264,8 @@ class WorkflowTriggerService:
         return (execution, True) if return_created else execution
 
     async def invoke(self, workflow: Workflow, trigger: WorkflowTrigger, actor_id: UUID, input_data: dict,
-                     idempotency_key: str | None = None, is_admin: bool = False) -> WorkflowExecution:
-        """执行 Manual Trigger；Execution 创建与 Trigger Audit 在 Runtime 启动前共用一个提交边界。"""
+                     idempotency_key: str | None = None, is_admin: bool = False, *, commit: bool = True) -> WorkflowExecution:
+        """执行 Manual Trigger；调用方可选择在 Runtime 启动前统一提交 Execution、审计与幂等事实。"""
         if trigger.status != "enabled":
             raise HTTPException(409, "Trigger 已禁用")
         if trigger.trigger_type != "manual":
@@ -285,5 +285,6 @@ class WorkflowTriggerService:
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type})
         await self.governance.trace(execution, actor_id, "trigger.invoked", "pending", data={
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type})
-        await self.db.commit()
+        if commit:
+            await self.db.commit()
         return await execution_service.run(execution, version, actor_id, is_admin)
