@@ -374,7 +374,7 @@ class OperatorActionGovernanceService:
                 result = trigger
             else:
                 result = await service.invoke(
-                    workflow, trigger, actor_id, input_data or {}, idempotency_key=idempotency_key, is_admin=is_admin,
+                    workflow, trigger, actor_id, input_data or {}, idempotency_key=idempotency_key, is_admin=is_admin, commit=False,
                 )
         except HTTPException as exc:
             if idempotency_record is None and definition.requires_idempotency_key:
