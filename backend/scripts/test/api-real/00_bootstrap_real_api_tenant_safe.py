@@ -147,6 +147,28 @@ def _ensure_existing_organization_membership(organization_id: str, user_id: str)
     return _run_fixture_db(_ensure)
 
 
+def _find_membership(client: httpx.Client, organization_id: str, user_id: str) -> dict | None:
+    """分页读取 Organization 全部成员，避免历史成员超过单页上限导致误判漂移。"""
+    offset = 0
+    while True:
+        payload = _BOOTSTRAP.request(
+            client,
+            "GET",
+            f"/organizations/{organization_id}/members",
+            params={"offset": offset, "limit": 50},
+        ).json()
+        page = payload.get("items", [])
+        membership = next(
+            (item for item in page if str(item.get("user_id")) == str(user_id)),
+            None,
+        )
+        if membership is not None:
+            return membership
+        if not page or offset + len(page) >= int(payload.get("total", 0)):
+            return None
+        offset += len(page)
+
+
 def create_organization_fixture(client, owner_username: str, owner_password: str) -> dict[str, str]:
     """创建或恢复 owner Tenant 的 Organization，并生成自动加入后的 admin 测试成员。"""
     global _BOOTSTRAP_ORGANIZATION_ID
@@ -215,18 +237,10 @@ def create_organization_fixture(client, owner_username: str, owner_password: str
 
     # /auth/register 已按当前默认 Tenant 的 Organization 语义自动创建 member membership。
     # 这里不能再次 POST /members，否则会稳定命中“用户已经属于该 Organization”的业务冲突。
-    members = _BOOTSTRAP.request(
-        client,
-        "GET",
-        f"/organizations/{organization['id']}/members",
-    ).json()
-    membership = next(
-        (item for item in members.get("items", []) if str(item.get("user_id")) == str(member["user_id"])),
-        None,
-    )
+    membership = _find_membership(client, str(organization["id"]), str(member["user_id"]))
     if membership is None:
         # 先查询数据库持久事实，再决定错误类型。若数据库已有 membership 而 HTTP 列表不可见，
-        # 说明注册事务已经正确提交，问题在当前 API 运行实例/代码版本或 HTTP 读路径，不得通过
+        # 说明注册事务已经正确提交，问题在当前 API 运行实例/代码版本或 HTTP 读取路径，不得通过
         # 直接写入测试夹具掩盖该问题；若数据库也没有，则才是注册持久化缺陷。
         persisted_membership = _registered_membership(
             str(organization["id"]),

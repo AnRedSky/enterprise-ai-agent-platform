@@ -2,36 +2,42 @@
 
 ## 1. 现象
 
-Tenant-safe Real API bootstrap 在 `POST /auth/register` 成功后，调用 `GET /organizations/{organization_id}/members` 无法找到刚注册用户的 membership：
+Tenant-safe Real API bootstrap 在 `POST /auth/register` 成功后，调用 `GET /organizations/{organization_id}/members` 无法在第一页找到刚注册用户的 membership，并据此误报运行态漂移。
 
-```text
-RuntimeError: Registered fixture user is not present in the default Organization membership list
-```
+本地反馈中的 Organization 使用了长期复用的默认 Tenant。该 Organization 已累积超过单页默认容量的历史成员，因此新注册用户位于后续分页，而旧 bootstrap 只检查第一批 `items`。
 
-当前远端 `main` 基线为 `f17ac8d182e6d987f40a7f78927229ef85bffe2b`，该版本的正式 `/auth/register` 已在同一事务中创建 `User`、`UserRole` 与默认 Organization 的 active `OrganizationMembership`。
+## 2. 根因判定
 
-## 2. 根因判定策略
+生产 `/auth/register` 当前正式语义是在同一事务中创建 `User`、`UserRole` 与默认 Organization 的 active `OrganizationMembership`。因此当数据库已经存在 membership 时，不应再次 POST `/members`，也不应修改生产注册逻辑。
 
-该错误不能直接归因于生产注册逻辑，也不能通过测试夹具再次 POST `/members` 掩盖问题，因为这会与正式注册语义重复并产生 409。
+实际根因是 Tenant-safe bootstrap 的成员查询没有遵循 Organization membership API 的分页 Contract：
 
-Tenant-safe bootstrap 现在在 HTTP 列表缺失时查询独立数据库连接：
+- `GET /organizations/{organization_id}/members` 默认只返回有限数量的成员；
+- 成员按 `created_at`、`id` 升序返回；
+- 长期复用 Organization 时，新注册成员可能位于第一页之后；
+- bootstrap 只搜索 `items` 第一页，会把“未在第一页发现”错误解释为“HTTP 读路径漂移”。
 
-- 数据库存在对应 membership：注册事务已经正确持久化，问题属于当前 API Service 运行实例、代码版本或 HTTP 读取路径漂移；
-- 数据库不存在对应 membership：才判定为注册持久化缺陷，应继续定位生产 `/auth/register` 事务。
+项目此前的 Real API Organization Governance 测试已经通过 `_list_all_members()` 分页读取完整成员集合来避免同类误判。本次修复将同一规则补齐到 Tenant-safe bootstrap。
 
-## 3. 本次代码修复
+## 3. 修复
 
-`backend/scripts/test/api-real/00_bootstrap_real_api_tenant_safe.py` 增加 `_registered_membership()` 数据库事实查询，并把原来的模糊错误拆分为两类确定性错误。
+`backend/scripts/test/api-real/00_bootstrap_real_api_tenant_safe.py` 新增 `_find_membership()`：
 
-该诊断只读取测试事实，不修改生产数据，不创建或启动任何服务。
+1. 以 `offset=0, limit=50` 请求成员列表；
+2. 在当前页搜索注册用户；
+3. 未找到且尚有后续成员时继续下一页；
+4. 找到后返回真实 membership ID；
+5. 遍历完全部分页仍未找到时，才执行数据库持久事实诊断。
 
-## 4. 服务启动边界
+这样既保持真实 HTTP 验收，又不会通过直接写数据库或重复 POST `/members` 掩盖 Contract 问题。
 
-根据 `docs/01-governance/DEVELOPMENT.md`，Real API Gate 禁止自动创建、启动、重启或停止 API、Worker、Scheduler、PostgreSQL、Redis。
+## 4. 服务生命周期边界
 
-因此当数据库已经存在 membership、HTTP 读取却不可见时，Gate 必须停止并要求从最新 `main` 手动重启 API Service；不得在脚本中实现自动重启。
+根据 `docs/01-governance/DEVELOPMENT.md`，Real API Gate 不负责自动创建、启动、重启或停止 API、Worker、Scheduler、PostgreSQL、Redis。服务由开发者按标准命令手动运行，Gate 只负责探测与测试。
 
-## 5. 验证流程
+因此本次不修改服务启动逻辑，也不在测试脚本中加入进程管理。
+
+## 5. 本地验证流程
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
@@ -42,7 +48,7 @@ git pull --ff-only origin main
 git rev-parse HEAD
 git rev-parse origin/main
 
-# 手动从最新 main 重启现有 API Service；Gate 不执行服务生命周期管理。
+# 保持现有 API / Worker / Scheduler / PostgreSQL / Redis 运行实例；不要由 Gate 自动重启服务。
 
 uv run python .\scripts\test\api-real\00_bootstrap_real_api_tenant_safe.py
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\api-real\01_run_real_api_tests_tenant_safe.ps1
@@ -51,4 +57,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\release\01_ba
 
 ## 6. 验收要求
 
-不得以“数据库中有 membership”替代 HTTP Real API 验收。最终必须由真实 HTTP `/auth/register` → `/organizations/{id}/members` → membership role update → 后续 Real API 测试完整通过。
+最终验收必须继续走真实 HTTP：
+
+`/auth/register` → `/organizations/{id}/members` 分页查询 → membership role update → 后续 Real API 测试。
+
+数据库读取只能用于失败时区分“生产注册未持久化”与“HTTP Contract/运行态问题”，不能替代 Real API 验收。
