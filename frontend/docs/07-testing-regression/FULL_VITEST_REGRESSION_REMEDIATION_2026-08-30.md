@@ -2,7 +2,9 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-03 本轮检查远端 `main` 与 `frontend`。`main` 当前为 `4180b55339106b2f922e3d6032399598dc4b14d8`，此前 `frontend` 为 `87092b9643ac6a56f6fb07becbd55cf0b0d3c4dd`；比较结果为 `frontend` 落后 `main` 4 个提交、无 frontend 独有提交。由于 `main` 是从此前 frontend 提交继续演进的后代，本轮将 `frontend` fast-forward 至当前 `main`，确保最新后端测试与文档变更进入前端开发基线。
+2026-09-03 本轮检查远端 `main` 与 `frontend`。`main` 当前为 `6110038ea027882617ff02352ab7afa10ac5a845`，此前 `frontend` 已同步至 `4180b55339106b2f922e3d6032399598dc4b14d8` 后完成本轮前端修复。由于 main 在前端修复过程中又新增了 1 个后端测试修复提交，本轮已将该最新 main 提交纳入 frontend，并以双父 merge commit 保持完整历史。
+
+当前 `frontend` 与 `main` 的 merge base 已为最新 main，frontend 无落后提交；frontend 保留本轮前端修复提交。
 
 本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
@@ -118,7 +120,7 @@ Dashboard 当前状态模型是：
 
 ## 8. 当前验证状态
 
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test` 或 `npm run build`，因此**不记录未经实际执行的“通过”**。当前已完成 main 同步、Vitest 失败分类、测试最小修复、build 类型错误根因定位、局部类型修复和文档同步。
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test` 或 `npm run build`，因此**不记录未经实际执行的“通过”**。当前已完成 main 同步、Vitest 失败分类、测试最小修复、build 类型错误根因定位、局部类型修复、最新 main 合并和文档同步。
 
 用户本地同步最新 `frontend`：
 
@@ -134,7 +136,7 @@ git rev-parse HEAD
 同步后预期 HEAD：
 
 ```text
-712c95fbce2c535c3792124cd0e80a5d9ee53a63
+0a24c808b5cc0d0c09092bd4f591e963832df634
 ```
 
 然后按标准顺序执行：
@@ -170,4 +172,4 @@ npm run test:e2e
 
 ## 10. 下一步
 
-当前状态仍为 **进行中**：本轮 build 类型修复已经提交到 `frontend`，但尚未由用户 Windows 工作树重新执行 `npm test` / `npm run build` 验证。下一步以用户最新验证结果为准；若两项均通过，再进入 test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
+当前状态仍为 **进行中**：本轮 build 类型修复已经提交到 `frontend`，最新 main 已同步，但尚未由用户 Windows 工作树重新执行 `npm test` / `npm run build` 验证。下一步以用户最新验证结果为准；若两项均通过，再进入 test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
