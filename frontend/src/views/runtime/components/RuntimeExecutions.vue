@@ -1,5 +1,5 @@
 <template>
-  <el-card>
+  <SurfaceCard>
     <template #header><div class="runtime-header"><span>运行记录</span><el-button size="small" @click="load">刷新</el-button></div></template>
     <el-alert v-if="routeSourceLabel" :title="`执行来源：${routeSourceLabel}`" type="info" :closable="false" class="source-context" />
     <el-form inline @submit.prevent="search">
@@ -12,8 +12,9 @@
       <el-button type="primary" @click="search">查询</el-button><el-button @click="resetFilters">重置</el-button>
     </el-form>
     <el-alert v-if="error" type="error" :closable="false" title="运行记录查询失败，请稍后重试" />
-    <el-empty v-else-if="!loading && items.length === 0" description="暂无运行记录" />
-    <el-table v-else :data="items" v-loading="loading" @row-click="open">
+    <StatePanel v-if="loading" state="loading" title="正在加载运行记录" description="正在同步 Execution 运行事实。" />
+    <StatePanel v-else-if="!items.length" state="empty" title="暂无运行记录" description="当前筛选条件没有可展示的 Execution。" />
+    <el-table v-else :data="items" @row-click="open">
       <el-table-column prop="execution_id" label="运行记录 ID" min-width="260"><template #default="{ row }"><el-button link type="primary" @click.stop="copyRuntimeId(row.execution_id)">{{ shortRuntimeId(row.execution_id) }}</el-button></template></el-table-column>
       <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag :type="getRuntimeStatusMeta(row.status).type">{{ getRuntimeStatusMeta(row.status).label }}</el-tag></template></el-table-column>
       <el-table-column prop="workflow_id" label="工作流" min-width="220" /><el-table-column prop="agent_id" label="智能体" min-width="220" />
@@ -21,7 +22,7 @@
       <el-table-column prop="started_at" label="开始时间" min-width="190" />
     </el-table>
     <el-pagination v-if="total" v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next" @change="load" />
-  </el-card>
+  </SurfaceCard>
 
   <el-drawer v-model="drawer" title="运行记录详情" size="60%">
     <el-alert v-if="detailError" type="error" :closable="false" title="运行记录详情查询失败" />
@@ -36,7 +37,7 @@
         <el-descriptions-item label="模型">{{ selected.model_id || "-" }}</el-descriptions-item><el-descriptions-item label="耗时">{{ formatLatency(selected.duration_ms) }}</el-descriptions-item>
       </el-descriptions>
 
-      <el-card v-if="correlationReady" shadow="never" class="relation-card correlation-card">
+      <SurfaceCard v-if="correlationReady" bordered>
         <template #header><div class="section-header"><span>执行可观测关联</span><el-tag type="success">Trigger → Execution → Trace → Audit</el-tag></div></template>
         <el-descriptions :column="2" border>
           <el-descriptions-item label="Trigger ID"><el-button v-if="triggerId" link type="primary" @click="copyRuntimeId(triggerId)">{{ shortRuntimeId(triggerId) }}</el-button><span v-else>-</span></el-descriptions-item>
@@ -47,9 +48,9 @@
           <el-descriptions-item label="关联来源">{{ correlationSource }}</el-descriptions-item>
         </el-descriptions>
         <el-alert v-if="!triggerId" type="info" :closable="false" class="relation-note" title="当前后端 Contract 未提供独立 Execution → Trigger 外键；Trigger ID 仅从入口上下文或 Trace data.trigger_id 读取，不进行推断。" />
-      </el-card>
+      </SurfaceCard>
 
-      <el-card v-if="trigger" shadow="never" class="relation-card">
+      <SurfaceCard v-if="trigger" bordered>
         <template #header><div class="section-header"><span>Trigger</span><el-tag :type="trigger.status === 'enabled' ? 'success' : 'info'">{{ trigger.status }}</el-tag></div></template>
         <el-descriptions :column="2" border>
           <el-descriptions-item label="名称">{{ trigger.name }}</el-descriptions-item>
@@ -57,11 +58,11 @@
           <el-descriptions-item label="Trigger ID">{{ trigger.id }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ trigger.created_at }}</el-descriptions-item>
         </el-descriptions>
-      </el-card>
+      </SurfaceCard>
 
-      <el-card shadow="never" class="relation-card">
+      <SurfaceCard bordered>
         <template #header><div class="section-header"><span>Audit 审计</span><el-tag>{{ auditLogs.length }}</el-tag></div></template>
-        <el-empty v-if="!auditLogs.length" description="暂无该 Execution 的审计记录" :image-size="60" />
+        <StatePanel v-if="!auditLogs.length" state="empty" title="暂无审计记录" description="当前 Execution 没有可展示的审计事实。" />
         <el-table v-else :data="auditLogs" size="small">
           <el-table-column prop="action" label="操作" min-width="180" />
           <el-table-column prop="status" label="状态" width="120" />
@@ -69,9 +70,9 @@
           <el-table-column prop="actor_id" label="操作人" min-width="180" />
           <el-table-column prop="created_at" label="时间" min-width="180" />
         </el-table>
-      </el-card>
+      </SurfaceCard>
 
-      <el-card v-if="workflowDetail" shadow="never" class="relation-card">
+      <SurfaceCard v-if="workflowDetail" bordered>
         <template #header><div class="section-header"><span>Execution 关系</span><el-tag v-if="workflowDetail.retry_of_execution_id || workflowDetail.resume_of_execution_id" type="warning">派生 Execution</el-tag></div></template>
         <el-descriptions :column="2" border>
           <el-descriptions-item v-if="workflowDetail.retry_of_execution_id" label="Retry 来源"><el-button link type="primary" @click="navigateToExecution(workflowDetail.retry_of_execution_id)">{{ shortRuntimeId(workflowDetail.retry_of_execution_id) }}</el-button></el-descriptions-item>
@@ -88,8 +89,8 @@
             <el-table-column prop="created_at" label="创建时间" min-width="180" />
           </el-table>
         </div>
-        <el-empty v-else description="暂无派生 Execution" :image-size="60" />
-      </el-card>
+        <StatePanel v-else state="empty" title="暂无派生 Execution" description="当前 Execution 没有后端返回的 Retry / Resume 派生关系。" />
+      </SurfaceCard>
 
       <el-alert v-if="selected" type="info" :closable="false" class="control-hint" title="以下操作直接调用 Workflow Execution 生命周期接口；父子关系以后端返回的 retry/resume 字段为准。" />
       <div v-if="selected" class="execution-actions">
@@ -99,8 +100,8 @@
         <el-button v-if="selected.status === 'failed'" :loading="actionLoading" @click="resumeSelected">从检查点恢复</el-button>
       </div>
 
-      <el-divider>运行时间线</el-divider><el-empty v-if="!events.length" description="暂无时间线事件" /><el-timeline v-else><el-timeline-item v-for="event in events" :key="event.id" :timestamp="event.started_at"><div><strong>{{ displayRuntimeType(event.span_type) }}</strong> / {{ getRuntimeStatusMeta(event.status).label }} / {{ event.duration_ms ?? 0 }} 毫秒</div><el-descriptions v-if="event.span_type === 'retrieval' && event.metadata" :column="2" border style="margin-top: 8px"><el-descriptions-item label="Top K">{{ event.metadata.top_k }}</el-descriptions-item><el-descriptions-item label="结果数">{{ event.metadata.result_count }}</el-descriptions-item><el-descriptions-item label="检索来源">{{ Array.isArray(event.metadata.retrieval_sources) ? event.metadata.retrieval_sources.join(", ") : "-" }}</el-descriptions-item><el-descriptions-item label="引用">{{ Array.isArray(event.metadata.citations) ? event.metadata.citations.join(", ") : "-" }}</el-descriptions-item></el-descriptions></el-timeline-item></el-timeline>
-      <el-divider>工作流运行链路</el-divider><el-empty v-if="!traceItems.length" description="暂无工作流运行链路事件" /><el-timeline v-else><el-timeline-item v-for="item in traceItems" :key="item.id" :timestamp="item.created_at"><div><strong>{{ displayRuntimeEvent(item.event_type) }}</strong><span> / {{ getRuntimeStatusMeta(item.status).label }}</span><span v-if="item.node_id"> / 节点={{ item.node_id }}</span></div><el-descriptions :column="2" border style="margin-top: 8px"><el-descriptions-item label="链路 ID">{{ shortRuntimeId(item.trace_id) }}</el-descriptions-item><el-descriptions-item label="节点">{{ item.node_id || "-" }}</el-descriptions-item><el-descriptions-item v-if="item.error_code" label="错误代码">{{ displayRuntimeErrorCode(item.error_code) }}</el-descriptions-item><el-descriptions-item v-if="item.error_message" label="错误信息">{{ displayRuntimeError(item.error_code, item.error_message) }}</el-descriptions-item></el-descriptions><pre v-if="item.data" class="trace-data">{{ JSON.stringify(item.data, null, 2) }}</pre></el-timeline-item></el-timeline>
+      <el-divider>运行时间线</el-divider><StatePanel v-if="!events.length" state="empty" title="暂无时间线事件" description="该 Execution 当前没有可展示的运行时间线。" /><el-timeline v-else><el-timeline-item v-for="event in events" :key="event.id" :timestamp="event.started_at"><div><strong>{{ displayRuntimeType(event.span_type) }}</strong> / {{ getRuntimeStatusMeta(event.status).label }} / {{ event.duration_ms ?? 0 }} 毫秒</div><el-descriptions v-if="event.span_type === 'retrieval' && event.metadata" :column="2" border style="margin-top: 8px"><el-descriptions-item label="Top K">{{ event.metadata.top_k }}</el-descriptions-item><el-descriptions-item label="结果数">{{ event.metadata.result_count }}</el-descriptions-item><el-descriptions-item label="检索来源">{{ Array.isArray(event.metadata.retrieval_sources) ? event.metadata.retrieval_sources.join(", ") : "-" }}</el-descriptions-item><el-descriptions-item label="引用">{{ Array.isArray(event.metadata.citations) ? event.metadata.citations.join(", ") : "-" }}</el-descriptions-item></el-descriptions></el-timeline-item></el-timeline>
+      <el-divider>工作流运行链路</el-divider><StatePanel v-if="!traceItems.length" state="empty" title="暂无工作流运行链路事件" description="该 Execution 当前没有可展示的 Trace 事件。" /><el-timeline v-else><el-timeline-item v-for="item in traceItems" :key="item.id" :timestamp="item.created_at"><div><strong>{{ displayRuntimeEvent(item.event_type) }}</strong><span> / {{ getRuntimeStatusMeta(item.status).label }}</span><span v-if="item.node_id"> / 节点={{ item.node_id }}</span></div><el-descriptions :column="2" border style="margin-top: 8px"><el-descriptions-item label="链路 ID">{{ shortRuntimeId(item.trace_id) }}</el-descriptions-item><el-descriptions-item label="节点">{{ item.node_id || "-" }}</el-descriptions-item><el-descriptions-item v-if="item.error_code" label="错误代码">{{ displayRuntimeErrorCode(item.error_code) }}</el-descriptions-item><el-descriptions-item v-if="item.error_message" label="错误信息">{{ displayRuntimeError(item.error_code, item.error_message) }}</el-descriptions-item></el-descriptions><pre v-if="item.data" class="trace-data">{{ JSON.stringify(item.data, null, 2) }}</pre></el-timeline-item></el-timeline>
     </template>
   </el-drawer>
 </template>
@@ -109,6 +110,8 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage, ElMessageBox } from "element-plus";
+import StatePanel from "@/components/ui/StatePanel.vue";
+import SurfaceCard from "@/components/ui/SurfaceCard.vue";
 import { runtimeApi, type Event, type Execution, type WorkflowTraceItem, type AuditLog } from "@/api/runtime";
 import { workflowApi, type WorkflowExecution, type WorkflowTrigger } from "@/api/workflows";
 import { formatLatency, getRuntimeStatusMeta, shortRuntimeId } from "@/utils/runtime";
@@ -137,7 +140,7 @@ function search() { page.value = 1; void load(); }
 function resetFilters() { filters.value = { status: "", agentId: "", traceId: "", requestId: "", workflowId: "", startedRange: null }; page.value = 1; void load(); }
 async function loadWorkflowRelation(id: string, workflowId?: string) { workflowDetail.value = null; children.value = []; if (!workflowId) return; try { const detail = await workflowApi.execution(id); workflowDetail.value = detail.data; const all = await workflowApi.listExecutions(workflowId); children.value = all.data.filter((item) => item.id !== id && (item.retry_of_execution_id === id || item.resume_of_execution_id === id)); } catch (err) { console.warn("Execution 关系查询失败", err); } }
 function resolveTriggerId() { const routeTrigger = typeof route.query.trigger_id === "string" ? route.query.trigger_id : ""; if (routeTrigger) return routeTrigger; for (const item of traceItems.value) { const value = item.data?.trigger_id; if (typeof value === "string" && value) return value; } return ""; }
-async function loadCorrelation(executionId: string, workflowId?: string) { trigger.value = null; auditLogs.value = []; triggerId.value = resolveTriggerId(); const tasks: Promise<unknown>[] = [runtimeApi.auditLogs({ execution_id: executionId, page: 1, page_size: 50 })]; if (workflowId) tasks.push(workflowApi.triggers(workflowId)); try { const [auditResult, triggerResult] = await Promise.all(tasks); auditLogs.value = (auditResult as { data: { items: AuditLog[] } }).data.items || []; if (triggerResult) { const triggers = (triggerResult as { data: WorkflowTrigger[] }).data; trigger.value = triggers.find((item) => item.id === triggerId.value) || null; if (!triggerId.value && triggers.length === 1 && typeof route.query.trigger_id === "string") trigger.value = triggers[0]; } } catch (err) { console.warn("运行关联信息查询失败", err); } }
+async function loadCorrelation(executionId: string, workflowId?: string) { trigger.value = null; auditLogs.value = []; triggerId.value = resolveTriggerId(); const tasks: Promise<unknown>[] = [runtimeApi.auditLogs({ execution_id: executionId, page: 1, page_size: 50 })]; if (workflowId) tasks.push(workflowApi.triggers(workflowId)); try { const [auditResult, triggerResult] = await Promise.all(tasks); auditLogs.value = (auditResult as { data: { items: AuditLog[] } }).data.items || []; if (triggerResult) { const triggers = (triggerResult as { data: WorkflowTrigger[] }).data; trigger.value = triggers.find((item) => item.id === triggerId.value) || null; } } catch (err) { console.warn("运行关联信息查询失败", err); } }
 async function openById(id: string) { selected.value = undefined; workflowDetail.value = null; children.value = []; events.value = []; traceItems.value = []; trigger.value = null; auditLogs.value = []; triggerId.value = ""; detailError.value = false; drawer.value = true; try { const detail = await runtimeApi.execution(id); selected.value = detail.data.execution; const [timeline, trace] = await Promise.all([runtimeApi.executionEvents(id), runtimeApi.executionTrace(id)]); events.value = timeline.data.items; traceItems.value = trace.data.items; await loadCorrelation(id, detail.data.execution.workflow_id); await loadWorkflowRelation(id, detail.data.execution.workflow_id); } catch (err) { console.error("运行记录详情查询失败", err); detailError.value = true; ElMessage.error("运行记录详情查询失败，请稍后重试"); } }
 async function open(row: Execution) { await openById(row.execution_id); }
 async function refreshSelected(id: string) { await openById(id); }
