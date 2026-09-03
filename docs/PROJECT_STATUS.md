@@ -46,30 +46,28 @@
 
 ## 3. 最新本地反馈
 
-开发者最新反馈的 Scheduled Trigger Real API Gate：
+开发者最新 Backend Regression Gate：
 
 ```text
-[1/5] Verify Real API source baseline
-[PASS] HEAD == origin/main: d3a4156ffab59a2c3657e86dd7ffb28806dc9253
-[PASS] Critical Real API / Checkpoint test sources are clean.
-[PASS] Runtime Model Governance tests use unified claim-race helper.
-[PASS] Checkpoint Resume Candidate tests do not use datetime.utcnow().
-[PASS] Real API source baseline verification completed.
-[2/5] Verify manually managed API / Worker / Scheduler services
-[PASS] Current-project Worker processes available.
-[PASS] Current-project Scheduler processes available.
-[3/5] Prepare tenant-safe Real API context
-Real API context prepared: .real_api_context_9bc031a78830
-[4/5] Execute Scheduled Trigger real_api tests
-3 passed in 8.79s
-[5/5] Verify generated Trigger context was consumed
-[PASS] TRIGGER_WORKFLOW_ID=82674a2b-1a6e-4641-a7ef-5878d2cb990d
-[PASS] Scheduled Trigger real_api gate completed.
+Backend regression: 1051 passed, 7 skipped, 80 deselected in 38.22s
+Database migration/head: 0056_merge_legacy_audit_and_operator_governance_heads (head)
+Tenant-safe Real HTTP API: 75 passed, 1 skipped, 2 deselected, 3 failed in 90.63s
 ```
 
-该 Gate 未执行任何 API / Worker / Scheduler 服务生命周期操作；测试上下文由 Gate 自动生成并清理。
+Real API 三个失败均集中在 Phase 2.8 Delegation Real API：
 
-此前 Scheduled Trigger Real API 曾出现约 76 分钟的 asyncpg socket / event-loop 生命周期异常；后续 main 已完成 Real API async runner 去重、事件循环隔离与 bounded polling 修复，当前开发者反馈已恢复为 8.79 秒并全部通过。该异常已记录在 `docs/04-errors/2026-09-03-scheduled-trigger-real-api-event-loop.md`。
+1. B4 timeout fixture 在真实多 Worker 环境下调用 `claim_delegation()` 时，后台 Worker 已先将 Delegation 认领为 `running`；
+2. B2 bridge 在 Delegation 已正常完成后才调用仅允许 `running` 的 `AgentDelegationRuntimeBridge.load()`，属于测试观察窗口错误；
+3. B6 multi-worker 至少一个 Delegation 最终为 `failed`，错误为 `Mock provider HTTP 503`。该项尚未放宽为允许 `failed`，必须继续定位 Provider/Runtime 装配原因。
+
+本轮已修复：
+
+- `claim_delegation()` 增加显式 `commit` 事务边界，默认保持原有行为，`commit=False` 时只 flush；
+- B4 timeout 使用 `commit=False`，将 Claim、Worker Execution、Frontier 与 `timeout_at` 放入同一事务，消除提交前的后台 Worker 竞争窗口；
+- B2 Fixture 将 Mock Profile 与 Claim 放入同一事务，避免 Profile 尚未装配时被真实 Worker 抢占，并停止在 Delegation 已终态后调用 running-only Bridge；
+- 上述并发 Fixture 根因与 B6 未决 Provider 503 已记录在 `docs/04-errors/2026-09-03-delegation-real-api-concurrency-fixture.md`。
+
+当前用户本地 `HEAD` 为 `d21f772...` 时，远端 `main` 已继续前进到 `14dc3e2...`；其中 `14dc3e2` 仅包含 Runtime Correlation 前端回归相关变更。后续本地测试应先同步最新 `main`，再验证本轮 Backend 修复。
 
 ## 4. 当前 Backend 修复 / 开发
 
@@ -81,19 +79,23 @@ Real API context prepared: .real_api_context_9bc031a78830
 - Trigger Service 的 Manual Invoke 现在提供显式 `commit` 事务边界，Operator Governance 可以把 Execution、Trigger Audit、Operator Action Idempotency 与最终治理 Audit 放入同一提交边界；
 - Operator Action API Contract 已补充 Manual Trigger deferred-commit 边界测试；
 - Retry / Resume 已保持 `commit=False` → Result Resource / Operator Action / Audit / Trace → 单次提交的治理路径；
+- Delegation Claim 现在同样提供显式 `commit` 边界，支持真实 Worker Fixture 在同一事务中完成 Claim + Execution + Frontier 装配；
 - 当前继续检查 Operator Action 的 `run / cancel / retry / resume / trigger invoke` 在异常路径下是否留下 partial commit，并补齐真实 PostgreSQL 回滚验收；
+- 同时继续定位 B6 multi-worker 的 `Mock provider HTTP 503`，重点检查 target Agent Version → Model Profile → Model Provider → Worker Runtime 的实际装配事实；
 - Worker / Scheduler 多实例语义保持不变，不通过降低锁粒度或移除 fencing 来“修复”测试。
 
 ## 5. 下一执行顺序
 
 ```text
-① Operator Action run / cancel / retry / resume / trigger invoke 异常路径事务一致性
-② Result Resource / OperatorActionIdempotency / AuditLog / Trace 的 partial-commit 回滚验收
-③ Idempotency-Key 并发 claim 与失败重试语义收敛
-④ Operator Governance Real PostgreSQL Acceptance
-⑤ Backend Regression + Alembic head verification
-⑥ 评估 Phase 2.10-II Backend Release Gate
-⑦ 继续处理剩余 Worker / Delegation 多实例真实 Provider 缺口
+① 同步远端 main 后执行 Delegation B2/B4/B6 targeted Real API
+② 定位并修复 B6 Mock Provider 503（若确认生产代码缺陷则修生产代码并补 Unit/Acceptance）
+③ Operator Action run / cancel / retry / resume / trigger invoke 异常路径事务一致性
+④ Result Resource / OperatorActionIdempotency / AuditLog / Trace 的 partial-commit 回滚验收
+⑤ Idempotency-Key 并发 claim 与失败重试语义收敛
+⑥ Operator Governance Real PostgreSQL Acceptance
+⑦ Backend Regression + Alembic head verification
+⑧ 评估 Phase 2.10-II Backend Release Gate
+⑨ 继续处理剩余 Worker / Delegation 多实例真实 Provider 缺口
 ```
 
 ## 6. Backend 验收规则
