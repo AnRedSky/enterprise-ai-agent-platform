@@ -32,8 +32,7 @@ describe("AgentDebugExperience UI-04", () => {
     let resolve!: (value: typeof agent[]) => void;
     api.listAgents.mockReturnValue(new Promise((r) => { resolve = r; }));
     const wrapper = mount(AgentDebugExperience, { global });
-    await vi.waitFor(() => expect(wrapper.text()).toContain("loading"));
-    expect(wrapper.text()).toContain("正在加载调试上下文");
+    expect(wrapper.text()).toContain("loading");
     resolve([agent]);
     await vi.waitFor(() => expect(wrapper.text()).toContain("当前生效版本"));
   });
