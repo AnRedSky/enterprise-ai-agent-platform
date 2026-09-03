@@ -31,9 +31,11 @@ def _execution(status: str = "pending") -> SimpleNamespace:
 
 
 def _db_mock() -> SimpleNamespace:
-    """创建仅包含本测试实际事务边界所需异步操作的数据库替身，避免隐式 AsyncMock 产生未等待协程。"""
+    """创建最小数据库替身，显式隔离 execute 的同步结果对象，避免 AsyncMock 嵌套协程泄漏。"""
+    execute_result = Mock()
+    execute_result.scalar_one_or_none.return_value = None
     return SimpleNamespace(
-        execute=AsyncMock(),
+        execute=AsyncMock(return_value=execute_result),
         commit=AsyncMock(),
         rollback=AsyncMock(),
         refresh=AsyncMock(),
