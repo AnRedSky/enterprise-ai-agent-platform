@@ -30,14 +30,16 @@ async def claim_delegation(
     tenant_id: UUID,
     delegation_id: UUID,
     worker_owner: str,
+    commit: bool = True,
 ) -> AgentDelegation:
     """原子认领一个 pending Delegation，并创建对应的 Workflow Worker Execution 与 Durable Frontier。
 
     Args:
         db: 当前事务使用的异步数据库会话。
         tenant_id: Delegation 所属租户，用于强制 tenant boundary。
-        delegation_id: 待认领 Delegation 标识。
+        delegation_id: 待认领的 Delegation 标识。
         worker_owner: Worker 实例唯一标识，写入既有 WorkflowExecution ownership 字段。
+        commit: 是否在本方法内提交事务；关闭时只 flush，调用方负责提交整个事务边界。
 
     Returns:
         AgentDelegation: 已从 pending 转为 running、绑定唯一 worker_execution_id 并排入 Durable Frontier 的 Delegation。
@@ -45,7 +47,7 @@ async def claim_delegation(
     Raises:
         HTTPException: Delegation 不存在、已经被其他 Worker 认领、已取消/终态、已超时或 Worker 标识无效。
 
-    设计意图：`SELECT ... FOR UPDATE` 锁住 Delegation 行；所有竞争 Worker 在同一行上串行判断，只有第一个仍为 pending 的事务能够创建 WorkflowExecution。随后以该 Execution 构造唯一 Durable Frontier，使默认 Frontier Worker 能真正消费 Delegation；Claim、Execution 与 Frontier 在同一事务提交，避免出现 Delegation 已 running 但 Worker work item 未持久化的半完成状态。
+    设计意图：`SELECT ... FOR UPDATE` 锁住 Delegation 行；所有竞争 Worker 在同一行上串行判断，只有第一个仍为 pending 的事务能够创建 WorkflowExecution。随后以该 Execution 构造唯一 Durable Frontier，使默认 Frontier Worker 能真正消费 Delegation；Claim、Execution、Frontier、Audit 与 Trace 默认在同一事务提交。调用方可通过 `commit=False` 将 Claim 与后续治理事实放入更大的原子事务。
     """
     owner = worker_owner.strip()
     if not owner or len(owner) > 128:
@@ -159,6 +161,7 @@ async def claim_delegation(
         },
     ))
 
-    await db.commit()
-    await db.refresh(item)
+    if commit:
+        await db.commit()
+        await db.refresh(item)
     return item
