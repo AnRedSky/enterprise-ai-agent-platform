@@ -315,9 +315,11 @@ class OperatorActionGovernanceService:
                 ))).scalar_one_or_none()
                 if version is None:
                     raise HTTPException(status_code=409, detail="Workflow Execution 版本不存在")
-                result = await service.run(execution, version, actor_id, is_admin)
+                # Run 必须留在 Operator Action 当前事务内，才能与后续 Audit/幂等事实原子提交。
+                result = await service.run(execution, version, actor_id, is_admin, commit=False)
             elif action == "cancel":
-                result = await service.cancel(execution, actor_id, reason)
+                # Cancel 与 Operator Action Audit 使用同一事务，避免先提交状态、后写审计形成半提交。
+                result = await service.cancel(execution, actor_id, reason, commit=False)
             elif action == "retry":
                 result = await service.retry(execution, actor_id, commit=False)
             else:
