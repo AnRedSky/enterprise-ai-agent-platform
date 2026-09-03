@@ -136,7 +136,7 @@ async def _create_delegation(client: httpx.Client, suffix: str, *, model_name: s
     )
     assert delegation.status_code == 201, delegation.text
     response = delegation.json()
-    assert response["model_profile_id"] == profile_id
+    assert response["model_profile_id"] == str(profile_id)
     return response["id"], target_agent_id, target_version_id, workflow_version_id, execution_id
 
 
