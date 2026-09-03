@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { Refresh, View, RefreshRight, CircleCheck, Warning, Clock, CircleClose } from "@element-plus/icons-vue";
 import { integrationApi, type WebhookDelivery, type WebhookDeliveryAudit } from "@/api/integrations";
+import StatePanel from "@/components/ui/StatePanel.vue";
 
 const loading = ref(false);
 const auditLoading = ref(false);
@@ -51,7 +52,7 @@ onMounted(loadDeliveries);
     </el-table>
     <el-dialog v-model="auditDialog" title="投递审计记录" width="760px">
       <div v-if="selectedDelivery" class="audit-header"><div><span>投递编号</span><strong>{{ selectedDelivery.id }}</strong></div><div><span>状态</span><el-tag :type="statusType(selectedDelivery.status)">{{ statusLabel(selectedDelivery.status) }}</el-tag></div><div><span>尝试次数</span><strong>{{ selectedDelivery.attempt_count }}</strong></div></div>
-      <el-timeline v-loading="auditLoading" class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ actionLabel(item.action) }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ errorLabel(item.error_code, item.error_message) }}</p></div></el-timeline-item><el-empty v-if="!auditLoading && !auditItems.length" description="暂无审计记录" /></el-timeline>
+      <el-timeline v-loading="auditLoading" class="audit-timeline"><el-timeline-item v-for="item in auditItems" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top"><div class="audit-item"><div class="audit-title"><strong>{{ actionLabel(item.action) }}</strong><el-tag size="small" :type="statusType(item.status)">{{ statusLabel(item.status) }}</el-tag></div><p>操作人：{{ item.actor }} · 第 {{ item.attempt_count }} 次尝试 · HTTP：{{ item.response_status_code ?? "—" }}</p><p v-if="item.error_code || item.error_message" class="audit-error">{{ errorLabel(item.error_code, item.error_message) }}</p></div></el-timeline-item><StatePanel v-if="!auditLoading && !auditItems.length" state="empty" title="暂无审计记录" description="当前投递记录没有审计事实。" /></el-timeline>
     </el-dialog>
   </section>
 </template>
