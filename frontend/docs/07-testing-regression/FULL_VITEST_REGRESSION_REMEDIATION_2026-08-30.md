@@ -2,9 +2,7 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-03 本轮检查远端 `main` 与 `frontend`。在处理本轮本地 regression 之前，`main` 已继续推进到 `af306fdb694ec92cf81ec28891996d50fe071f3a`，`frontend` 当前为 `ba0997bf22bdd411f272ab12719b2793b83eee81`，包含此前组织详情修复及其合并基线。
-
-本轮先按开发准则将最新 `main` 纳入 `frontend`，再处理新的静态审计失败项。
+2026-09-03 本轮检查远端 `main` 与 `frontend`。在处理本轮本地 regression 之前，`main` 已继续推进到 `af306fdb694ec92cf81ec28891996d50fe071f3a`，`frontend` 已将该最新 `main` 纳入当前历史。
 
 本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
 
@@ -17,11 +15,11 @@ Test Files  1 failed | 6 passed (7)
 Tests       1 failed | 27 passed (28)
 ```
 
-唯一失败文件仍为 `FullSiteConsistencyStaticAudit.test.ts`，但暴露出的下一项历史问题已经移动到：
+唯一失败文件为 `FullSiteConsistencyStaticAudit.test.ts`，当前暴露的问题为：
 
 - `src/views/tools/components/ToolWorkbench.vue` 仍使用 `v-loading="loading"`。
 
-这说明前一项 `organizations/detail.vue` 的 `v-loading` 已不再是当前静态审计报告中的失败项；当前门禁继续逐项收敛。
+上一轮的 `organizations/detail.vue` `v-loading` 已完成迁移并不再是当前失败项。
 
 ## 3. 根因分析
 
@@ -29,28 +27,59 @@ Tests       1 failed | 27 passed (28)
 
 因此问题属于页面状态呈现方式未完全迁移到共享 primitive，而不是工具 API Contract、权限模型或工具生命周期逻辑问题。
 
-## 4. 本轮处理策略
+## 4. 本轮代码修复
 
-本轮继续遵循：
+### 4.1 ToolWorkbench
 
-> 本地实际失败 → 根因分析 → 单一修复 → targeted test → 文档 → 原子提交
+本轮仅移除成功分支表格上的 `v-loading="loading"`。
 
-修复范围严格限定为 ToolWorkbench 的 loading presentation contract：
+Loading 仍由既有 `pageState` + `StatePanel state="loading"` 表达；成功后才渲染工具表格，因此不会损失用户可见的 Loading 状态，也不会引入第二套状态逻辑。
 
-- 成功分支不再通过 `v-loading` 对表格施加遮罩；
-- 保留现有 `pageState` 的 loading 状态和 `StatePanel` 表达；
-- 不修改工具创建、启停、绑定/解绑、执行 API；
-- 不修改管理员权限判断；
-- 不改变工具与智能体的真实 ID 关系；
-- 不新增业务状态机或本地 durable fact。
+未修改：
 
-本轮还为该治理规则补充 ToolWorkbench targeted regression，确保以后不会重新引入 `v-loading`。
+- `listTools` / `listAgents` API；
+- 工具创建、启停、绑定、解绑、执行行为；
+- 管理员权限判断；
+- 工具与智能体真实 ID 关系；
+- 后端 Contract。
 
-## 5. 当前验证状态
+### 4.2 回归测试
 
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。用户反馈已经确认当前 targeted suite 为 `1 failed / 6 passed / 28 tests`，唯一失败是 ToolWorkbench 的 `v-loading` 静态治理项。
+扩展既有 `frontend/tests/views/Tools.test.ts`，增加静态 presentation contract：
 
-代码修改后需要在本地重新执行：
+- `ToolWorkbench.vue` 不得包含 `v-loading`；
+- 页面仍通过 `StatePanel` 与 `pageState` 表达 loading。
+
+代码、回归测试与本轮错误记录保持在同一个原子修复提交中。
+
+## 5. Full-site Governance Contract
+
+`FullSiteConsistencyStaticAudit.test.ts` 当前约束：
+
+- 禁止原始 `el-card / el-empty / el-result`；
+- 禁止 `v-loading` 页面指令；
+- 禁止 `items / versions / destinations / providers / triggers` 使用 `[0]` 推导 durable relationship；
+- 禁止通过 `sort()` / `reverse()` 建立实体关系；
+- 禁止 View 层 optimistic durable status mutation。
+
+这些规则是前端架构治理门禁：页面状态通过共享 primitive 表达，实体关系通过后端 durable ID / Contract 支撑。
+
+## 6. 当前验证状态
+
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此不记录未经实际执行的“通过”。当前已根据用户反馈完成根因定位、最小代码修复、针对性回归测试和文档同步。
+
+用户本地先同步最新 `frontend`：
+
+```powershell
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
+
+git fetch origin
+git checkout frontend
+git pull --ff-only origin frontend
+git rev-parse HEAD
+```
+
+然后执行 targeted regression：
 
 ```powershell
 npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts tests/views/LoginForm.test.ts tests/views/OrganizationsDetail.test.ts tests/views/Tools.test.ts
@@ -67,7 +96,7 @@ npm run test:e2e
 
 没有实际执行的测试不得记录为通过；测试数据必须由 Fixture / Script 自动生成，不得要求手工填写业务信息，也不得自动启动 API、Scheduler、Worker、PostgreSQL、Redis。
 
-## 6. 本地手动验证流程
+## 7. 本地手动验证流程
 
 1. 打开工具管理页，确认首次加载由统一 `StatePanel` 呈现 Loading。
 2. 工具列表成功后确认表格正常展示，不再出现表格 `v-loading` 遮罩实现。
@@ -77,7 +106,7 @@ npm run test:e2e
 6. 管理员执行创建、启停、绑定、解绑和工具执行时，确认仍调用既有 API，并在需要时刷新后端真实状态。
 7. 小屏宽度下确认页面 padding、工具栏和表格容器不产生明显横向布局异常。
 
-## 7. 下一步
+## 8. 下一步
 
 当前状态保持 **进行中**：ToolWorkbench 的静态治理修复需要用户本地重新执行 targeted regression 后才能确认通过。全量 `npm test`、build、gate、E2E 仍未由本轮环境实际执行。
 

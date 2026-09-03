@@ -13,7 +13,7 @@
         <span class="toolbar-count">共 {{ tools.length }} 个工具</span>
       </PageToolbar>
       <SurfaceCard>
-        <el-table v-loading="loading" :data="tools" border class="table">
+        <el-table :data="tools" border class="table">
           <el-table-column prop="name" label="名称" min-width="180" />
           <el-table-column prop="description" label="描述" min-width="220" />
           <el-table-column label="状态" width="110">

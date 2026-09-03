@@ -1,5 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { ElTable, ElTableColumn } from 'element-plus';
 import ToolWorkbench from '@/views/tools/components/ToolWorkbench.vue';
 import PageHeader from '@/components/ui/PageHeader.vue';
@@ -7,6 +10,9 @@ import PageToolbar from '@/components/ui/PageToolbar.vue';
 import SurfaceCard from '@/components/ui/SurfaceCard.vue';
 import StatePanel from '@/components/ui/StatePanel.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+const source = readFileSync(resolve(root, 'src/views/tools/components/ToolWorkbench.vue'), 'utf8');
 
 const api = vi.hoisted(() => ({ listTools: vi.fn(), listAgents: vi.fn(), createTool: vi.fn(), disableTool: vi.fn(), enableTool: vi.fn(), unbindTool: vi.fn() }));
 vi.mock('@/api/auth', () => ({ getRoles: () => ['admin'] }));
@@ -90,5 +96,10 @@ describe('ToolWorkbench UI-03/UI-05 migration', () => {
     await (wrapper.vm as any).create();
     expect((wrapper.vm as any).createVisible).toBe(true);
     expect((wrapper.vm as any).createForm).toEqual(form);
+  });
+  it('does not use the forbidden v-loading directive when the success table is rendered', () => {
+    expect(source).not.toMatch(/\bv-loading\s*=/);
+    expect(source).toContain('<StatePanel v-if="pageState !== \'success\'"');
+    expect(source).toContain("loading.value ? 'loading'");
   });
 });
