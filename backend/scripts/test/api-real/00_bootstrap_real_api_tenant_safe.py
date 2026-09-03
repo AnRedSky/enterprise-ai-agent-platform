@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import os
 from pathlib import Path
 import sys
 import uuid
@@ -294,4 +295,8 @@ _BOOTSTRAP.create_organization_fixture = create_organization_fixture
 
 
 if __name__ == "__main__":
+    # Tenant-safe Gate 必须自行生成隔离 owner，不能继承人工提供的 API_TEST_USERNAME/PASSWORD。
+    # /auth/register 当前只允许进入默认 Tenant，因此生成 owner 后才能保证后续成员与 Organization 同属该 Tenant。
+    os.environ.pop("API_TEST_USERNAME", None)
+    os.environ.pop("API_TEST_PASSWORD", None)
     _BOOTSTRAP.main()
