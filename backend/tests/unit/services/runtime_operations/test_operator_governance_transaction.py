@@ -30,10 +30,19 @@ def _execution(status: str = "pending") -> SimpleNamespace:
     )
 
 
+def _db_mock() -> SimpleNamespace:
+    """创建仅包含本测试实际事务边界所需异步操作的数据库替身，避免隐式 AsyncMock 产生未等待协程。"""
+    return SimpleNamespace(
+        execute=AsyncMock(),
+        commit=AsyncMock(),
+        refresh=AsyncMock(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_run_is_deferred_until_operator_audit_transaction(monkeypatch):
     """Run 不得在领域服务内部提前提交，Operator Audit 完成后才统一 commit。"""
-    db = AsyncMock()
+    db = _db_mock()
     service = OperatorActionGovernanceService(db)
     execution = _execution()
     version = SimpleNamespace(id=execution.workflow_version_id)
@@ -47,25 +56,20 @@ async def test_run_is_deferred_until_operator_audit_transaction(monkeypatch):
     monkeypatch.setattr(governance_module, "WorkflowExecutionService", Mock(return_value=workflow_service))
     db.execute.return_value.scalar_one_or_none.return_value = version
 
-    persisted = await service.execute_execution(
-        execution.id,
-        uuid4(),
-        uuid4(),
-        True,
-        "run",
-    )
+    persisted = await service.execute_execution(execution.id, uuid4(), uuid4(), True, "run")
 
     assert persisted is result
     workflow_service.run.assert_awaited_once()
     assert workflow_service.run.await_args.kwargs["commit"] is False
     service._audit.assert_awaited_once()
     db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(result)
 
 
 @pytest.mark.asyncio
 async def test_cancel_is_deferred_until_operator_audit_transaction(monkeypatch):
     """Cancel 不得先提交 Execution 状态，必须与 Operator Audit 共用事务。"""
-    db = AsyncMock()
+    db = _db_mock()
     service = OperatorActionGovernanceService(db)
     execution = _execution(status="running")
     result = SimpleNamespace(id=execution.id)
@@ -78,13 +82,7 @@ async def test_cancel_is_deferred_until_operator_audit_transaction(monkeypatch):
     monkeypatch.setattr(governance_module, "WorkflowExecutionService", Mock(return_value=workflow_service))
 
     persisted = await service.execute_execution(
-        execution.id,
-        uuid4(),
-        uuid4(),
-        True,
-        "cancel",
-        confirm=True,
-        reason="operator test",
+        execution.id, uuid4(), uuid4(), True, "cancel", confirm=True, reason="operator test"
     )
 
     assert persisted is result
@@ -92,12 +90,13 @@ async def test_cancel_is_deferred_until_operator_audit_transaction(monkeypatch):
     assert workflow_service.cancel.await_args.kwargs["commit"] is False
     service._audit.assert_awaited_once()
     db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(result)
 
 
 @pytest.mark.asyncio
 async def test_run_does_not_commit_when_operator_audit_fails(monkeypatch):
     """Operator Audit 失败时不得提交已经产生的 Execution 状态变更。"""
-    db = AsyncMock()
+    db = _db_mock()
     service = OperatorActionGovernanceService(db)
     execution = _execution()
     version = SimpleNamespace(id=execution.workflow_version_id)
@@ -112,13 +111,8 @@ async def test_run_does_not_commit_when_operator_audit_fails(monkeypatch):
     db.execute.return_value.scalar_one_or_none.return_value = version
 
     with pytest.raises(RuntimeError, match="audit failure"):
-        await service.execute_execution(
-            execution.id,
-            uuid4(),
-            uuid4(),
-            True,
-            "run",
-        )
+        await service.execute_execution(execution.id, uuid4(), uuid4(), True, "run")
 
     assert workflow_service.run.await_args.kwargs["commit"] is False
     db.commit.assert_not_awaited()
+    db.refresh.assert_not_awaited()
