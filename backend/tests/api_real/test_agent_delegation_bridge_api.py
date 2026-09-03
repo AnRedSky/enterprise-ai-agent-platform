@@ -40,7 +40,7 @@ def _client() -> httpx.Client:
 
 
 def _publish_agent(client: httpx.Client, name: str) -> tuple[str, str]:
-    """创建并发布 Mock Agent，返回 Agent ID 与 published version ID。"""
+    """创建并发布 Mock Agent。"""
     response = client.post(
         "/agents",
         json={
@@ -67,7 +67,6 @@ async def _prepare_target_model_profile(target_version_id: uuid.UUID, suffix: st
         target_agent = (await db.execute(select(Agent).where(Agent.id == target_version.agent_id))).scalar_one()
         owner = (await db.execute(select(User).where(User.id == target_agent.owner_id))).scalar_one()
         organization = (await db.execute(select(Organization).where(Organization.tenant_id == owner.tenant_id))).scalar_one()
-
         provider = ModelProvider(
             organization_id=organization.id,
             name=f"phase-28-mock-provider-{suffix}",
@@ -96,7 +95,7 @@ async def _prepare_target_model_profile(target_version_id: uuid.UUID, suffix: st
 
 
 async def _create_delegation(client: httpx.Client, suffix: str, *, model_name: str = "mock-model") -> tuple[str, str, str, str, str]:
-    """创建真实 Workflow/Execution/Delegation Fixture，并在 Delegation 可见前完成 Provider 装配。"""
+    """创建真实 Workflow、Execution、Delegation Fixture。"""
     orchestrator_id, _ = _publish_agent(client, f"phase-28-b2-orchestrator-{suffix}")
     target_agent_id, target_version_id = _publish_agent(client, f"phase-28-b2-worker-{suffix}")
     workflow = client.post("/workflows", json={"name": f"phase-28-b2-{suffix}", "description": "Delegation Runtime fixture"})
@@ -141,7 +140,7 @@ async def _create_delegation(client: httpx.Client, suffix: str, *, model_name: s
 
 
 async def _wait_for_terminal_delegation(delegation_id: uuid.UUID, timeout_seconds: float = 30.0) -> AgentDelegation:
-    """等待任一合法 Worker 完成竞争中的 Delegation。"""
+    """等待 Delegation 进入终态；超时时输出完整 durable ownership 诊断。"""
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     while True:
         async with SessionLocal() as db:
@@ -149,12 +148,24 @@ async def _wait_for_terminal_delegation(delegation_id: uuid.UUID, timeout_second
             if delegation.status in {"completed", "failed", "cancelled", "timed_out"}:
                 return delegation
         if asyncio.get_running_loop().time() >= deadline:
-            raise AssertionError(f"Delegation {delegation_id} did not reach a terminal state within {timeout_seconds}s")
+            async with SessionLocal() as db:
+                delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
+                execution = None
+                frontier = None
+                if delegation.worker_execution_id is not None:
+                    execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == delegation.worker_execution_id))).scalar_one_or_none()
+                    frontier = (await db.execute(select(WorkflowFrontier).where(WorkflowFrontier.execution_id == delegation.worker_execution_id).order_by(WorkflowFrontier.created_at.asc(), WorkflowFrontier.id.asc()).limit(1))).scalar_one_or_none()
+                raise AssertionError(
+                    f"Delegation {delegation_id} did not reach a terminal state within {timeout_seconds}s; "
+                    f"delegation_status={delegation.status}, "
+                    f"execution={None if execution is None else {'status': execution.status, 'worker_owner': execution.worker_owner, 'lease': str(execution.worker_lease_expires_at)}}, "
+                    f"frontier={None if frontier is None else {'status': frontier.status, 'worker_owner': frontier.worker_owner, 'lease': str(frontier.worker_lease_expires_at), 'attempt': frontier.attempt}}"
+                )
         await asyncio.sleep(0.2)
 
 
 async def _claim_or_observe_running(db, delegation_id: uuid.UUID, tenant_id, worker_owner: str) -> AgentDelegation:
-    """Claim pending Delegation；若后台 Worker 已合法抢占，则读取 durable running 状态。"""
+    """Claim pending Delegation；若其他 Worker 已抢占，则读取 durable running 状态。"""
     current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
     if current.status == "pending":
         try:
@@ -164,7 +175,6 @@ async def _claim_or_observe_running(db, delegation_id: uuid.UUID, tenant_id, wor
                 raise
             await db.rollback()
         except IntegrityError:
-            # 并发 Worker 可能已经提交相同 delegation:{id} Execution；回滚后必须重新读取 durable 状态。
             await db.rollback()
     current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
     if current.status != "running":
@@ -175,7 +185,7 @@ async def _claim_or_observe_running(db, delegation_id: uuid.UUID, tenant_id, wor
 
 @pytest.mark.asyncio
 async def test_b2_worker_execution_bridge_runs_target_agent_version():
-    """验证 Claim 后正式 Durable Frontier Worker 执行 target Agent，并完成 Execution/Frontier/Delegation。"""
+    """验证正式 Delegation Worker 路径执行 target Agent。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
         delegation_id, target_agent_id, target_version_id, workflow_version_id, _ = await _create_delegation(client, suffix)
@@ -187,32 +197,18 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
     async with SessionLocal() as db:
         delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
         delegation_status = delegation.status
-        delegation_tenant_id = delegation.tenant_id
-        if delegation_status == "pending":
-            claimed = await claim_delegation(db=db, tenant_id=delegation_tenant_id, delegation_id=delegation_uuid, worker_owner=worker.owner, commit=False)
-            worker_execution_id = claimed.worker_execution_id
-            assert worker_execution_id is not None
-            await db.commit()
-        else:
-            assert delegation_status == "running"
-            worker_execution_id = delegation.worker_execution_id
-            assert worker_execution_id is not None
 
-    async with SessionLocal() as db:
-        execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == worker_execution_id))).scalar_one()
-        execution_status = execution.status
-        execution_owner = execution.worker_owner
-        await db.rollback()
-        if execution_status in {"completed", "failed", "cancelled"}:
-            persisted = await _wait_for_terminal_delegation(delegation_uuid)
-        elif execution_owner == worker.owner:
-            frontier = await worker._claim_pending_delegation_frontier()
-            if frontier is not None:
-                await worker.execute_frontier(frontier)
-            persisted = await _wait_for_terminal_delegation(delegation_uuid)
-        else:
-            persisted = await _wait_for_terminal_delegation(delegation_uuid)
+    if delegation_status == "pending":
+        # 不先调用通用 claim_delegation：该方法提交后 Delegation 已为 running，随后再调用
+        # _claim_pending_delegation_frontier 会找不到 pending 候选。B2 必须使用 Worker 的
+        # 原子 Delegation→Execution→Frontier 入口，避免把 Execution ownership 与 Frontier ownership 混为一谈。
+        frontier = await worker._claim_pending_delegation_frontier()
+        if frontier is not None:
+            await worker.execute_frontier(frontier)
+    else:
+        assert delegation_status == "running"
 
+    persisted = await _wait_for_terminal_delegation(delegation_uuid)
     assert persisted.status == "completed"
     async with SessionLocal() as db:
         persisted = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
@@ -221,7 +217,6 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
         target_version = (await db.execute(select(AgentVersion).where(AgentVersion.id == uuid.UUID(target_version_id)))).scalar_one()
         profile = (await db.execute(select(ModelProfile).where(ModelProfile.id == persisted.model_profile_id))).scalar_one()
         provider = (await db.execute(select(ModelProvider).where(ModelProvider.id == profile.provider_id))).scalar_one()
-        assert persisted.status == "completed"
         assert worker_execution.status == "completed"
         assert frontier.status == "completed"
         assert frontier.worker_owner is None
@@ -256,7 +251,7 @@ async def test_b3_stale_worker_generation_cannot_complete_delegation():
 
 @pytest.mark.asyncio
 async def test_b3_failed_worker_execution_closes_delegation():
-    """验证 Worker Execution 已持久化失败后，当前 generation 能收敛 Delegation failed。"""
+    """验证当前 Worker generation 的失败 Execution 能收敛 Delegation。"""
     suffix = uuid.uuid4().hex[:10]
     with _client() as client:
         delegation_id, _, _, _, _ = await _create_delegation(client, f"b3-failure-{suffix}", model_name="mock-http-503")
@@ -271,15 +266,9 @@ async def test_b3_failed_worker_execution_closes_delegation():
             tenant_id_value = delegation.tenant_id
             if delegation.status in {"completed", "failed", "cancelled", "timed_out"}:
                 break
-
             if delegation.status == "pending":
                 try:
-                    claimed = await claim_delegation(
-                        db=db,
-                        tenant_id=tenant_id_value,
-                        delegation_id=delegation_id_value,
-                        worker_owner=worker_owner,
-                    )
+                    claimed = await claim_delegation(db=db, tenant_id=tenant_id_value, delegation_id=delegation_id_value, worker_owner=worker_owner)
                 except (HTTPException, IntegrityError):
                     await db.rollback()
                     claimed = None
@@ -288,7 +277,6 @@ async def test_b3_failed_worker_execution_closes_delegation():
                 execution_id = claimed.worker_execution_id
             else:
                 execution_id = delegation.worker_execution_id
-
             assert execution_id is not None
             execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))).scalar_one()
             if execution.worker_owner != worker_owner:
