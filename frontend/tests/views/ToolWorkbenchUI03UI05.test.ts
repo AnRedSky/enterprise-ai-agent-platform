@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 
 const api = vi.hoisted(() => ({ listTools: vi.fn(), createTool: vi.fn(), enableTool: vi.fn(), disableTool: vi.fn(), bindTool: vi.fn(), unbindTool: vi.fn(), executeTool: vi.fn(), listAgents: vi.fn(), getRoles: vi.fn(), confirm: vi.fn() }));
 vi.mock("@/api/tools", () => ({ listTools: api.listTools, createTool: api.createTool, enableTool: api.enableTool, disableTool: api.disableTool, bindTool: api.bindTool, unbindTool: api.unbindTool, executeTool: api.executeTool }));
@@ -31,6 +32,7 @@ describe("ToolWorkbench UI-03/UI-05", () => {
   it("uses shared loading and empty/error state patterns", async () => {
     api.listTools.mockReturnValueOnce(new Promise(() => {}));
     const loading = mount(ToolWorkbench, { global });
+    await nextTick();
     expect(loading.find(".state-panel").text()).toContain("loading");
 
     api.listTools.mockRejectedValueOnce(new Error("network"));
