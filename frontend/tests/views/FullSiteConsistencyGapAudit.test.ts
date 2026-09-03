@@ -44,20 +44,21 @@ describe("full-site UI consistency gap audit", () => {
     const triggers = read("src/views/workflow-triggers/index.vue");
     expect(operations).toContain("execution_id:id");
     expect(correlation).toContain("audit.details?.workflow_execution_id");
-    expect(audit).toContain("execution_id:executionId");
+    expect(audit).toMatch(/execution_id:\s*executionId/);
     expect(dashboard).toContain("execution_id: executionId");
     expect(triggers).toContain("execution.value.id");
     expect(triggers).toContain("schedulerStatus.value?.last_execution_id");
   });
 
   it("requires shared state primitives on the closed governance pages", () => {
-    for (const view of [
+    const stateBearingViews = [
       "src/views/integrations/OperationsConsole.vue",
       "src/views/integrations/OperationsRuntimeCorrelation.vue",
-      "src/views/audit-log/AuditLogWorkbench.vue",
+      "src/views/audit-log/components/AuditLogPanel.vue",
       "src/views/dashboard/components/DashboardOverview.vue",
       "src/views/workflow-triggers/index.vue",
-    ]) {
+    ];
+    for (const view of stateBearingViews) {
       const source = read(view);
       expect(source, view).toContain("StatePanel");
     }
