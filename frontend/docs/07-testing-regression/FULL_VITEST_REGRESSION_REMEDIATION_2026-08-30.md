@@ -70,7 +70,29 @@ Dashboard 当前状态模型是：
 
 `test: await tool loading state render`
 
-## 5. 已完成的前序回归修复
+## 5. 本轮 build 类型修复
+
+用户随后在 Windows 工作树执行 `npm run build`，发现 11 个 `vue-tsc` 模板类型错误，集中于三个页面：
+
+- `integrations/OperationsConsole.vue`：Element Plus `el-switch` 的 `change` 事件在模板中推断为 `string | number | boolean`，而运行时操作函数只接受 boolean；Audit table slot 的 `row` 同时被推断为 `DefaultRow`，不能直接传给 `executionIdOf(RuntimeAudit)`。
+- `organizations/detail.vue`：`organization` 在 `v-else` 成功分支中业务上已经非空，但 Vue 模板类型收窄不会跨 sibling `StatePanel` 分支传播，因此直接访问 `organization.name/id/status` 被判定为 nullable。
+- `organizations/model-providers.vue`：Element Plus table slot 的 `row` 被推断为 `DefaultRow`，而编辑/删除函数要求 `ModelProfile`。
+
+修复策略保持局部、类型安全且不放宽全局 `strict` / `vue-tsc`：
+
+1. `OperationsConsole.vue`：对 switch 事件使用 `($event === true)` 明确收窄为 boolean；Audit slot 在进入 `executionIdOf` 前显式标注 `row as RuntimeAudit`。生产状态仍由后端成功结果刷新，不恢复 optimistic durable mutation。
+2. `organizations/detail.vue`：新增成功分支专用 `organizationData` computed，在页面状态 Contract 已保证组织存在的前提下集中完成非空收窄；不改变 API 请求和权限逻辑。
+3. `organizations/model-providers.vue`：仅在 ModelProfile 编辑/删除动作边界将 table row 显式收窄为 `ModelProfile`，不改变后端返回的数据结构。
+
+原子提交：
+
+- `fix: narrow operations console template events`
+- `fix: type model provider table rows`
+- `fix: narrow organization detail template state`
+
+这些修复没有修改后端 API Contract，也没有通过关闭 strict template checking 来隐藏真实类型问题。
+
+## 6. 已完成的前序回归修复
 
 以下修复仍属于当前回归基线：
 
@@ -82,7 +104,7 @@ Dashboard 当前状态模型是：
 - Dashboard 保留空运行记录状态和快速入口；
 - Knowledge UI-04 成功态按 `.grid` 工作区语义断言。
 
-## 6. Full-site Governance Contract
+## 7. Full-site Governance Contract
 
 `FullSiteConsistencyStaticAudit.test.ts` 当前约束：
 
@@ -94,9 +116,9 @@ Dashboard 当前状态模型是：
 
 这些规则是前端架构治理门禁：页面状态通过共享 primitive 表达，实体关系通过后端 durable ID / Contract 支撑。
 
-## 7. 当前验证状态
+## 8. 当前验证状态
 
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test`，因此**不记录未经实际执行的“通过”**。当前已经根据用户反馈完成 main 同步、失败分类、根因定位、最小测试修复和文档同步。
+本轮环境不能直接执行用户 Windows 工作树中的 `npm test` 或 `npm run build`，因此**不记录未经实际执行的“通过”**。当前已完成 main 同步、Vitest 失败分类、测试最小修复、build 类型错误根因定位、局部类型修复和文档同步。
 
 用户本地同步最新 `frontend`：
 
@@ -112,26 +134,26 @@ git rev-parse HEAD
 同步后预期 HEAD：
 
 ```text
-4180b55339106b2f922e3d6032399598dc4b14d8
+712c95fbce2c535c3792124cd0e80a5d9ee53a63
 ```
 
 然后按标准顺序执行：
 
 ```powershell
 npm test
+npm run build
 ```
 
-若全量通过，再执行：
+若两项均通过，再执行：
 
 ```powershell
-npm run build
 npm run test:gate
 npm run test:e2e
 ```
 
 没有实际执行的测试不得记录为通过；测试数据必须由 Fixture / Script 自动生成，不得要求手工填写业务信息，也不得自动启动 API、Scheduler、Worker、PostgreSQL、Redis。
 
-## 8. 本地手动验证流程
+## 9. 本地手动验证流程
 
 1. Dashboard 空数据：确认指标、常用入口和“暂无运行记录”同时可见。
 2. Dashboard Loading：确认聚合请求未完成时显示 loading StatePanel。
@@ -141,8 +163,11 @@ npm run test:e2e
 6. Audit Log 深链：点击真实 `execution_id`，确认 Runtime URL 使用该 durable ID，不通过列表位置推断。
 7. Agent Workbench：触发列表错误，确认只展示用户可读 fallback，不显示 HTTP/provider 原始错误。
 8. Tool Workbench：确认 Loading、Error、Empty 状态均稳定，并验证启用/停用确认后按 durable `tool.id` 调用后端。
-9. 小屏宽度：确认上述页面操作区、表格、状态面板和卡片保持可读，不产生明显布局溢出。
+9. Operations Console：验证 Alert Rule / Provider 开关传入严格 boolean；Audit Execution 深链使用真实 audit durable row 数据。
+10. Organization Detail：成功态确认组织信息正常渲染，Loading/Error/Empty 状态保持 shared `StatePanel`。
+11. Model Providers：确认模型配置编辑、删除仍使用后端返回的 `ModelProfile.id`，并验证表格操作不依赖列表位置。
+12. 小屏宽度：确认上述页面操作区、表格、状态面板和卡片保持可读，不产生明显布局溢出。
 
-## 9. 下一步
+## 10. 下一步
 
-当前状态仍为 **进行中**：本轮测试修复尚未由用户 Windows 工作树重新执行 `npm test` 验证。下一步以用户最新全量 Vitest 结果为准；若 70 个测试文件全部通过，再进入 build、test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
+当前状态仍为 **进行中**：本轮 build 类型修复已经提交到 `frontend`，但尚未由用户 Windows 工作树重新执行 `npm test` / `npm run build` 验证。下一步以用户最新验证结果为准；若两项均通过，再进入 test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
