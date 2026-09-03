@@ -64,7 +64,7 @@ function handleStateAction() {
 }
 
 function statusLabel(status: Organization["status"]) {
-  return status === "active" ? "已启用" : status === "suspended" ? "已暂停" : `未知状态（${status}）`;
+  return status === "active" ? "已启用" : status === "suspended" ? "已暂停" : status === "pending" ? "待处理" : `未知状态（${status}）`;
 }
 
 onMounted(load);
