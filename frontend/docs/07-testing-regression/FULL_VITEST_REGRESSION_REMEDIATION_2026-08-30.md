@@ -1,10 +1,10 @@
 # Frontend Full Vitest Regression Remediation — 2026-08-30 / 2026-09-03
 
-## 1. 历史基线
+## 1. 版本同步与当前基线
 
-`main` 与 `frontend` 在本轮修复开始前已同步；2026-09-03 的 `main` HEAD 为 `001e2bd6ab2e4c4d4d5fe7a9f8d05e3b99ee9e0b`。
+2026-09-03 通过 GitHub compare 确认 `main` 已在原 frontend 基线之上继续前进；`main` 当前 HEAD 为 `e1551fc88402cdca943b1509e516aa93725d1e45`。`frontend` 已先快速前移到该最新 `main`，避免继续基于过期后端测试/文档基线开发。
 
-2026-08-30 的本地基线为 34 个测试文件中 2 个失败、153 个测试中 2 个失败，集中在 Runtime Operations 页面异步渲染与诊断错误可见性。
+本次同步不是新增 merge commit：`main` 是原 `frontend` HEAD 的后继，因此采用 fast-forward 更新 `frontend`。
 
 ## 2. 2026-09-03 本地反馈
 
@@ -14,110 +14,137 @@
 npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts
 ```
 
-结果：
+最新反馈结果：
 
 ```text
-Test Files  4 failed | 1 passed (5)
-Tests       4 failed | 14 passed (18)
+Test Files  3 failed | 2 passed (5)
+Tests       2 failed | 12 passed (14)
+Failed Suites 2
 ```
 
-失败集中为三类：
+失败根因已经明确为三组：
 
-1. **Full-site static audit**：`DeliveryConsole.vue` 仍存在原始 `el-empty`，违反页面统一状态组件约束。
-2. **Integrations 空状态测试**：测试切换到 `subscriptions` 后立即查找 Element Plus Button；Tab 内容存在异步挂载时序，导致组件尚未进入测试树。
-3. **Operations Console Tab inventory**：测试依赖 Element Plus Tab 内部运行时 DOM 文本；当前挂载方式下 Tab label slot 不保证出现在 `wrapper.text()` 中。
-
-`Organizations` 与 `IntegrationsUI03UI05` 在用户反馈中已经通过，不再重复实现或修改。
+1. **测试文件路径解析不兼容当前 Vitest 运行环境**：`IntegrationsUI03UI05.test.ts` 与 `OperationsConsole.test.ts` 使用 `fileURLToPath(new URL(..., import.meta.url))` 读取源码时收到 `The URL must be of scheme file`。
+2. **Full-site presentation audit**：`AgentWorkbench.vue` 的 Chat 空消息状态仍使用原始 `<el-empty>`。
+3. **Full-site durable relationship audit**：`RuntimeExecutions.vue` 存在 `triggers[0]` 的数组位置关系推断，同时该页面还残留原始 `el-card`、`el-empty` 与 `v-loading`，与全站共享 UI primitive 规则不一致。
 
 ## 3. 本轮修复
 
-### 3.1 DeliveryConsole 统一 Empty State
+### 3.1 测试源码路径统一使用工作区根路径
 
-`frontend/src/views/integrations/DeliveryConsole.vue` 将审计记录为空时的原始 `<el-empty>` 替换为共享 `StatePanel`：
+`IntegrationsUI03UI05.test.ts` 与 `OperationsConsole.test.ts` 改为：
 
-- 保持 `loading / empty / error / permission / success` 状态组件体系一致；
-- 不改变投递审计数据或交互行为；
-- 避免 Full-site static audit 对页面原始 Element Plus 状态组件的误报。
+```ts
+resolve(process.cwd(), "src/views/...")
+```
 
-原子提交：`638bcaffc409d9bb9f58e8209c349f9a6efaa87a` (`fix: align delivery empty state with shared primitive`)。
+不再依赖 Vitest/Vue transform 环境下 `import.meta.url` 的 URL scheme。
 
-### 3.2 Integrations Tab 异步挂载契约
+原子提交：
 
-`frontend/tests/views/Integrations.test.ts` 保留 Element Plus `ElButton` component contract，同时使用 `vi.waitFor()` 等待“新建事件订阅”按钮真正进入测试组件树，再验证 `disabled` prop。
+- `86c2b652e6008c546f061da5ae1c210b4c9abe80` — `test: stabilize integrations source path`
+- `ec53bce7cacd078398f04214549129c0fa0660c8` — `test: stabilize operations source path`
 
-这样测试关注真实用户契约，而不是 Element Plus Tab 内容同步渲染的内部时序。
+### 3.2 AgentWorkbench Chat Empty State
 
-原子提交：`a8e43fdc9bd514660d5ee70e42c7b6cb2adeb32c` (`test: stabilize integrations tab assertion`)。
+`AgentWorkbench.vue` 已将 Chat 无消息场景从原始 `el-empty` 迁移为 `StatePanel`，并增加 Chat Context 本身的 Empty 状态：
 
-### 3.3 Operations Console Tab inventory 契约
+- `loading` → `StatePanel.loading`
+- `permission` → `StatePanel.permission`
+- `error` → `StatePanel.error + Retry`
+- `empty` → `StatePanel.empty`
+- Chat `streaming / completed / failed / cancelled` 仍保持领域状态，不被页面状态组件替代。
 
-`frontend/tests/views/OperationsConsole.test.ts` 不再依赖 Element Plus Tab runtime DOM 文本。测试直接读取当前 `OperationsConsole.vue` 的正式 Tab label 声明，并验证完整的 7 项导航契约：
+原子提交：
 
-`全局运行态势 / 总览 / 告警 / Provider / Metrics / Audit / 死信`
+- `e43e5f49107c2d393900aaa2b6c63555bbd65f6e` — `fix: align agent chat empty state`
 
-该测试仍验证产品页面的正式文案，但不绑定第三方组件内部渲染结构。
+### 3.3 RuntimeExecutions Durable Relationship 与 UI Primitive
 
-原子提交：`867717eacbd35edbd963644096d3b9e6f78ed639` (`test: stabilize operations tab inventory contract`)。
+`RuntimeExecutions.vue` 已移除无语义价值的 `triggers[0]` fallback。Trigger 只能由：
 
-## 4. Durable Relationship / UI Governance
+- 路由入口 `trigger_id`；或
+- Trace `data.trigger_id`
 
-`FullSiteConsistencyStaticAudit.test.ts` 继续禁止：
+提供 durable ID，再通过 `triggers.find(item => item.id === triggerId)` 建立关系；不再根据集合长度或位置推断实体关系。
 
-- `items / versions / destinations / providers / triggers` 使用 `[0]` 推导 durable relationship；
-- `items / rows / list / executions / traces / audits` 通过 `sort()` / `reverse()` 推导关系；
-- 页面直接使用原始 `el-card / el-empty / el-result`；
-- View 层 optimistic durable status mutation。
+同时完成页面共享 primitive 收敛：
 
-允许的默认选择场景必须与 Durable Relationship 推断明确区分，例如 Workflow/Execution 页面默认聚焦对象不能被关系审计规则误判为实体关联。
+- 原始 `el-card` → `SurfaceCard`
+- 原始 `el-empty` → `StatePanel`
+- `v-loading` → 页面 Loading 状态 `StatePanel`
+- Execution / Trigger / Audit / Retry / Resume / Trace 关系仍以后端 durable ID 与字段为准。
 
-## 5. 版本同步事实
+原子提交：
 
-修复开始前通过 GitHub compare 确认：
+- `b9506c864f1b64e6ad8dc3bdb8d90835185a6de6` — `fix: align runtime execution shared primitives`
 
-- `main` HEAD：`001e2bd6ab2e4c4d4d5fe7a9f8d05e3b99ee9e0b`
-- `frontend` HEAD：`001e2bd6ab2e4c4d4d5fe7a9f8d05e3b99ee9e0b`
-- `ahead_by = 0`
-- `behind_by = 0`
+## 4. Full-site Governance Contract
 
-因此无需额外产生 `main → frontend` 合并提交。本轮随后形成 3 个独立原子提交，当前 `frontend` HEAD 为 `867717eacbd35edbd963644096d3b9e6f78ed639`；这些提交尚未合并回 `main`，符合前端开发分支隔离原则。
+`FullSiteConsistencyStaticAudit.test.ts` 当前继续约束所有 `src/views/**/*.vue`：
+
+- 禁止原始 `el-card / el-empty / el-result`；
+- 禁止 `v-loading` 页面指令；
+- 禁止 `items / versions / destinations / providers / triggers` 使用 `[0]` 推导 durable relationship；
+- 禁止通过 `sort()` / `reverse()` 建立实体关系；
+- 禁止 View 层 optimistic durable status mutation。
+
+该规则的目标不是限制 Element Plus 本身，而是确保页面级状态、Surface/Card 结构与 Durable Relationship 均使用项目已经建立的共享契约。
+
+## 5. 后端同步事实
+
+本轮开始时发现 `main` 已经包含原 `frontend` 基线之后的后端测试与错误记录更新，包括 Scheduler Runtime cleanup deadlock、Delegation Worker Runtime 等文档/测试变更。为确保 frontend 基于最新 backend facts 开发，已将 `frontend` fast-forward 到：
+
+`e1551fc88402cdca943b1509e516aa93725d1e45`
+
+其提交信息为 `docs(errors): record scheduler runtime cleanup deadlock`。
+
+随后在 `frontend` 上追加本轮 4 个原子代码/测试提交；本文档为同步记录提交。
 
 ## 6. 验证状态
 
-当前执行环境无法访问用户 Windows 工作树，因此没有伪造 `npm test`、`npm run test:unit`、`npm run build` 或 E2E 的本地通过结果；GitHub Actions 对最新修复提交也未返回 workflow run。
+当前执行环境不能直接运行用户 Windows 工作树中的 `npm test`，因此不伪造测试通过结果。
 
-用户本地应在更新到最新 `frontend` 后执行：
+用户本地更新到最新 `frontend` 后，首先执行 targeted regression：
 
 ```powershell
-cd frontend
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
+
+git fetch origin
+git checkout frontend
+git pull --ff-only origin frontend
+
 npm test -- tests/views/FullSiteConsistencyStaticAudit.test.ts tests/views/Integrations.test.ts tests/views/IntegrationsUI03UI05.test.ts tests/views/OperationsConsole.test.ts tests/views/Organizations.test.ts
+```
+
+随后依次执行：
+
+```powershell
 npm run test:unit
 npm run build
 npm run test:gate
-```
-
-浏览器 E2E 在基础回归通过后执行：
-
-```powershell
 npm run test:e2e
 ```
 
-测试环境要求保持不变：不得由测试自动启动 API、Scheduler、Worker、PostgreSQL 或 Redis；测试数据必须由 Fixture / 脚本自动生成，禁止人工填写测试信息。
+测试环境约束保持不变：
+
+- 测试不得自动启动 API、Scheduler、Worker、PostgreSQL、Redis；
+- 测试数据必须由 Fixture / Script 自动生成；
+- 禁止人工填写测试业务信息；
+- targeted regression 通过后再进入完整 gate/E2E。
 
 ## 7. 本地手动验证流程
 
-1. `git fetch origin` 后确认 `frontend` 已包含最新提交。
-2. 安装前端依赖并确认 Node/npm 版本符合项目要求。
-3. 启动已有开发环境，不由测试脚本自动拉起后端服务。
-4. 进入“集成中心”：
-   - 无投递目标时，“新建事件订阅”保持禁用；
-   - 页面明确显示“请先创建至少一个投递目标”；
-   - 创建投递目标后订阅入口恢复可用。
-5. 进入“运维窗口”：确认 7 个正式 Tab 均可见且可切换，Audit 查询结果、Provider、Metrics、死信等内容与后端事实一致。
-6. 进入投递管理并打开一条投递记录的审计弹窗：确认无审计记录时使用统一 Empty State，不出现原始 Element Plus Empty 组件。
-7. 检查桌面与窄屏布局，确认工具栏、表格、状态面板不发生横向溢出。
+1. 确认 `frontend` 已包含 `main` 最新后端事实及本轮测试/页面修复。
+2. 进入集成中心：确认无投递目标时事件订阅创建入口保持禁用，创建投递目标后恢复。
+3. 进入运维窗口：确认 `全局运行态势 / 总览 / 告警 / Provider / Metrics / Audit / 死信` 七个正式 Tab 均可切换。
+4. 进入智能体工作台：确认列表 Loading / Empty / Permission / Error / Success 状态一致；打开 Chat 时无生效版本显示 Empty State，不出现原始 Element Plus Empty。
+5. 进入 Runtime：确认 Execution 列表 Loading / Empty 使用统一状态组件；打开 Execution 详情后，Audit、派生 Execution、Timeline、Trace Empty 均使用统一状态组件。
+6. 通过 Workflow Trigger / Scheduler / Webhook 进入 Runtime 深链时，确认 Trigger ID 只来自显式入口上下文或 Trace durable data，不因集合顺序产生关联。
+7. 在桌面与窄屏尺寸检查表单、工具栏、表格、Drawer、StatePanel，确认无明显横向溢出。
 
 ## 8. 当前状态
 
-**代码修复已完成，待用户本地重新验证。**
+**本轮代码修复已提交，等待用户 Windows targeted regression 实测。**
 
-不能将本轮标记为“全量通过”，直到用户本地提供 targeted regression、unit、build、gate 的实际结果。
+在用户重新执行 targeted regression 并提供实际结果前，不将本轮标记为“全量通过”。
