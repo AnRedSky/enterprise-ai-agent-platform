@@ -38,7 +38,7 @@ const mountView = () => mount(KnowledgeWorkbench, {
 });
 
 describe("Knowledge UI-04 states", () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => vi.clearAllMocks());
 
   it("shows loading while knowledge bases are requested", async () => {
     mocks.listKnowledgeBases.mockReturnValueOnce(new Promise(() => undefined));
@@ -51,8 +51,9 @@ describe("Knowledge UI-04 states", () => {
     mocks.listKnowledgeBases.mockResolvedValueOnce({ items: [{ id: "kb-1", name: "企业知识库", status: "active" }] });
     const wrapper = mountView();
     await flushPromises();
-    expect(wrapper.find(".state-panel").exists()).toBe(false);
     expect(wrapper.find(".grid").exists()).toBe(true);
+    expect(wrapper.find(".state-panel--loading").exists()).toBe(false);
+    expect(wrapper.find(".state-panel--error").exists()).toBe(false);
   });
 
   it("provides retry action for recoverable loading failure", async () => {
@@ -64,7 +65,8 @@ describe("Knowledge UI-04 states", () => {
     await wrapper.find(".state-panel button").trigger("click");
     await flushPromises();
     expect(mocks.listKnowledgeBases).toHaveBeenCalledTimes(2);
-    expect(wrapper.find(".state-panel").exists()).toBe(false);
+    expect(wrapper.find(".grid").exists()).toBe(true);
+    expect(wrapper.find(".state-panel--error").exists()).toBe(false);
   });
 
   it("exposes an action for the empty state", async () => {
