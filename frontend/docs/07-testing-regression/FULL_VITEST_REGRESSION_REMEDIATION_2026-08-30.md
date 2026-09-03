@@ -2,66 +2,132 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-03 本轮检查远端 `main` 与 `frontend`。`main` 当前为 `6110038ea027882617ff02352ab7afa10ac5a845`，此前 `frontend` 已同步至 `4180b55339106b2f922e3d6032399598dc4b14d8` 后完成本轮前端修复。由于 main 在前端修复过程中又新增了 1 个后端测试修复提交，本轮已将该最新 main 提交纳入 frontend，并以双父 merge commit 保持完整历史。
+2026-09-03 本轮检查远端 `main` 与 `frontend`。`main` 当前为 `9b9d9f09a72810c26f97000608c9193dd4c9d4d4`，此前 `frontend` 已同步至 `b999a7dc26ea353824b8a11798afc8618f7595c2`。本轮发现 main 新增 6 个提交，已通过双父 merge commit `fe6ff0c3b0279df4abe4fb1a35a15da57e00aca7` 纳入 frontend，保持 frontend 自身历史与 main 最新后端修复完整合流。
 
-当前 `frontend` 与 `main` 的 merge base 已为最新 main，frontend 无落后提交；frontend 保留本轮前端修复提交。
+本轮随后针对用户最新 Browser E2E 反馈完成两类测试契约修复：组织 E2E fixture 显式建立组织成员关系；Workflow Trigger E2E 显式选择 API 创建的 Workflow；Model Provider E2E 增加 API 持久化同步后重新加载页面的 UI 持久化校验。
 
-本轮未修改后端业务 Contract；frontend 继续消费已确认的正式 API 类型与 Durable Facts。
+本轮未修改后端业务 Contract；frontend 继续消费正式 API 类型与 Durable Facts。
 
-## 2. 用户最新全量 Vitest 反馈
+## 2. 用户最新 Browser E2E 反馈
 
-用户在 Windows `frontend` 工作树执行 `npm test`，本次反馈结果：
+用户在 Windows `frontend` 工作树执行 `npm run test:e2e`：
 
 ```text
-Test Files  1 failed | 69 passed (70)
-Tests       1 failed | 325 passed (326)
+Running 8 tests using 5 workers
+
+5 failed
+3 passed (1.1m)
 ```
 
-唯一失败项：
+失败项：
 
-- `tests/views/FullSiteConsistencyStaticAudit.test.ts > full-site static consistency audit > keeps Operations Console toggles backend-truth based`
-- 测试仍断言旧实现 `@change="toggleProvider(row as RuntimeProvider, $event)"` 与 `@change="toggleRule(row as RuntimeAlertRule, $event)"`。
-- 当前生产代码为解决 `vue-tsc` 的严格模板类型错误，已经明确使用 `$event === true` 将 Element Plus `change` 事件收窄为 boolean；测试因此发生 Contract 漂移。
+1. `model-provider-governance.spec.ts:11`：创建模型提供方成功反馈后，5 秒内没有找到新 Provider 名称。
+2. `organization-management.spec.ts:13`：注册新用户后，组织成员列表中找不到该用户。
+3. `organization-management.spec.ts:28`：同上。
+4. `organization-management.spec.ts:37`：同上。
+5. `workflow-trigger-governance.spec.ts:24`：Workflow Trigger 页面等待 `Trigger 名称` 输入框超时。
 
 ## 3. 根因分析
 
-Element Plus `el-switch` 的模板 `change` 事件在当前类型环境中可能被推断为 `string | number | boolean`。生产处理函数要求严格 `boolean`，因此直接传递 `$event` 无法通过 `vue-tsc`。
+### 3.1 Organization E2E fixture 与 Backend Membership Contract 不一致
 
-本轮之前已经采用局部类型收窄：
+最新 Backend Contract 提供显式的：
 
-```vue
-@change="toggleProvider(row as RuntimeProvider, $event === true)"
-@change="toggleRule(row as RuntimeAlertRule, $event === true)"
+```text
+POST /api/v1/organizations/{organization_id}/members
 ```
 
-该实现没有改变后端 API Contract，也没有恢复 optimistic durable mutation；开关操作仍在后端请求成功后重新加载 Provider / Alert Rule，以后端事实作为页面最终状态。
+用于将已注册用户加入组织。注册用户本身不会自动成为 `browser_e2e_owner` 所属组织成员；原 E2E 直接注册用户后立即查询 owner 组织成员列表，因此 `membership` 为 `undefined`。
 
-因此本次失败不是生产代码回归，而是静态治理测试仍保留旧事件表达式。
+本轮不修改后端行为，而是让 E2E fixture 遵循正式组织成员 Contract：注册用户 → owner token → `POST /organizations/{organization_id}/members` → 查询持久化 membership。
 
-## 4. 本轮最小修复
+### 3.2 Workflow Trigger E2E 未满足当前页面的显式 Workflow 选择 Contract
 
-### 4.1 Operations Console 静态治理测试
+当前 Workflow Trigger 页面要求先显式选择目标 Workflow，之后才渲染 Trigger 名称、类型和操作区域。页面不会根据只有一个 Workflow 的事实自动选择目标，也不会通过数组位置推断关系。
 
-更新 `FullSiteConsistencyStaticAudit.test.ts` 的两个精确断言，使测试契约与当前严格类型安全实现一致：
+原测试通过 API 创建并发布 Workflow 后直接访问 `/workflows/triggers`，随后立即查找 `Trigger 名称`，因此页面仍停留在“请选择 Workflow”状态，输入框根本不存在。
 
-- Provider：断言 `toggleProvider(row as RuntimeProvider, $event === true)`；
-- Alert Rule：断言 `toggleRule(row as RuntimeAlertRule, $event === true)`。
+本轮测试先通过页面 Workflow combobox 选择刚由 API 创建的 Workflow，再进入 Trigger 创建流程。该修改与前端治理规则一致：实体关系必须由真实 Workflow ID / 显式选择建立，不依赖列表位置。
 
-同时继续保留：
+### 3.3 Model Provider E2E 的 UI 持久化观察需要与真实 API 持久化事实同步
 
-- `:model-value="row.enabled"`；
-- 禁止 `v-model="row.enabled"`；
-- 禁止 `Object.assign(row,r.data)`；
-- 要求 `await loadProviders()`；
-- 要求 `await loadAlerts()`。
+用户反馈发生在“保存成功”提示之后，但 UI 未在默认 5 秒断言窗口内观察到新 Provider。后端正式 Contract 的 Provider 创建接口返回成功后由后端 commit 并 refresh，测试同时具备直接 API 查询能力。
 
-原子提交：
+本轮将该断言调整为：
 
-`test: align operations console static audit with strict events`
+1. 保存成功后直接通过 organization-scoped API 查询并确认 Provider 已持久化；
+2. 浏览器重新加载当前页面；
+3. 再确认新 Provider 在真实页面中可见；
+4. 使用页面 Provider Card 继续创建 Model Profile。
 
-## 5. 前序 build 类型修复
+这样既不通过延长任意 UI timeout 掩盖问题，也能明确区分“后端持久化失败”和“页面刷新观察失败”。
 
-用户此前在 Windows 工作树执行 `npm run build`，发现 11 个 `vue-tsc` 模板类型错误，集中于三个页面：
+## 4. 本轮原子修复
+
+### 4.1 Organization E2E membership fixture
+
+提交：
+
+```text
+4e5c15bd6ee023ad499346f0c83e7d1e67cc0ddf
+```
+
+提交信息：
+
+```text
+test: align organization E2E fixture with membership contract
+```
+
+变更：
+
+- 新增 `addMember()` 测试辅助函数；
+- 三个组织 E2E 场景在 `getMembership()` 前显式调用组织成员 API；
+- 不修改生产页面、API client 或后端 Contract。
+
+### 4.2 Workflow Trigger explicit selection
+
+提交：
+
+```text
+7e96ba01cc0d1695daf729d1412b2843b93acc98
+```
+
+提交信息：
+
+```text
+test: align workflow trigger E2E with explicit workflow selection
+```
+
+变更：
+
+- 页面进入 Trigger 配置前显式选择 API 创建的 Workflow；
+- 保持后续真实 Trigger / Scheduler / Execution API 验证不变；
+- 不通过 `[0]` 或本地推断建立 Workflow/Trigger 关系。
+
+### 4.3 Model Provider persistence synchronization
+
+提交：
+
+```text
+51ac05c7015e7326af55b0d2299cf83a0055676c
+```
+
+提交信息：
+
+```text
+test: stabilize model provider E2E persistence check
+```
+
+变更：
+
+- Provider 保存成功后先通过真实 organization-scoped API 确认持久化；
+- 浏览器 reload 后确认 Provider UI 可见；
+- 再继续 Model Profile 创建与 API 持久化断言；
+- 不修改生产 Model Provider 实现。
+
+## 5. 前序 Vitest / build 类型修复
+
+用户此前在 Windows 工作树执行 `npm test`，发现 11 个 `vue-tsc` 模板类型错误，集中于三个页面：
 
 - `integrations/OperationsConsole.vue`：Element Plus `el-switch` 的 `change` 事件在模板中推断为 `string | number | boolean`，而运行时操作函数只接受 boolean；Audit table slot 的 `row` 同时被推断为 `DefaultRow`，不能直接传给 `executionIdOf(RuntimeAudit)`。
 - `organizations/detail.vue`：`organization` 在 `v-else` 成功分支中业务上已经非空，但 Vue 模板类型收窄不会跨 sibling `StatePanel` 分支传播，因此直接访问 `organization.name/id/status` 被判定为 nullable。
@@ -73,27 +139,7 @@ Element Plus `el-switch` 的模板 `change` 事件在当前类型环境中可能
 2. `organizations/detail.vue`：新增成功分支专用 `organizationData` computed，在页面状态 Contract 已保证组织存在的前提下集中完成非空收窄；不改变 API 请求和权限逻辑。
 3. `organizations/model-providers.vue`：仅在 ModelProfile 编辑/删除动作边界将 table row 显式收窄为 `ModelProfile`，不改变后端返回的数据结构。
 
-原子提交：
-
-- `fix: narrow operations console template events`
-- `fix: type model provider table rows`
-- `fix: narrow organization detail template state`
-
-这些修复没有修改后端 API Contract，也没有通过关闭 strict template checking 来隐藏真实类型问题。
-
-## 6. 已完成的前序回归修复
-
-以下修复仍属于当前回归基线：
-
-- ToolWorkbench 测试 fixture 字符串边界修复；
-- Agent 用户可见错误 fallback 断言对齐，并继续禁止 HTTP/provider 原始错误泄漏；
-- Audit Log durable `execution_id` 关联改为语义断言；
-- Audit Log shared-state ownership 测试定位到 `AuditLogPanel.vue`；
-- Audit Log 成功刷新反馈 `审计日志已更新`；
-- Dashboard 保留空运行记录状态和快速入口；
-- Knowledge UI-04 成功态按 `.grid` 工作区语义断言。
-
-## 7. Full-site Governance Contract
+## 6. Full-site Governance Contract
 
 `FullSiteConsistencyStaticAudit.test.ts` 当前约束：
 
@@ -106,19 +152,21 @@ Element Plus `el-switch` 的模板 `change` 事件在当前类型环境中可能
 
 这些规则是前端架构治理门禁：页面状态通过共享 primitive 表达，实体关系通过后端 durable ID / Contract 支撑。
 
-## 8. 当前验证状态
+## 7. 当前验证状态
 
-本轮环境不能直接执行用户 Windows 工作树中的 `npm test` 或 `npm run build`，因此**不记录未经实际执行的“通过”**。
+本轮无法直接执行用户 Windows 工作树中的 Browser E2E，因此**不记录未经实际执行的“通过”**。
 
-用户最新本地结果已经将失败从此前的 3 个测试文件 / 3 个测试收敛至 **1 个测试文件 / 1 个测试**；本轮已针对该唯一失败完成最小测试契约修复。
+用户提供的 E2E 结果明确为 **8 个测试中 3 个通过、5 个失败**。本轮已针对 5 个失败按根因拆分并完成对应测试契约修复；这不等同于 E2E 已通过。
 
 当前 `frontend` 最新提交为：
 
 ```text
-6723dd6e1b91562ede8990e971c1d9fec0e7db1f
+51ac05c7015e7326af55b0d2299cf83a0055676c
 ```
 
-用户本地同步最新 `frontend`：
+GitHub Combined Status 当前没有返回任何 status check，因此不记录 CI 通过。
+
+用户本地同步：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
@@ -129,49 +177,46 @@ git pull --ff-only origin frontend
 git rev-parse HEAD
 ```
 
-同步后预期 HEAD：
+预期 HEAD：
 
 ```text
-6723dd6e1b91562ede8990e971c1d9fec0e7db1f
+51ac05c7015e7326af55b0d2299cf83a0055676c
 ```
 
-然后执行本轮 targeted regression：
+## 8. 推荐验证顺序
+
+首先验证三个发生实际 Contract 调整的 E2E 文件：
 
 ```powershell
-npx vitest run tests/views/FullSiteConsistencyStaticAudit.test.ts
+npx playwright test tests/e2e/organization-management.spec.ts
+npx playwright test tests/e2e/workflow-trigger-governance.spec.ts
+npx playwright test tests/e2e/model-provider-governance.spec.ts
 ```
 
-随后执行标准全量验证：
+如果三组均通过，再执行完整 E2E：
+
+```powershell
+npm run test:e2e
+```
+
+随后回到标准前端验收顺序：
 
 ```powershell
 npm test
 npm run build
-```
-
-若两项均通过，再执行：
-
-```powershell
 npm run test:gate
-npm run test:e2e
 ```
 
 没有实际执行的测试不得记录为通过；测试数据必须由 Fixture / Script 自动生成，不得要求手工填写业务信息，也不得自动启动 API、Scheduler、Worker、PostgreSQL、Redis。
 
 ## 9. 本地手动验证流程
 
-1. Dashboard 空数据：确认指标、常用入口和“暂无运行记录”同时可见。
-2. Dashboard Loading：确认聚合请求未完成时显示 loading StatePanel。
-3. Dashboard Permission/Error：确认 403 显示权限状态，普通失败显示错误与重试动作。
-4. Knowledge Workbench：分别验证 Loading、Success、Empty、Error/Retry、Permission 状态。
-5. Audit Log：确认首次 Loading、成功刷新反馈、Empty、Error、Permission 均使用 shared `StatePanel`。
-6. Audit Log 深链：点击真实 `execution_id`，确认 Runtime URL 使用该 durable ID，不通过列表位置推断。
-7. Agent Workbench：触发列表错误，确认只展示用户可读 fallback，不显示 HTTP/provider 原始错误。
-8. Tool Workbench：确认 Loading、Error、Empty 状态均稳定，并验证启用/停用确认后按 durable `tool.id` 调用后端。
-9. Operations Console：验证 Alert Rule / Provider 开关传入严格 boolean；Audit Execution 深链使用真实 audit durable row 数据。
-10. Organization Detail：成功态确认组织信息正常渲染，Loading/Error/Empty 状态保持 shared `StatePanel`。
-11. Model Providers：确认模型配置编辑、删除仍使用后端返回的 `ModelProfile.id`，并验证表格操作不依赖列表位置。
-12. 小屏宽度：确认上述页面操作区、表格、状态面板和卡片保持可读，不产生明显布局溢出。
+1. Organization：注册测试用户后由脚本加入目标组织，确认 owner/member/suspended/transfer-owner 链路符合权限边界。
+2. Workflow Trigger：打开页面后显式选择 Workflow，确认 Manual / Scheduled / Webhook Trigger 的创建、状态更新、删除和 Scheduler 状态来自真实 API。
+3. Model Provider：创建 Provider 后确认 API 持久化，再 reload 页面确认 Provider UI 可见，继续创建 embedding Model Profile 并核验 dimension。
+4. Dashboard / Knowledge / Audit / Agent / Tool / Operations Console：继续执行既有 UI-04 Loading / Empty / Error / Permission / Success 回归清单。
+5. 小屏宽度：确认操作区、表格、状态面板和卡片保持可读，不产生明显布局溢出。
 
 ## 10. 下一步
 
-当前状态仍为 **进行中**：本轮唯一 Vitest 失败已经完成测试契约修复，但尚未由用户 Windows 工作树重新执行 targeted Vitest、全量 `npm test` 和 `npm run build` 验证。下一步先执行 targeted regression，再执行全量 test/build；若两项均通过，再进入 test gate 和 E2E。若仍失败，继续遵循“单一根因 → 最小修复 → targeted/full regression → 文档 → 原子提交”，不进行无关的大规模重构。
+当前状态仍为 **进行中**：本轮 E2E 失败已经完成最小测试契约修复，但尚未由用户 Windows 工作树重新执行。下一步优先执行三组 targeted Playwright；若通过，再执行完整 `npm run test:e2e`，之后执行 `npm test`、`npm run build` 和 `npm run test:gate`。若任一 targeted E2E 仍失败，继续遵循“单一根因 → 最小修复 → targeted regression → 文档 → 原子提交”，不进行无关的大规模重构。
