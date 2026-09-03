@@ -15,16 +15,16 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.infrastructure.db.session import SessionLocal
 from app.models.agent_delegation import AgentDelegation
-from app.models.core import Agent, AgentVersion, AuditLog, User
+from app.models.core import Agent, AgentVersion, User
 from app.models.model_provider import ModelProfile, ModelProvider
 from app.models.organization import Organization
 from app.models.workflow_execution import WorkflowExecution, WorkflowFrontier
 from app.services.agent_delegation.claim import claim_delegation
 from app.services.agent_delegation.completion import complete_delegation, fail_delegation
-from app.services.agent_delegation.runtime_bridge import AgentDelegationRuntimeBridge
 from app.services.workflow_worker import WorkflowWorker
 
 BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1").rstrip("/")
@@ -163,7 +163,10 @@ async def _claim_or_observe_running(db, delegation_id: uuid.UUID, tenant_id, wor
             if exc.status_code != 409:
                 raise
             await db.rollback()
-            current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
+        except IntegrityError:
+            # 并发 Worker 可能已经提交相同 delegation:{id} Execution；回滚后必须重新读取 durable 状态。
+            await db.rollback()
+    current = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_id))).scalar_one()
     if current.status != "running":
         raise AssertionError(f"Delegation 必须处于 pending/running，实际为 {current.status}")
     assert current.worker_execution_id is not None
@@ -183,32 +186,33 @@ async def test_b2_worker_execution_bridge_runs_target_agent_version():
 
     async with SessionLocal() as db:
         delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-        if delegation.status == "pending":
-            claimed = await claim_delegation(db=db, tenant_id=delegation.tenant_id, delegation_id=delegation_uuid, worker_owner=worker.owner, commit=False)
+        delegation_status = delegation.status
+        delegation_tenant_id = delegation.tenant_id
+        if delegation_status == "pending":
+            claimed = await claim_delegation(db=db, tenant_id=delegation_tenant_id, delegation_id=delegation_uuid, worker_owner=worker.owner, commit=False)
             worker_execution_id = claimed.worker_execution_id
             assert worker_execution_id is not None
             await db.commit()
         else:
-            assert delegation.status == "running"
+            assert delegation_status == "running"
             worker_execution_id = delegation.worker_execution_id
             assert worker_execution_id is not None
 
     async with SessionLocal() as db:
         execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == worker_execution_id))).scalar_one()
-        if execution.status in {"completed", "failed", "cancelled"}:
-            await db.rollback()
+        execution_status = execution.status
+        execution_owner = execution.worker_owner
+        execution_id_value = execution.id
+        await db.rollback()
+        if execution_status in {"completed", "failed", "cancelled"}:
             persisted = await _wait_for_terminal_delegation(delegation_uuid)
-        elif execution.worker_owner == worker.owner:
-            frontier = (await db.execute(select(WorkflowFrontier).where(WorkflowFrontier.execution_id == execution.id))).scalar_one()
-            frontier_status = frontier.status
-            await db.rollback()
-            if frontier_status == "pending":
-                frontier = await worker._claim_pending_delegation_frontier()
-                assert frontier is not None
-            await worker.execute_frontier(frontier)
+        elif execution_owner == worker.owner:
+            frontier = await worker._claim_pending_delegation_frontier()
+            if frontier is not None:
+                await worker.execute_frontier(frontier)
+            # Frontier 可能已被其他 Worker 消费；只要 durable generation 合法并最终收敛即可。
             persisted = await _wait_for_terminal_delegation(delegation_uuid)
         else:
-            await db.rollback()
             persisted = await _wait_for_terminal_delegation(delegation_uuid)
 
     assert persisted.status == "completed"
@@ -259,20 +263,63 @@ async def test_b3_failed_worker_execution_closes_delegation():
     with _client() as client:
         delegation_id, _, _, _, _ = await _create_delegation(client, f"b3-failure-{suffix}", model_name="mock-http-503")
     delegation_uuid = uuid.UUID(delegation_id)
-    async with SessionLocal() as db:
-        delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
-        claimed = await _claim_or_observe_running(db, delegation_uuid, delegation.tenant_id, f"b3-failure-worker-{suffix}")
-        execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == claimed.worker_execution_id))).scalar_one()
-        if execution.status == "running" and execution.worker_owner == f"b3-failure-worker-{suffix}":
+    worker_owner = f"b3-failure-worker-{suffix}"
+    deadline = asyncio.get_running_loop().time() + 30.0
+    while True:
+        async with SessionLocal() as db:
+            delegation = (await db.execute(select(AgentDelegation).where(AgentDelegation.id == delegation_uuid))).scalar_one()
+            delegation_status = delegation.status
+            delegation_tenant_id = delegation.tenant_id
+            delegation_id_value = delegation.id
+            if delegation_status in {"completed", "failed", "cancelled", "timed_out"}:
+                persisted_status = delegation_status
+                break
+            if delegation_status == "pending":
+                try:
+                    claimed = await claim_delegation(
+                        db=db,
+                        tenant_id=delegation_tenant_id,
+                        delegation_id=delegation_id_value,
+                        worker_owner=worker_owner,
+                    )
+                except (HTTPException, IntegrityError):
+                    await db.rollback()
+                    continue
+                execution_id = claimed.worker_execution_id
+                assert execution_id is not None
+            else:
+                execution_id = delegation.worker_execution_id
+                assert execution_id is not None
+
+            execution = (await db.execute(select(WorkflowExecution).where(WorkflowExecution.id == execution_id))).scalar_one()
+            if execution.worker_owner != worker_owner:
+                await db.rollback()
+                if asyncio.get_running_loop().time() >= deadline:
+                    break
+                await asyncio.sleep(0.2)
+                continue
             execution.status = "failed"
             execution.error_code = "FIXTURE_FAILURE"
             execution.error_message = "B3 failure fixture"
             await db.commit()
-            finalized = await fail_delegation(db=db, tenant_id=delegation.tenant_id, delegation_id=delegation.id, worker_execution_id=execution.id, error_code="FIXTURE_FAILURE", error_message="B3 failure fixture")
-            assert finalized.status == "failed"
-        else:
-            await db.rollback()
-    persisted = await _wait_for_terminal_delegation(delegation_uuid)
+            finalized = await fail_delegation(
+                db=db,
+                tenant_id=delegation_tenant_id,
+                delegation_id=delegation_id_value,
+                worker_execution_id=execution.id,
+                error_code="FIXTURE_FAILURE",
+                error_message="B3 failure fixture",
+            )
+            persisted_status = finalized.status
+            break
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.2)
+
+    if persisted_status != "failed":
+        persisted = await _wait_for_terminal_delegation(delegation_uuid)
+    else:
+        persisted = await _wait_for_terminal_delegation(delegation_uuid)
     assert persisted.status == "failed"
     assert persisted.error_code is not None
     assert persisted.ended_at is not None
