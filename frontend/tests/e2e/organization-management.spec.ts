@@ -49,7 +49,8 @@ async function confirmMessageBox(page: import("@playwright/test").Page) {
 }
 
 function waitForMessage(page: import("@playwright/test").Page, message: string) {
-  return page.waitForFunction((expected) => document.body.innerText.includes(expected), message);
+  const notification = page.locator(".el-message", { hasText: message }).last();
+  return expect(notification).toBeVisible();
 }
 
 async function showMemberRow(page: import("@playwright/test").Page, userId: string) {
@@ -105,26 +106,27 @@ test("Organization management completes the real owner browser contract", async 
     await page.getByRole("dialog", { name: "编辑成员" }).getByRole("button", { name: "保存" }).click();
     await expect(page.getByText("成员角色已更新")).toBeVisible();
     await expect(memberRow).toContainText("管理员（admin）");
+
     const suspendedMessage = waitForMessage(page, "成员已暂停");
     await memberRow.getByRole("button", { name: "暂停" }).click();
     await suspendedMessage;
-    await expect(page.getByText("成员已暂停")).toBeVisible();
     await expect(memberRow).toContainText("已暂停（suspended）");
+
     const restoredMessage = waitForMessage(page, "成员已恢复");
     await memberRow.getByRole("button", { name: "恢复" }).click();
     await restoredMessage;
-    await expect(page.getByText("成员已恢复")).toBeVisible();
     await expect(memberRow).toContainText("已启用（active）");
+
     const suspendedOrganizationMessage = waitForMessage(page, "组织已暂停");
     await page.getByRole("button", { name: "暂停组织" }).click();
     await confirmMessageBox(page);
     await suspendedOrganizationMessage;
-    await expect(page.getByText("组织已暂停")).toBeVisible();
+
     const restoredOrganizationMessage = waitForMessage(page, "组织已恢复");
     await page.getByRole("button", { name: "恢复组织" }).click();
     await confirmMessageBox(page);
     await restoredOrganizationMessage;
-    await expect(page.getByText("组织已恢复")).toBeVisible();
+
     await memberRow.getByRole("button", { name: "转移所有权" }).click();
     await expect(page.locator(".el-message-box:visible")).toContainText(`确认将组织所有权转移给 ${memberUser.user_id}`);
     await confirmMessageBox(page);
