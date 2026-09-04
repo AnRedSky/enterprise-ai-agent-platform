@@ -6,48 +6,42 @@
 
 - `Organization management completes the real owner browser contract`：成员暂停成功后，5 秒内未捕获 `成员已暂停` 通知；成员状态断言尚未执行。
 - `Organization browser governance enforces member and suspended-member boundaries`：通过。
-- `Organization owner transfer exposes owner-only browser controls`：为动态注册用户创建第二个 Organization 的请求返回非 2xx；原因是当前认证注册契约会把新用户加入默认 Organization，而 Organization 创建服务要求当前 Tenant 尚未存在 Organization。
+- `Organization owner transfer exposes owner-only browser controls`：owner 登录后页面存在多个成员行，每个非 owner 行均可能渲染“转移所有权”，原测试使用 page 级 locator 触发 Playwright strict mode violation。
 
 ## 2. 根因
 
-### 2.1 页面权限上下文错误
+### 2.1 页面权限上下文
 
-组织详情页原先直接从当前渲染页 `members` 数组推导当前用户 membership。成员列表是后端分页结果，当前用户不一定出现在当前页，因此页面可能已经拿到目标成员行，却错误隐藏管理操作列。
+组织详情页的管理权限必须基于真实当前用户 membership，而不能从当前分页成员数组推导。当前 `frontend` 已通过独立 `currentMembership` 上下文和分页查找解决该问题；本次不重复实现。
 
-该问题已在前一提交通过独立 `currentMembership` 权限上下文修复。
+### 2.2 E2E 通知是瞬时 UI 状态
 
-### 2.2 E2E owner transfer 测试与后端注册/Organization 创建契约不一致
+Element Plus `ElMessage` 是短生命周期 DOM。仅使用 `expect(locator).toBeVisible()` 作为等待器，虽然在点击前建立等待，但如果浏览器事件循环在通知创建和销毁之间没有完成一次满足 locator 条件的采样，仍可能出现“element(s) not found”。
 
-当前后端 `POST /auth/register` 会将新注册用户自动加入默认 Tenant 对应的 Organization；同时 `POST /organizations` 只允许在当前 Tenant 尚未存在 Organization 时创建 Organization。因此 owner-transfer E2E 为动态注册 owner 再创建第二个 Organization 的数据准备方式与真实后端契约冲突，并非前端业务故障。
+### 2.3 owner transfer locator 作用域过宽
 
-### 2.3 成功通知是瞬时 UI 状态
-
-Element Plus `ElMessage` 是短生命周期通知。原测试在完成 `updateMember`、重新加载成员列表后才开始等待 `成员已暂停`，如果操作链耗时超过通知生命周期，DOM 中已经不存在该文本，从而产生时序型失败。
+组织 owner 可以向任意非 owner 成员转移所有权，因此详情页可能同时出现多个“转移所有权”按钮。page 级 `getByRole('button', { name: '转移所有权' })` 在多个匹配项存在时会触发 Playwright strict mode。测试应明确表达“owner 能看到该控制”，而不是假定全页只有一个按钮。
 
 ## 3. 本次修复方案
 
 ### E2E 通知捕获
 
-`frontend/tests/e2e/organization-management.spec.ts` 的 `waitForMessage()` 现在直接定位可见的 `.el-message` 通知，并在触发操作前创建 `expect(...).toBeVisible()` 等待：
+`frontend/tests/e2e/organization-management.spec.ts` 的 `waitForMessage()` 改为在浏览器上下文中预先安装 `MutationObserver`：
 
-- 保留精确的业务通知文本匹配，例如 `成员已暂停`、`成员已恢复`、`组织已暂停`、`组织已恢复`；
-- 等待订阅建立在点击动作之前，因此不会因为通知生命周期短而错过可见窗口；
-- 可见性断言由 helper 本身完成，没有用“文本曾经出现在 body”替代可见性语义；
-- 未修改测试总超时 `60_000ms`，未降低任何业务状态断言。
+- 监听 `.el-message` 的 DOM 创建、文本变化和子树变化；
+- 在操作触发前建立观察器，避免依赖固定轮询窗口；
+- 只接受同时满足 `.el-message`、目标业务文本和可见性的通知；
+- 保留 5 秒超时，并在超时后给出明确的测试错误；
+- 不修改生产 `ElMessage` duration，不通过增加 sleep 掩盖时序问题。
 
-### E2E owner transfer 数据准备
+### owner transfer 控件
 
-owner-transfer 场景继续使用 deterministic `browser_e2e_owner` 作为真实 owner，但目标用户每次运行动态注册。
+owner-only browser contract 保持业务语义不变：
 
-- 新注册目标用户按照正式认证契约自动获得默认 Organization 的 `active/member` membership；
-- 测试直接通过 `GET /organizations/{organization_id}/members` 获取该真实 membership ID，不重复调用必然冲突的 Organization 创建接口；
-- 仍执行真实 owner transfer API 与浏览器权限边界验证；
-- 成功转移后恢复原 owner；
-- 若 UI 断言在转移完成后失败，`finally` 会尝试使用动态新 owner 恢复原 owner，避免 durable owner fixture 被污染。
-
-### 后端边界
-
-本次未修改后端 Organization 创建、注册、成员分页、membership 状态机或 owner transfer 业务逻辑。
+- 原 owner 登录后断言“转移所有权”控件数量为 `0`；
+- 新 owner 登录后断言 page 级 locator 的第一个匹配项可见；
+- 不假定页面只存在一个目标成员，因此避免 strict mode 假设；
+- owner transfer API 仍使用真实 membership ID，未修改后端权限规则。
 
 ## 4. Contract 对齐
 
@@ -57,14 +51,15 @@ owner-transfer 场景继续使用 deterministic `browser_e2e_owner` 作为真实
 - `GET /organizations`：按用户 active membership 返回 Organization；
 - `GET /organizations/{organization_id}/members?offset=&limit=`：分页返回真实 membership；
 - `POST /organizations/{organization_id}/members/{membership_id}/transfer-owner`：仅当前 owner 可执行；
-- owner transfer 后原 owner 降级为 `admin`，目标 active membership 升级为 `owner`；
-- `POST /organizations`：当前 Tenant 已存在 Organization 时返回业务冲突。
+- owner transfer 后原 owner 降级为 `admin`，目标 active membership 升级为 `owner`。
+
+本次未修改后端 Organization、membership、权限或 owner transfer 业务规则。
 
 ## 5. 验证要求
 
 本地环境保持现有服务运行，不由测试脚本自动启动服务。测试数据全部由 Playwright API 脚本生成。
 
-先执行一次 deterministic Browser E2E 数据重置，确保 durable owner fixture 为 `active/owner`：
+先执行 deterministic Browser E2E 数据重置：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
@@ -86,12 +81,10 @@ npm run build
 npm run test:gate
 ```
 
-## 6. 本次反馈后的状态
+## 6. 当前状态
 
-- 最新 `main` 已通过 PR #93 合并进 `frontend`；
-- 页面权限上下文修复已存在于 `frontend`；
-- owner-transfer 数据准备已与当前后端注册/Organization Contract 对齐；
-- 本次继续修复瞬时通知的可见性断言时序；
-- 未弱化断言、未调整测试超时、未修改后端生产分页或业务规则；
-- 用户本地此前执行结果仍记录为 `1 passed / 2 failed`，不能作为本次提交的通过证据；
-- 必须在同步到最新 `frontend` 后重新执行 targeted E2E，确认三项全部通过，再进入全量回归。
+- `frontend` 当前分支已与最新 `main` 同步到 `8885308f10685f9b571a2df11c7b19149a29f738`，因此本轮无需重复创建 main→frontend 合并提交。
+- 页面 `currentMembership` 权限上下文修复已存在，不重复实现。
+- 本次提交仅修复 organization management E2E 的瞬时通知捕获和 owner-transfer locator strict mode。
+- 用户提供的本地结果 `1 passed / 2 failed` 仍作为修复前证据；在用户本地重新执行前，不标记 targeted E2E 为通过。
+- 本地 targeted E2E 通过后再执行全量 Vitest、build 和 regression gate；未实际执行的结果不得记录为通过。
