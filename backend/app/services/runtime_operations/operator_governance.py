@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -315,10 +315,8 @@ class OperatorActionGovernanceService:
                 ))).scalar_one_or_none()
                 if version is None:
                     raise HTTPException(status_code=409, detail="Workflow Execution 版本不存在")
-                # Run 必须留在 Operator Action 当前事务内，才能与后续 Audit/幂等事实原子提交。
                 result = await service.run(execution, version, actor_id, is_admin, commit=False)
             elif action == "cancel":
-                # Cancel 与 Operator Action Audit 使用同一事务，避免先提交状态、后写审计形成半提交。
                 result = await service.cancel(execution, actor_id, reason, commit=False)
             elif action == "retry":
                 result = await service.retry(execution, actor_id, commit=False)
@@ -354,8 +352,6 @@ class OperatorActionGovernanceService:
             )
             await self.db.commit()
         except Exception:
-            # Result Resource、Operator Action 与 Audit 必须原子提交；任一最终化步骤失败都不得
-            # 留下当前事务中的 Execution/Idempotency/Audit 脏状态供连接复用。
             await self.db.rollback()
             raise
         await self.db.refresh(result)
@@ -364,12 +360,9 @@ class OperatorActionGovernanceService:
     async def execute_trigger(self, trigger_id: UUID, tenant_id: UUID, actor_id: UUID, is_admin: bool,
                               action: str, *, confirm: bool = False, input_data: dict[str, Any] | None = None,
                               idempotency_key: str | None = None) -> WorkflowTrigger | WorkflowExecution:
-        """执行 Trigger 运维动作，并委托给现有 Trigger 领域服务。"""
+        """执行 Trigger 运维动作，并委托给现有 Trigger 领域服务；成功幂等重放不受资源当前状态变化影响。"""
         definition = self.validate_request("workflow_trigger", action, confirm=confirm, idempotency_key=idempotency_key)
         workflow, trigger = await self._trigger(trigger_id, tenant_id, actor_id, is_admin)
-        available = self.availability("workflow_trigger", action, trigger.status, trigger_type=trigger.trigger_type)
-        if not available["allowed"]:
-            raise HTTPException(status_code=409, detail="当前 Workflow Trigger 状态不允许执行该 Operator Action")
         idempotency_record = None
         if definition.requires_idempotency_key:
             idempotency_record = await self._claim_idempotency(
@@ -379,6 +372,18 @@ class OperatorActionGovernanceService:
             reused = await self._reuse_or_raise(idempotency_record)
             if reused is not None:
                 return reused
+        available = self.availability("workflow_trigger", action, trigger.status, trigger_type=trigger.trigger_type)
+        if not available["allowed"]:
+            if idempotency_record is None and definition.requires_idempotency_key:
+                raise HTTPException(status_code=409, detail="相同 Idempotency-Key 的 Operator Action 已在处理中或此前失败")
+            if definition.requires_idempotency_key:
+                await self.db.execute(delete(OperatorActionIdempotency).where(
+                    OperatorActionIdempotency.tenant_id == tenant_id,
+                    OperatorActionIdempotency.idempotency_key == idempotency_key,
+                    OperatorActionIdempotency.status == "started",
+                ))
+                await self.db.flush()
+            raise HTTPException(status_code=409, detail="当前 Workflow Trigger 状态不允许执行该 Operator Action")
         service = WorkflowTriggerService(self.db)
         try:
             if action == "enable":
@@ -424,7 +429,6 @@ class OperatorActionGovernanceService:
             )
             await self.db.commit()
         except Exception:
-            # Trigger 状态、Invoke Execution、Operator Action 与 Audit 必须共享同一提交边界。
             await self.db.rollback()
             raise
         if isinstance(result, WorkflowExecution):
