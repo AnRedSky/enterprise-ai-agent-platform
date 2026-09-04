@@ -76,6 +76,42 @@ Phase 3 将 Trigger 删除操作改为后端 Availability 驱动。旧测试只 
 
 提交：`fix: align trigger lifecycle test mocks`
 
+### 3. 生命周期测试错误依赖表格 DOM 文本
+
+现象：
+
+定向测试出现大量“期望 `订单审批` / `e1` / `Runtime 诊断`，实际只得到 PageHeader 文本”的失败，共 23 个断言失败。失败集中发生在 `WorkflowLifecycle.test.ts`。
+
+根因：
+
+测试使用的 `el-table` / `el-table-column` stub 不渲染真实列 slot，因此表格中的 Workflow/Execution 数据不会进入 `wrapper.text()`。这属于测试渲染契约问题，而不是后端数据缺失；继续扩大生产 DOM 或修改表格组件以迎合测试都会产生不必要耦合。
+
+修复：
+
+- 增加 `waitForReady()`，以组件公开的 `pageState === "success"` 作为页面加载完成条件。
+- Workflow、Version、Trigger、Execution 数据断言改为直接验证组件真实状态，而不是依赖被 stub 隐藏的表格文本。
+- 深链诊断仍验证真实 `trace_id` / `audit_id`，并保留“反向诊断上下文”“继续 Trace/Audit 诊断”等既有 UX 契约。
+- 详情错误断言与当前 `StatePanel` 文案统一为“工作流详情加载失败”。
+
+提交：`test: align workflow lifecycle assertions with rendered contracts`
+
+### 4. Trigger 成功操作后的 loading 状态阻止了关闭确认态
+
+现象：
+
+保存 scheduled Trigger 或删除 Trigger 成功后，测试发现 `triggerEditor.trigger` / `deleteTriggerTarget` 仍保留目标对象。
+
+根因：
+
+成功处理函数在 `triggerEditorLoading` / `deleteTriggerLoading` 仍为 `true` 时调用带 loading guard 的取消函数，取消函数为了防止用户重复操作直接 return，导致成功路径无法清理状态。
+
+修复：
+
+- 为编辑器、删除确认、启停确认分别增加成功路径专用 reset 函数。
+- 用户主动取消仍保留 loading guard，避免中途操作破坏请求状态。
+- 成功 API 返回后先 reset dialog/target，再执行 Backend refresh。
+- 不改变 Operator Availability 门禁和 canonical API 调用。
+
 ## 验证纪律
 
 本环境不执行用户本地 Node/Vitest/build 命令，因此本次改动不标记本地测试为已通过。用户应在 Windows 前端工作区执行 targeted test、全量 `npm test`、`npm run build` 与 `npm run test:gate`，并以实际终端结果作为验收事实。
@@ -91,7 +127,8 @@ npm run test:gate
 
 ## 当前状态
 
-- 代码修复：已提交。
-- 测试 fixture 修复：已提交。
-- 文档回归记录：已同步。
+- 最新 `main` 已同步到 `frontend`，当前 frontend 不落后 main。
+- WorkflowLifecycle 生产状态清理修复：已提交。
+- 生命周期测试契约修复：已提交。
+- 回归文档：已同步。
 - 本地最终验证：等待用户执行上述命令确认，当前不能标记为通过。
