@@ -26,34 +26,38 @@
 
 `it.each` 直接在测试参数定义阶段创建 `Promise.reject(...)`，Vitest 在测试消费前即捕获 unhandled rejection。修复为 Promise factory，在每个测试体内创建 rejected Promise 并立即交给 API mock。
 
+### 2.6 Workflow Webhook Runtime E2E 严格定位冲突
+
+开发者本地执行 `npm run test:e2e -- tests/e2e/workflow-webhook-runtime.spec.ts` 时，Webhook Runtime E2E 在生命周期工作台断言处失败。页面为同一工作流名称同时渲染了 `strong` 身份标题、`span` 元信息和表格单元格，`getByLabel("工作流生命周期工作台").getByText(workflow.name, { exact: true })` 因严格模式解析为 3 个元素而失败。
+
+根因不是 Workflow 生命周期数据或深链 Contract，而是测试定位器只约束了文本，没有约束工作流身份区域的 DOM 语义。页面已经提供稳定的 `.workflow-identity strong` 身份标题，因此回归测试改为在工作流生命周期工作台内定位 `.workflow-identity strong`，并用 `toHaveText(..., { exact: true })` 验证真实工作流名称。
+
+该修复不修改业务代码、API Contract 或生命周期状态机，只收敛 E2E 测试边界，避免通过 `.first()` 等顺序性选择器掩盖真实 DOM 歧义。
+
 ## 3. 变更范围
 
-- `frontend/src/views/knowledge/components/KnowledgeWorkbench.vue`
-- `frontend/src/views/runtime/components/RuntimeObservabilityOverview.vue`
-- `frontend/tests/views/Tools.test.ts`
-- `frontend/tests/views/RuntimeUI04.test.ts`
-- `frontend/tests/views/AuditLogUI04.test.ts`
-- `frontend/tests/views/OperationsConsole.test.ts`
+- `frontend/tests/e2e/workflow-webhook-runtime.spec.ts`
+- `frontend/docs/07-testing-regression/2026-08-31-frontend-regression-followup.md`
 
 ## 4. 验证状态
 
-当前执行环境无法解析 `github.com`，因此无法直接复现用户 Windows 本地 Node/npm 环境；未伪称 `npm test`、`npm run build` 或 `npm run test:gate` 已通过。
+本轮已完成 `main` → `frontend` 快进同步，并针对开发者提供的 E2E 失败堆栈完成根因定位与回归测试修复。
 
-开发者本地必须执行：
+当前工具环境只能访问远程 GitHub 仓库，不能直接执行开发者 Windows 本地 Node/npm 服务，因此不能将以下命令记录为已通过：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
 npm ci
-npm test -- tests/views/KnowledgeUI03.test.ts tests/views/Tools.test.ts tests/views/RuntimeUI04.test.ts tests/views/AuditLogUI04.test.ts tests/views/OperationsConsole.test.ts
+npm run test:e2e -- tests/e2e/workflow-webhook-runtime.spec.ts
 npm test
 npm run build
 npm run test:gate
 ```
 
-`npm run test:gate` 必须以 0 退出码结束，并且不得出现 Vitest `Unhandled Errors` / `Unhandled Rejection`。
+本地验收必须使用项目已安装依赖和已启动的真实 Backend/API；测试数据由 E2E 脚本自动生成，不需要手工填写测试账号、Workflow、Trigger 或 Webhook 数据。重点确认原失败用例继续通过，并且无新增 strict-mode violation、Unhandled Rejection 或 URL 深链回归。
 
 ## 5. 完成判定
 
 当前状态：**待本地验证**。
 
-在 targeted test、全量 Vitest、build 和 release gate 未实际执行并通过前，不标记本轮修复为完成。
+在 targeted E2E、全量 Vitest、build 和 release gate 未实际执行并通过前，不标记本轮修复为完成。
