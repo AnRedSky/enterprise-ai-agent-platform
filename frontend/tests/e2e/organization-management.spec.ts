@@ -49,7 +49,7 @@ async function confirmMessageBox(page: import("@playwright/test").Page) {
 }
 
 async function showMemberRow(page: import("@playwright/test").Page, userId: string) {
-  const memberRow = page.locator(".el-table__body-wrapper tbody tr").filter({ hasText: userId });
+  const memberRow = page.getByRole("row").filter({ hasText: userId });
   const nextPage = page.locator(".el-pagination button.btn-next");
   for (;;) {
     if (await memberRow.count() > 0) {
@@ -57,7 +57,10 @@ async function showMemberRow(page: import("@playwright/test").Page, userId: stri
       return memberRow;
     }
     if (await nextPage.count() === 0 || await nextPage.isDisabled()) break;
+    const currentPage = page.locator(".el-pagination .number.is-active");
+    const currentPageText = await currentPage.textContent();
     await nextPage.click();
+    if (currentPageText) await expect(currentPage).not.toHaveText(currentPageText);
   }
   throw new Error(`Organization member row not found in rendered pages for user ${userId}`);
 }
@@ -176,9 +179,13 @@ test("Organization owner transfer exposes owner-only browser controls", async ({
     const ownerBody = await loginOwner(api);
     const ownerHeaders = { Authorization: `Bearer ${ownerBody.access_token}` };
     const organization = await getOrganization(api, ownerHeaders, ownerBody.tenant_id);
+    const ownerMembership = await getMembership(api, organization.id, ownerBody.user_id, ownerHeaders);
+    expect(ownerMembership).toMatchObject({ user_id: ownerBody.user_id, status: "active", role: "owner" });
     const membership = await getMembership(api, organization.id, newUser.user_id, ownerHeaders);
+    expect(membership).toMatchObject({ user_id: newUser.user_id, status: "active", role: "member" });
     const transfer = await api.post(apiPath(`/organizations/${organization.id}/members/${membership.id}/transfer-owner`), { headers: ownerHeaders });
-    expect(transfer.ok()).toBeTruthy();
+    const transferBody = await transfer.text();
+    expect(transfer.ok(), `owner transfer failed (${transfer.status()}): ${transferBody}`).toBeTruthy();
 
     await loginInBrowser(page, ownerUsername, ownerPassword);
     await page.goto(`/organizations/${organization.id}`);
