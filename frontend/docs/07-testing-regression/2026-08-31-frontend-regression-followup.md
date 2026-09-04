@@ -34,14 +34,23 @@
 
 该修复不修改业务代码、API Contract 或生命周期状态机，只收敛 E2E 测试边界，避免通过 `.first()` 等顺序性选择器掩盖真实 DOM 歧义。
 
+### 2.7 Runtime Correlations 深链未自动恢复关联事实
+
+开发者继续执行 Webhook Runtime E2E 时，生命周期工作台断言已通过，但进入 `/runtime?tab=correlations&focus_type=execution&focus_id=<execution_id>...` 后，`Audit / Trace 关联` 标题可见，而 `Execution ID` 不存在。根因是 `RuntimeCorrelations` 已从 route query 初始化 `focusType` / `focusId`，但只在用户点击“查询关联”时调用 `query()`，没有在深链首次挂载时恢复关联事实。
+
+该行为与前端准则要求的 Runtime 深链上下文恢复不一致，也导致真实用户从 Workflow、Webhook、Audit 或 Trace 深链进入关联工作台后必须重复点击查询。修复为在 `RuntimeCorrelations` 的 `onMounted` 阶段检测已有 `focusId`，直接复用现有 `query()` 和既有 API client 查询对应 durable facts；没有深链 ID 时仍保持原 Empty 状态，不增加额外请求。
+
+该修复不新增 API、mapper 或业务状态机，不改变 Backend Contract；仅补齐现有深链参数到现有关联查询能力之间的 UI 加载闭环。
+
 ## 3. 变更范围
 
+- `frontend/src/views/runtime/components/RuntimeCorrelations.vue`
 - `frontend/tests/e2e/workflow-webhook-runtime.spec.ts`
 - `frontend/docs/07-testing-regression/2026-08-31-frontend-regression-followup.md`
 
 ## 4. 验证状态
 
-本轮已完成 `main` → `frontend` 快进同步，并针对开发者提供的 E2E 失败堆栈完成根因定位与回归测试修复。
+本轮已完成 `main` → `frontend` 快进同步，并针对开发者提供的 E2E 失败堆栈完成根因定位与修复。
 
 当前工具环境只能访问远程 GitHub 仓库，不能直接执行开发者 Windows 本地 Node/npm 服务，因此不能将以下命令记录为已通过：
 

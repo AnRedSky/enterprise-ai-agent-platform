@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { runtimeCorrelationsApi, type RuntimeCorrelationAudit, type RuntimeCorrelationResponse, type RuntimeCorrelationTrace } from "@/api/runtimeCorrelations";
@@ -85,6 +85,9 @@ function openAudit(auditId: string) {
 function openAuditTrace(traceId: string) { if (traceId) openTrace(traceId); }
 function selectTrace(trace: RuntimeCorrelationTrace) { selectedTraceId.value = trace.trace_id; }
 function selectAudit(audit: RuntimeCorrelationAudit) { selectedAuditId.value = audit.id; }
+onMounted(() => {
+  if (focusId.value.trim()) void query();
+});
 </script>
 
 <template>
