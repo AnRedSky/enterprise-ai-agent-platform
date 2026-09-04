@@ -69,14 +69,18 @@ async def _create_failed_execution(tenant_id, user_id):
     execution_id = uuid4()
     async with SessionLocal() as session:
         async with session.begin():
+            # WorkflowVersion.workflow_id 与 Workflow.published_version_id 构成互相依赖，必须分阶段 flush。
             workflow = Workflow(
                 id=workflow_id,
                 name=f"operator-governance-{workflow_id}",
                 owner_id=user_id,
                 tenant_id=tenant_id,
                 status="published",
-                published_version_id=version_id,
+                published_version_id=None,
             )
+            session.add(workflow)
+            await session.flush()
+
             version = WorkflowVersion(
                 id=version_id,
                 workflow_id=workflow_id,
@@ -89,6 +93,10 @@ async def _create_failed_execution(tenant_id, user_id):
                 status="published",
                 created_by=user_id,
             )
+            session.add(version)
+            await session.flush()
+
+            workflow.published_version_id = version_id
             execution = WorkflowExecution(
                 id=execution_id,
                 tenant_id=tenant_id,
@@ -99,7 +107,7 @@ async def _create_failed_execution(tenant_id, user_id):
                 input_data={"source": "operator-acceptance"},
                 error_code="TEST_FAILED",
             )
-            session.add_all([workflow, version, execution])
+            session.add(execution)
     return workflow_id, version_id, execution_id
 
 
