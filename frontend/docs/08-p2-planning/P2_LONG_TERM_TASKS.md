@@ -17,17 +17,17 @@
 - Runtime 来源上下文与 Workflow ID 查询
 - Retry / Resume → Parent Execution → Runtime 关系追踪
 - Trigger → Execution → Trace → Audit 四层统一关联展示
+- Webhook 单次事件响应返回的真实 `execution_id` → Runtime 精确 Execution 深链接回归覆盖
 
 ### 当前进行中
 
-1. Webhook 单次事件 → 精确 Execution ID 的关联，需要以后端现有事件/Execution Contract 为事实来源。
-2. P2 阶段专项自动化测试与本地手动验收。
+1. P2 阶段专项自动化测试与本地手动验收。
 
 ## 本轮实施原则
 
 1. 以后端已经存在的 API Contract 为唯一业务事实来源。
 2. Scheduler `last_execution_id` 是唯一允许直接导航的 Scheduler Execution 标识，不使用 `last_run_at` 推断 Execution。
-3. Webhook 当前前端没有合法的 `last_execution_id` Contract，因此只导航到 Workflow + Trigger 的 Runtime Observation 上下文，不伪造 Execution ID。
+3. Webhook 单次请求以 Webhook API 返回的真实 `execution_id` 为精确 Execution 事实；前端测试只使用该响应值建立 Runtime 深链接，不根据时间、状态、唯一 Trigger 或列表结果推断 Execution。
 4. Retry / Resume 父子关系只使用后端 `retry_of_execution_id`、`resume_of_execution_id` 与 `resume_checkpoint_sequence`。
 5. Trigger ID 只来自 Runtime 路由上下文或 Trace `data.trigger_id`；没有真实 ID 时显示未解析，禁止根据唯一 Trigger、时间或状态推断。
 6. Audit 只按真实 `execution_id` 查询，不把相邻审计记录归属到当前 Execution。
@@ -52,5 +52,5 @@
 - [x] Runtime 使用真实 Trigger ID 展示 Trigger 类型与详情。
 - [x] Runtime 在同一详情中展示 Trigger / Execution / Trace / Audit 关联链路。
 - [x] 无 Trigger ID 时不进行唯一 Trigger 推断。
-- [ ] Webhook 单次请求的真实 Execution ID 深链接。
+- [x] Webhook 单次请求的真实 Execution ID 深链接已有专项 E2E 覆盖。
 - [ ] P2 阶段专项自动化测试与本地手动验收。
