@@ -134,6 +134,7 @@ test("Organization management completes the real owner browser contract", async 
       && response.request().method() === "PATCH"
       && response.url().includes(`/organizations/${organization.id}/members/${member.id}`));
     await memberRow.getByRole("button", { name: "暂停" }).click();
+    await confirmMessageBox(page);
     await suspendMemberResponse;
     await expect(memberRow).toContainText("已暂停（suspended）");
 
@@ -141,6 +142,7 @@ test("Organization management completes the real owner browser contract", async 
       && response.request().method() === "PATCH"
       && response.url().includes(`/organizations/${organization.id}/members/${member.id}`));
     await memberRow.getByRole("button", { name: "恢复" }).click();
+    await confirmMessageBox(page);
     await restoreMemberResponse;
     await expect(memberRow).toContainText("已启用（active）");
 
