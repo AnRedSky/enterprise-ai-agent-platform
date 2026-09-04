@@ -374,9 +374,7 @@ class OperatorActionGovernanceService:
                 return reused
         available = self.availability("workflow_trigger", action, trigger.status, trigger_type=trigger.trigger_type)
         if not available["allowed"]:
-            if idempotency_record is None and definition.requires_idempotency_key:
-                raise HTTPException(status_code=409, detail="相同 Idempotency-Key 的 Operator Action 已在处理中或此前失败")
-            if definition.requires_idempotency_key:
+            if definition.requires_idempotency_key and idempotency_record is None:
                 await self.db.execute(delete(OperatorActionIdempotency).where(
                     OperatorActionIdempotency.tenant_id == tenant_id,
                     OperatorActionIdempotency.idempotency_key == idempotency_key,
