@@ -57,6 +57,36 @@ describe("workflowApi", () => {
     expect(post).toHaveBeenNthCalledWith(2, "/runtime/operator-actions/workflow-triggers/t1/disable", { confirm: true });
   });
 
+  it("queries operator action availability without inferring action state locally", async () => {
+    get.mockResolvedValue({ data: {
+      resource_type: "workflow_execution",
+      resource_id: "e1",
+      status: "failed",
+      actions: [
+        { action: "retry", allowed: true, reason_code: "AVAILABLE", requires_confirmation: true, requires_idempotency_key: true, idempotent: true, description: "retry" },
+        { action: "resume", allowed: false, reason_code: "CHECKPOINT_NOT_ELIGIBLE", requires_confirmation: true, requires_idempotency_key: false, idempotent: true, description: "resume" },
+      ],
+    } });
+    const response = await workflowApi.executionAvailability("e1");
+    expect(get).toHaveBeenCalledWith("/runtime/operator-actions/workflow-executions/e1");
+    expect(response.data.actions.find((item) => item.action === "resume")?.reason_code).toBe("CHECKPOINT_NOT_ELIGIBLE");
+  });
+
+  it("queries trigger operator action availability from the backend", async () => {
+    get.mockResolvedValue({ data: {
+      resource_type: "workflow_trigger",
+      resource_id: "t1",
+      status: "enabled",
+      trigger_type: "manual",
+      actions: [
+        { action: "invoke", allowed: true, reason_code: "AVAILABLE", requires_confirmation: false, requires_idempotency_key: true, idempotent: true, description: "invoke" },
+      ],
+    } });
+    const response = await workflowApi.triggerAvailability("t1");
+    expect(get).toHaveBeenCalledWith("/runtime/operator-actions/workflow-triggers/t1");
+    expect(response.data.actions[0]).toMatchObject({ action: "invoke", allowed: true, requires_idempotency_key: true });
+  });
+
   it("queries the persisted scheduler status through the formal workflow trigger contract", async () => {
     get.mockResolvedValue({ data: { id: "s1", trigger_id: "t1", lease_active: false } });
     const response = await workflowApi.schedule("w1", "t1");

@@ -40,15 +40,11 @@
 
 该行为与前端准则要求的 Runtime 深链上下文恢复不一致，也导致真实用户从 Workflow、Webhook、Audit 或 Trace 深链进入关联工作台后必须重复点击查询。修复为在 `RuntimeCorrelations` 的 `onMounted` 阶段检测已有 `focusId`，直接复用现有 `query()` 和既有 API client 查询对应 durable facts；没有深链 ID 时仍保持原 Empty 状态，不增加额外请求。
 
-该修复不新增 API、mapper 或业务状态机，不改变 Backend Contract；仅补齐现有深链参数到现有关联查询能力之间的 UI 加载闭环。
-
 ### 2.8 Runtime Correlations 深链路由上下文同步
 
 开发者在上述 `onMounted` 修复后再次执行同一 targeted E2E，`Execution ID` 仍未在 5 秒断言窗口内出现。进一步审查 `RuntimeWorkspaceTabs`、`RuntimeCorrelations` 与 Vue Router 生命周期后确认，关联工作台属于由 Runtime Tabs 管理的子视图，深链上下文本质上是 route-driven state；仅依赖一次 `onMounted` 无法覆盖组件实例复用或 route query 在挂载后完成同步的情况。
 
 根因进一步收敛为 **Runtime Correlations 将 route query 当作一次性初始化数据，而不是持续的路由状态源**。修复改为监听 `focus_type`、`focus_id`、`execution_id` 三个关联上下文 query，并使用 `immediate: true` 首次同步。focus 发生变化时重置 Trace/Audit 分页与选中事实，再复用既有 `query()` 请求对应 durable facts；没有 focus ID 时清理结果并恢复 Empty 状态。
-
-该修复仍不新增 API、mapper 或业务状态机，也不改变 Backend Contract；它将深链恢复从单次生命周期行为提升为稳定的 route-driven hydration，并同时覆盖同一 Runtime 页面内的深链切换。
 
 ### 2.9 Runtime Correlations immediate watcher 首次水合条件遗漏
 
@@ -64,14 +60,26 @@ Backend Phase 2.10-II 已将 Workflow Execution / Trigger 的运维操作统一�
 
 前端原 `workflowApi` 仍暴露稳定的 `runExecution / cancelExecution / retryExecution / resumeExecution / invokeTrigger / deleteTrigger` 调用边界，因此本轮未在页面复制第二套状态机或新增平行 client；仅将这些方法的 HTTP 路径切换到 canonical Operator Action Contract，并在 API client 层解包 `result`，保持现有 WorkflowLifecycle 组件调用方式不变。Retry / Invoke 在调用方未提供 key 时生成一次性幂等键；高风险动作明确发送 `confirm=true`。
 
-本轮不把前端本地状态矩阵提升为后端可用性事实源；下一阶段将消费 availability Contract，统一 `allowed / reason_code / requires_confirmation / requires_idempotency_key`，并将 Permission / 409 / 幂等 replay 结果映射到统一 UI 状态。
+### 2.11 WorkflowLifecycle 第二阶段：Availability Contract 消费
+
+本轮将前端最终操作资格切换到 Backend Operator Action Availability Contract。Workflow Execution 详情加载时，前端请求 `/runtime/operator-actions/workflow-executions/{execution_id}`，以 `actions[]` 中的 `allowed` 作为 Run / Cancel / Retry / Resume 唯一展示条件，并同时保留 `reason_code`、`requires_confirmation`、`requires_idempotency_key` 等治理元数据。
+
+Resume 不再由 `failed` 状态直接推出可用；Backend Availability 内部执行 Durable Checkpoint Recovery Assessment，前端只接受后端返回的 `allowed` / `reason_code`，从而尊重 `CHECKPOINT_NOT_ELIGIBLE` 等真实 checkpoint eligibility。
+
+Trigger 同步消费 `/runtime/operator-actions/workflow-triggers/{trigger_id}` Availability，manual Invoke 与 Delete 均不再单独复制后端状态资格。Scheduler 仍保持只读。
+
+403 明确映射 Permission；409 根据后端 detail 区分状态冲突与 Idempotency / replay 结果冲突。Retry / Invoke 的成功结果直接使用 `result` Durable Resource；Retry lineage 通过 `retry_of_execution_id` 展示，Resume 通过 `resume_checkpoint_sequence` 展示。每次成功操作后重新拉取 Execution、Availability 与 Trigger 状态，Backend refresh 继续作为最终事实源。
+
+Operator Action → Result Resource → Audit → Execution → Trace 的完整追踪链没有在前端复制：页面只展示后端返回的 Result Resource 和真实 Durable ID，并继续通过 Runtime / Trace / Audit 深链进入统一观测入口。
 
 ## 3. 变更范围
 
-本轮新增 Operator Governance 对齐：
+本轮 WorkflowLifecycle Availability 收口范围：
 
 - `frontend/src/api/workflows.ts`
+- `frontend/src/views/workflows/WorkflowLifecycle.vue`
 - `frontend/tests/api/workflows.test.ts`
+- `frontend/tests/views/WorkflowLifecycle.test.ts`
 - `frontend/docs/00-governance/FRONTEND_TASK_EXECUTION_PLAN.md`
 - `frontend/docs/07-testing-regression/2026-08-31-frontend-regression-followup.md`
 
@@ -82,17 +90,33 @@ Backend Phase 2.10-II 已将 Workflow Execution / Trigger 的运维操作统一�
 
 ## 4. 验证状态
 
-开发者已提供最新 Windows 本地验证结果：
+此前用户已提供最新 Windows 本地验证结果：
 
 ```text
 npm run test:e2e -- tests/e2e/workflow-webhook-runtime.spec.ts
 1 passed (8.0s)
 ```
 
-开发者同时反馈 `npm test`、`npm run build`、`npm run test:gate` 均执行并通过；由于完整日志较长未提供，本记录只保存用户确认的通过事实，不虚构具体测试数量、耗时或 gate 明细。
+用户同时反馈 `npm test`、`npm run build`、`npm run test:gate` 均执行并通过；由于完整日志较长未提供，本记录只保存用户确认的通过事实，不虚构具体测试数量、耗时或 gate 明细。
 
-远端工具环境不能直接执行开发者 Windows 本地 Node/npm 服务，因此本轮本地验证结论仅来自开发者明确反馈，不将远端 GitHub Actions 或未执行的本地命令冒充验收证据。
+本轮新增 Availability targeted test 已写入 API 与 WorkflowLifecycle view tests，但当前远端工具环境没有执行开发者 Windows Node/Vitest。因此本轮新改动必须由用户本地 targeted regression 验证，不能将未执行命令标记为通过。
+
+建议 targeted：
+
+```powershell
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
+npm run test:unit -- --run tests/api/workflows.test.ts tests/views/WorkflowLifecycle.test.ts
+npm run test:e2e -- tests/e2e/workflow-webhook-runtime.spec.ts
+```
+
+随后再执行完整门禁：
+
+```powershell
+npm test
+npm run build
+npm run test:gate
+```
 
 ## 5. 完成判定
 
-此前 Runtime Correlations 深链修复已获得用户本地 targeted E2E 通过证据；本轮 Operator Action Contract API 对齐已加入 targeted API regression，但尚未由本工具环境实际执行，因此 **本轮代码交付状态为待用户本地 targeted regression 验证**。
+WorkflowLifecycle 第二阶段代码、targeted tests、任务台账和回归文档已按同一原子交付准备完成；**最终验收状态待用户本地 targeted regression 验证**。在用户确认新 targeted tests 通过前，不标记本轮为最终回归通过。

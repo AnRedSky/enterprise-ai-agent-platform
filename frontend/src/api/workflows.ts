@@ -131,6 +131,34 @@ export type CreateWebhookTriggerConfig = {
   event_id_field?: string;
 };
 
+export type OperatorActionName = "run" | "cancel" | "retry" | "resume" | "enable" | "disable" | "delete" | "invoke";
+
+export type OperatorActionAvailability = {
+  resource_type: "workflow_execution" | "workflow_trigger";
+  action: OperatorActionName;
+  allowed: boolean;
+  reason_code: string;
+  requires_confirmation: boolean;
+  requires_idempotency_key: boolean;
+  idempotent: boolean;
+  description: string;
+};
+
+export type WorkflowExecutionActionAvailability = {
+  resource_type: "workflow_execution";
+  resource_id: string;
+  status: string;
+  actions: OperatorActionAvailability[];
+};
+
+export type WorkflowTriggerActionAvailability = {
+  resource_type: "workflow_trigger";
+  resource_id: string;
+  status: WorkflowTriggerStatus;
+  trigger_type: WorkflowTriggerType;
+  actions: OperatorActionAvailability[];
+};
+
 type OperatorExecutionResponse = {
   resource_type: "workflow_execution";
   action: string;
@@ -201,6 +229,12 @@ export const workflowApi = {
   },
   listExecutions(workflowId: string) {
     return request.get<WorkflowExecution[]>(`/workflows/${workflowId}/executions`);
+  },
+  executionAvailability(executionId: string) {
+    return request.get<WorkflowExecutionActionAvailability>(`/runtime/operator-actions/workflow-executions/${executionId}`);
+  },
+  triggerAvailability(triggerId: string) {
+    return request.get<WorkflowTriggerActionAvailability>(`/runtime/operator-actions/workflow-triggers/${triggerId}`);
   },
   runExecution(executionId: string) {
     return executeExecutionOperatorAction(executionId, "run", { confirm: false });

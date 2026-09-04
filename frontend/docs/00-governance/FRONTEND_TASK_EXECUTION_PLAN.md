@@ -22,7 +22,7 @@
 
 ## UI-05 Form / Dialog / Drawer / Confirm
 
-状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 已完成 Manual Trigger / Execution 确认闭环，并继续关闭真实 Trigger 配置与删除缺口；RuntimeCorrelations 已完成 Durable Fact focused-record 定位。当前开始对齐 Backend Operator Action Governance Canonical Contract。**
+状态：**进行中：WorkflowLifecycle 第二阶段已完成 Backend Operator Action Availability 收口；下一步进入核心页面回归与后续页面选择。**
 
 原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。
 
@@ -38,18 +38,20 @@
 
 - 使用公共 `PageHeader`、`SurfaceCard`、`StatePanel`，统一页面标题、内容容器和 Loading / Empty / Error / Permission 状态。
 - 保留真实 Workflow / Version / Trigger / Scheduler / Execution 关联和 Runtime 深链。
-- Execution 状态矩阵已形成真实操作入口：`pending → Run / Cancel`、`running → Cancel`、`failed → Retry / Resume`，终态不暴露生命周期变更。
-- Manual Trigger 与 Execution 操作统一使用 `ConfirmDialog`，提交期间防重复确认，取消后清理 target/action，成功后刷新后端真实状态。
-- 已确认 Scheduled / Webhook Trigger 配置存在真实 `PATCH /workflows/{workflow_id}/triggers/{trigger_id}` Contract；前端新增配置编辑表单，严格复用既有 `workflowApi.updateTrigger`。
+- Execution 操作按钮不再根据 `execution.status` 本地推断；统一消费 `/runtime/operator-actions/workflow-executions/{execution_id}` 返回的 `actions[]`，只展示后端 `allowed=true` 的 Run / Cancel / Retry / Resume。
+- Availability Contract 的 `reason_code`、`requires_confirmation`、`requires_idempotency_key`、`idempotent` 与描述信息进入前端 API 类型边界，不复制后端状态机。
+- Resume 不再把 `failed` 视为充分条件；后端 Availability 会执行 Durable Checkpoint Recovery Assessment，前端只接受后端最终的 `allowed / reason_code`，因此 `CHECKPOINT_NOT_ELIGIBLE` 等情况不会出现错误 Resume 入口。
+- Manual Trigger 的 invoke / delete 同样消费 `/runtime/operator-actions/workflow-triggers/{trigger_id}` Availability；Scheduler 仍保持只读。
+- 403 明确映射为 Permission；409 根据后端 detail 区分状态变化与 Idempotency / Result 冲突，不再统一误报为状态错误。
+- Retry / Invoke 成功后以 Operator Action 返回的 `Result Resource` 为操作结果展示依据；Retry 继续展示 `retry_of_execution_id` lineage，Resume 展示 `resume_checkpoint_sequence`，随后重新拉取 Backend Execution / Availability，后端刷新是最终事实。
+- Runtime / Trace / Audit 仍以真实 Execution / Workflow / Version / Durable ID 作为关联根，不在前端重新推导关系。
+- Operator Action → Result Resource → Audit → Execution → Trace 的链路保持由后端治理；前端只展示和传递真实结果资源及关联 ID，不创建平行审计或状态机。
+- Manual Trigger 与 Execution 操作统一使用 `ConfirmDialog`，提交期间防重复确认，取消后清理 target/action。
+- 已确认 Scheduled / Webhook Trigger 配置存在真实 `PATCH /workflows/{workflow_id}/triggers/{trigger_id}` Contract；前端严格复用既有 `workflowApi.updateTrigger`。
 - Scheduled 编辑严格使用后端 timezone / interval / misfire / catch-up Contract，不在前端计算 Scheduler `next_run_at`。
 - Webhook 编辑只允许提交新 Secret；留空时不发送 Secret，页面不读取或回显后端 `secret_hash`。
-- 已确认 Trigger 删除存在真实 `DELETE /workflows/{workflow_id}/triggers/{trigger_id}` Contract；前端新增 ConfirmDialog、loading、403/409/通用错误处理以及成功刷新闭环。
 - 归档 Workflow 不提供 Trigger 编辑/删除入口，保持只读观测边界。
-- Scheduler 当前仅存在 GET 状态 Contract，没有确认过的 HTTP Write Contract，因此仍保持只读，不伪造 Scheduler API。
-- 403 / 409 / 422 / 通用异常分别提供可理解的操作反馈，失败时不伪造本地 Trigger / Scheduler / Execution 状态。
-- Runtime / Trace / Audit 入口继续只传递后端真实 Durable ID。
-- **本轮 Operator Governance 对齐：Execution `run / cancel / retry / resume` 与 manual Trigger `invoke`、Trigger `delete / enable / disable` 的正式操作入口统一改由 `/runtime/operator-actions/...` Contract 承载；高风险动作发送 `confirm=true`，Retry / Invoke 发送 `Idempotency-Key`，API client 解包后端 `result` durable resource，保持既有页面调用边界不变。**
-- 本轮暂不把本地 `status` 矩阵升级为最终可用性事实源；下一原子任务将消费 Backend availability Contract，补齐 permission / invalid-state / idempotency-result UI。
+- **第二阶段 targeted regression 已补充：Availability action filtering、Resume checkpoint eligibility、403 Permission、409 idempotency conflict、Retry Result Resource / lineage、Backend refresh。**
 - 设计记录：`docs/01-design/UI_05_WORKFLOW_LIFECYCLE_MIGRATION.md`。
 
 ### RuntimeCorrelations Durable Fact 定位
@@ -97,8 +99,8 @@ npm run test:gate
 
 本轮用户已反馈 `tests/e2e/workflow-webhook-runtime.spec.ts`：**1 passed (8.0s)**；同时已执行 `npm test`、`npm run build`、`npm run test:gate`，用户确认测试通过，但未提供完整长日志，因此这里只记录“用户确认通过”，不虚构具体测试数量或耗时。
 
-远端执行环境不运行 Node/Vitest/build，因此后续未实际执行的门禁仍不得标记为通过。
+远端执行环境不运行 Node/Vitest/build，因此本轮新改动仍需用户本地执行 targeted test；未实际执行的门禁不得标记为通过。
 
 ## 下一任务
 
-继续 UI-05 主线：**WorkflowLifecycle 第二阶段——消费 Backend Operator Action availability Contract，统一 Run / Cancel / Retry / Resume / Trigger 操作的 allowed、requires_confirmation、requires_idempotency_key、reason_code 与 Permission / 409 反馈；成功后继续以 Backend refresh 为最终事实。** Scheduler 仍保持只读，直到后端提供完整的 Scheduler Write Contract（配置修改、Trigger → Scheduler 同步、lease / misfire / idempotency 等）。不在前端虚构操作，不新增平行 API client、状态机或 Dialog。稳定后再选择下一个核心页面。
+继续 UI-05 主线：**先完成 WorkflowLifecycle 第二阶段本地 targeted regression，再根据结果进入下一个核心页面。** 后续页面必须继续复用 Backend Operator Action Availability Contract；不得恢复 `execution.status → action[]` 本地状态矩阵。Scheduler 仍保持只读，直到后端提供完整的 Scheduler Write Contract（配置修改、Trigger → Scheduler 同步、lease / misfire / idempotency 等）。不在前端虚构操作，不新增平行 API client、状态机或 Dialog。
