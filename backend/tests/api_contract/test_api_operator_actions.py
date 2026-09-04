@@ -45,7 +45,8 @@ def auth_headers():
     """生成仅用于 Contract 测试的租户用户 Token，无需人工填写身份数据。"""
     tenant_id = uuid4()
     actor_id = uuid4()
-    return {"Authorization": f"Bearer {create_token(actor_id, [\"user\"], tenant_id=tenant_id)}"}
+    token = create_token(actor_id, ["user"], tenant_id=tenant_id)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_operator_action_routes_are_registered():
