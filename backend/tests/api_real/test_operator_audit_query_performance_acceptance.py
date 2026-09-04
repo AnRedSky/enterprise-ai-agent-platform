@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -21,6 +23,7 @@ TENANT_ID = "00000000-0000-0000-0000-000000000001"
 ACTOR_ID = "00000000-0000-0000-0000-000000000002"
 OPERATOR_ACTION_ID = "00000000-0000-0000-0000-000000000003"
 WORKFLOW_EXECUTION_ID = "00000000-0000-0000-0000-000000000004"
+SINCE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 QUERY_CASES = (
@@ -36,10 +39,7 @@ QUERY_CASES = (
         ORDER BY created_at DESC, id DESC
         LIMIT 50
         """,
-        {
-            "action": "operator.workflow_execution.retry",
-            "since": "2026-01-01T00:00:00+00:00",
-        },
+        {"action": "operator.workflow_execution.retry", "since": SINCE},
     ),
     (
         "actor",
@@ -116,7 +116,7 @@ async def test_operator_audit_query_uses_canonical_tenant_scoped_index(
     case_name: str,
     index_name: str,
     query: str,
-    parameters: dict[str, str],
+    parameters: dict[str, object],
 ) -> None:
     """验证每条正式 Operator Audit 过滤路径都可命中对应 tenant-first 复合索引。"""
     test_engine = create_async_engine(settings.database_url, poolclass=NullPool, pool_pre_ping=True)
