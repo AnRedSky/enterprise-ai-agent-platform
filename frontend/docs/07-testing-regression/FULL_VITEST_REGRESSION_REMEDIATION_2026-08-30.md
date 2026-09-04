@@ -2,214 +2,128 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-04 已重新检查远端 `main` 与 `frontend`。当前远端 `main` 为：
+2026-09-04 已重新检查远端 `main` 与 `frontend`。最新 `main` 已通过 PR #92 合并进入 `frontend`。
 
 ```text
-52c9ed9375e61425af7282b606006e8dd36a6976
+main    f435546ffb84229e8aae08fc5958ad24f295099b
+frontend 2018514f58b2e6c562ce0ffd86182ed8edfc5291
+关系：ahead 1 / behind 0
 ```
 
-`frontend` 已合并该 `main`，当前相对 `main` 为 `ahead 1 / behind 0`。
-
-最新 `main` 同时包含 Operator/Trigger transaction boundary 与 acceptance fixture 修复，不改变前端 Organization API Contract。
+本轮 `main` 新增 Browser E2E 数据库隔离与 owner fixture 初始化脚本 `backend/scripts/test/e2e/00_reset_browser_e2e_database.py`。该脚本会清理 Organization 聚合，并重新建立 deterministic active owner fixture；不启动或停止任何服务。fileciteturn697file0L2-L2
 
 ## 2. 用户最新 Browser E2E 反馈
 
-用户在 Windows `frontend` 工作树重新验证：
+用户在 Windows `frontend` 工作树执行：
 
 ```text
-organization-management.spec.ts
-2 failed / 1 passed (7.8s)
+npm run test:e2e -- tests/e2e/organization-management.spec.ts
 
-workflow-trigger-governance.spec.ts
-1 passed (4.7s)
-
-model-provider-governance.spec.ts
-2 passed (9.3s)
+2 failed / 1 passed (1.1m)
 ```
 
-Organization 的两个失败分别为：
+失败 1：owner browser contract 在已找到成员 row 后，点击 `编辑` 超时。
 
-1. owner browser contract 在成员列表中无法通过旧的 Element Plus CSS wrapper selector 找到新注册成员；
-2. owner transfer API 返回非 2xx。
+失败 2：owner transfer 场景前置条件发现持久 owner fixture 当前实际 membership 为 `active/admin`，而不是后端 Contract 要求的 `active/owner`。
+
+同时已有基线保持：
+
+```text
+workflow-trigger-governance.spec.ts  1 passed (4.7s)
+model-provider-governance.spec.ts    2 passed (9.3s)
+```
 
 ## 3. 根因分析
 
-### 3.1 Organization fixture 已正确对齐注册 Contract
+### 3.1 当前主要阻塞是本地 Browser E2E 数据库状态漂移
 
-当前后端注册 Contract 会把新注册用户绑定到 `DEFAULT_TENANT_ID` 对应的既有 Organization，并创建 active membership。Organization Service 同时限制一个 Tenant 只能存在一个 Organization。
+最新后端已经提供专用 Browser E2E 数据库 reset 工具。该工具会：
 
-因此 E2E 不再为每个场景创建第二个 Organization，而是：
+1. `TRUNCATE TABLE organizations CASCADE` 清理 Organization 聚合及级联数据；
+2. 确保 `DEFAULT_TENANT_ID` 存在且 active；
+3. 确保 `BROWSER_E2E_OWNER_USERNAME/PASSWORD` 对应用户存在且 active；
+4. 重新创建 `Browser E2E Organization`；
+5. 将该用户重新建立为唯一 `active/owner` membership。fileciteturn697file0L2-L2
 
-1. 使用 `BROWSER_E2E_OWNER_USERNAME/PASSWORD` 持久 owner fixture；
-2. owner 登录后通过真实 `/organizations` 获取当前 Tenant 的 Organization；
-3. 每个场景注册唯一测试成员；
-4. 直接读取注册产生的真实 membership；
-5. transfer 完成后恢复原 owner；
-6. suspended-member 场景结束后恢复 active 状态。
+因此用户本轮第三个场景报告的 `admin` 状态不是前端权限逻辑应被放宽的证据，而是持久测试数据库未恢复到 deterministic owner fixture 基线。
 
-### 3.2 成员 UI 定位失败属于测试 selector 与渲染结构耦合
+### 3.2 第一场景不继续放宽 selector
 
-原实现使用：
+生产 Organization 详情页明确以 `user_id` 作为成员表第一列，并仅在当前用户 `active` 且 role 为 `owner/admin` 时渲染成员操作列；`owner` 行本身不显示编辑/暂停/转移按钮。fileciteturn685file0L2-L2
 
-```text
-.el-table__body-wrapper tbody tr
+当前 E2E 已从 Element Plus 内部 wrapper selector 改为 semantic table row，并增加分页切换等待。下一步优先恢复 deterministic owner fixture 后重新验证该失败，而不是继续增加 timeout 或放宽 locator。
+
+## 4. 当前代码状态
+
+Organization E2E 已包含：
+
+- 唯一随机测试成员；
+- 真实 `/organizations` 查询；
+- 真实 membership 分页查询；
+- semantic table row locator；
+- owner/target membership durable precondition；
+- transfer API status/body 诊断；
+- transfer 后恢复原 owner；
+- suspended-member 场景结束恢复 active。
+
+生产 Organization API Types 与页面均保持现有正式 Contract；Membership role 仍为 `owner/admin/member`，status 仍为 `active/suspended`。fileciteturn686file0L2-L2
+
+## 5. 本地验证前置条件
+
+必须先使用后端已有的 Browser E2E 数据库隔离工具恢复 deterministic fixture：
+
+```powershell
+cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
+uv run python .\scripts\test\e2e\00_reset_browser_e2e_database.py
 ```
 
-该 selector 依赖 Element Plus 当前内部 DOM wrapper。用户反馈显示 API membership 已找到，但 Browser E2E 无法在渲染页面中找到对应行。
-
-本轮最小修复改为基于用户可观察的 table row semantics：
+预期输出：
 
 ```text
-getByRole("row").filter({ hasText: userId })
+BROWSER_E2E_DATABASE_RESET_OK owner=browser_e2e_owner
 ```
 
-分页仍然通过真实 UI 控件推进，不修改生产分页逻辑。
+该脚本只重置 Browser E2E Organization/owner 测试数据，不启动 API、Worker、Scheduler、PostgreSQL 或 Redis。fileciteturn697file0L2-L2
 
-### 3.3 owner transfer 当前需要进一步验证 durable owner 状态
-
-本轮用户反馈中的 transfer failure 发生在真实 API：
-
-```text
-POST /organizations/{organization_id}/members/{membership_id}/transfer-owner
-```
-
-后端正式 Contract 要求：
-
-- actor 必须是 active owner；
-- target membership 必须 active；
-- 当前 Organization 必须恰好存在一个 active owner，且该 owner 必须是 actor。
-
-因此本轮不通过修改生产权限逻辑或忽略 409 制造假绿。测试现在在 transfer 前显式断言 owner 与 target membership 的真实状态，并在失败时输出 HTTP status/body，便于区分持久测试数据污染、owner 状态异常和生产 Contract 问题。
-
-## 4. 当前原子修复
-
-### 4.1 Organization fixture 与注册 Contract 对齐
-
-```text
-91bae8a74574909ce44401bd2e4325451682ed72
-test: align organization fixtures with registration contract
-```
-
-### 4.2 成员 locator 与 owner precondition 强化
-
-```text
-2193d4c1ee57461d8dd6632eef66e685fc673d25
-test: stabilize organization member locator and owner preconditions
-```
-
-变更：
-
-- 成员行使用 semantic table row locator；
-- 分页切换后等待 active page 变化；
-- transfer 前验证 owner fixture 的 membership 必须是 `active/owner`；
-- transfer target 必须是 `active/member`；
-- transfer API failure 保留真实 HTTP status/body 诊断上下文；
-- 不修改生产 Organization Service。
-
-## 5. Workflow / Model Provider 已验证基线
-
-用户当前反馈明确确认：
-
-```text
-workflow-trigger-governance.spec.ts
-1 passed (4.7s)
-
-model-provider-governance.spec.ts
-2 passed (9.3s)
-```
-
-Workflow 修复使用真实 `Scheduler 持久化状态` SurfaceCard，不再依赖不存在的 `.scheduler-card` selector。
-
-## 6. 当前分支状态
-
-当前 `main`：
-
-```text
-52c9ed9375e61425af7282b606006e8dd36a6976
-```
-
-当前 `frontend`：
-
-```text
-2193d4c1ee57461d8dd6632eef66e685fc673d25
-```
-
-关系：
-
-```text
-ahead 1 / behind 0
-```
-
-`main` 已通过 PR #91 合并进入 `frontend`；当前 frontend 仍保留一个独立的 Organization E2E 修复提交。
-
-## 7. 本地验证顺序
-
-同步远端：
+然后回到 frontend：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
-git fetch origin
-git checkout frontend
-git pull --ff-only origin frontend
+npm run test:e2e -- tests/e2e/organization-management.spec.ts
 ```
 
-Targeted Browser E2E：
+Organization 3/3 后再执行：
 
 ```powershell
-npx playwright test tests/e2e/organization-management.spec.ts
-npx playwright test tests/e2e/workflow-trigger-governance.spec.ts
-npx playwright test tests/e2e/model-provider-governance.spec.ts
-```
-
-Targeted 全部通过后，再执行：
-
-```powershell
+npm run test:e2e -- tests/e2e/workflow-trigger-governance.spec.ts
+npm run test:e2e -- tests/e2e/model-provider-governance.spec.ts
 npm run test:e2e
 npm test
 npm run build
 npm run test:gate
 ```
 
-遵循项目准则，E2E 不自动启动 API / Scheduler / Worker / PostgreSQL / Redis；测试数据由测试脚本自动创建，不要求手工填写业务数据。
-
-## 8. 手动验收重点
+## 6. 手动验收重点
 
 ### Organization
 
-- 使用既有 Browser E2E owner 进入真实 Organization；
-- 新注册成员自动出现在该 Organization membership 中；
-- 组织列表根据真实 Organization 名称进入正确详情；
-- 编辑角色、暂停/恢复成员、暂停/恢复组织均成功；
-- owner transfer 前 owner/target membership 状态满足后端 Contract；
-- owner transfer 后新 owner 权限正确；
-- transfer 后恢复原 owner；
-- suspended-member 场景结束后恢复成员 active 状态。
+- reset 后 owner fixture 为唯一 active owner；
+- 新注册成员自动拥有 active membership；
+- 成员表正确展示 User ID、role、status；
+- 编辑角色、暂停/恢复成员成功；
+- 暂停/恢复组织成功；
+- owner transfer 成功且 durable state 正确；
+- transfer 后新 owner 获得 owner-only 操作，原 owner 降级；
+- 最终恢复原 owner，避免污染下一轮测试。
 
-### Workflow Trigger
+### Workflow / Model Provider
 
-- 选择 durable published Workflow；
-- 创建 Scheduled Trigger；
-- 真实 API 能读取 Trigger 与 Scheduler 持久化状态；
-- UI 的 `Scheduler 持久化状态` 显示 UTC / skip / 10；
-- 禁用并删除 Trigger 后列表事实刷新。
+继续保持用户当前已验证的 Workflow 1/1、Model Provider 2/2 基线。
 
-### Model Provider
+## 7. 当前状态
 
-- 保持当前用户反馈的 2/2 通过基线；
-- Provider fixture 在列表中稳定可见；
-- 不引入第二套 API client 或状态枚举。
+**Organization E2E 阻塞于本地持久 Browser E2E fixture 状态漂移，尚未重新执行 reset 后验证。**
 
-## 9. 当前状态与下一步
+当前不修改生产 Organization Service，不通过放宽 selector、增加任意 timeout、跳过 durable assertion 或忽略 owner precondition 制造假绿。
 
-当前状态：**Organization E2E 仍进行中；Workflow Trigger 与 Model Provider targeted E2E 已通过。**
-
-下一步：
-
-1. 用户同步最新 `frontend`；
-2. 重新执行 Organization targeted E2E；
-3. 若 transfer 仍失败，使用新增 status/body 诊断信息确认 durable owner 状态是否异常；
-4. 仅当真实 Contract/生产实现存在问题时修改后端；否则修复测试 fixture 或环境基线；
-5. Organization 3/3、Workflow 1/1、Model Provider 2/2 全部通过后，再进入 Full E2E / Vitest / build / gate；
-6. 同步更新本文件，记录实际命令与结果。
-
-禁止通过增加任意 timeout、放宽 locator、跳过 durable assertion、修改生产分页行为或创建第二个默认 Tenant Organization 来制造假绿。
+下一步唯一优先动作：执行 Browser E2E database reset，然后重新执行 Organization targeted E2E；只有 reset 后仍出现可重复的生产/UI Contract 错误，才继续修改代码。
