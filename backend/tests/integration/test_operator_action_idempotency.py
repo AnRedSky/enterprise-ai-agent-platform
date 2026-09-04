@@ -81,7 +81,11 @@ async def _create_failed_execution(tenant_id, user_id):
                 id=version_id,
                 workflow_id=workflow_id,
                 version="1",
-                definition={"nodes": [], "edges": []},
+                definition={
+                    "config": {},
+                    "nodes": [{"id": "input", "type": "input", "config": {}}],
+                    "edges": [],
+                },
                 status="published",
                 created_by=user_id,
             )
