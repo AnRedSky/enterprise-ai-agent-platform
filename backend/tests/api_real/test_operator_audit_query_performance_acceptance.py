@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 from sqlalchemy import text
@@ -23,7 +23,8 @@ TENANT_ID = "00000000-0000-0000-0000-000000000001"
 ACTOR_ID = "00000000-0000-0000-0000-000000000002"
 OPERATOR_ACTION_ID = "00000000-0000-0000-0000-000000000003"
 WORKFLOW_EXECUTION_ID = "00000000-0000-0000-0000-000000000004"
-SINCE = datetime(2026, 1, 1, tzinfo=timezone.utc)
+# AuditLog.created_at 使用 SQLAlchemy DateTime（无 timezone），与项目统一的 UTC naive 时间约定保持一致。
+SINCE = datetime(2026, 1, 1)
 
 
 QUERY_CASES = (
