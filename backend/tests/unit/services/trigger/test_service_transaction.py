@@ -17,7 +17,8 @@ from app.services.trigger.service import WorkflowTriggerService
 @pytest.mark.asyncio
 async def test_manual_invoke_forwards_commit_boundary_to_execution_run(monkeypatch) -> None:
     """验证 Operator Governance 使用 commit=False 时，Execution Runtime 不能自行提前提交。"""
-    db = SimpleNamespace(commit=AsyncMock())
+    execute_result = SimpleNamespace(scalar_one_or_none=lambda: None)
+    db = SimpleNamespace(commit=AsyncMock(), execute=AsyncMock(return_value=execute_result))
     service = WorkflowTriggerService(db)
     workflow = SimpleNamespace(
         id=uuid4(),

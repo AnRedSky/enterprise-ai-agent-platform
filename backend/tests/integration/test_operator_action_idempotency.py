@@ -20,6 +20,7 @@ from sqlalchemy import delete, func, select
 from app.infrastructure.db import SessionLocal
 from app.infrastructure.db.session import engine
 from app.models.core import AuditLog, Tenant, User
+from app.models.integration_event import IntegrationEventRecord
 from app.models.operator_action import OperatorActionIdempotency
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_execution import WorkflowExecution
@@ -69,7 +70,6 @@ async def _create_failed_execution(tenant_id, user_id):
     execution_id = uuid4()
     async with SessionLocal() as session:
         async with session.begin():
-            # WorkflowVersion.workflow_id 与 Workflow.published_version_id 构成互相依赖，必须分阶段 flush。
             workflow = Workflow(
                 id=workflow_id,
                 name=f"operator-governance-{workflow_id}",
@@ -128,14 +128,15 @@ async def _claim_and_commit(tenant_id, user_id, resource_id, key):
 
 
 async def _cleanup(*tenant_ids, user_ids) -> None:
-    """清理本测试生成的 Workflow、Execution、审计、幂等事实与身份。"""
+    """清理本测试生成的 Workflow、Execution、审计、幂等、Integration Event 与身份。"""
     async with SessionLocal() as cleanup_session:
         await cleanup_session.execute(delete(AuditLog).where(AuditLog.tenant_id.in_(tenant_ids)))
         await cleanup_session.execute(
             delete(OperatorActionIdempotency).where(OperatorActionIdempotency.tenant_id.in_(tenant_ids))
         )
-        await cleanup_session.execute(delete(WorkflowExecution).where(WorkflowExecution.tenant_id.in_(tenant_ids)))
         await cleanup_session.execute(delete(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id.in_(tenant_ids)))
+        await cleanup_session.execute(delete(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id.in_(tenant_ids)))
+        await cleanup_session.execute(delete(WorkflowExecution).where(WorkflowExecution.tenant_id.in_(tenant_ids)))
         await cleanup_session.execute(delete(WorkflowVersion).where(WorkflowVersion.created_by.in_(user_ids)))
         await cleanup_session.execute(delete(Workflow).where(Workflow.owner_id.in_(user_ids)))
         await cleanup_session.execute(delete(User).where(User.id.in_(user_ids)))
