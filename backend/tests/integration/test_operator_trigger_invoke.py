@@ -237,6 +237,46 @@ async def test_operator_trigger_invoke_concurrent_same_key_converges_to_one_exec
 
 
 @pytest.mark.asyncio
+async def test_operator_trigger_invoke_rejecting_unavailable_trigger_removes_transient_idempotency_claim() -> None:
+    """验证新幂等键因 Trigger 不可用被拒绝时不会留下 started 幂等孤儿记录。"""
+    tenant_id = uuid4()
+    user_id = uuid4()
+    key = f"trigger-invoke-unavailable-{uuid4()}"
+    workflow_id, _, trigger_id = await _create_fixture(tenant_id, user_id)
+    try:
+        async with SessionLocal() as session:
+            trigger = (await session.execute(select(WorkflowTrigger).where(
+                WorkflowTrigger.id == trigger_id,
+                WorkflowTrigger.tenant_id == tenant_id,
+            ))).scalar_one()
+            await WorkflowTriggerService(session).update(trigger, None, "disabled", None)
+
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            with pytest.raises(Exception) as exc_info:
+                await service.execute_trigger(
+                    trigger_id, tenant_id, user_id, True, "invoke", confirm=True,
+                    input_data={"source": "unavailable-trigger"}, idempotency_key=key,
+                )
+            assert getattr(exc_info.value, "status_code", None) == 409
+
+        async with SessionLocal() as session:
+            record = (await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalar_one_or_none()
+            execution_count = (await session.execute(select(func.count()).select_from(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.idempotency_key == key,
+            ))).scalar_one()
+            assert record is None
+            assert execution_count == 0
+            assert workflow_id is not None
+    finally:
+        await _cleanup(tenant_id, user_id)
+
+
+@pytest.mark.asyncio
 async def test_operator_trigger_invoke_replay_survives_trigger_state_change() -> None:
     """验证成功 Invoke 后 Trigger 状态变化不会阻断同一 Idempotency-Key 的确定性重放。"""
     tenant_id = uuid4()
