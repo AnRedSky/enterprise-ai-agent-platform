@@ -5,18 +5,19 @@ import WorkflowLifecycle from "@/views/workflows/WorkflowLifecycle.vue";
 const { router, workflowApi } = vi.hoisted(() => ({
   router: { push: vi.fn(), replace: vi.fn() },
   workflowApi: {
-    list: vi.fn(), versions: vi.fn(), triggers: vi.fn(), listExecutions: vi.fn(), schedule: vi.fn(), updateTrigger: vi.fn(), deleteTrigger: vi.fn(), invokeTrigger: vi.fn(), runExecution: vi.fn(), cancelExecution: vi.fn(), retryExecution: vi.fn(), resumeExecution: vi.fn(),
+    list: vi.fn(), versions: vi.fn(), triggers: vi.fn(), listExecutions: vi.fn(), executionAvailability: vi.fn(), triggerAvailability: vi.fn(), schedule: vi.fn(), updateTrigger: vi.fn(), deleteTrigger: vi.fn(), invokeTrigger: vi.fn(), runExecution: vi.fn(), cancelExecution: vi.fn(), retryExecution: vi.fn(), resumeExecution: vi.fn(),
   },
 }));
 
 vi.mock("vue-router", () => ({ useRoute: () => ({ query: {} }), useRouter: () => router }));
 vi.mock("@/api/workflows", () => ({ workflowApi }));
-vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("element-plus", () => ({ ElMessage: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
 
 const workflow = { id: "w1", name: "Workflow 1", description: "", owner_id: "u1", tenant_id: "t1", status: "published", published_version_id: "v1", created_at: "2026-01-01", updated_at: "2026-01-01" };
 const version = { id: "v1", workflow_id: "w1", version: 1, definition: {}, status: "published", created_by: "u1", created_at: "2026-01-01" };
 const scheduledTrigger = { id: "t-scheduled", tenant_id: "t1", workflow_id: "w1", name: "Daily", trigger_type: "scheduled", status: "enabled", config: { timezone: "Asia/Seoul", interval_seconds: 600, misfire_policy: "catch_up", catch_up_limit: 5 }, created_by: "u1", created_at: "2026-01-01", updated_at: "2026-01-01" };
 const webhookTrigger = { id: "t-webhook", tenant_id: "t1", workflow_id: "w1", name: "Webhook", trigger_type: "webhook", status: "enabled", config: { auth_mode: "secret", event_id_field: "event_id", secret_configured: true }, created_by: "u1", created_at: "2026-01-01", updated_at: "2026-01-01" };
+const triggerActions = ["invoke", "enable", "disable", "delete"].map((action) => ({ action, allowed: true, reason_code: "ALLOWED", requires_confirmation: true, requires_idempotency_key: action === "invoke", idempotent: true, description: "test" }));
 
 function mountPage() {
   return mount(WorkflowLifecycle, {
@@ -36,6 +37,8 @@ describe("WorkflowLifecycle trigger management", () => {
     workflowApi.versions.mockResolvedValue({ data: [version] });
     workflowApi.triggers.mockResolvedValue({ data: [scheduledTrigger, webhookTrigger] });
     workflowApi.listExecutions.mockResolvedValue({ data: [] });
+    workflowApi.executionAvailability.mockResolvedValue({ data: { actions: [] } });
+    workflowApi.triggerAvailability.mockResolvedValue({ data: { actions: triggerActions } });
     workflowApi.schedule.mockResolvedValue({ data: { id: "s1" } });
     workflowApi.updateTrigger.mockResolvedValue({ data: scheduledTrigger });
     workflowApi.deleteTrigger.mockResolvedValue({ data: undefined });
