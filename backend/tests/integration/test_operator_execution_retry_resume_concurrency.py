@@ -18,6 +18,7 @@ from sqlalchemy import delete, func, select
 from app.infrastructure.db import SessionLocal
 from app.infrastructure.db.session import engine
 from app.models.core import AuditLog, Tenant, User
+from app.models.integration_event import IntegrationEventRecord
 from app.models.operator_action import OperatorActionIdempotency
 from app.models.workflow import Workflow, WorkflowVersion
 from app.models.workflow_checkpoint import WorkflowExecutionCheckpoint
@@ -156,6 +157,7 @@ async def _cleanup(tenant_id, user_id) -> None:
     """删除本测试生成的所有持久化事实。"""
     async with SessionLocal() as session:
         await session.execute(delete(AuditLog).where(AuditLog.tenant_id == tenant_id))
+        await session.execute(delete(IntegrationEventRecord).where(IntegrationEventRecord.tenant_id == tenant_id))
         await session.execute(delete(OperatorActionIdempotency).where(OperatorActionIdempotency.tenant_id == tenant_id))
         await session.execute(delete(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id == tenant_id))
         await session.execute(delete(WorkflowExecutionCheckpoint).where(
