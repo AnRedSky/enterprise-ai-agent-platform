@@ -82,6 +82,7 @@ Invoke-Test "Operator Governance PostgreSQL Acceptance" @(
     "-q",
     "tests/api_real/test_operator_action_result_correlation_acceptance.py",
     "tests/api_real/test_operator_action_schema_acceptance.py",
+    "tests/api_real/test_operator_audit_query_index_acceptance.py",
     "-m", "integration",
     "--tb=long",
     "-W", "error"
@@ -97,6 +98,7 @@ if ($created.Count -gt 0) {
 }
 
 Write-Host "[PASS] Operator Action → AuditLog → Result Resource schema is migration-complete."
+Write-Host "[PASS] Canonical Operator Audit indexes are present with tenant-first column order."
 Write-Host "[PASS] Alembic exposes exactly one migration head."
 Write-Host "[PASS] PostgreSQL Acceptance completed with warnings treated as errors."
 Write-Host "[PASS] No protected service process appeared during the gate."
