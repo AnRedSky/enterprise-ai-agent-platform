@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -117,24 +118,14 @@ async def _claim_and_commit(tenant_id, user_id, resource_id, key):
 async def _cleanup(*tenant_ids, user_ids) -> None:
     """清理本测试生成的 Workflow、Execution、审计、幂等事实与身份。"""
     async with SessionLocal() as cleanup_session:
-        await cleanup_session.execute(
-            delete(AuditLog).where(AuditLog.tenant_id.in_(tenant_ids))
-        )
+        await cleanup_session.execute(delete(AuditLog).where(AuditLog.tenant_id.in_(tenant_ids)))
         await cleanup_session.execute(
             delete(OperatorActionIdempotency).where(OperatorActionIdempotency.tenant_id.in_(tenant_ids))
         )
-        await cleanup_session.execute(
-            delete(WorkflowExecution).where(WorkflowExecution.tenant_id.in_(tenant_ids))
-        )
-        await cleanup_session.execute(
-            delete(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id.in_(tenant_ids))
-        )
-        await cleanup_session.execute(
-            delete(WorkflowVersion).where(WorkflowVersion.created_by.in_(user_ids))
-        )
-        await cleanup_session.execute(
-            delete(Workflow).where(Workflow.owner_id.in_(user_ids))
-        )
+        await cleanup_session.execute(delete(WorkflowExecution).where(WorkflowExecution.tenant_id.in_(tenant_ids)))
+        await cleanup_session.execute(delete(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id.in_(tenant_ids)))
+        await cleanup_session.execute(delete(WorkflowVersion).where(WorkflowVersion.created_by.in_(user_ids)))
+        await cleanup_session.execute(delete(Workflow).where(Workflow.owner_id.in_(user_ids)))
         await cleanup_session.execute(delete(User).where(User.id.in_(user_ids)))
         await cleanup_session.execute(delete(Tenant).where(Tenant.id.in_(tenant_ids)))
         await cleanup_session.commit()
@@ -158,8 +149,6 @@ async def test_operator_action_idempotency_concurrent_claim_has_single_winner_an
             _claim_and_commit(tenant_id, user_id, resource_id, key),
             _claim_and_commit(tenant_id, user_id, resource_id, key),
         )
-
-        # INSERT ... ON CONFLICT DO NOTHING 只能让一个事务真正创建幂等事实；另一个事务必须读取已提交事实。
         assert (first is None) != (second is None)
         existing = first or second
         assert existing is not None
@@ -169,7 +158,6 @@ async def test_operator_action_idempotency_concurrent_claim_has_single_winner_an
         assert existing.action == "retry"
         assert existing.status == "started"
 
-        # tenant_id 是唯一约束的一部分，相同 Idempotency-Key 不得跨租户冲突。
         async with SessionLocal() as other_session:
             other_service = OperatorActionGovernanceService(other_session)
             other_record = await other_service._claim_idempotency(
@@ -229,17 +217,11 @@ async def test_operator_action_idempotency_failed_record_cannot_be_reused_as_suc
     await _create_identity(tenant_id, user_id)
     try:
         async with SessionLocal() as session:
-            record = OperatorActionIdempotency(
-                tenant_id=tenant_id,
-                actor_id=user_id,
-                resource_type="workflow_execution",
-                resource_id=resource_id,
-                action="retry",
-                idempotency_key=key,
-                status="failed",
-                error_code="OPERATOR_ACTION_FAILED",
-            )
-            session.add(record)
+            session.add(OperatorActionIdempotency(
+                tenant_id=tenant_id, actor_id=user_id, resource_type="workflow_execution",
+                resource_id=resource_id, action="retry", idempotency_key=key,
+                status="failed", error_code="OPERATOR_ACTION_FAILED",
+            ))
             await session.commit()
 
         async with SessionLocal() as session:
@@ -262,19 +244,13 @@ async def test_operator_action_retry_replay_reuses_result_and_does_not_duplicate
     tenant_id = uuid4()
     user_id = uuid4()
     key = f"operator-replay-{uuid4()}"
-    workflow_id, version_id, execution_id = await _create_failed_execution(tenant_id, user_id)
+    _, _, execution_id = await _create_failed_execution(tenant_id, user_id)
 
     try:
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
             first = await service.execute_execution(
-                execution_id,
-                tenant_id,
-                user_id,
-                True,
-                "retry",
-                confirm=True,
-                idempotency_key=key,
+                execution_id, tenant_id, user_id, True, "retry", confirm=True, idempotency_key=key,
             )
             first_result_id = first.id
 
@@ -295,13 +271,7 @@ async def test_operator_action_retry_replay_reuses_result_and_does_not_duplicate
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
             replay = await service.execute_execution(
-                execution_id,
-                tenant_id,
-                user_id,
-                True,
-                "retry",
-                confirm=True,
-                idempotency_key=key,
+                execution_id, tenant_id, user_id, True, "retry", confirm=True, idempotency_key=key,
             )
             assert replay.id == first_result_id
             await session.commit()
@@ -332,26 +302,15 @@ async def test_operator_action_retry_rolls_back_result_idempotency_audit_and_tra
     tenant_id = uuid4()
     user_id = uuid4()
     key = f"operator-rollback-{uuid4()}"
-    workflow_id, version_id, execution_id = await _create_failed_execution(tenant_id, user_id)
+    _, _, execution_id = await _create_failed_execution(tenant_id, user_id)
 
     try:
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
-            service._audit = pytest.MonkeyPatch().context().__enter__ if False else service._audit
-            monkeypatch.setattr(
-                service,
-                "_audit",
-                lambda **kwargs: (_ for _ in ()).throw(RuntimeError("operator audit failure")),
-            )
+            service._audit = AsyncMock(side_effect=RuntimeError("operator audit failure"))
             with pytest.raises(RuntimeError, match="operator audit failure"):
                 await service.execute_execution(
-                    execution_id,
-                    tenant_id,
-                    user_id,
-                    True,
-                    "retry",
-                    confirm=True,
-                    idempotency_key=key,
+                    execution_id, tenant_id, user_id, True, "retry", confirm=True, idempotency_key=key,
                 )
             await session.rollback()
 
