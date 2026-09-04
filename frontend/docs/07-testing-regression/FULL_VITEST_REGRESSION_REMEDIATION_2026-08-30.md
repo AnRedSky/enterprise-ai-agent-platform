@@ -2,151 +2,166 @@
 
 ## 1. 版本同步与当前基线
 
-2026-09-04 本轮继续检查远端 `main` 与 `frontend`。最新 `main` 为：
+2026-09-04 继续检查远端 `main` 与 `frontend`。当前远端 `main` 为：
 
 ```text
-164e79fcabbddcc4b0f974a32d93c530be4ce62f
+6f7af7b5f373d51c94fd34e371ff141d28581bc4
 ```
 
-`frontend` 已基于该 main，当前未落后 main。本轮继续围绕用户 Windows targeted Browser E2E 反馈执行最小根因修复，不修改后端业务 Contract。
+当前 `frontend` 与 `main` 已发生分叉：`frontend` 相对 `main` ahead 3、behind 8。已创建 PR #90 尝试将 `main` 同步到 `frontend`，GitHub 当前报告 `mergeable=false`，因此本轮**未宣称同步完成**，也未强行改写分支历史。继续开发前应在本地执行真实 merge 并解决冲突，再推送到 `frontend`。
+
+本轮 Browser E2E 修复均基于当前 `frontend` HEAD 提交，未修改后端业务 Contract。
 
 ## 2. 用户最新 Browser E2E 反馈
 
-用户执行三个 targeted Playwright：
+用户在 Windows `frontend` 工作树执行：
 
 ```text
 organization-management.spec.ts
 3 failed
 
-workflow-trigger-governance.spec.ts
-1 failed
-
 model-provider-governance.spec.ts
-1 failed, 1 passed
+2 passed
 ```
 
-失败表现：
+Organization 三个失败分别表现为：
 
-1. Organization 三个场景：`getMembership()` 在组织成员列表第一页中找不到新注册用户。
-2. Workflow Trigger：选择 Workflow 的 option 等待超时，测试期待 `E2E Scheduled Workflow ... (draft)`。
-3. Model Provider：真实 POST 已返回 201，但页面 reload 后 5 秒内没有看到 Provider 名称。
+1. `getByRole("heading", { name: "组织" })` 严格模式匹配 `组织` 与 `组织列表` 两个 heading；
+2. suspended member 重新加载后等待 `role=alert`，但页面实际使用共享 `StatePanel`，其语义角色为 `status`；
+3. owner transfer 场景在 API transfer 前置步骤收到非成功响应。
+
+Model Provider 本轮用户反馈已全部通过 2/2；此前由 Provider 列表排序/分页导致的 fixture 不可见问题已通过 `000 E2E Provider <nonce>` fixture 修复。
 
 ## 3. 根因分析
 
-### 3.1 Organization membership 查询错误地只检查第一页
+### 3.1 Organization 列表 heading locator 不够精确
 
-当前 Backend Contract 中，`POST /auth/register` 已在默认 Tenant 对应 Organization 中创建 active/member membership；Organization service 的 `add_member()` 对已存在 membership 返回 409。后端成员列表同时支持 `offset` / `limit` 分页，并按创建时间升序返回。fileciteturn487file0 fileciteturn483file0 fileciteturn488file0
+页面同时存在 `h1=组织` 和 `h2=组织列表`。Playwright `getByRole("heading", { name: "组织" })` 默认使用非 exact name 匹配，因此同时命中两个元素并触发 strict mode violation。
 
-因此当前失败已经不再是“需要再次 add member”。上一轮删除重复 `addMember()` 后，`getMembership()` 仍只读取默认第一页；随着 E2E 数据积累，新 membership 可能位于第 2 页或之后。
+修复为：
 
-本轮修复为分页遍历成员列表，直到找到目标 `user_id` 或 `offset + items.length >= total`。这避免通过数组位置推断关系，也不改变后端分页 Contract。
-
-### 3.2 Workflow option 使用了创建时的 stale workflow status
-
-测试通过 API 创建 Workflow 后取得的对象仍保存创建时的 `status = draft`。随后已经调用 publish API，但测试继续使用原对象中的 `workflow.status` 组成 option locator，因此期待：
-
-```text
-E2E Scheduled Workflow ... (draft)
+```ts
+page.getByRole("heading", { name: "组织", exact: true })
 ```
 
-而页面读取的是发布后的 durable Workflow，option 实际状态应为 `published`。
+不修改生产 UI，仅让测试 locator 精确表达既有 UI Contract。
 
-修复策略：发布后通过正式 `GET /workflows/{workflow_id}` 重新读取 durable Workflow，并断言 `status = published`，再使用真实名称和真实发布状态选择页面 option。当前这项代码修改已准备，但 GitHub Contents API 对该文件的连续写入返回 SHA 冲突，尚未提交，因此不得记录为已完成。
+### 3.2 Organization error state 使用共享 StatePanel 的 status 语义
 
-### 3.3 Model Provider UI 受后端列表排序/分页 Contract 影响
+`organizations/detail.vue` 的加载错误通过共享 `StatePanel` 渲染。`StatePanel` 明确使用 `role="status"`，错误状态设置 `aria-live="assertive"`；不存在 `role="alert"`。
 
-后端 `list_providers()` 按 `ModelProvider.name.asc()` 排序，并使用 `offset` / `limit` 分页。fileciteturn506file0
+因此测试等待 `getByRole("alert")` 与公共状态组件 Contract 不一致。
 
-页面当前调用 `listModelProviders(organizationId)` 的默认 `limit=50`。因此 Browser E2E 使用普通 `Provider <nonce>` 名称时，如果组织中已有超过 50 个按名称排序靠前的 Provider，新建 Provider 可能不在页面首批 50 条数据中，即使创建接口已经成功返回 201。
+修复为验证：
 
-本轮先采用**测试 fixture 最小修复**：Provider 名称改为 `000 E2E Provider <nonce>`，使自动生成的数据稳定位于当前字典序列表前部，从而验证本测试真正关注的“创建 → reload → UI 可见 → 创建 Profile”链路，而不依赖数据库已有测试数据数量。
+```ts
+page.getByRole("status")
+```
 
-该修复没有通过延长 timeout 掩盖问题，也没有修改生产分页行为。若实际环境仍能复现 Provider 创建后 reload 不可见，则下一步应检查浏览器 reload 时真实 GET response，而不是继续增加等待时间。
+并同时验证 `当前用户无权访问该组织`，确保不仅验证“有错误状态”，还验证 403 permission boundary 被正确表达。
+
+### 3.3 Owner transfer 测试污染后续测试的 durable organization state
+
+Organization owner transfer 是 durable mutation。原场景完成 UI/API transfer 后没有恢复原始 owner，导致 Playwright worker 在同一个测试文件继续运行后，后续依赖固定 `browser_e2e_owner` 的场景可能失去 owner 权限，最终在 transfer API 前置步骤得到失败响应。
+
+修复策略：transfer browser contract 验证成功后，使用刚成为 owner 的测试用户重新登录 API，定位原 owner 的真实 membership ID，再执行一次真实 `transfer-owner` 将所有权恢复。恢复动作仍使用 durable membership ID，不通过数组位置推断关系。
+
+该修复保持测试数据自动生成，并避免测试之间共享不可控的 durable owner 状态。
 
 ## 4. 本轮原子修复
 
-### 4.1 Organization membership pagination fixture
+### 4.1 Organization UI semantic selectors
 
 提交：
 
 ```text
-44ffedd6467418389828e4814d02392a9c137f79
+06b415fc493ea9ac277f633b3b8b58c7e22c9d4f
 ```
 
 提交信息：
 
 ```text
-test: paginate organization membership fixture lookup
+test: align organization E2E selectors with UI semantics
 ```
 
 变更：
 
-- `getMembership()` 从单页查询改为按 `offset=0,100,200...` 遍历；
-- 使用后端返回的 `total` 作为停止条件；
-- 仍以真实 `user_id` 建立 membership 关系，不使用 `[0]` 推断。
+- `组织` heading 使用 `exact: true`；
+- error StatePanel 使用 `role=status`，并校验 403 语义文案；
+- 不修改生产组件。
 
-### 4.2 Model Provider fixture ordering
+### 4.2 Organization owner transfer fixture isolation
 
 提交：
 
 ```text
-e947d39377150edf11bfe178513389738631c98d
+138ec3a2dc5b898fda2063d1f1c1f9f3041487dc
 ```
 
 提交信息：
 
 ```text
-test: stabilize model provider fixture ordering
+test: isolate organization owner transfer fixture state
 ```
 
 变更：
 
-- Provider 测试名称改为 `000 E2E Provider <nonce>`；
-- 保留真实浏览器 POST 201 / durable ID 验证；
-- 保留 reload 后 Provider UI 验证；
-- 不修改生产 Model Provider 页面和后端服务。
+- owner transfer Browser Contract 验证完成后恢复原 owner；
+- 恢复时重新获取新 owner token，并通过真实 `user_id` 查找原 owner membership；
+- 不使用 `[0]`、`sort()` 或 `reverse()` 推导实体关系。
 
 ### 4.3 Workflow published-status refresh
 
-**状态：待提交。**
-
-目标提交内容：
-
-- publish 后通过 `GET /workflows/{workflow_id}` 获取最新 durable Workflow；
-- 断言 `status = published`；
-- 页面 option 使用最新 Workflow status，而不是 API 创建响应中的 stale `draft`。
-
-当前 GitHub Contents API 连续更新该文件时返回 SHA mismatch，因此没有绕过原子提交规范强行制造替代提交。
-
-## 5. 前序 Browser E2E 修复
-
-此前已完成：
+提交：
 
 ```text
-4b57b7b27a26a448b9cbb5ae726537e04379a093
-test: align organization E2E fixture with registration membership contract
-
-108fae87aa8518bc0bf7eec40b40a8bbb9a88a31
-test: use stable workflow selector in trigger E2E
-
-7cc59a5ba75c907ad602c7b981ea94bdedb8886f
-test: verify model provider creation from persisted API response
+6fca57e2a13ecccaa7219bfd125564da83ef9027
 ```
 
-这些修复已经分别解决：重复创建 membership、Element Plus 内部 combobox locator、以及依赖独立 list 查询猜测 Provider 的测试契约问题。
+提交信息：
 
-## 6. 前序 Vitest / build 类型修复
+```text
+test: refresh published workflow before trigger selection
+```
 
-此前已修复：
+变更：
 
-- `integrations/OperationsConsole.vue` 的 switch boolean 事件收窄及 table row 类型；
-- `organizations/detail.vue` 的 nullable organization 模板类型；
-- `organizations/model-providers.vue` 的 ModelProfile table row 类型；
-- Full-site static audit 中与严格事件类型对应的断言。
+- publish 后通过 `GET /workflows/{workflow_id}` 获取 durable Workflow；
+- 断言 `status = published`；
+- 页面 option 使用发布后的真实 status，而不是创建响应中的 stale `draft`。
 
-保持全局 `strict` / `vue-tsc`，不通过放宽类型系统消除错误。
+### 4.4 前序 Organization membership pagination fixture
 
-## 7. Full-site Governance Contract
+```text
+44ffedd6467418389828e4814d02392a9c137f79
+test: paginate organization membership fixture lookup
+```
+
+`getMembership()` 按 `offset=0,100,200...` 遍历，直到找到目标 `user_id` 或达到 `total`。
+
+### 4.5 前序 Model Provider fixture ordering
+
+```text
+e947d39377150edf11bfe178513389738631c98d
+test: stabilize model provider fixture ordering
+```
+
+Provider fixture 使用 `000 E2E Provider <nonce>`，确保在当前按名称排序、默认 limit=50 的首批数据中稳定可见。
+
+## 5. 之前已验证的测试结果
+
+用户本轮反馈确认：
+
+```text
+model-provider-governance.spec.ts
+2 passed (9.3s)
+```
+
+此结果来自用户实际 Windows 工作树执行，记录为已验证。
+
+Organization 和 Workflow Trigger 的最新修改尚未由用户在当前工作树重新执行，因此不记录为通过。
+
+## 6. Governance Contract
 
 继续遵循：
 
@@ -155,54 +170,76 @@ test: verify model provider creation from persisted API response
 - 禁止 `items / versions / destinations / providers / triggers` 使用 `[0]` 推导 durable relationship；
 - 禁止通过 `sort()` / `reverse()` 建立实体关系；
 - 禁止 View 层 optimistic durable status mutation；
-- 实体关系必须使用后端 durable ID 或显式 UI 选择；
-- 状态变更后重新读取后端事实。
+- 状态变更后重新读取后端事实；
+- 测试 locator 应表达真实 UI semantic contract，不通过宽泛 locator 掩盖 strict mode 问题；
+- durable mutation 测试必须隔离或恢复共享 fixture 状态。
 
-## 8. 当前验证状态
+## 7. 当前验证状态
 
-本轮不能直接执行用户 Windows 工作树，因此**不记录未经实际执行的通过结果**。
+本轮**未执行 Windows 本地命令**，因此不能宣称 Organization / Workflow Trigger 已通过。
 
-用户最新结果仍是失败基线。本轮已经提交 Organization 分页 fixture 和 Model Provider fixture 两项修复；Workflow published-status 修复尚未提交。
-
-当前 `frontend` 最新 HEAD：
+已完成代码提交：
 
 ```text
- e947d39377150edf11bfe178513389738631c98d
+06b415fc493ea9ac277f633b3b8b58c7e22c9d4f
+test: align organization E2E selectors with UI semantics
+
+138ec3a2dc5b898fda2063d1f1c1f9f3041487dc
+test: isolate organization owner transfer fixture state
+
+6fca57e2a13ecccaa7219bfd125564da83ef9027
+test: refresh published workflow before trigger selection
 ```
 
-GitHub Combined Status 没有提供本轮新的可用 status check，因此不记录 CI 通过。
+当前 `frontend` HEAD：
 
-## 9. 本地同步与验证顺序
+```text
+138ec3a2dc5b898fda2063d1f1c1f9f3041487dc
+```
+
+随后还需要将 Workflow commit 和文档 commit 纳入最终同步历史；以 GitHub 当前实际 branch HEAD 为准，不以历史预期值代替。
+
+## 8. 本地同步与验证顺序
+
+由于 `main` 与 `frontend` 当前 diverged，先不要继续假定 fast-forward。建议：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
 
 git fetch origin
 git checkout frontend
-git pull --ff-only origin frontend
-git rev-parse HEAD
+git status
+git log --oneline --decorate -8
 ```
 
-预期 HEAD：
+确认工作区干净后，在本地完成：
 
-```text
-e947d39377150edf11bfe178513389738631c98d
+```powershell
+git merge origin/main
 ```
 
-先执行：
+如有冲突，按 `frontend/docs/00-governance/FRONTEND_DEVELOPMENT_GUIDELINES.md` 与当前 frontend 测试契约解决；解决后：
+
+```powershell
+git add <resolved-files>
+git commit
+```
+
+然后推送：
+
+```powershell
+git push origin frontend
+```
+
+同步完成后执行 targeted：
 
 ```powershell
 npx playwright test tests/e2e/organization-management.spec.ts
 npx playwright test tests/e2e/model-provider-governance.spec.ts
-```
-
-Workflow Trigger 在 `workflow` 测试修复提交后再执行：
-
-```powershell
 npx playwright test tests/e2e/workflow-trigger-governance.spec.ts
 ```
 
-全部 targeted 通过后：
+全部 targeted 通过后再执行：
 
 ```powershell
 npm run test:e2e
@@ -211,18 +248,23 @@ npm run build
 npm run test:gate
 ```
 
-如仍失败，优先查看对应 screenshot / trace 和真实 API response，继续遵循“单一根因 → 最小修复 → targeted regression → 文档 → 原子提交”。
+## 9. 本地手动验证流程
 
-## 10. 本地手动验证流程
-
-1. **Organization**：注册测试用户，确认默认 membership 存在；验证 owner/member/suspended/owner-transfer 权限边界。
-2. **Workflow Trigger**：确认发布后的 Workflow 以 `published` durable status 出现在选择器中，再创建 Scheduled Trigger 并核验 Scheduler 状态。
-3. **Model Provider**：创建 `000 E2E Provider <nonce>`，确认 POST 201 / durable ID，reload 后确认 Provider 可见，再创建 embedding Profile 并核验 dimension。
-4. **状态治理**：继续执行 UI-04 Loading / Empty / Error / Permission / Success 回归。
-5. **响应式**：检查小屏下操作区、表格、StatePanel、Provider Card 无明显溢出。
+1. **Organization**：确认组织列表标题、成员管理、成员角色/状态、组织暂停/恢复、owner transfer 均符合 UI Contract；owner transfer 完成后确认 fixture 不污染后续场景。
+2. **Suspended boundary**：暂停测试成员后 reload，确认共享 `StatePanel` 展示 403 无权访问状态，而不是依赖不存在的 `alert` role。
+3. **Workflow Trigger**：确认发布后的 Workflow option 显示 `(published)`，创建 Scheduled Trigger 后核验真实 Trigger 与 Scheduler 状态。
+4. **Model Provider**：确认创建 POST 201、reload 后 `000 E2E Provider <nonce>` 可见，再创建 embedding Profile。
+5. **响应式**：检查小屏操作区、表格、StatePanel、Provider Card 无明显溢出。
 
 测试数据必须由 Fixture / Script 自动生成；不得手工填写业务数据；不得由 E2E 自动启动 API、Scheduler、Worker、PostgreSQL 或 Redis。
 
-## 11. 下一步
+## 10. 下一步
 
-当前仍为 **进行中**。下一优先级是提交并验证 Workflow published-status refresh，然后重新执行三个 targeted Browser E2E。若 targeted 全部通过，再进入完整 E2E 与 Vitest/build/gate 验收；若出现新失败，只针对真实 Contract / UI 行为的单一根因修复，不通过放宽断言或任意增加 timeout 制造假绿。
+当前状态仍为 **进行中**：
+
+1. 先在本地将最新 `main` 合并到 `frontend`，解决当前分叉；
+2. 同步后重新执行三个 targeted Browser E2E；
+3. 若 targeted 全部通过，再执行 Full E2E / Vitest / build / gate；
+4. 若出现新失败，只针对真实单一根因做最小修复，并同步测试文档与原子提交记录。
+
+禁止通过增加任意 timeout、放宽 locator、跳过 durable state assertion 或共享测试状态的方式制造假绿。
