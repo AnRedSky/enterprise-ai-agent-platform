@@ -5,7 +5,7 @@
 - Branch：`main`
 - 当前阶段：**Phase 2.10-II Enterprise Operations Console / Operator Governance 开发中**
 - 当前任务：**Operator Governance 幂等并发、租户隔离与事务结果事实一致性收敛**。
-- 最近完成：**Scheduler Runtime Real API 最终验收**、Scheduled Trigger 多实例/恢复验收、#84 Durable Resume Operator Action 幂等审计收敛、Operator Governance 最终化 rollback 保护、AsyncMock warning 根因修复、Operator Action API Contract 13 项验收、Trigger Lifecycle PostgreSQL Acceptance、Execution run/cancel 治理事务 Acceptance。
+- 最近完成：**Scheduler Runtime Real API 最终验收**、Scheduled Trigger 多实例/恢复验收、#84 Durable Resume Operator Action 幂等审计收敛、Operator Governance 最终化 rollback 保护、AsyncMock warning 根因修复、Operator Action API Contract 13 项验收、Trigger Lifecycle PostgreSQL Acceptance、Execution run/cancel 治理事务 Acceptance、Retry/Resume 跨 Session 并发竞争验收测试。
 
 开发严格基于远端 `main`，不创建功能分支。
 
@@ -25,13 +25,16 @@ uv run pytest -q -W error -s
 
 本次反馈确认 Windows 环境下 `-W error` 回归通过；跳过项来自显式数据库/Real API 等外部依赖测试，不将未启用依赖的 skip 解释为失败。
 
-Operator Governance PostgreSQL Acceptance：
+Operator Governance PostgreSQL Acceptance（此前已执行）：
 
 ```text
 Operator Action Idempotency: 5 passed
 Manual Trigger Invoke: 5 passed
 Trigger Lifecycle: 4 passed
+Execution Governance: 4 passed
 ```
+
+本次新增跨 Session 并发验收尚待本地真实 PostgreSQL Gate 执行确认，不能以代码已提交替代真实数据库运行证据。
 
 对应 Gate：
 
@@ -39,7 +42,11 @@ Trigger Lifecycle: 4 passed
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\test\database\01_operator_governance_idempotency_acceptance.ps1
 ```
 
-当前 Gate 已覆盖 Operator Action claim/replay、tenant isolation、conflict、failed-key rejection、Trigger Invoke replay、Trigger lifecycle、invalid state rejection、Execution run/cancel、delete atomicity 与 finalization rollback。
+Gate 现在额外执行：
+
+```powershell
+uv run pytest -q -W error tests/integration/test_operator_execution_retry_resume_concurrency.py -s
+```
 
 Alembic：
 
@@ -60,13 +67,14 @@ Gate 在 PostgreSQL acceptance 前执行 migration head verification；真实迁
 - Phase 2.10-II / II-01 Operator Action Governance、II-02 Global Runtime Operations、II-03 Worker/Scheduler Diagnostics、II-04 Audit/Trace Correlation、II-05 Controlled Batch Operations、II-06/II-07 Runtime Audit Query 已完成对应 Backend 能力；
 - Operator Audit Query 已具备 tenant-scoped 分页、精确过滤、时间窗口校验和 admin-only 访问治理；
 - `0051_operator_audit_query_indexes` 与 `0055_operator_audit_operator_action_index` 已补齐 Canonical Operator Audit 查询索引；
-- Retry Operator Action → Idempotency Result Resource → AuditLog → Workflow Execution → Workflow Trace 已具备真实 PostgreSQL 验收基础，并继续补强成功重放与最终化失败原子性；
+- Retry Operator Action → Idempotency Result Resource → AuditLog → Workflow Execution → Workflow Trace 已具备真实 PostgreSQL 验收基础，并继续补强成功重放、最终化失败原子性及跨 Session 并发收敛；
 - Durable Resume 的确定性 Resume Execution 幂等键已收敛到 Operator Action Governance，重放复用同一 Result Resource，不重复生成 Operator Audit；
 - Scheduler 多实例 lease、slot 幂等、tenant isolation、misfire 与 lease expiry recovery 已完成真实 PostgreSQL 验收；
 - Scheduled Trigger 多 Scheduler Real API Gate 已完成；
 - Operator Governance `run / cancel / retry / resume / trigger` 已统一采用治理事务提交边界，最终化失败和最终 commit 失败显式 rollback；
 - Trigger `enable / disable / delete` 已完成真实 PostgreSQL 生命周期验收，非法状态不会生成 Operator Audit，最终审计失败会回滚状态；
 - Execution `run / cancel` 已补齐真实 PostgreSQL 治理事务验收，验证成功状态与 Operator Audit 同事务提交、非法状态拒绝以及最终审计失败回滚；
+- Retry / Resume 已新增真实 PostgreSQL 双 Session 并发验收：两个独立数据库事务同时竞争同一个 Operator Action 时，要求最终仅存在一个 Result Workflow Execution；竞争请求只能 replay 已成功 Result Resource 或返回稳定 409，禁止第二个 Retry / Resume Execution；
 - AsyncMock warning 根因已修复，Backend default regression 在 `-W error` 下通过；
 - Operator Action HTTP Contract 已覆盖认证、请求默认值、Idempotency-Key 转发及 409 冲突映射。
 
@@ -105,7 +113,14 @@ Gate 在 PostgreSQL acceptance 前执行 migration head verification；真实迁
 3. 非法 Execution 状态返回 409 且不生成 Operator Audit；
 4. Run 最终 Audit 失败时 Execution 状态、Audit、Idempotency 全部回滚。
 
-测试中的 run/cancel 领域调用仅替换为最小状态变更，用于隔离并验证 Operator Governance 事务边界，不复制生产状态机，也不启动 API、Worker、Scheduler、PostgreSQL 或 Redis。
+`backend/tests/integration/test_operator_execution_retry_resume_concurrency.py` 新增跨 Session 并发验收：
+
+1. Retry：两个独立 `AsyncSession` 同时提交同一个 `Idempotency-Key`，最终只能存在一个 `retry_of_execution_id = 原 Execution` 的 Result Workflow Execution；
+2. Retry：竞争请求只能获得同一 Result Resource 的 replay，或在竞争边界返回 409，不允许产生第二个 Retry Execution；
+3. Retry：最终 `OperatorActionIdempotency.result_resource_id` 必须指向唯一 Retry Execution，且对应 Operator Audit 只能存在一条；
+4. Resume：两个独立 `AsyncSession` 同时竞争同一个确定性 `resume:{execution_id}:checkpoint:{sequence}`，最终只能存在一个 Resume Execution；
+5. Resume：Result Resource、Resume Checkpoint Sequence、Execution idempotency key 与 Operator Action 幂等事实必须一致，Operator Audit 不得重复；
+6. 测试只使用真实 PostgreSQL ORM/领域服务链路，不启动 API、Worker、Scheduler，也不要求人工输入测试数据。
 
 `backend/scripts/test/database/01_operator_governance_idempotency_acceptance.ps1` 继续作为 Operator Governance PostgreSQL Acceptance 唯一 Gate，现已按以下顺序执行：
 
@@ -119,6 +134,8 @@ Manual Trigger Invoke
 Trigger Lifecycle
     ↓
 Execution Governance
+    ↓
+Retry / Resume cross-session concurrency
 ```
 
 脚本只探测依赖并执行测试，不自动启动、停止或重启任何受保护服务；测试数据由测试自动生成与清理，不要求手工填写 ID、Token 或修改源码。
@@ -126,12 +143,11 @@ Execution Governance
 ## 5. 下一执行顺序
 
 ```text
-① 扩展 Retry / Resume 的真实 PostgreSQL 并发与最终化边界
-② 补齐 Result Resource / OperatorActionIdempotency / AuditLog / Trace 的 partial-commit 反向验收
-③ 完成 Operator Governance 全量 PostgreSQL Acceptance 收敛
-④ Backend Regression + Alembic head verification
-⑤ 评估 Phase 2.10-II Backend Release Gate
-⑥ 继续处理剩余 Worker / Delegation 多实例真实 Provider 缺口
+① 补齐 Result Resource / OperatorActionIdempotency / AuditLog / Trace 的 partial-commit 反向验收
+② 完成 Operator Governance 全量 PostgreSQL Acceptance 收敛并执行最新 Gate
+③ Backend Regression + Alembic head verification
+④ 评估 Phase 2.10-II Backend Release Gate
+⑤ 继续处理剩余 Worker / Delegation 多实例真实 Provider 缺口
 ```
 
 ## 6. Backend 验收规则
