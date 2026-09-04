@@ -13,25 +13,6 @@ function Get-ProtectedServiceSnapshot {
         Select-Object ProcessId, Name, CommandLine
 }
 
-function Invoke-Checked {
-    param(
-        [string]$Description,
-        [scriptblock]$Command,
-        [switch]$AllowNotRun
-    )
-
-    Write-Host $Description
-    & $Command
-    $exitCode = $LASTEXITCODE
-    if ($AllowNotRun -and $exitCode -eq 2) {
-        return $exitCode
-    }
-    if ($exitCode -ne 0) {
-        throw "Gate failed: $Description"
-    }
-    return 0
-}
-
 $before = @(Get-ProtectedServiceSnapshot)
 $beforeIds = @($before | ForEach-Object { $_.ProcessId })
 
