@@ -28,10 +28,11 @@ Element Plus `ElMessage` 是短生命周期通知。原测试在完成 `updateMe
 
 ### E2E 通知捕获
 
-`frontend/tests/e2e/organization-management.spec.ts` 新增 `waitForMessage()`，在触发操作前建立对 `document.body.innerText` 的等待：
+`frontend/tests/e2e/organization-management.spec.ts` 的 `waitForMessage()` 现在直接定位可见的 `.el-message` 通知，并在触发操作前创建 `expect(...).toBeVisible()` 等待：
 
-- 保留原来的精确业务通知文本断言；
-- 将等待订阅建立在点击动作之前，避免短生命周期通知因等待时机而丢失；
+- 保留精确的业务通知文本匹配，例如 `成员已暂停`、`成员已恢复`、`组织已暂停`、`组织已恢复`；
+- 等待订阅建立在点击动作之前，因此不会因为通知生命周期短而错过可见窗口；
+- 可见性断言由 helper 本身完成，没有用“文本曾经出现在 body”替代可见性语义；
 - 未修改测试总超时 `60_000ms`，未降低任何业务状态断言。
 
 ### E2E owner transfer 数据准备
@@ -67,7 +68,7 @@ owner-transfer 场景继续使用 deterministic `browser_e2e_owner` 作为真实
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\backend
-python scripts/test/e2e/00_reset_browser_e2e_database.py
+uv run python scripts/test/e2e/00_reset_browser_e2e_database.py
 ```
 
 然后进入 frontend 执行 targeted E2E：
@@ -87,8 +88,10 @@ npm run test:gate
 
 ## 6. 本次反馈后的状态
 
+- 最新 `main` 已通过 PR #93 合并进 `frontend`；
 - 页面权限上下文修复已存在于 `frontend`；
-- 本次针对瞬时通知时序和 owner-transfer 数据准备契约进行修复；
+- owner-transfer 数据准备已与当前后端注册/Organization Contract 对齐；
+- 本次继续修复瞬时通知的可见性断言时序；
 - 未弱化断言、未调整测试超时、未修改后端生产分页或业务规则；
-- targeted E2E 仍需由用户本地 Windows + Playwright 环境实际执行确认；
-- 在用户本地重新执行前，不将测试结果标记为“通过”。
+- 用户本地此前执行结果仍记录为 `1 passed / 2 failed`，不能作为本次提交的通过证据；
+- 必须在同步到最新 `frontend` 后重新执行 targeted E2E，确认三项全部通过，再进入全量回归。
