@@ -5,12 +5,12 @@
 2026-09-04 已重新检查远端 `main` 与 `frontend`。当前远端 `main` 为：
 
 ```text
-1b512fa8305301d3d262dc70f1425af6f014339e
+12223ae982410745abcdc20262e1f1a28f8ed1c4
 ```
 
-`frontend` 已包含该 `main`，当前相对 `main` 为 `ahead 5 / behind 0`。本轮同步通过真实 merge commit 完成，没有 force push，也没有伪造 fast-forward 关系。
+`frontend` 已通过 fast-forward 包含该 `main`，随后继续追加 Organization E2E 原子修复；当前相对 `main` 为 `ahead 1 / behind 0`。
 
-最新 `main` 同时包含 Operator Governance PostgreSQL acceptance fixture 修复：Retry 验收在创建 Workflow 前先建立 Tenant/User 外键事实；该修复不改变前端 API Contract。
+最新 `main` 同时包含 Operator/Trigger transaction boundary 与 acceptance fixture 修复，不改变前端 Organization API Contract。
 
 ## 2. 用户最新 Browser E2E 反馈
 
@@ -18,135 +18,118 @@
 
 ```text
 organization-management.spec.ts
-2 failed, 1 passed
+3 failed
+```
 
+三个场景均在 `POST /organizations` 前置 fixture 收到：
+
+```text
+Expected: 201
+Received: 409
+```
+
+同时：
+
+```text
 workflow-trigger-governance.spec.ts
-1 failed
+1 passed
 
 model-provider-governance.spec.ts
 2 passed
 ```
 
-Organization 最新失败：
-
-1. `showMemberRow()` 遍历 UI 分页后仍找不到刚注册成员；
-2. owner transfer API 前置步骤失败。
-
-Workflow Trigger 最新失败：
-
-```text
-locator(".scheduler-card") not found
-```
-
-Model Provider 已保持 2/2 通过。
-
 ## 3. 根因分析
 
-### 3.1 Organization 测试仍存在共享 owner identity 风险
+### 3.1 Organization E2E 错误地假设“注册用户 = 新 Tenant = 可创建新 Organization”
 
-仅创建独立 Organization 仍不足以保证测试隔离：后端 Organization 与 Tenant 为一对一治理范围，固定 `browser_e2e_owner` 不能无限创建新的 Organization。多次测试运行还可能留下 durable membership / owner 状态。
+当前后端注册 Contract 会把新注册用户绑定到 `DEFAULT_TENANT_ID` 对应的既有 Organization，并创建 active membership。后端 Organization 又明确限制一个 Tenant 只能存在一个 Organization。
 
-因此最终方案不是继续复用固定 owner，而是每个 Organization Browser E2E 场景由脚本注册唯一 owner identity，再登录该 identity 创建唯一 Organization。这样每个测试拥有独立的 Tenant / Organization / owner membership 前置事实。
+因此 E2E 中为每个场景注册唯一 owner identity 后再调用 `POST /organizations`，会命中：
 
-### 3.2 Organization 列表入口必须定位刚创建的真实组织
+```text
+409 当前 Tenant 已存在 Organization
+```
 
-测试保留真实 `/organizations` UI 入口，但不再使用 `.first()` 假设新组织处于列表首位。测试根据本次唯一组织名称定位对应 table row，再点击该 row 的 `管理成员` 深链。
+这不是用户名、组织名称冲突，也不是 Playwright 并发问题，而是测试 fixture 与最新后端注册/租户治理 Contract 不一致。后端路由的创建接口仍返回 201 成功 Contract，但 service 层会在当前 Tenant 已有 Organization 时返回 409。fileciteturn618file0L2-L5 fileciteturn625file0L2-L5
 
-成员查询继续通过真实 `offset/limit` 分页查找目标 `user_id`，不修改生产页面的 20 条分页，也不使用 `[0]`、`sort()` 或 `reverse()` 推断关系。
+### 3.2 正确 fixture 是复用默认 Organization，而不是创建第二个 Organization
 
-### 3.3 Workflow Scheduler 测试使用了不存在的旧 CSS selector
+后端注册实现会把注册用户写入默认 Tenant，并自动创建该用户的 Organization membership；测试不应再次 `addMember`，否则会重复创建 membership。fileciteturn633file0L2-L5
 
-生产页面使用共享 `SurfaceCard`，Scheduler 区域标题为 `Scheduler 持久化状态`，实际根节点是 `.ui-surface-card`，不存在 `.scheduler-card`。
+因此 Organization Browser E2E 应：
 
-测试已改为以 `Scheduler 持久化状态` 标题限定真实 SurfaceCard，并验证 `UTC`、`skip`、`10` 三项持久化状态，不新增平行 DOM 结构。
+1. 使用环境变量 `BROWSER_E2E_OWNER_USERNAME/PASSWORD` 对应的持久 owner fixture；
+2. owner 登录后通过 `/organizations` 获取其 Tenant 对应的 Organization；
+3. 每个场景仅注册新的测试成员；
+4. 直接通过真实 membership API 查找注册用户已经拥有的 membership；
+5. durable owner transfer 场景完成后恢复原 owner；
+6. suspended-member 场景断言完成后恢复成员状态。
 
-### 3.4 Workflow published status 与 trigger type selector
+### 3.3 Organization UI selector 与分页修复继续保留
 
-前序修复继续有效：publish 后重新 GET `/workflows/{workflow_id}`，确认 durable `status=published`，再选择 `(published)` Workflow；`scheduled` option 使用 `exact: true`，避免 Element Plus strict mode violation。
+生产页面不修改。测试继续使用：
+
+- `heading[name="组织", exact=true]`；
+- 组织 table row 按真实 `organization.name` 定位；
+- 成员按真实 `user_id` 遍历 UI 分页；
+- membership API 使用 `offset/limit` 查找真实 `user_id`；
+- 不使用 `[0]`、`sort()` 或 `reverse()` 推断 durable relationship。
 
 ## 4. 当前原子修复
 
-### 4.1 Organization owner identity isolation
+### 4.1 Organization fixture 与注册 Contract 对齐
 
 ```text
-09f099f2baf1f34db2b85f3ffa2f1bd84431fba9
-test: isolate organization owner identities
+91bae8a74574909ce44401bd2e4325451682ed72
+test: align organization fixtures with registration contract
 ```
 
 变更：
 
-- 每个 Organization E2E 注册独立 owner identity；
-- owner identity 登录后创建自己的 Organization；
-- 每个场景拥有独立 Tenant / Organization / owner membership；
-- Organization 列表根据唯一组织名称定位真实 row；
-- 保留真实 Browser UI 与 durable API assertion。
+- 恢复 `BROWSER_E2E_OWNER_USERNAME/PASSWORD` owner fixture；
+- 移除每个场景创建第二个 Organization 的错误假设；
+- 通过 `tenant_id` 精确定位 owner 所属 Organization；
+- 保留唯一测试成员用户名，利用注册 API 自动产生真实 membership；
+- 保留成员分页、UI semantic locator、durable assertions；
+- owner transfer 和 suspended-member 测试均恢复 durable 状态，避免污染后续场景。
 
-### 4.2 Workflow Scheduler UI contract selector
+## 5. Workflow / Model Provider 已验证基线
 
-```text
-44ac4c222792eca9b977dee6399fbd3bc3d51747
-test: align scheduler status selector with UI contract
-```
-
-变更：
-
-- 移除不存在的 `.scheduler-card` 假设；
-- 使用 `.ui-surface-card` + `Scheduler 持久化状态` 标题定位真实状态区域；
-- 验证 UTC / skip / 10；
-- 不修改生产 Scheduler 业务逻辑。
-
-## 5. 前序已完成修复
+用户当前反馈明确确认：
 
 ```text
-44ffedd6467418389828e4814d02392a9c137f79
-test: paginate organization membership fixture lookup
-```
+workflow-trigger-governance.spec.ts
+1 passed (5.1s)
 
-`getMembership()` 按 `offset=0,100,200...` 查找目标 `user_id`。
-
-```text
-e947d39377150edf11bfe178513389738631c98d
-test: stabilize model provider fixture ordering
-```
-
-Provider fixture 使用稳定的首批排序命名策略，避免测试依赖随机分页位置。
-
-```text
-c56223b1e45122b288c9f4aef0c0d1f08f2d582c
-test: use exact scheduled trigger type option
-```
-
-修复 Element Plus `scheduled` option strict mode selector。
-
-## 6. 用户实际验证结果
-
-当前仅记录用户明确执行的结果：
-
-```text
 model-provider-governance.spec.ts
-2 passed (10.3s)
+2 passed (8.8s)
 ```
 
-Organization 与 Workflow Trigger 的最新修复提交是在用户反馈之后完成的，**尚未由用户在其 Windows 工作树重新执行**，因此不能记录为通过。
+Workflow 修复使用真实 `Scheduler 持久化状态` SurfaceCard，不再依赖不存在的 `.scheduler-card` selector。
 
-## 7. 当前分支状态
+## 6. 当前分支状态
 
 当前 `main`：
 
 ```text
-1b512fa8305301d3d262dc70f1425af6f014339e
+12223ae982410745abcdc20262e1f1a28f8ed1c4
 ```
 
-`frontend` 已包含 `main`，并继续包含本轮前端原子修复。最新 Organization fixture commit：
+当前 `frontend`：
 
 ```text
-09f099f2baf1f34db2b85f3ffa2f1bd84431fba9
-test: isolate organization owner identities
+91bae8a74574909ce44401bd2e4325451682ed72
 ```
 
-本文件随后以独立文档治理提交更新；最终 HEAD 以远端实际 branch 为准。
+关系：
 
-## 8. 本地验证顺序
+```text
+ahead 1 / behind 0
+```
+
+尚未把本轮 Organization fixture 修复合并回 `main`；`frontend` 保持单一原子提交，未 force push。
+
+## 7. 本地验证顺序
 
 同步远端：
 
@@ -161,8 +144,8 @@ Targeted Browser E2E：
 
 ```powershell
 npx playwright test tests/e2e/organization-management.spec.ts
-npx playwright test tests/e2e/model-provider-governance.spec.ts
 npx playwright test tests/e2e/workflow-trigger-governance.spec.ts
+npx playwright test tests/e2e/model-provider-governance.spec.ts
 ```
 
 Targeted 全部通过后，再执行：
@@ -176,16 +159,17 @@ npm run test:gate
 
 遵循项目准则，E2E 不自动启动 API / Scheduler / Worker / PostgreSQL / Redis；测试数据由测试脚本自动创建，不要求手工填写业务数据。
 
-## 9. 手动验收重点
+## 8. 手动验收重点
 
 ### Organization
 
-- 本次测试 owner 能创建自己的唯一 Organization；
-- 组织列表根据唯一组织名称进入正确详情深链；
-- 成员管理页显示随机测试成员；
+- 使用既有 Browser E2E owner 进入真实 Organization；
+- 新注册成员自动出现在该 Organization membership 中；
+- 组织列表根据真实 Organization 名称进入正确详情；
 - 编辑角色、暂停/恢复成员、暂停/恢复组织均成功；
 - owner transfer 后新 owner 权限正确；
-- transfer 后原 owner 可恢复，不污染其他测试 owner。
+- transfer 后恢复原 owner；
+- suspended-member 场景结束后恢复成员 active 状态。
 
 ### Workflow Trigger
 
@@ -201,16 +185,16 @@ npm run test:gate
 - Provider fixture 在列表中稳定可见；
 - 不引入第二套 API client 或状态枚举。
 
-## 10. 当前状态与下一步
+## 9. 当前状态与下一步
 
-当前状态：**等待 Windows targeted E2E 复验**。
+当前状态：**Organization fixture 修复已提交，等待 Windows targeted E2E 复验。**
 
 下一步：
 
 1. 用户同步最新 `frontend`；
 2. 重新执行 Organization / Workflow Trigger / Model Provider 三个 targeted E2E；
 3. 若全部通过，再进入 Full E2E / Vitest / build / gate；
-4. 若仍失败，仅针对新的真实根因做最小原子修复；
+4. 若 Organization 仍失败，仅针对新的真实 API/fixture 根因做最小原子修复；
 5. 同步更新本文件，记录实际命令与结果。
 
-禁止通过增加任意 timeout、放宽 locator、跳过 durable assertion、修改生产分页行为或复用共享 durable state 来制造假绿。
+禁止通过增加任意 timeout、放宽 locator、跳过 durable assertion、修改生产分页行为或创建第二个默认 Tenant Organization 来制造假绿。
