@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -270,7 +271,7 @@ async def test_retry_rolls_back_execution_and_governance_facts_when_finalization
     try:
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
-            service._audit = AsyncMock(side_effect=RuntimeError("operator audit failure"))
+            monkeypatch.setattr(service, "_audit", AsyncMock(side_effect=RuntimeError("operator audit failure")))
             with pytest.raises(RuntimeError, match="operator audit failure"):
                 await service.execute_execution(
                     execution_id,
@@ -311,7 +312,7 @@ async def test_resume_rolls_back_execution_and_governance_facts_when_finalizatio
     try:
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
-            service._audit = AsyncMock(side_effect=RuntimeError("operator audit failure"))
+            monkeypatch.setattr(service, "_audit", AsyncMock(side_effect=RuntimeError("operator audit failure")))
             with pytest.raises(RuntimeError, match="operator audit failure"):
                 await service.execute_execution(
                     execution_id,
