@@ -248,6 +248,7 @@ async def test_operator_action_retry_replay_reuses_result_and_does_not_duplicate
     tenant_id = uuid4()
     user_id = uuid4()
     key = f"operator-replay-{uuid4()}"
+    await _create_identity(tenant_id, user_id)
     _, _, execution_id = await _create_failed_execution(tenant_id, user_id)
 
     try:
@@ -306,6 +307,7 @@ async def test_operator_action_retry_rolls_back_result_idempotency_audit_and_tra
     tenant_id = uuid4()
     user_id = uuid4()
     key = f"operator-rollback-{uuid4()}"
+    await _create_identity(tenant_id, user_id)
     _, _, execution_id = await _create_failed_execution(tenant_id, user_id)
 
     try:
