@@ -1,4 +1,4 @@
-"""Operator Trigger Invoke PostgreSQL 集成测试：验证幂等重放与治理事务原子性。
+"""Operator Trigger Invoke PostgreSQL 集成测试：验证幂等重放、并发收敛与治理事务原子性。
 
 职责：使用真实 PostgreSQL 验证 Manual Trigger Operator Action 的 Result Resource、幂等记录、Audit、Trace 与 Integration Event 一致性。
 边界：不覆盖 HTTP API，不启动任何服务；Workflow Runtime 使用最小 input 节点定义。
@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -177,6 +178,58 @@ async def test_operator_trigger_invoke_replay_reuses_execution_and_does_not_dupl
             assert operator_audit_count == 1
             assert execution_count == 1
             assert record.result_resource_id == first_id
+            assert workflow_id is not None
+    finally:
+        await _cleanup(tenant_id, user_id)
+
+
+@pytest.mark.asyncio
+async def test_operator_trigger_invoke_concurrent_same_key_converges_to_one_execution_and_audit() -> None:
+    """验证并发 Invoke 使用同一幂等键时只创建一个 Execution、一个幂等事实和一条 Operator Audit。"""
+    tenant_id = uuid4()
+    user_id = uuid4()
+    key = f"trigger-invoke-concurrent-{uuid4()}"
+    workflow_id, _, trigger_id = await _create_fixture(tenant_id, user_id)
+
+    async def invoke(source: str) -> UUID:
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            execution = await service.execute_trigger(
+                trigger_id, tenant_id, user_id, True, "invoke", confirm=True,
+                input_data={"source": source}, idempotency_key=key,
+            )
+            return execution.id
+
+    try:
+        first_id, second_id = await asyncio.gather(
+            invoke("operator-concurrent-a"),
+            invoke("operator-concurrent-b"),
+        )
+
+        assert first_id == second_id
+
+        async with SessionLocal() as session:
+            records = (await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalars().all()
+            executions = (await session.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.idempotency_key == key,
+            ))).scalars().all()
+            audits = (await session.execute(select(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.action == "operator.workflow_trigger.invoke",
+                AuditLog.resource_id == str(trigger_id),
+            ))).scalars().all()
+
+            assert len(records) == 1
+            assert records[0].status == "succeeded"
+            assert records[0].result_resource_type == "workflow_execution"
+            assert records[0].result_resource_id == first_id
+            assert len(executions) == 1
+            assert executions[0].id == first_id
+            assert len(audits) == 1
             assert workflow_id is not None
     finally:
         await _cleanup(tenant_id, user_id)
