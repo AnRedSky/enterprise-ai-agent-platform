@@ -37,7 +37,6 @@ describe("workflowApi", () => {
     get.mockResolvedValue({ data: [] });
     post.mockResolvedValue({ data: {} });
     patch.mockResolvedValue({ data: {} });
-    del.mockResolvedValue({ data: undefined });
 
     await workflowApi.triggers("w1");
     await workflowApi.createTrigger("w1", { name: "Manual trigger", trigger_type: "manual", config: {} });
@@ -47,7 +46,15 @@ describe("workflowApi", () => {
     expect(get).toHaveBeenCalledWith("/workflows/w1/triggers");
     expect(post).toHaveBeenCalledWith("/workflows/w1/triggers", { name: "Manual trigger", trigger_type: "manual", config: {} });
     expect(patch).toHaveBeenCalledWith("/workflows/w1/triggers/t1", { status: "disabled" });
-    expect(del).toHaveBeenCalledWith("/workflows/w1/triggers/t1");
+    expect(post).toHaveBeenLastCalledWith("/runtime/operator-actions/workflow-triggers/t1/delete", { confirm: true });
+  });
+
+  it("exposes canonical trigger lifecycle governance actions", async () => {
+    post.mockResolvedValue({ data: {} });
+    await workflowApi.enableTrigger("w1", "t1");
+    await workflowApi.disableTrigger("w1", "t1");
+    expect(post).toHaveBeenNthCalledWith(1, "/runtime/operator-actions/workflow-triggers/t1/enable", { confirm: true });
+    expect(post).toHaveBeenNthCalledWith(2, "/runtime/operator-actions/workflow-triggers/t1/disable", { confirm: true });
   });
 
   it("queries the persisted scheduler status through the formal workflow trigger contract", async () => {
@@ -57,39 +64,23 @@ describe("workflowApi", () => {
     expect(response.data.trigger_id).toBe("t1");
   });
 
-  it("creates a webhook trigger with secret config without inventing a second endpoint", async () => {
-    post.mockResolvedValue({ data: {} });
-    await workflowApi.createTrigger("w1", {
-      name: "Webhook trigger",
-      trigger_type: "webhook",
-      config: { auth_mode: "secret", secret: "1234567890123456", event_id_field: "event_id" },
-    });
-    expect(post).toHaveBeenCalledWith("/workflows/w1/triggers", {
-      name: "Webhook trigger",
-      trigger_type: "webhook",
-      config: { auth_mode: "secret", secret: "1234567890123456", event_id_field: "event_id" },
-    });
-  });
-
-  it("invokes a trigger with an optional idempotency key", async () => {
-    post.mockResolvedValue({ data: {} });
+  it("invokes a trigger through Operator Action governance with an idempotency key", async () => {
+    post.mockResolvedValue({ data: { resource_type: "workflow_execution", action: "invoke", result: { id: "e1" } } });
     await workflowApi.invokeTrigger("w1", "t1", { order_id: "o1" }, "trigger-request-1");
     expect(post).toHaveBeenCalledWith(
-      "/workflows/w1/triggers/t1/invoke",
+      "/runtime/operator-actions/workflow-triggers/t1/invoke",
       { input_data: { order_id: "o1" } },
       { headers: { "Idempotency-Key": "trigger-request-1" } },
     );
   });
 
-  it("creates, lists and runs executions", async () => {
+  it("creates and lists executions without changing the creation contract", async () => {
     get.mockResolvedValue({ data: [] });
     post.mockResolvedValue({ data: {} });
     await workflowApi.createExecution("w1", { order_id: "o1" });
     await workflowApi.listExecutions("w1");
-    await workflowApi.runExecution("e1");
-    expect(post).toHaveBeenNthCalledWith(1, "/workflows/w1/executions", { input_data: { order_id: "o1" } }, undefined);
+    expect(post).toHaveBeenCalledWith("/workflows/w1/executions", { input_data: { order_id: "o1" } }, undefined);
     expect(get).toHaveBeenCalledWith("/workflows/w1/executions");
-    expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e1/run");
   });
 
   it("sends an idempotency key when creating an execution", async () => {
@@ -102,14 +93,28 @@ describe("workflowApi", () => {
     );
   });
 
-  it("controls failed and active executions including Durable Resume", async () => {
-    post.mockResolvedValue({ data: {} });
+  it("routes Execution lifecycle actions through Operator Action governance", async () => {
+    const result = { id: "e1", status: "running" };
+    post.mockResolvedValue({ data: { resource_type: "workflow_execution", action: "run", result } });
+    await workflowApi.runExecution("e1");
     await workflowApi.cancelExecution("e1", "operator requested stop");
-    await workflowApi.retryExecution("e2");
+    await workflowApi.retryExecution("e2", "retry-request-1");
     await workflowApi.resumeExecution("e3");
-    expect(post).toHaveBeenNthCalledWith(1, "/workflows/executions/e1/cancel", { reason: "operator requested stop" });
-    expect(post).toHaveBeenNthCalledWith(2, "/workflows/executions/e2/retry");
-    expect(post).toHaveBeenNthCalledWith(3, "/workflows/executions/e3/resume");
+
+    expect(post).toHaveBeenNthCalledWith(1, "/runtime/operator-actions/workflow-executions/e1/run", { confirm: false }, undefined);
+    expect(post).toHaveBeenNthCalledWith(2, "/runtime/operator-actions/workflow-executions/e1/cancel", { confirm: true, reason: "operator requested stop" }, undefined);
+    expect(post).toHaveBeenNthCalledWith(3, "/runtime/operator-actions/workflow-executions/e2/retry", { confirm: true }, { headers: { "Idempotency-Key": "retry-request-1" } });
+    expect(post).toHaveBeenNthCalledWith(4, "/runtime/operator-actions/workflow-executions/e3/resume", { confirm: true }, undefined);
+  });
+
+  it("generates an idempotency key for retry when the caller does not supply one", async () => {
+    post.mockResolvedValue({ data: { resource_type: "workflow_execution", action: "retry", result: { id: "e2" } } });
+    await workflowApi.retryExecution("e2");
+    expect(post).toHaveBeenCalledWith(
+      "/runtime/operator-actions/workflow-executions/e2/retry",
+      { confirm: true },
+      { headers: { "Idempotency-Key": expect.stringMatching(/^retry-/) } },
+    );
   });
 
   it("queries execution status, nodes, trace and audit", async () => {

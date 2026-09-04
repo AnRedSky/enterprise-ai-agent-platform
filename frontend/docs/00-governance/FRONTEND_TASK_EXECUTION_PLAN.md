@@ -22,7 +22,7 @@
 
 ## UI-05 Form / Dialog / Drawer / Confirm
 
-状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 已完成 Manual Trigger / Execution 确认闭环，并继续关闭真实 Trigger 配置与删除缺口；RuntimeCorrelations 已完成 Durable Fact focused-record 定位。**
+状态：**进行中：ToolWorkbench 第一、二批迁移已实现；WorkflowLifecycle 已完成 Manual Trigger / Execution 确认闭环，并继续关闭真实 Trigger 配置与删除缺口；RuntimeCorrelations 已完成 Durable Fact focused-record 定位。当前开始对齐 Backend Operator Action Governance Canonical Contract。**
 
 原则：一个核心页面 → 公共模式迁移 → targeted test → 文档 → 原子提交。
 
@@ -48,6 +48,8 @@
 - Scheduler 当前仅存在 GET 状态 Contract，没有确认过的 HTTP Write Contract，因此仍保持只读，不伪造 Scheduler API。
 - 403 / 409 / 422 / 通用异常分别提供可理解的操作反馈，失败时不伪造本地 Trigger / Scheduler / Execution 状态。
 - Runtime / Trace / Audit 入口继续只传递后端真实 Durable ID。
+- **本轮 Operator Governance 对齐：Execution `run / cancel / retry / resume` 与 manual Trigger `invoke`、Trigger `delete / enable / disable` 的正式操作入口统一改由 `/runtime/operator-actions/...` Contract 承载；高风险动作发送 `confirm=true`，Retry / Invoke 发送 `Idempotency-Key`，API client 解包后端 `result` durable resource，保持既有页面调用边界不变。**
+- 本轮暂不把本地 `status` 矩阵升级为最终可用性事实源；下一原子任务将消费 Backend availability Contract，补齐 permission / invalid-state / idempotency-result UI。
 - 设计记录：`docs/01-design/UI_05_WORKFLOW_LIFECYCLE_MIGRATION.md`。
 
 ### RuntimeCorrelations Durable Fact 定位
@@ -93,8 +95,10 @@ npm run test:unit
 npm run test:gate
 ```
 
-远端执行环境不运行 Node/Vitest/build，因此未实际执行的门禁不得标记为通过。
+本轮用户已反馈 `tests/e2e/workflow-webhook-runtime.spec.ts`：**1 passed (8.0s)**；同时已执行 `npm test`、`npm run build`、`npm run test:gate`，用户确认测试通过，但未提供完整长日志，因此这里只记录“用户确认通过”，不虚构具体测试数量或耗时。
+
+远端执行环境不运行 Node/Vitest/build，因此后续未实际执行的门禁仍不得标记为通过。
 
 ## 下一任务
 
-继续 UI-05 主线：先执行 WorkflowLifecycle / RuntimeCorrelations / Trigger Management targeted regression + build 验证；Scheduler 仍保持只读，直到后端提供完整的 Scheduler Write Contract（配置修改、Trigger → Scheduler 同步、lease / misfire / idempotency 等）。不在前端虚构操作，不新增平行 API client、状态机或 Dialog。稳定后再选择下一个核心页面。
+继续 UI-05 主线：**WorkflowLifecycle 第二阶段——消费 Backend Operator Action availability Contract，统一 Run / Cancel / Retry / Resume / Trigger 操作的 allowed、requires_confirmation、requires_idempotency_key、reason_code 与 Permission / 409 反馈；成功后继续以 Backend refresh 为最终事实。** Scheduler 仍保持只读，直到后端提供完整的 Scheduler Write Contract（配置修改、Trigger → Scheduler 同步、lease / misfire / idempotency 等）。不在前端虚构操作，不新增平行 API client、状态机或 Dialog。稳定后再选择下一个核心页面。

@@ -58,29 +58,41 @@
 
 该修复直接对应本地反馈中的“标题存在、Execution ID 不存在”现象，不修改 E2E 断言、不等待任意固定时间、不新增 API 或 mapper，也不改变 Backend Contract。现有 `workflow-webhook-runtime.spec.ts` 的 `Execution ID` 断言继续作为真实深链 hydration 回归门禁。
 
+### 2.10 WorkflowLifecycle Operator Action Contract 收口
+
+Backend Phase 2.10-II 已将 Workflow Execution / Trigger 的运维操作统一收口到 `Runtime Operator Action Governance`：Execution 支持 `run / cancel / retry / resume`，Trigger 支持 `enable / disable / delete / invoke`；高风险操作要求 `confirm=true`，Retry / Invoke 要求 `Idempotency-Key`，成功结果通过统一 `result` durable resource 返回，并由治理层负责租户边界、状态冲突、幂等与 Operator Audit。
+
+前端原 `workflowApi` 仍暴露稳定的 `runExecution / cancelExecution / retryExecution / resumeExecution / invokeTrigger / deleteTrigger` 调用边界，因此本轮未在页面复制第二套状态机或新增平行 client；仅将这些方法的 HTTP 路径切换到 canonical Operator Action Contract，并在 API client 层解包 `result`，保持现有 WorkflowLifecycle 组件调用方式不变。Retry / Invoke 在调用方未提供 key 时生成一次性幂等键；高风险动作明确发送 `confirm=true`。
+
+本轮不把前端本地状态矩阵提升为后端可用性事实源；下一阶段将消费 availability Contract，统一 `allowed / reason_code / requires_confirmation / requires_idempotency_key`，并将 Permission / 409 / 幂等 replay 结果映射到统一 UI 状态。
+
 ## 3. 变更范围
+
+本轮新增 Operator Governance 对齐：
+
+- `frontend/src/api/workflows.ts`
+- `frontend/tests/api/workflows.test.ts`
+- `frontend/docs/00-governance/FRONTEND_TASK_EXECUTION_PLAN.md`
+- `frontend/docs/07-testing-regression/2026-08-31-frontend-regression-followup.md`
+
+此前深链修复范围仍包括：
 
 - `frontend/src/views/runtime/components/RuntimeCorrelations.vue`
 - `frontend/tests/e2e/workflow-webhook-runtime.spec.ts`
-- `frontend/docs/07-testing-regression/2026-08-31-frontend-regression-followup.md`
 
 ## 4. 验证状态
 
-本轮继续以开发者提供的真实 Windows E2E 结果作为根因输入，并完成第三阶段代码修复。当前工具环境只能访问远程 GitHub 仓库，不能直接执行开发者 Windows 本地 Node/npm 服务，因此不能将以下命令记录为已通过：
+开发者已提供最新 Windows 本地验证结果：
 
-```powershell
-cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend
-npm ci
+```text
 npm run test:e2e -- tests/e2e/workflow-webhook-runtime.spec.ts
-npm test
-npm run build
-npm run test:gate
+1 passed (8.0s)
 ```
 
-本地验收必须使用项目已安装依赖和已启动的真实 Backend/API；测试数据由 E2E 脚本自动生成，不需要手工填写测试账号、Workflow、Trigger 或 Webhook 数据。重点确认原失败用例继续通过，并且无新增 strict-mode violation、Unhandled Rejection 或 URL 深链回归。
+开发者同时反馈 `npm test`、`npm run build`、`npm run test:gate` 均执行并通过；由于完整日志较长未提供，本记录只保存用户确认的通过事实，不虚构具体测试数量、耗时或 gate 明细。
+
+远端工具环境不能直接执行开发者 Windows 本地 Node/npm 服务，因此本轮本地验证结论仅来自开发者明确反馈，不将远端 GitHub Actions 或未执行的本地命令冒充验收证据。
 
 ## 5. 完成判定
 
-当前状态：**待本地验证**。
-
-在 targeted E2E、全量 Vitest、build 和 release gate 未实际执行并通过前，不标记本轮修复为完成。
+此前 Runtime Correlations 深链修复已获得用户本地 targeted E2E 通过证据；本轮 Operator Action Contract API 对齐已加入 targeted API regression，但尚未由本工具环境实际执行，因此 **本轮代码交付状态为待用户本地 targeted regression 验证**。
