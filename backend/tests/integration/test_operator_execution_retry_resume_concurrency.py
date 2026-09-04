@@ -161,16 +161,21 @@ async def test_resume_cross_session_same_operator_action_creates_one_result_reso
     finally:
         await _cleanup(tenant_id, user_id)
 
+async def _raise_after_audit(service: OperatorActionGovernanceService, *args, **kwargs):
+    """让真实 Operator Audit 先写入当前事务，再故意失败以验证最终提交原子性。"""
+    await OperatorActionGovernanceService._audit(service, *args, **kwargs)
+    raise RuntimeError("operator audit failure")
+
 @pytest.mark.asyncio
 async def test_retry_rolls_back_execution_and_governance_facts_when_finalization_fails(monkeypatch) -> None:
-    """验证 Retry 创建新 Execution 后最终治理写入失败时，Execution、幂等、Audit 与 Trace 一起回滚。"""
+    """验证 Retry 已写入 Operator Audit 后最终化失败时，Execution、幂等、Audit 与 Trace 一起回滚。"""
     tenant_id, user_id = await _create_identity()
     _, _, execution_id = await _create_failed_execution(tenant_id, user_id)
     key = f"operator-retry-rollback-{uuid4()}"
     try:
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
-            monkeypatch.setattr(service, "_audit", AsyncMock(side_effect=RuntimeError("operator audit failure")))
+            monkeypatch.setattr(service, "_audit", AsyncMock(side_effect=_raise_after_audit))
             with pytest.raises(RuntimeError, match="operator audit failure"):
                 await service.execute_execution(execution_id, tenant_id, user_id, True, "retry", confirm=True, idempotency_key=key)
         async with SessionLocal() as session:
@@ -187,14 +192,14 @@ async def test_retry_rolls_back_execution_and_governance_facts_when_finalization
 
 @pytest.mark.asyncio
 async def test_resume_rolls_back_execution_and_governance_facts_when_finalization_fails(monkeypatch) -> None:
-    """验证 Resume 创建新 Execution 后最终治理写入失败时，Execution、幂等、Audit 与 Trace 一起回滚。"""
+    """验证 Resume 已写入 Operator Audit 后最终化失败时，Execution、幂等、Audit 与 Trace 一起回滚。"""
     tenant_id, user_id = await _create_identity()
     _, _, execution_id = await _create_failed_execution(tenant_id, user_id, with_checkpoint=True)
     key = f"resume:{execution_id}:checkpoint:0:rollback"
     try:
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
-            monkeypatch.setattr(service, "_audit", AsyncMock(side_effect=RuntimeError("operator audit failure")))
+            monkeypatch.setattr(service, "_audit", AsyncMock(side_effect=_raise_after_audit))
             with pytest.raises(RuntimeError, match="operator audit failure"):
                 await service.execute_execution(execution_id, tenant_id, user_id, True, "resume", confirm=True, idempotency_key=key)
         async with SessionLocal() as session:
