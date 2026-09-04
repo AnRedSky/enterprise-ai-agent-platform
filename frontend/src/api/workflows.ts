@@ -165,6 +165,12 @@ type OperatorExecutionResponse = {
   result: WorkflowExecution;
 };
 
+type OperatorTriggerResponse = {
+  resource_type: "workflow_trigger";
+  action: OperatorActionName;
+  result: WorkflowTrigger;
+};
+
 function newIdempotencyKey(prefix: string) {
   const uuid = globalThis.crypto?.randomUUID?.();
   return `${prefix}-${uuid || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
@@ -184,6 +190,17 @@ async function executeExecutionOperatorAction(
   return { ...response, data: response.data.result };
 }
 
+async function executeTriggerOperatorAction(
+  triggerId: string,
+  action: "enable" | "disable" | "delete",
+) {
+  const response = await request.post<OperatorTriggerResponse>(
+    `/runtime/operator-actions/workflow-triggers/${triggerId}/${action}`,
+    { confirm: true },
+  );
+  return { ...response, data: response.data.result };
+}
+
 export const workflowApi = {
   list() { return request.get<Workflow[]>("/workflows"); },
   get(id: string) { return request.get<Workflow>(`/workflows/${id}`); },
@@ -194,24 +211,12 @@ export const workflowApi = {
   createVersion(id: string, definition: Record<string, unknown>) { return request.post<WorkflowVersion>(`/workflows/${id}/versions`, { definition }); },
   publish(id: string, versionId: string) { return request.post<WorkflowVersion>(`/workflows/${id}/versions/${versionId}/publish`); },
   triggers(id: string) { return request.get<WorkflowTrigger[]>(`/workflows/${id}/triggers`); },
-  schedule(id: string, triggerId: string) {
-    return request.get<SchedulerStatus>(`/workflows/${id}/triggers/${triggerId}/schedule`);
-  },
-  createTrigger(id: string, payload: { name: string; trigger_type: WorkflowTriggerType; config: Record<string, unknown> }) {
-    return request.post<WorkflowTrigger>(`/workflows/${id}/triggers`, payload);
-  },
-  updateTrigger(id: string, triggerId: string, payload: { name?: string; status?: WorkflowTriggerStatus; config?: Record<string, unknown> }) {
-    return request.patch<WorkflowTrigger>(`/workflows/${id}/triggers/${triggerId}`, payload);
-  },
-  deleteTrigger(_id: string, triggerId: string) {
-    return request.post(`/runtime/operator-actions/workflow-triggers/${triggerId}/delete`, { confirm: true });
-  },
-  enableTrigger(_id: string, triggerId: string) {
-    return request.post(`/runtime/operator-actions/workflow-triggers/${triggerId}/enable`, { confirm: true });
-  },
-  disableTrigger(_id: string, triggerId: string) {
-    return request.post(`/runtime/operator-actions/workflow-triggers/${triggerId}/disable`, { confirm: true });
-  },
+  schedule(id: string, triggerId: string) { return request.get<SchedulerStatus>(`/workflows/${id}/triggers/${triggerId}/schedule`); },
+  createTrigger(id: string, payload: { name: string; trigger_type: WorkflowTriggerType; config: Record<string, unknown> }) { return request.post<WorkflowTrigger>(`/workflows/${id}/triggers`, payload); },
+  updateTrigger(id: string, triggerId: string, payload: { name?: string; status?: WorkflowTriggerStatus; config?: Record<string, unknown> }) { return request.patch<WorkflowTrigger>(`/workflows/${id}/triggers/${triggerId}`, payload); },
+  deleteTrigger(_id: string, triggerId: string) { return executeTriggerOperatorAction(triggerId, "delete"); },
+  enableTrigger(_id: string, triggerId: string) { return executeTriggerOperatorAction(triggerId, "enable"); },
+  disableTrigger(_id: string, triggerId: string) { return executeTriggerOperatorAction(triggerId, "disable"); },
   invokeTrigger(_id: string, triggerId: string, inputData: Record<string, unknown> = {}, idempotencyKey?: string) {
     const key = idempotencyKey || newIdempotencyKey("trigger");
     return request.post<OperatorExecutionResponse>(
@@ -221,33 +226,15 @@ export const workflowApi = {
     ).then((response) => ({ ...response, data: response.data.result }));
   },
   createExecution(workflowId: string, inputData: Record<string, unknown> = {}, idempotencyKey?: string) {
-    return request.post<WorkflowExecution>(
-      `/workflows/${workflowId}/executions`,
-      { input_data: inputData },
-      idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
-    );
+    return request.post<WorkflowExecution>(`/workflows/${workflowId}/executions`, { input_data: inputData }, idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined);
   },
-  listExecutions(workflowId: string) {
-    return request.get<WorkflowExecution[]>(`/workflows/${workflowId}/executions`);
-  },
-  executionAvailability(executionId: string) {
-    return request.get<WorkflowExecutionActionAvailability>(`/runtime/operator-actions/workflow-executions/${executionId}`);
-  },
-  triggerAvailability(triggerId: string) {
-    return request.get<WorkflowTriggerActionAvailability>(`/runtime/operator-actions/workflow-triggers/${triggerId}`);
-  },
-  runExecution(executionId: string) {
-    return executeExecutionOperatorAction(executionId, "run", { confirm: false });
-  },
-  cancelExecution(executionId: string, reason?: string) {
-    return executeExecutionOperatorAction(executionId, "cancel", { confirm: true, ...(reason ? { reason } : {}) });
-  },
-  retryExecution(executionId: string, idempotencyKey?: string) {
-    return executeExecutionOperatorAction(executionId, "retry", { confirm: true }, idempotencyKey || newIdempotencyKey("retry"));
-  },
-  resumeExecution(executionId: string) {
-    return executeExecutionOperatorAction(executionId, "resume", { confirm: true });
-  },
+  listExecutions(workflowId: string) { return request.get<WorkflowExecution[]>(`/workflows/${workflowId}/executions`); },
+  executionAvailability(executionId: string) { return request.get<WorkflowExecutionActionAvailability>(`/runtime/operator-actions/workflow-executions/${executionId}`); },
+  triggerAvailability(triggerId: string) { return request.get<WorkflowTriggerActionAvailability>(`/runtime/operator-actions/workflow-triggers/${triggerId}`); },
+  runExecution(executionId: string) { return executeExecutionOperatorAction(executionId, "run", { confirm: false }); },
+  cancelExecution(executionId: string, reason?: string) { return executeExecutionOperatorAction(executionId, "cancel", { confirm: true, ...(reason ? { reason } : {}) }); },
+  retryExecution(executionId: string, idempotencyKey?: string) { return executeExecutionOperatorAction(executionId, "retry", { confirm: true }, idempotencyKey || newIdempotencyKey("retry")); },
+  resumeExecution(executionId: string) { return executeExecutionOperatorAction(executionId, "resume", { confirm: true }); },
   execution(executionId: string) { return request.get<WorkflowExecution>(`/workflows/executions/${executionId}`); },
   executionNodes(executionId: string) { return request.get<WorkflowExecutionNode[]>(`/workflows/executions/${executionId}/nodes`); },
   trace(executionId: string) { return request.get<{ execution_id: string; items: WorkflowTrace[] }>(`/runtime/executions/${executionId}/trace`); },
