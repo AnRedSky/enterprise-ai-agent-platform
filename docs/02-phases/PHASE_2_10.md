@@ -17,7 +17,7 @@
 
 ### 2.10-II / II-08 Canonical Operator Audit Query Performance / Fact-Source Alignment
 
-状态：**已实现，等待开发者本地 Gate 实际执行**。
+状态：**实现已补齐，等待开发者本地重新执行扩展后的 Gate**。
 
 已完成：
 - `0051_operator_audit_query_indexes` 为 Canonical `audit_logs` 增加 tenant-scoped 复合查询索引；
@@ -25,7 +25,10 @@
 - `audit_logs.operator_action_id` / `operator_action_idempotencies.result_resource_type` PostgreSQL Acceptance 已覆盖；
 - Operator Audit Query 增加 `operator_action_id` 精确过滤，直接定位 Operator Action → AuditLog 治理关联；
 - 新增 `0055_operator_audit_operator_action_index`，为 `tenant_id + operator_action_id + created_at` 建立 Canonical AuditLog 查询索引；
-- API Contract 与 PostgreSQL Acceptance 已同步覆盖该过滤与索引。
+- API Contract 与 PostgreSQL Acceptance 已同步覆盖该过滤与索引；
+- 修复 Gate 覆盖漂移：将 Operator Action Idempotency 与 Retry / Resume 跨 Session 并发验收纳入 `26_operator_audit_query_performance_gate.ps1`；
+- 新增查询计划验收，覆盖 action、actor、resource、execution、trace、operator_action 六条正式查询路径，验证 tenant-first Canonical 索引可被 PostgreSQL 查询计划使用；
+- Gate 自动设置 `RUN_DATABASE_INTEGRATION=1`，测试数据仍由测试自动生成与清理，不要求人工填写或修改测试代码。
 
 对应 Gate：
 
