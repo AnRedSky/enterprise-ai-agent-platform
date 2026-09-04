@@ -259,3 +259,85 @@ async def test_resume_cross_session_same_operator_action_creates_one_result_reso
             assert returned_ids == [executions[0].id] * len(returned_ids)
     finally:
         await _cleanup(tenant_id, user_id)
+
+
+@pytest.mark.asyncio
+async def test_retry_rolls_back_execution_and_governance_facts_when_finalization_fails(monkeypatch) -> None:
+    """验证 Retry 创建新 Execution 后最终治理写入失败时，Execution 与幂等事实一起回滚。"""
+    tenant_id, user_id = await _create_identity()
+    _, _, execution_id = await _create_failed_execution(tenant_id, user_id)
+    key = f"operator-retry-rollback-{uuid4()}"
+    try:
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            service._audit = AsyncMock(side_effect=RuntimeError("operator audit failure"))
+            with pytest.raises(RuntimeError, match="operator audit failure"):
+                await service.execute_execution(
+                    execution_id,
+                    tenant_id,
+                    user_id,
+                    True,
+                    "retry",
+                    confirm=True,
+                    idempotency_key=key,
+                )
+
+        async with SessionLocal() as session:
+            executions = list((await session.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.retry_of_execution_id == execution_id,
+            ))).scalars().all())
+            idempotency = list((await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalars().all())
+            audits = list((await session.execute(select(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.action == "operator.workflow_execution.retry",
+            ))).scalars().all())
+            assert executions == []
+            assert idempotency == []
+            assert audits == []
+    finally:
+        await _cleanup(tenant_id, user_id)
+
+
+@pytest.mark.asyncio
+async def test_resume_rolls_back_execution_and_governance_facts_when_finalization_fails(monkeypatch) -> None:
+    """验证 Resume 创建新 Execution 后最终治理写入失败时，Execution 与幂等事实一起回滚。"""
+    tenant_id, user_id = await _create_identity()
+    _, _, execution_id = await _create_failed_execution(tenant_id, user_id, with_checkpoint=True)
+    key = f"resume:{execution_id}:checkpoint:0:rollback"
+    try:
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            service._audit = AsyncMock(side_effect=RuntimeError("operator audit failure"))
+            with pytest.raises(RuntimeError, match="operator audit failure"):
+                await service.execute_execution(
+                    execution_id,
+                    tenant_id,
+                    user_id,
+                    True,
+                    "resume",
+                    confirm=True,
+                    idempotency_key=key,
+                )
+
+        async with SessionLocal() as session:
+            executions = list((await session.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.resume_of_execution_id == execution_id,
+            ))).scalars().all())
+            idempotency = list((await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalars().all())
+            audits = list((await session.execute(select(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.action == "operator.workflow_execution.resume",
+            ))).scalars().all())
+            assert executions == []
+            assert idempotency == []
+            assert audits == []
+    finally:
+        await _cleanup(tenant_id, user_id)
