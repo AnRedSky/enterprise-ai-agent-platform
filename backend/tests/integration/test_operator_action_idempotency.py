@@ -1,8 +1,8 @@
-"""Operator Action PostgreSQL 集成测试：验证幂等键并发 claim、冲突语义与租户隔离。
+"""Operator Action PostgreSQL 集成测试：验证幂等键并发、结果复用、事务原子性与租户隔离。
 
-职责：验证 OperatorActionIdempotency 的数据库唯一约束、原子 claim 与既有幂等结果语义。
-边界：不执行实际 Workflow / Trigger 业务动作，不启动任何服务，不覆盖 HTTP API。
-关键依赖：真实 PostgreSQL、OperatorActionIdempotency 模型与 OperatorActionGovernanceService。
+职责：验证 OperatorActionIdempotency 的数据库唯一约束、原子 claim、成功结果复用以及治理事务事实一致性。
+边界：不覆盖 HTTP API，不启动任何服务；业务执行仅使用真实 Workflow Execution 持久化链路。
+关键依赖：真实 PostgreSQL、Workflow/Execution ORM、OperatorActionGovernanceService。
 """
 
 from __future__ import annotations
@@ -14,12 +14,15 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from app.infrastructure.db import SessionLocal
 from app.infrastructure.db.session import engine
-from app.models.core import Tenant, User
+from app.models.core import AuditLog, Tenant, User
 from app.models.operator_action import OperatorActionIdempotency
+from app.models.workflow import Workflow, WorkflowVersion
+from app.models.workflow_execution import WorkflowExecution
+from app.models.workflow_trace import WorkflowTraceEvent
 from app.services.runtime_operations.operator_governance import OperatorActionGovernanceService
 
 
@@ -58,6 +61,43 @@ async def _create_identity(tenant_id, user_id) -> None:
             )
 
 
+async def _create_failed_execution(tenant_id, user_id):
+    """创建可用于 Retry 治理验收的最小已发布 Workflow 与 failed Execution。"""
+    workflow_id = uuid4()
+    version_id = uuid4()
+    execution_id = uuid4()
+    async with SessionLocal() as session:
+        async with session.begin():
+            workflow = Workflow(
+                id=workflow_id,
+                name=f"operator-governance-{workflow_id}",
+                owner_id=user_id,
+                tenant_id=tenant_id,
+                status="published",
+                published_version_id=version_id,
+            )
+            version = WorkflowVersion(
+                id=version_id,
+                workflow_id=workflow_id,
+                version="1",
+                definition={"nodes": [], "edges": []},
+                status="published",
+                created_by=user_id,
+            )
+            execution = WorkflowExecution(
+                id=execution_id,
+                tenant_id=tenant_id,
+                workflow_id=workflow_id,
+                workflow_version_id=version_id,
+                created_by=user_id,
+                status="failed",
+                input_data={"source": "operator-acceptance"},
+                error_code="TEST_FAILED",
+            )
+            session.add_all([workflow, version, execution])
+    return workflow_id, version_id, execution_id
+
+
 async def _claim_and_commit(tenant_id, user_id, resource_id, key):
     """在独立数据库事务中竞争同一个幂等键，并提交 claim 结果。"""
     async with SessionLocal() as session:
@@ -75,10 +115,25 @@ async def _claim_and_commit(tenant_id, user_id, resource_id, key):
 
 
 async def _cleanup(*tenant_ids, user_ids) -> None:
-    """清理本测试生成的持久化身份与幂等事实。"""
+    """清理本测试生成的 Workflow、Execution、审计、幂等事实与身份。"""
     async with SessionLocal() as cleanup_session:
         await cleanup_session.execute(
+            delete(AuditLog).where(AuditLog.tenant_id.in_(tenant_ids))
+        )
+        await cleanup_session.execute(
             delete(OperatorActionIdempotency).where(OperatorActionIdempotency.tenant_id.in_(tenant_ids))
+        )
+        await cleanup_session.execute(
+            delete(WorkflowExecution).where(WorkflowExecution.tenant_id.in_(tenant_ids))
+        )
+        await cleanup_session.execute(
+            delete(WorkflowTraceEvent).where(WorkflowTraceEvent.tenant_id.in_(tenant_ids))
+        )
+        await cleanup_session.execute(
+            delete(WorkflowVersion).where(WorkflowVersion.created_by.in_(user_ids))
+        )
+        await cleanup_session.execute(
+            delete(Workflow).where(Workflow.owner_id.in_(user_ids))
         )
         await cleanup_session.execute(delete(User).where(User.id.in_(user_ids)))
         await cleanup_session.execute(delete(Tenant).where(Tenant.id.in_(tenant_ids)))
@@ -197,5 +252,127 @@ async def test_operator_action_idempotency_failed_record_cannot_be_reused_as_suc
                 await service._reuse_or_raise(existing)
             assert exc_info.value.status_code == 409
             await session.rollback()
+    finally:
+        await _cleanup(tenant_id, user_ids=[user_id])
+
+
+@pytest.mark.asyncio
+async def test_operator_action_retry_replay_reuses_result_and_does_not_duplicate_audit() -> None:
+    """验证 Retry 成功后同 key 重放复用同一 Result Resource，且不会再次写入 Operator Audit。"""
+    tenant_id = uuid4()
+    user_id = uuid4()
+    key = f"operator-replay-{uuid4()}"
+    workflow_id, version_id, execution_id = await _create_failed_execution(tenant_id, user_id)
+
+    try:
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            first = await service.execute_execution(
+                execution_id,
+                tenant_id,
+                user_id,
+                True,
+                "retry",
+                confirm=True,
+                idempotency_key=key,
+            )
+            first_result_id = first.id
+
+        async with SessionLocal() as session:
+            idempotency = (await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalar_one()
+            audit_count = (await session.execute(select(func.count()).select_from(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.operator_action_id == idempotency.id,
+            ))).scalar_one()
+            assert idempotency.status == "succeeded"
+            assert idempotency.result_resource_type == "workflow_execution"
+            assert idempotency.result_resource_id == first_result_id
+            assert audit_count == 1
+
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            replay = await service.execute_execution(
+                execution_id,
+                tenant_id,
+                user_id,
+                True,
+                "retry",
+                confirm=True,
+                idempotency_key=key,
+            )
+            assert replay.id == first_result_id
+            await session.commit()
+
+        async with SessionLocal() as session:
+            idempotency = (await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalar_one()
+            execution_count = (await session.execute(select(func.count()).select_from(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.retry_of_execution_id == execution_id,
+            ))).scalar_one()
+            audit_count = (await session.execute(select(func.count()).select_from(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.operator_action_id == idempotency.id,
+            ))).scalar_one()
+            assert idempotency.result_resource_id == first_result_id
+            assert execution_count == 1
+            assert audit_count == 1
+    finally:
+        await _cleanup(tenant_id, user_ids=[user_id])
+
+
+@pytest.mark.asyncio
+async def test_operator_action_retry_rolls_back_result_idempotency_audit_and_trace_on_finalization_failure(monkeypatch) -> None:
+    """验证治理最终化失败时 Retry Result Resource、幂等事实、Audit 与 Trace 全部回滚。"""
+    tenant_id = uuid4()
+    user_id = uuid4()
+    key = f"operator-rollback-{uuid4()}"
+    workflow_id, version_id, execution_id = await _create_failed_execution(tenant_id, user_id)
+
+    try:
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            service._audit = pytest.MonkeyPatch().context().__enter__ if False else service._audit
+            monkeypatch.setattr(
+                service,
+                "_audit",
+                lambda **kwargs: (_ for _ in ()).throw(RuntimeError("operator audit failure")),
+            )
+            with pytest.raises(RuntimeError, match="operator audit failure"):
+                await service.execute_execution(
+                    execution_id,
+                    tenant_id,
+                    user_id,
+                    True,
+                    "retry",
+                    confirm=True,
+                    idempotency_key=key,
+                )
+            await session.rollback()
+
+        async with SessionLocal() as session:
+            assert (await session.execute(select(OperatorActionIdempotency).where(
+                OperatorActionIdempotency.tenant_id == tenant_id,
+                OperatorActionIdempotency.idempotency_key == key,
+            ))).scalar_one_or_none() is None
+            assert (await session.execute(select(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.retry_of_execution_id == execution_id,
+            ))).scalar_one_or_none() is None
+            assert (await session.execute(select(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.resource_id == str(execution_id),
+                AuditLog.action.like("operator.workflow_execution.retry%"),
+            ))).scalars().all() == []
+            assert (await session.execute(select(WorkflowTraceEvent).where(
+                WorkflowTraceEvent.tenant_id == tenant_id,
+                WorkflowTraceEvent.execution_id == execution_id,
+                WorkflowTraceEvent.event_type == "execution.retry_requested",
+            ))).scalars().all() == []
     finally:
         await _cleanup(tenant_id, user_ids=[user_id])
