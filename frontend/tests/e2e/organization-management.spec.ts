@@ -49,9 +49,9 @@ async function confirmMessageBox(page: import("@playwright/test").Page) {
 }
 
 async function showMemberRow(page: import("@playwright/test").Page, userId: string) {
-  const memberRow = page.getByRole("row").filter({ hasText: userId });
   const nextPage = page.locator(".el-pagination button.btn-next");
   for (;;) {
+    const memberRow = page.getByRole("row").filter({ hasText: userId });
     if (await memberRow.count() > 0) {
       await expect(memberRow).toBeVisible();
       return memberRow;
@@ -169,25 +169,37 @@ test("Organization browser governance enforces member and suspended-member bound
 test("Organization owner transfer exposes owner-only browser controls", async ({ page, playwright }) => {
   test.setTimeout(60_000);
   const nonce = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+  const ownerUsernameForTest = `organization_transfer_owner_${nonce}`;
+  const ownerPasswordForTest = `OrganizationTransferOwner!${nonce}`;
   const newOwnerUsername = `organization_transfer_new_${nonce}`;
   const newOwnerPassword = `OrganizationTransferNew!${nonce}`;
   const api: APIRequestContext = await playwright.request.newContext({ baseURL: normalizeApiOrigin(process.env.API_BASE_URL || "http://127.0.0.1:8000/api/v1") });
   try {
+    const ownerRegister = await api.post(apiPath("/auth/register"), { data: { username: ownerUsernameForTest, password: ownerPasswordForTest } });
+    expect([200, 201]).toContain(ownerRegister.status());
+    const ownerUser = await ownerRegister.json();
+    const ownerLogin = await api.post(apiPath("/auth/login"), { data: { username: ownerUsernameForTest, password: ownerPasswordForTest } });
+    expect(ownerLogin.ok()).toBeTruthy();
+    const ownerBody = await ownerLogin.json();
+    const ownerHeaders = { Authorization: `Bearer ${ownerBody.access_token}` };
+    const organizationResponse = await api.post(apiPath("/organizations"), { headers: ownerHeaders, data: { name: `Organization Owner Transfer E2E ${nonce}` } });
+    expect(organizationResponse.ok()).toBeTruthy();
+    const organization = await organizationResponse.json();
+    const ownerMembership = await getMembership(api, organization.id, ownerUser.user_id, ownerHeaders);
+    expect(ownerMembership).toMatchObject({ user_id: ownerUser.user_id, status: "active", role: "owner" });
+
     const newRegister = await api.post(apiPath("/auth/register"), { data: { username: newOwnerUsername, password: newOwnerPassword } });
     expect([200, 201]).toContain(newRegister.status());
     const newUser = await newRegister.json();
-    const ownerBody = await loginOwner(api);
-    const ownerHeaders = { Authorization: `Bearer ${ownerBody.access_token}` };
-    const organization = await getOrganization(api, ownerHeaders, ownerBody.tenant_id);
-    const ownerMembership = await getMembership(api, organization.id, ownerBody.user_id, ownerHeaders);
-    expect(ownerMembership).toMatchObject({ user_id: ownerBody.user_id, status: "active", role: "owner" });
+    const addMemberResponse = await api.post(apiPath(`/organizations/${organization.id}/members`), { headers: ownerHeaders, data: { user_id: newUser.user_id, role: "member" } });
+    expect(addMemberResponse.ok()).toBeTruthy();
     const membership = await getMembership(api, organization.id, newUser.user_id, ownerHeaders);
     expect(membership).toMatchObject({ user_id: newUser.user_id, status: "active", role: "member" });
     const transfer = await api.post(apiPath(`/organizations/${organization.id}/members/${membership.id}/transfer-owner`), { headers: ownerHeaders });
     const transferBody = await transfer.text();
     expect(transfer.ok(), `owner transfer failed (${transfer.status()}): ${transferBody}`).toBeTruthy();
 
-    await loginInBrowser(page, ownerUsername, ownerPassword);
+    await loginInBrowser(page, ownerUsernameForTest, ownerPasswordForTest);
     await page.goto(`/organizations/${organization.id}`);
     await expect(page.getByRole("button", { name: "添加成员" })).toBeVisible();
     await expect(page.getByRole("button", { name: "转移所有权" })).toHaveCount(0);
@@ -201,7 +213,7 @@ test("Organization owner transfer exposes owner-only browser controls", async ({
     expect(newOwner.ok()).toBeTruthy();
     const newOwnerBody = await newOwner.json();
     const newOwnerHeaders = { Authorization: `Bearer ${newOwnerBody.access_token}` };
-    const originalOwnerMembership = await getMembership(api, organization.id, ownerBody.user_id, newOwnerHeaders);
+    const originalOwnerMembership = await getMembership(api, organization.id, ownerUser.user_id, newOwnerHeaders);
     const restore = await api.post(apiPath(`/organizations/${organization.id}/members/${originalOwnerMembership.id}/transfer-owner`), { headers: newOwnerHeaders });
     expect(restore.ok()).toBeTruthy();
   } finally {
