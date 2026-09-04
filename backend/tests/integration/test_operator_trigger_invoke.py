@@ -191,7 +191,7 @@ async def test_operator_trigger_invoke_concurrent_same_key_converges_to_one_exec
     key = f"trigger-invoke-concurrent-{uuid4()}"
     workflow_id, _, trigger_id = await _create_fixture(tenant_id, user_id)
 
-    async def invoke(source: str) -> UUID:
+    async def invoke(source: str):
         async with SessionLocal() as session:
             service = OperatorActionGovernanceService(session)
             execution = await service.execute_trigger(
