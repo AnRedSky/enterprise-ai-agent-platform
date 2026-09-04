@@ -50,6 +50,14 @@
 
 该修复仍不新增 API、mapper 或业务状态机，也不改变 Backend Contract；它将深链恢复从单次生命周期行为提升为稳定的 route-driven hydration，并同时覆盖同一 Runtime 页面内的深链切换。
 
+### 2.9 Runtime Correlations immediate watcher 首次水合条件遗漏
+
+开发者再次执行同一 targeted E2E 后，失败位置仍是 `/runtime` 关联工作台中的 `Execution ID`，且此前的 route watcher 已经存在。重新核对 watcher 的实际执行条件后发现了更具体的根因：`watch(..., { immediate: true })` 首次回调执行时，`focusType` / `focusId` 已在 setup 阶段由同一 route query 初始化，因此 `focusChanged` 为 `false`；原实现又只在 `focusChanged` 为 `true` 时调用 `query()`，导致 **首次 immediate watcher 虽然执行，却没有发起 hydration 请求**。
+
+本次修复保留 route watcher 作为唯一路由状态源，但把“是否需要水合”与“focus 是否发生变化”解耦：当当前 `result` 尚未存在，或者 focus 发生变化时，只要存在有效 `focusId` 就复用现有 `query()`；focus 变化仍负责重置 Trace/Audit 分页和选中事实；没有 focus ID 且确实发生 focus 变化时清理结果并恢复 Empty 状态。
+
+该修复直接对应本地反馈中的“标题存在、Execution ID 不存在”现象，不修改 E2E 断言、不等待任意固定时间、不新增 API 或 mapper，也不改变 Backend Contract。现有 `workflow-webhook-runtime.spec.ts` 的 `Execution ID` 断言继续作为真实深链 hydration 回归门禁。
+
 ## 3. 变更范围
 
 - `frontend/src/views/runtime/components/RuntimeCorrelations.vue`
@@ -58,9 +66,7 @@
 
 ## 4. 验证状态
 
-本轮已完成 `main` → `frontend` 快进同步，并针对开发者提供的 E2E 失败堆栈完成根因定位与第二阶段修复。
-
-当前工具环境只能访问远程 GitHub 仓库，不能直接执行开发者 Windows 本地 Node/npm 服务，因此不能将以下命令记录为已通过：
+本轮继续以开发者提供的真实 Windows E2E 结果作为根因输入，并完成第三阶段代码修复。当前工具环境只能访问远程 GitHub 仓库，不能直接执行开发者 Windows 本地 Node/npm 服务，因此不能将以下命令记录为已通过：
 
 ```powershell
 cd D:\works\AgentWorks\LocalDev\enterprise-ai-agent-platform\frontend

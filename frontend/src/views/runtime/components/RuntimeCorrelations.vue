@@ -50,6 +50,7 @@ function syncRouteFocus() {
   const nextFocusId = typeof route.query.focus_id === "string" ? route.query.focus_id : (typeof route.query.execution_id === "string" ? route.query.execution_id : "");
   const nextType: FocusType = ["execution", "trace", "audit", "operator-action"].includes(nextFocusType) ? nextFocusType as FocusType : "execution";
   const focusChanged = focusType.value !== nextType || focusId.value !== nextFocusId;
+  const needsHydration = !result.value || focusChanged;
   focusType.value = nextType;
   focusId.value = nextFocusId;
   if (focusChanged) {
@@ -57,9 +58,9 @@ function syncRouteFocus() {
     auditPage.value = 1;
     selectedTraceId.value = "";
     selectedAuditId.value = "";
-    if (nextFocusId.trim()) void query();
-    else { error.value = ""; result.value = null; }
   }
+  if (nextFocusId.trim() && needsHydration) void query();
+  else if (!nextFocusId.trim() && focusChanged) { error.value = ""; result.value = null; }
 }
 function setTracePage(page: number) { tracePage.value = page; void query(); }
 function setAuditPage(page: number) { auditPage.value = page; void query(); }
@@ -106,8 +107,7 @@ watch(() => [route.query.focus_type, route.query.focus_id, route.query.execution
 
 <template>
   <section class="correlation-workspace" aria-label="Audit Trace 关联工作台">
-    <header class="section-heading"><div><span class="eyebrow">P2.10-II / II-04</span><h2>Audit / Trace 关联</h2><p>围绕一个 Durable Fact 双向展开 Execution、Trace、Audit 与 Operator Action。</p></div><el-tag type="info" effect="plain">只读 / Tenant Scoped</el-tag></header>
-    <el-form inline @submit.prevent="query"><el-select v-model="focusType" style="width: 180px"><el-option label="Execution" value="execution" /><el-option label="Trace" value="trace" /><el-option label="Audit" value="audit" /><el-option label="Operator Action" value="operator-action" /></el-select><el-input v-model="focusId" clearable :placeholder="`输入 ${focusLabel} ID`" style="width: 360px" @keyup.enter="query" /><el-button type="primary" :loading="loading" @click="query">查询关联</el-button></el-form>
+    <header class="section-heading"><div><span class="eyebrow">P2.10-II / II-04</span><h2>Audit / Trace 关联</h2><p>围绕一个 Durable Fact 双向展开 Execution、Trace、Audit 与 Operator Action。</p></div><el-tag type="info" effect="plain">只读 / Tenant Scoped</el-tag></header><el-form inline @submit.prevent="query"><el-select v-model="focusType" style="width: 180px"><el-option label="Execution" value="execution" /><el-option label="Trace" value="trace" /><el-option label="Audit" value="audit" /><el-option label="Operator Action" value="operator-action" /></el-select><el-input v-model="focusId" clearable :placeholder="`输入 ${focusLabel} ID`" style="width: 360px" @keyup.enter="query" /><el-button type="primary" :loading="loading" @click="query">查询关联</el-button></el-form>
     <StatePanel v-if="loading && !result" state="loading" title="正在查询关联事实" description="正在同步 Execution、Trace、Audit 与 Operator Action。" />
     <StatePanel v-else-if="error" state="error" title="关联查询失败" :description="error" action-label="重试" @action="query" />
     <StatePanel v-else-if="!result" state="empty" title="等待关联查询" description="输入对象 ID 开始关联查询。" />
