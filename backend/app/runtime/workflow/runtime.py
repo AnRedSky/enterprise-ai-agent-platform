@@ -311,8 +311,8 @@ class WorkflowRuntime:
         return result
 
     async def execute(self, execution, version, actor_id: UUID, is_admin: bool = False,
-                      allow_legacy_empty_nodes: bool = False) -> dict:
-        """执行 Workflow；存在 DAG edges 时，首次执行与 Resume 统一按持久化 frontier 规划。"""
+                      allow_legacy_empty_nodes: bool = False, *, commit: bool = True) -> dict:
+        """执行 Workflow，并由调用方控制终态提交边界；commit=False 时禁止 Runtime 提前提交。"""
         if self.execution_service is None:
             from app.services.workflow import WorkflowExecutionService
             service = WorkflowExecutionService(self.db)
@@ -347,12 +347,12 @@ class WorkflowRuntime:
                 if dag_context is None:
                     break
                 plan, branch_state_data = dag_context
-            await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
+            await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id, commit=commit)
             return current_data
 
         for node in nodes:
             current_data = await self._execute_node_with_policy(service, execution, node, current_data, actor_id, is_admin, workflow_timeout, max_retries, started, workflow_retry_counter)
-        await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id)
+        await service.transition(execution, "completed", output_data=current_data, actor_id=actor_id, commit=commit)
         return current_data
 
     async def _resolve_organization_id(self, tenant_id: UUID | None) -> UUID:

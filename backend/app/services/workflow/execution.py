@@ -400,7 +400,7 @@ class WorkflowExecutionService:
     async def run(self, execution: WorkflowExecution, version: WorkflowVersion, actor_id: UUID, admin: bool = False,
                   allow_legacy_empty_nodes: bool = False, worker_owner: str | None = None,
                   *, commit: bool = True) -> WorkflowExecution:
-        """执行已发布 Workflow；commit=False 时不在状态转换处主动提交事务。"""
+        """执行已发布 Workflow，并把统一事务提交边界传递给 WorkflowRuntime。"""
         execution = await self._lock_execution(execution)
         if execution.status != "pending":
             raise HTTPException(409, "只有 pending Execution 可以 Run")
@@ -408,7 +408,14 @@ class WorkflowExecutionService:
         await self.transition(execution, "running", actor_id=actor_id, commit=commit)
         runtime = WorkflowRuntime(self.db, execution_service=self)
         try:
-            await runtime.execute(execution, version, actor_id, admin, allow_legacy_empty_nodes=allow_legacy_empty_nodes)
+            await runtime.execute(
+                execution,
+                version,
+                actor_id,
+                admin,
+                allow_legacy_empty_nodes=allow_legacy_empty_nodes,
+                commit=commit,
+            )
         except CircuitOpenError:
             await self.transition(execution, "failed", error_code="CIRCUIT_OPEN", error_message="Circuit Breaker is open", actor_id=actor_id, commit=commit)
             raise HTTPException(503, "Circuit Breaker is open")
