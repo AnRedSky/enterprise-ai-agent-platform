@@ -130,14 +130,18 @@ test("Organization management completes the real owner browser contract", async 
     await expect(page.getByText("成员角色已更新")).toBeVisible();
     await expect(memberRow).toContainText("管理员（admin）");
 
-    const suspendedMessage = waitForMessage(page, "成员已暂停");
+    const suspendMemberResponse = page.waitForResponse((response) => response.ok()
+      && response.request().method() === "PATCH"
+      && response.url().includes(`/organizations/${organization.id}/members/${member.id}`));
     await memberRow.getByRole("button", { name: "暂停" }).click();
-    await suspendedMessage;
+    await suspendMemberResponse;
     await expect(memberRow).toContainText("已暂停（suspended）");
 
-    const restoredMessage = waitForMessage(page, "成员已恢复");
+    const restoreMemberResponse = page.waitForResponse((response) => response.ok()
+      && response.request().method() === "PATCH"
+      && response.url().includes(`/organizations/${organization.id}/members/${member.id}`));
     await memberRow.getByRole("button", { name: "恢复" }).click();
-    await restoredMessage;
+    await restoreMemberResponse;
     await expect(memberRow).toContainText("已启用（active）");
 
     const suspendedOrganizationMessage = waitForMessage(page, "组织已暂停");
