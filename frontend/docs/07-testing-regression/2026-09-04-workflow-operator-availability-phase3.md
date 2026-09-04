@@ -130,6 +130,29 @@ Phase 3 将 Trigger 删除操作改为后端 Availability 驱动。旧测试只 
 
 提交：`fix: target workflow detail error state in test`
 
+## 2026-09-04 后续本地反馈：Operator Availability 测试等待条件
+
+现象：
+
+用户执行全量 `npm test` 后，`WorkflowLifecycle.operator-availability.test.ts` 的 5 个用例全部失败。每个失败均期望 `wrapper.text()` 包含 `订单审批`，实际只包含 PageHeader、Trigger/Execution 区域及对话框文本。
+
+根因：
+
+该测试文件使用的 `el-table` / `el-table-column` stub 与前一轮 `WorkflowLifecycle.test.ts` 相同，不渲染列 slot，因此 Workflow 列中的 `订单审批` 不会进入 `wrapper.text()`。这里继续等待页面文本既不能证明详情请求完成，也会把测试绑定到具体 DOM 渲染实现。
+
+修复：
+
+- 新增本文件共享的 `waitForReady(wrapper)` 测试辅助函数。
+- 统一以组件真实 `pageState === "success"` 作为生命周期页面加载完成条件。
+- 五个 Operator Availability 用例全部移除 `wrapper.text()` 的 Workflow 名称等待，不修改生产组件 DOM 或 Availability 门禁。
+- 保留原有 `triggerActionAllowed`、`reason_code`、确认态、canonical endpoint、refresh、403/409 映射以及 Availability source-of-truth 断言。
+
+验证：
+
+用户本次本地全量结果为 `71` 个测试文件中 `1` 个失败、`5` 个失败用例、`336` 个通过；本修复针对该 5 个失败用例。`npm run build` 已开始执行，用户尚未提供最终退出结果，因此不将 build 或全量测试标记为通过。
+
+提交：`test: align operator availability readiness assertions`
+
 ## 验证纪律
 
 本环境不执行用户本地 Node/Vitest/build 命令，因此本次改动不标记本地测试为已通过。用户应在 Windows 前端工作区执行 targeted test、全量 `npm test`、`npm run build` 与 `npm run test:gate`，并以实际终端结果作为验收事实。
@@ -137,7 +160,7 @@ Phase 3 将 Trigger 删除操作改为后端 Availability 驱动。旧测试只 
 建议验证顺序：
 
 ```powershell
-npm test -- tests/api/workflows.test.ts tests/views/WorkflowLifecycle.test.ts tests/views/WorkflowLifecycleTriggerManagement.test.ts
+npm test -- tests/api/workflows.test.ts tests/views/WorkflowLifecycle.test.ts tests/views/WorkflowLifecycleTriggerManagement.test.ts tests/views/WorkflowLifecycle.operator-availability.test.ts
 npm test
 npm run build
 npm run test:gate
@@ -149,5 +172,6 @@ npm run test:gate
 - WorkflowLifecycle 生产状态清理修复：已提交。
 - 生命周期测试契约修复：已提交。
 - 详情错误 StatePanel 测试选择器修复：已提交。
+- Operator Availability 测试 readiness 选择器修复：已提交。
 - 回归文档：已同步。
 - 本地最终验证：等待用户执行上述命令确认，当前不能标记为通过。
