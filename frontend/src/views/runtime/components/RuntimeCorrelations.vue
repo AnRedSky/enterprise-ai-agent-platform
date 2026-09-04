@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { runtimeCorrelationsApi, type RuntimeCorrelationAudit, type RuntimeCorrelationResponse, type RuntimeCorrelationTrace } from "@/api/runtimeCorrelations";
@@ -45,6 +45,22 @@ async function query() {
     error.value = "关联查询失败，可能对象不存在或不属于当前租户";
   } finally { loading.value = false; }
 }
+function syncRouteFocus() {
+  const nextFocusType = typeof route.query.focus_type === "string" ? route.query.focus_type : "";
+  const nextFocusId = typeof route.query.focus_id === "string" ? route.query.focus_id : (typeof route.query.execution_id === "string" ? route.query.execution_id : "");
+  const nextType: FocusType = ["execution", "trace", "audit", "operator-action"].includes(nextFocusType) ? nextFocusType as FocusType : "execution";
+  const focusChanged = focusType.value !== nextType || focusId.value !== nextFocusId;
+  focusType.value = nextType;
+  focusId.value = nextFocusId;
+  if (focusChanged) {
+    tracePage.value = 1;
+    auditPage.value = 1;
+    selectedTraceId.value = "";
+    selectedAuditId.value = "";
+    if (nextFocusId.trim()) void query();
+    else { error.value = ""; result.value = null; }
+  }
+}
 function setTracePage(page: number) { tracePage.value = page; void query(); }
 function setAuditPage(page: number) { auditPage.value = page; void query(); }
 async function copy(value: string | null | undefined) { if (!value) return; await navigator.clipboard.writeText(value); ElMessage.success("已复制 ID"); }
@@ -85,6 +101,7 @@ function openAudit(auditId: string) {
 function openAuditTrace(traceId: string) { if (traceId) openTrace(traceId); }
 function selectTrace(trace: RuntimeCorrelationTrace) { selectedTraceId.value = trace.trace_id; }
 function selectAudit(audit: RuntimeCorrelationAudit) { selectedAuditId.value = audit.id; }
+watch(() => [route.query.focus_type, route.query.focus_id, route.query.execution_id], syncRouteFocus, { immediate: true });
 </script>
 
 <template>
