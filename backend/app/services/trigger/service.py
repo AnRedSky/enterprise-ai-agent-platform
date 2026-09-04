@@ -287,4 +287,4 @@ class WorkflowTriggerService:
             "trigger_id": str(trigger.id), "trigger_type": trigger.trigger_type})
         if commit:
             await self.db.commit()
-        return await execution_service.run(execution, version, actor_id, is_admin)
+        return await execution_service.run(execution, version, actor_id, is_admin, commit=commit)
