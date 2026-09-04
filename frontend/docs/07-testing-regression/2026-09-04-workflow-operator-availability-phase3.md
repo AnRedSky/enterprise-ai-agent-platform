@@ -112,6 +112,24 @@ Phase 3 将 Trigger 删除操作改为后端 Availability 驱动。旧测试只 
 - 成功 API 返回后先 reset dialog/target，再执行 Backend refresh。
 - 不改变 Operator Availability 门禁和 canonical API 调用。
 
+## 2026-09-04 后续本地反馈：详情错误 StatePanel 选择器
+
+现象：
+
+用户执行定向测试后剩余 1 个失败：`详情失败后支持重新加载`。测试期望 `StatePanel.title === "工作流详情加载失败"`，实际读取到 `"暂无版本"`。
+
+根因：
+
+`WorkflowLifecycle` 在详情加载失败时保持页面级 `pageState === "success"`，并在版本区域渲染一个 `StatePanel(state="empty", title="暂无版本")`；详情失败状态随后以另一个 `StatePanel(state="error", title="工作流详情加载失败")` 追加渲染。测试使用 `findComponent(StatePanel)` 只返回第一个匹配组件，因此误把版本空状态当成详情错误状态。
+
+修复：
+
+- 不改变生产页面状态模型：详情失败仍是局部错误，不把整个 WorkflowLifecycle 页面误标为 page-level error。
+- 测试改为从 `findAllComponents(StatePanel)` 中按 `title === "工作流详情加载失败"` 精确选择目标状态面板。
+- 保留重新加载详情后 `detailError === ""` 与 `workflowApi.versions` 调用次数断言。
+
+提交：`fix: target workflow detail error state in test`
+
 ## 验证纪律
 
 本环境不执行用户本地 Node/Vitest/build 命令，因此本次改动不标记本地测试为已通过。用户应在 Windows 前端工作区执行 targeted test、全量 `npm test`、`npm run build` 与 `npm run test:gate`，并以实际终端结果作为验收事实。
@@ -130,5 +148,6 @@ npm run test:gate
 - 最新 `main` 已同步到 `frontend`，当前 frontend 不落后 main。
 - WorkflowLifecycle 生产状态清理修复：已提交。
 - 生命周期测试契约修复：已提交。
+- 详情错误 StatePanel 测试选择器修复：已提交。
 - 回归文档：已同步。
 - 本地最终验证：等待用户执行上述命令确认，当前不能标记为通过。
