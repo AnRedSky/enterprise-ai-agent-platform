@@ -26,6 +26,7 @@ from app.models.workflow_execution import WorkflowExecution
 from app.models.workflow_trace import WorkflowTraceEvent
 from app.models.workflow_trigger import WorkflowTrigger
 from app.services.runtime_operations.operator_governance import OperatorActionGovernanceService
+from app.services.trigger import WorkflowTriggerService
 
 
 pytestmark = pytest.mark.integration
@@ -230,6 +231,53 @@ async def test_operator_trigger_invoke_concurrent_same_key_converges_to_one_exec
             assert len(executions) == 1
             assert executions[0].id == first_id
             assert len(audits) == 1
+            assert workflow_id is not None
+    finally:
+        await _cleanup(tenant_id, user_id)
+
+
+@pytest.mark.asyncio
+async def test_operator_trigger_invoke_replay_survives_trigger_state_change() -> None:
+    """验证成功 Invoke 后 Trigger 状态变化不会阻断同一 Idempotency-Key 的确定性重放。"""
+    tenant_id = uuid4()
+    user_id = uuid4()
+    key = f"trigger-invoke-state-change-{uuid4()}"
+    workflow_id, _, trigger_id = await _create_fixture(tenant_id, user_id)
+    try:
+        async with SessionLocal() as session:
+            service = OperatorActionGovernanceService(session)
+            first = await service.execute_trigger(
+                trigger_id, tenant_id, user_id, True, "invoke", confirm=True,
+                input_data={"source": "before-disable"}, idempotency_key=key,
+            )
+            first_id = first.id
+
+        async with SessionLocal() as session:
+            trigger = (await session.execute(select(WorkflowTrigger).where(
+                WorkflowTrigger.id == trigger_id,
+                WorkflowTrigger.tenant_id == tenant_id,
+            ))).scalar_one()
+            await WorkflowTriggerService(session).update(trigger, None, "disabled", None)
+
+        async with SessionLocal() as session:
+            replay = await OperatorActionGovernanceService(session).execute_trigger(
+                trigger_id, tenant_id, user_id, True, "invoke", confirm=True,
+                input_data={"source": "after-disable"}, idempotency_key=key,
+            )
+            assert replay.id == first_id
+
+        async with SessionLocal() as session:
+            execution_count = (await session.execute(select(func.count()).select_from(WorkflowExecution).where(
+                WorkflowExecution.tenant_id == tenant_id,
+                WorkflowExecution.id == first_id,
+            ))).scalar_one()
+            audit_count = (await session.execute(select(func.count()).select_from(AuditLog).where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.action == "operator.workflow_trigger.invoke",
+                AuditLog.resource_id == str(trigger_id),
+            ))).scalar_one()
+            assert execution_count == 1
+            assert audit_count == 1
             assert workflow_id is not None
     finally:
         await _cleanup(tenant_id, user_id)
