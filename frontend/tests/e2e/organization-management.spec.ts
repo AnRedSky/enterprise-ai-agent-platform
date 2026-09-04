@@ -49,8 +49,31 @@ async function confirmMessageBox(page: import("@playwright/test").Page) {
 }
 
 function waitForMessage(page: import("@playwright/test").Page, message: string) {
-  const notification = page.locator(".el-message", { hasText: message }).last();
-  return expect(notification).toBeVisible();
+  return page.evaluate((expected) => new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      observer.disconnect();
+      reject(new Error(`Expected Element Plus message was not observed: ${expected}`));
+    }, 5_000);
+    const isVisible = (element: Element) => {
+      const node = element as HTMLElement;
+      const style = window.getComputedStyle(node);
+      return style.display !== "none" && style.visibility !== "hidden" && node.getClientRects().length > 0;
+    };
+    const findMessage = () => Array.from(document.querySelectorAll(".el-message"))
+      .some((element) => isVisible(element) && (element.textContent || "").includes(expected));
+    if (findMessage()) {
+      window.clearTimeout(timeout);
+      resolve();
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (!findMessage()) return;
+      observer.disconnect();
+      window.clearTimeout(timeout);
+      resolve();
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+  }), message);
 }
 
 async function showMemberRow(page: import("@playwright/test").Page, userId: string) {
@@ -228,7 +251,7 @@ test("Organization owner transfer exposes owner-only browser controls", async ({
     await loginInBrowser(page, newOwnerUsername, newOwnerPassword);
     await page.goto(`/organizations/${organization.id}`);
     await expect(page.getByRole("button", { name: "添加成员" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "转移所有权" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "转移所有权" }).first()).toBeVisible();
 
     const newOwner = await api.post(apiPath("/auth/login"), { data: { username: newOwnerUsername, password: newOwnerPassword } });
     expect(newOwner.ok()).toBeTruthy();
