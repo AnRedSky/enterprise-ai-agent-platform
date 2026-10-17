@@ -5,6 +5,7 @@
 本次通过 GitHub 仓库接口重新核对远端状态；此记录仅说明本轮实际观察到的事实，不替代开发者本地测试结果。
 
 - 远端默认分支：`main`；当前 HEAD：`85f85d02537ddc663786d46008e6af89c5bde2ed`（`merge: sync latest main into frontend`，提交时间 2026-09-04 15:42:39 UTC）。可见固定分支为 `main`、`frontend`。
+- 固定分支同步：已确认 `frontend` 原 HEAD 与本次文档提交前的 `main` HEAD 一致，随后以 fast-forward 方式将 `frontend` 同步到本次交接提交；本次没有覆盖 frontend 独有提交。
 - 开放 PR：当前查询未发现开放 PR。开发准则要求所有开发直接提交 `main`、不创建功能分支，因此本轮不为形式上的 PR 流程创建分支或 PR。
 - 开放 Issue：仍存在历史开放项，包括 #40（Phase 2.3-A Contract）、#33（Phase 2.1-B）及早期验收跟踪项；这些 Issue 与当前 Phase 2.10-II 的任务状态不一致，不能直接视为当前执行顺序，后续应按正式路线图和本文件任务台账判断。
 - CI：对当前 `main` HEAD 查询得到 0 个关联 Actions workflow runs；Commit Status 返回 `pending`，但状态检查数量为 0。Actions 查询中可见的分支运行记录最后更新于 2026-08-27。**这不代表 CI 通过，也不足以判定代码失败**；当前主线缺少可作为验收证据的对应 CI 结果。
