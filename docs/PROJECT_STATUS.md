@@ -1,5 +1,20 @@
 # 项目状态
 
+## 0. 2026-10-17 开发恢复与交接记录
+
+本次通过 GitHub 仓库接口重新核对远端状态；此记录仅说明本轮实际观察到的事实，不替代开发者本地测试结果。
+
+- 远端默认分支：`main`；当前 HEAD：`85f85d02537ddc663786d46008e6af89c5bde2ed`（`merge: sync latest main into frontend`，提交时间 2026-09-04 15:42:39 UTC）。可见固定分支为 `main`、`frontend`。
+- 开放 PR：当前查询未发现开放 PR。开发准则要求所有开发直接提交 `main`、不创建功能分支，因此本轮不为形式上的 PR 流程创建分支或 PR。
+- 开放 Issue：仍存在历史开放项，包括 #40（Phase 2.3-A Contract）、#33（Phase 2.1-B）及早期验收跟踪项；这些 Issue 与当前 Phase 2.10-II 的任务状态不一致，不能直接视为当前执行顺序，后续应按正式路线图和本文件任务台账判断。
+- CI：对当前 `main` HEAD 查询得到 0 个关联 Actions workflow runs；Commit Status 返回 `pending`，但状态检查数量为 0。Actions 查询中可见的分支运行记录最后更新于 2026-08-27。**这不代表 CI 通过，也不足以判定代码失败**；当前主线缺少可作为验收证据的对应 CI 结果。
+- 本轮未能取得可执行的本地 Git 工作区，因此未运行 pytest、Alembic 或 PowerShell Gate，未修改业务实现。不能把既有历史测试记录标记为本轮通过。
+- 下一任务仍按既有台账执行：先在具备最新 `main` 工作区和 PostgreSQL 的开发环境运行 `backend/scripts/test/phase-2.10/26_operator_audit_query_performance_gate.ps1`；修复其实际暴露的问题并复验，然后运行 `25_operator_action_result_lineage_gate.ps1` 和必要的 Backend Regression。测试不得自动启动、重启或停止受保护服务。
+
+## 本轮阻塞与解除条件
+
+当前阻塞是缺少本地可执行仓库工作区和可确认的 PostgreSQL 验收环境，不是已经证实的代码缺陷。解除后应先同步远端 `main`，确认工作区干净，再按上述顺序执行 Gate；只有拿到实际输出后，才更新验收状态。文档本次只记录状态，不宣称测试、代码修复、PR 合并或固定分支同步已完成。
+
 ## 1. 当前基线
 - Repository：`AnRedSky/enterprise-ai-agent-platform`
 - Branch：`main`
